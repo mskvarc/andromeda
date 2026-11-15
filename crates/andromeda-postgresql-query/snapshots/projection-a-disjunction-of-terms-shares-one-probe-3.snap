@@ -21,9 +21,15 @@ WHERE
         OR (
           "ca"."attribute_name_key" = $2
           AND (
-            ("ca"."value_string" ~ $3)
+            (
+              ("ca"."value_string" ~ $3)
+              AND nullif("ca"."value_kind" = (2), FALSE)
+            )
             OR (
-              (("ca"."value_long_text") COLLATE "default") ~ $4
+              (
+                (("ca"."value_long_text") COLLATE "default") ~ $4
+              )
+              AND nullif("ca"."value_kind" = (2), FALSE)
             )
             OR EXISTS (
               SELECT

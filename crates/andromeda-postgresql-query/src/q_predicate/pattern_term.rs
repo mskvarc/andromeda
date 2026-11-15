@@ -13,6 +13,7 @@ use crate::{
         instance_row::InstanceRow,
         language_map::{LanguageMap, LanguageSelection},
         language_term::language_term,
+        typed_column::as_string,
         value_column::ValueColumn,
     },
 };
@@ -50,12 +51,15 @@ pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> 
 
 /// `pred`, a pattern term of `polarity`, tested against one target of `row`.
 ///
-/// A String field holds one string, which the pattern tests directly. Some
+/// A String field holds one string, which the pattern tests directly, and
+/// only when the value is a String: a `Date` and a `Time` share the field, and
+/// clause 4.9 makes a target "considered as not matching" under both pattern
+/// operators "If the target value data type is different than String". Some
 /// string of a `languageMap` has to match `~=`, and none may match `!~=`.
 #[must_use]
 pub fn pattern_on(target: PatternTarget, pred: &Predicate, pattern: &Pattern, polarity: PatternPolarity, row: InstanceRow) -> SimpleExpr {
     match target {
-        PatternTarget::Column(column) => pattern_predicate(row.value(column), polarity, pattern, column_indexes(row, column)),
+        PatternTarget::Column(column) => as_string(pattern_predicate(row.value(column), polarity, pattern, column_indexes(row, column)), row),
         PatternTarget::LanguageMap => language_term(pred, &LanguageMap::of_instance(row), LanguageSelection::AnyLanguage),
     }
 }

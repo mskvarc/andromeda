@@ -3,9 +3,15 @@ source: crates/andromeda-postgresql-query/src/q_predicate/pattern_term.rs
 ---
 SELECT
 WHERE
-  ((("ca"."value_string") COLLATE "default") ~ $1)
+  (
+    ((("ca"."value_string") COLLATE "default") ~ $1)
+    AND nullif("ca"."value_kind" = (2), FALSE)
+  )
   OR (
-    (("ca"."value_long_text") COLLATE "default") ~ $2
+    (
+      (("ca"."value_long_text") COLLATE "default") ~ $2
+    )
+    AND nullif("ca"."value_kind" = (2), FALSE)
   )
   OR EXISTS (
     SELECT

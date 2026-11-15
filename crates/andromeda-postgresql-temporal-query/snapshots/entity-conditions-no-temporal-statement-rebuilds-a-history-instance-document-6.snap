@@ -275,7 +275,10 @@ WITH
         WHERE
           "qh"."attribute_name_key" = $1
           AND (
-            ("qh"."value_string" ~ $2)
+            (
+              ("qh"."value_string" ~ $2)
+              AND nullif("qh"."value_kind" = (2), FALSE)
+            )
             OR EXISTS (
               SELECT
                 1
@@ -784,7 +787,10 @@ WITH
           AND "qh"."placed" < $10
           AND "qh"."attribute_name_key" = $11
           AND (
-            ("qh"."value_string" ~ $12)
+            (
+              ("qh"."value_string" ~ $12)
+              AND nullif("qh"."value_kind" = (2), FALSE)
+            )
             OR EXISTS (
               SELECT
                 1
@@ -1294,7 +1300,10 @@ UNION ALL
             WHERE
               "qh"."attribute_name_key" = $17
               AND (
-                ("qh"."value_string" ~ $18)
+                (
+                  ("qh"."value_string" ~ $18)
+                  AND nullif("qh"."value_kind" = (2), FALSE)
+                )
                 OR EXISTS (
                   SELECT
                     1
@@ -1803,7 +1812,10 @@ UNION ALL
               AND "qh"."placed" < $26
               AND "qh"."attribute_name_key" = $27
               AND (
-                ("qh"."value_string" ~ $28)
+                (
+                  ("qh"."value_string" ~ $28)
+                  AND nullif("qh"."value_kind" = (2), FALSE)
+                )
                 OR EXISTS (
                   SELECT
                     1
@@ -2289,7 +2301,10 @@ UNION ALL
             WHERE
               "qh"."attribute_name_key" = $34
               AND (
-                ("qh"."value_string" ~ $35)
+                (
+                  ("qh"."value_string" ~ $35)
+                  AND nullif("qh"."value_kind" = (2), FALSE)
+                )
                 OR EXISTS (
                   SELECT
                     1
@@ -2798,7 +2813,10 @@ UNION ALL
               AND "qh"."placed" < $43
               AND "qh"."attribute_name_key" = $44
               AND (
-                ("qh"."value_string" ~ $45)
+                (
+                  ("qh"."value_string" ~ $45)
+                  AND nullif("qh"."value_kind" = (2), FALSE)
+                )
                 OR EXISTS (
                   SELECT
                     1

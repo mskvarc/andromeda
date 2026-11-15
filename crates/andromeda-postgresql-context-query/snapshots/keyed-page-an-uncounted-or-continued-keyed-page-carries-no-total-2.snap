@@ -49,9 +49,15 @@ FROM
               OR "ca"."expires_at" > NOW()
             )
             AND (
-              ((("ca"."value_string") COLLATE "default") ~ $3)
+              (
+                ((("ca"."value_string") COLLATE "default") ~ $3)
+                AND nullif("ca"."value_kind" = (2), FALSE)
+              )
               OR (
-                (("ca"."value_long_text") COLLATE "default") ~ $4
+                (
+                  (("ca"."value_long_text") COLLATE "default") ~ $4
+                )
+                AND nullif("ca"."value_kind" = (2), FALSE)
               )
               OR EXISTS (
                 SELECT
@@ -90,7 +96,10 @@ FROM
               "ca"."expires_at" IS NULL
               OR "ca"."expires_at" > NOW()
             )
-            AND ((("ca"."value_string") COLLATE "default") ~ $7)
+            AND (
+              ((("ca"."value_string") COLLATE "default") ~ $7)
+              AND nullif("ca"."value_kind" = (2), FALSE)
+            )
           UNION ALL
           (
             SELECT
@@ -104,7 +113,10 @@ FROM
                 OR "ca"."expires_at" > NOW()
               )
               AND (
-                (("ca"."value_long_text") COLLATE "default") ~ $9
+                (
+                  (("ca"."value_long_text") COLLATE "default") ~ $9
+                )
+                AND nullif("ca"."value_kind" = (2), FALSE)
               )
           )
           UNION ALL
@@ -237,9 +249,15 @@ FROM
                   OR "ca"."expires_at" > NOW()
                 )
                 AND (
-                  ((("ca"."value_string") COLLATE "default") ~ $20)
+                  (
+                    ((("ca"."value_string") COLLATE "default") ~ $20)
+                    AND nullif("ca"."value_kind" = (2), FALSE)
+                  )
                   OR (
-                    (("ca"."value_long_text") COLLATE "default") ~ $21
+                    (
+                      (("ca"."value_long_text") COLLATE "default") ~ $21
+                    )
+                    AND nullif("ca"."value_kind" = (2), FALSE)
                   )
                   OR EXISTS (
                     SELECT
