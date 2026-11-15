@@ -961,6 +961,21 @@ mod tests {
         assert_statement_snapshot!("projection-a-member-of-the-attribute-is-read-from-its-row", statement);
     }
 
+    /// Clause 4.9 evaluates a trailing group against the target value, which
+    /// for an instance member is a String or a `DateTime` with no member: the
+    /// target element does not exist, so the term holds for no Entity, under
+    /// `!=` too.
+    #[test]
+    fn a_member_before_a_trailing_group_holds_for_no_entity() {
+        let statement = render(&format!("{}.\"https://uri.etsi.org/ngsi-ld/observedAt\"[x]", quoted(SPEED)));
+        assert_statement_snapshot!("projection-a-member-before-a-trailing-group-holds-for-no-entity", statement);
+        let unequal = render(&format!(
+            "{}.\"https://uri.etsi.org/ngsi-ld/observedAt\"[x]!=2024-01-01T00:00:00Z",
+            quoted(SPEED)
+        ));
+        assert_statement_snapshot!("projection-a-member-before-a-trailing-group-holds-for-no-entity", unequal);
+    }
+
     /// Two terms one instance must pass together are not two terms two
     /// instances pass separately, so a conjunction keeps a probe per term.
     #[test]

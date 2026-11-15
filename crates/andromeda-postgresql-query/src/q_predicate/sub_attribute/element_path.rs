@@ -229,6 +229,20 @@ mod tests {
         }
     }
 
+    /// Clause 4.9 evaluates a trailing group against the target value, which
+    /// for an instance member is a String or a `DateTime` with no member, so
+    /// the member is a sub-attribute name no instance was recorded under.
+    #[test]
+    fn a_member_before_a_trailing_group_ends_no_path_on_it() {
+        assert_eq!(element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\"[x]"), None);
+        assert_eq!(
+            element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\"[x]!=\"y\""),
+            None
+        );
+        let path = element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\"[*]>\"2024-01-01T00:00:00Z\"").expect("resolved");
+        assert_eq!(path.field, Some(InstanceMetadata::ObservedAt));
+    }
+
     #[test]
     fn an_unrecorded_name_on_the_way_resolves_nothing() {
         assert_eq!(element_path("\"https://example.com/a\".\"https://example.com/z\"==3"), None);

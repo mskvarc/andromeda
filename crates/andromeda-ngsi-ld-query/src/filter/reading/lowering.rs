@@ -99,11 +99,7 @@ fn hops_to_local(path: &QueryPath) -> (Vec<Hop>, &AttrPath) {
 
 /// The sub-attributes a local path walks and what it ends on.
 fn local_reading(path: &AttrPath, matching: LanguageMatching) -> (Vec<AttributeName>, Terminal) {
-    let member = match path.trailing {
-        None | Some(TrailingPath::AllLanguages) => path.ending_member(),
-        Some(TrailingPath::Language(_) | TrailingPath::Members(_)) => None,
-    };
-    match member {
+    match path.ending_member() {
         Some((member, above)) => (above.to_vec(), Terminal::InstanceMember(member)),
         None => (path.sub_attrs.clone(), trailing_terminal(path, matching)),
     }
