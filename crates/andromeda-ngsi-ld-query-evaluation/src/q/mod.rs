@@ -5,12 +5,16 @@
 
 pub mod attribute_axis;
 pub mod compound_member;
+pub mod cost_class;
 pub mod family_target;
 pub mod filter_run;
 pub mod geometry_member;
 pub mod hop_steps;
 pub mod language_target;
+pub mod prepared_filter;
+pub mod required_attributes;
 pub mod target_value;
+pub mod term_memo;
 pub mod verdict_run;
 
 /// Every operator, path shape and attribute family, run in memory.
@@ -28,3 +32,8 @@ mod corpus_tests;
 /// The normal form of a filter selects what the filter as lowered selects.
 #[cfg(test)]
 mod normal_form_tests;
+
+/// A prepared filter and its required attributes hold for exactly the states
+/// the filter holds for, over generated and corpus Entities.
+#[cfg(test)]
+mod prepared_filter_tests;

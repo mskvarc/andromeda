@@ -7,7 +7,13 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
-use crate::{entity_filter_set::EntityFilterSet, geo_filter::SubscriptionGeoFilter, notification_slot::NotificationCadence, notifying_since::NotifyingSince};
+use crate::{
+    entity_filter_set::EntityFilterSet,
+    geo_filter::SubscriptionGeoFilter,
+    notification_slot::NotificationCadence,
+    notifying_since::NotifyingSince,
+    subscription_query::SubscriptionQuery,
+};
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_lexicon::{
@@ -27,10 +33,11 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     dataset::DatasetSelector,
     entity_filters::EntityFilters,
-    filter::{compiled_filter::CompiledFilter, expression::Expr, reading::filter_reading::FilterReading},
+    filter::{expression::Expr, reading::filter_reading::FilterReading},
     projection::compiled::Projection,
     scope::query::ScopeQuery,
 };
+use andromeda_ngsi_ld_query_evaluation::q::term_memo::TermInterner;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -165,7 +172,7 @@ pub struct CompiledSubscription {
     /// The entity filter, compiled under the language matching of the
     /// broker's `q_target_languages` level when the subscription was compiled,
     /// so a stored filter reads as the broker now reads every filter.
-    pub compiled_q: Option<CompiledFilter>,
+    pub compiled_q: Option<SubscriptionQuery>,
     /// The restriction the subscription's `geoQ` places on matching (clause
     /// 4.10): none without a `geoQ`, the compiled geoquery otherwise, and no
     /// entity at all for a stored `geoQ` that no longer compiles.
@@ -210,17 +217,27 @@ impl CompiledSubscription {
             SubscriptionGeoFilter::Unusable => return EntityFilterSet::AdmitsNothing,
         };
         EntityFilterSet::Evaluate(EntityFilters {
-            q: self.compiled_q.as_ref(),
+            q: match &self.compiled_q {
+                Some(query) => Some(query.compiled()),
+                None => None,
+            },
             geo,
             scope: self.compiled_scope_q.as_ref(),
         })
+    }
+
+    /// Numbers the terms of the subscription's `q` with `interner`.
+    pub fn number_terms(&mut self, interner: &TermInterner) {
+        if let Some(query) = &mut self.compiled_q {
+            query.number_terms(interner);
+        }
     }
 
     /// The filters whose `rel{…}` hops cross into linked entities: the `q`.
     pub fn hopping_filters(&self) -> impl Iterator<Item = &Expr> {
         self.compiled_q
             .as_ref()
-            .map(CompiledFilter::expr)
+            .map(|query| query.compiled().expr())
             .into_iter()
             .filter(|filter| filter.contains_linked_hop())
     }

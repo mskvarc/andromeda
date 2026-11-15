@@ -5,11 +5,12 @@
 //! read from and what a row without one means; the relations themselves do not
 //! vary. [`restriction`] is that one reading: the box test of
 //! [`crate::stored_geometry`], then the exact relation of
-//! [`relation_expression`]. [`condition`] applies it to an entity's
+//! [`relation_expression`], which renders the test [`RelationReading`]
+//! states for the relation. [`condition`] applies it to an entity's
 //! `GeoProperty` instances, and [`registration_area`] to the geometry a
-//! registration declares, with the relation [`AreaCondition`] reduces the
-//! geoquery to, since that geometry bounds where the source's Entities are
-//! rather than where one of them is (clause 5.10.2.4).
+//! registration declares, with the weaker relation the same reading states for
+//! it, since that geometry bounds where the source's Entities are rather than
+//! where one of them is (clause 5.10.2.4).
 //!
 //! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
 //! to `location`, and clause 5.7.2.4 counts an entity as matching when any
@@ -29,11 +30,16 @@ use crate::{
     location_instances::any_location_instance,
     stored_geometry::{BoxIndexing, StoredGeometry, box_test},
 };
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
+use andromeda_ngsi_ld_geometry::{
+    geo_rel::GeoRel,
+    geometry::Geometry,
+    positive_distance::PositiveDistance,
+    relation_reading::{AreaCondition, Operand, RelationReading, SpatialTest, TopologicalTest},
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery, registration_area::AreaCondition},
+    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_encoding::ewkb::encode;
@@ -109,7 +115,7 @@ pub fn condition(
 ///
 /// The failures of [`relation_expression`].
 pub fn registration_area(geo: &GeoQuery, subject: &StoredGeometry) -> Result<Option<Condition>, RenderError> {
-    match AreaCondition::of(geo) {
+    match RelationReading::of(&geo.georel).registration {
         AreaCondition::Relation(georel) => restriction(&georel, &geo.geometry, subject, BoxIndexing::Indexed).map(Some),
         AreaCondition::NotWithin => relation_expression(&GeoRel::Within, subject, &geo.geometry).map(|within| Some(Condition::all().add(within.not()))),
         AreaCondition::Unconstrained => Ok(None),
@@ -133,11 +139,11 @@ pub fn restriction(georel: &GeoRel, reference: &Geometry, subject: &StoredGeomet
     Ok(Condition::all().add_option(boxed).add(relation_expression(georel, subject, reference)?))
 }
 
-/// The topological or distance relation of a geo query as a boolean SQL
-/// expression over a subject geometry (clause 4.10).
+/// The test a geo query's relation states ([`RelationReading`]) as a boolean
+/// SQL expression over a subject geometry (clause 4.10).
 ///
-/// The six topological relations evaluate the subject read as a `PostGIS`
-/// `geometry`; `near` measures the same subject cast to `geography`, on the
+/// A topological test evaluates the subject read as a `PostGIS` `geometry`;
+/// the distance test measures the same subject cast to `geography`, on the
 /// spheroid. The relation semantics live here rather than inside
 /// [`condition`] so a caller that reads its subject geometry from rows this
 /// module does not model (the `attribute_history` instances a clause 5.7.4.4
@@ -155,15 +161,9 @@ pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: 
     // Built fresh per relation so the EWKB it binds is not shared as an owned
     // value between the two operands a `near` relation carries.
     let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
-    let spatial = match georel {
-        GeoRel::Within => exact_within(subject.planar(), reference_geom()),
-        GeoRel::Contains => exact_contains(subject.planar(), reference_geom()),
-        GeoRel::Intersects => exact_intersects(subject.planar(), reference_geom()),
-        GeoRel::Disjoint => st_disjoint(subject.planar(), reference_geom()),
-        GeoRel::Equals => exact_equals(subject.planar(), reference_geom()),
-        GeoRel::Overlaps => exact_overlaps(subject.planar(), reference_geom()),
-        // `near` measures on the spheroid, so both operands become `geography`.
-        GeoRel::Near { max_distance, min_distance } => {
+    let spatial = match RelationReading::of(georel).test {
+        SpatialTest::Topological(test) => topological_expression(test, subject.planar(), reference_geom()),
+        SpatialTest::Distance { max_distance, min_distance } => {
             let reference_geography = cast(reference_geom(), PostgresType::Geography);
             let max_metres = max_distance.map(PositiveDistance::metres);
             let min_metres = min_distance.map(PositiveDistance::metres);
@@ -171,6 +171,18 @@ pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: 
         }
     };
     Ok(spatial)
+}
+
+/// A topological test over the planar subject and reference.
+fn topological_expression(test: TopologicalTest, subject: SimpleExpr, reference: SimpleExpr) -> SimpleExpr {
+    match test {
+        TopologicalTest::Contains { container: Operand::Reference } => exact_within(subject, reference),
+        TopologicalTest::Contains { container: Operand::Subject } => exact_contains(subject, reference),
+        TopologicalTest::Intersects => exact_intersects(subject, reference),
+        TopologicalTest::Disjoint => st_disjoint(subject, reference),
+        TopologicalTest::Equals => exact_equals(subject, reference),
+        TopologicalTest::Overlaps => exact_overlaps(subject, reference),
+    }
 }
 
 /// Alias the correlated instance subquery reads `current_attributes`

@@ -19,7 +19,8 @@
 //! Spatial *indexing* is not here either. An R-tree partitioned by tenant, type
 //! and `GeoProperty` is a broker decision about which entities are worth
 //! comparing; what a comparison means is the part that belongs to geometry, and
-//! that is [`relation::matches`].
+//! that is [`relation_reading`], which [`relation::matches`] evaluates in
+//! memory.
 //!
 //! Coordinates are up to three-dimensional, because RFC 7946 section 3.1.1
 //! makes altitude an optional third ordinate of every position and NGSI-LD
@@ -67,6 +68,7 @@ pub mod positive_distance;
 pub mod proximity;
 pub mod query_coordinates;
 pub mod relation;
+pub mod relation_reading;
 pub mod written_geometry;
 
 #[cfg(test)]

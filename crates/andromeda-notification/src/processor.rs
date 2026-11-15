@@ -380,6 +380,7 @@ mod tests {
         geo_filter::SubscriptionGeoFilter,
         matching::{matches_entity_filters, matches_subscription},
         notifying_since::NotifyingSince,
+        subscription_query::SubscriptionQuery,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::{DateTime, Utc};
@@ -885,20 +886,20 @@ mod tests {
     #[test]
     fn matches_entity_filters_q_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(CompiledFilter::new(
+        sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
             parser::parse("\"https://example.com/speed\">50").expect("valid q"),
             LanguageMatching::TagEquality,
-        ));
+        )));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_q_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(CompiledFilter::new(
+        sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
             parser::parse("\"https://example.com/speed\">100").expect("valid q"),
             LanguageMatching::TagEquality,
-        ));
+        )));
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
@@ -968,10 +969,10 @@ mod tests {
     fn durable_delivery_does_not_re_evaluate_a_matched_filter() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(CompiledFilter::new(
+        sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
             parser::parse("\"https://example.com/speed\">100").expect("valid q"),
             LanguageMatching::TagEquality,
-        ));
+        )));
         let subscription_id = sub.id.clone();
         let candidates = vec![Arc::new(sub)];
         let state = entity_with_geo_and_scope();
@@ -1036,10 +1037,10 @@ mod tests {
     fn a_queued_delivery_decided_at_commit_still_decides_a_hopping_filter() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(CompiledFilter::new(
+        sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
             parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\"").expect("valid q"),
             LanguageMatching::TagEquality,
-        ));
+        )));
         let subscription_id = sub.id.clone();
         let candidates = vec![Arc::new(sub)];
         let vehicle = EntityState::from_slice(

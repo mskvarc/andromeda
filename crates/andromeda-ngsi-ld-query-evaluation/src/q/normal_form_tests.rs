@@ -40,7 +40,7 @@ const ENTITY_TYPE: &str = "https://example.com/T";
 const SUB_PROPERTY: &str = "s";
 
 /// The expanded name of a generated attribute.
-fn generated_iri(term: &str) -> String {
+pub(crate) fn generated_iri(term: &str) -> String {
     format!("https://example.com/{term}")
 }
 
@@ -146,7 +146,7 @@ fn entity(id: &'static str) -> BoxedStrategy<Value> {
 
 /// The two generated Entities as expanded documents, and a filter over the
 /// attributes they hold.
-fn generated_case() -> BoxedStrategy<(Vec<Value>, String)> {
+pub(crate) fn generated_case() -> BoxedStrategy<(Vec<Value>, String)> {
     (entity(IDENTIFIERS[0]), entity(IDENTIFIERS[1]))
         .prop_flat_map(|(first, second)| {
             let held: Vec<&'static str> = NAMES
@@ -159,7 +159,7 @@ fn generated_case() -> BoxedStrategy<(Vec<Value>, String)> {
 }
 
 /// The Entities `documents` hold, decoded.
-fn decoded(documents: &[Value]) -> Vec<FixtureEntity> {
+pub(crate) fn decoded(documents: &[Value]) -> Vec<FixtureEntity> {
     documents.iter().map(FixtureEntity::from_expanded).collect()
 }
 
@@ -257,7 +257,7 @@ fn term_over(path: String) -> BoxedStrategy<String> {
 /// A filter over a few terms, each over one of a few paths, joined by `;` and
 /// `|` in groups nested up to three deep, the same term free to appear more
 /// than once.
-fn filter_over(paths: BoxedStrategy<String>) -> BoxedStrategy<String> {
+pub(crate) fn filter_over(paths: BoxedStrategy<String>) -> BoxedStrategy<String> {
     vec(paths, 1..=3)
         .prop_flat_map(|paths| vec(select(paths).prop_flat_map(term_over), 1..=5))
         .prop_flat_map(|terms| {
@@ -273,7 +273,7 @@ fn filter_over(paths: BoxedStrategy<String>) -> BoxedStrategy<String> {
 
 /// A path over the corpus vocabulary: an attribute, then possibly a
 /// sub-attribute or an instance member, then possibly a trailing group.
-fn corpus_path() -> BoxedStrategy<String> {
+pub(crate) fn corpus_path() -> BoxedStrategy<String> {
     let name = |term: &str| quoted(&CorpusVocabulary::attribute_iri(term));
     let terms = vec![
         "n", "s", "b", "r", "rl", "l", "d", "tm", "t", "f", "m", "addr", "city", "zip", "vp", "lp", "jp", "link", "src",
@@ -293,7 +293,7 @@ fn corpus_path() -> BoxedStrategy<String> {
 }
 
 /// The corpus Entities, decoded once.
-static CORPUS_ENTITIES: LazyLock<Vec<FixtureEntity>> = LazyLock::new(corpus_entities);
+pub(crate) static CORPUS_ENTITIES: LazyLock<Vec<FixtureEntity>> = LazyLock::new(corpus_entities);
 
 /// The first Entity and matching for which the normal form of `expr` and
 /// `expr` as lowered disagree, over `entities`.

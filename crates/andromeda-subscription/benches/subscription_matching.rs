@@ -32,14 +32,22 @@ use andromeda_ngsi_ld_query::{
     filter::{compiled_filter::CompiledFilter, expression::Expr, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
     projection::compiled::Projection,
 };
-use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
+use andromeda_ngsi_ld_query_evaluation::{
+    q::{
+        filter_run::filter_holds,
+        prepared_filter::PreparedFilter,
+        term_memo::{TermInterner, TermMemo},
+    },
+    queried_entity::linked_entities::NoLinkedEntities,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     candidate_index::CandidateIndex,
     compiled::CompiledSubscription,
     geo_filter::SubscriptionGeoFilter,
-    matching::matches_entity_filters,
+    matching::{matches_entity_filters, matches_entity_filters_memoised},
     notifying_since::NotifyingSince,
+    subscription_query::SubscriptionQuery,
 };
 use chrono::{DateTime, Utc};
 use criterion::{BenchmarkId, Criterion};
@@ -148,8 +156,8 @@ fn creation() -> Result<ChangeEvent, SetupError> {
 }
 
 /// A Subscription to every Vehicle, keyed `key`, filtering on `q`.
-fn subscription(key: i64, q: Expr) -> Result<Arc<CompiledSubscription>, SetupError> {
-    Ok(Arc::new(CompiledSubscription {
+fn subscription(key: i64, q: Expr, terms: &TermInterner) -> Result<Arc<CompiledSubscription>, SetupError> {
+    let mut subscription = CompiledSubscription {
         id: format!("urn:ngsi-ld:Subscription:{key}").parse()?,
         key: SubscriptionKey::try_from(key)?,
         standing: SubscriptionStanding {
@@ -180,7 +188,7 @@ fn subscription(key: i64, q: Expr) -> Result<Arc<CompiledSubscription>, SetupErr
             active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
         },
-        compiled_q: Some(CompiledFilter::new(q, LanguageMatching::TagEquality)),
+        compiled_q: Some(SubscriptionQuery::new(CompiledFilter::new(q, LanguageMatching::TagEquality))),
         compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
         compiled_scope_q: None,
         dataset_id: None,
@@ -190,14 +198,16 @@ fn subscription(key: i64, q: Expr) -> Result<Arc<CompiledSubscription>, SetupErr
         ngsild_conformance: None,
         lang: None,
         notification_projection: Projection::default(),
-    }))
+    };
+    subscription.number_terms(terms);
+    Ok(Arc::new(subscription))
 }
 
 /// An index of `count` Subscriptions whose filters cycle through `filters`.
-fn index_of(count: i64, filters: &[Expr]) -> Result<CandidateIndex, SetupError> {
+fn index_of(count: i64, filters: &[Expr], terms: &TermInterner) -> Result<CandidateIndex, SetupError> {
     let mut index = CandidateIndex::default();
     for (key, filter) in (1..=count).zip(filters.iter().cycle()) {
-        index.insert(subscription(key, filter.clone())?);
+        index.insert(subscription(key, filter.clone(), terms)?);
     }
     Ok(index)
 }
@@ -212,6 +222,8 @@ struct Fixture {
     filters: Vec<Expr>,
     /// Ten filters each needing an Attribute the Vehicle lacks.
     absent: Vec<Expr>,
+    /// The numbers of the terms of every Subscription.
+    terms: TermInterner,
 }
 
 impl Fixture {
@@ -224,6 +236,7 @@ impl Fixture {
             absent: (0..10)
                 .map(|position| expanded(&format!("a{position}==1;absent{position}>0")))
                 .collect::<Result<_, _>>()?,
+            terms: TermInterner::new(),
         })
     }
 
@@ -236,15 +249,36 @@ impl Fixture {
             .filter(|subscription| matches_entity_filters(subscription, &self.entity, NoLinkedEntities))
             .count()
     }
+
+    /// The Subscriptions `index` holds that a change of the Vehicle notifies,
+    /// a term the Subscriptions share decided once.
+    fn notified_memoised(&self, index: &CandidateIndex, memo: &mut TermMemo) -> usize {
+        memo.begin_pass();
+        index
+            .find_matching(&self.change)
+            .matched
+            .iter()
+            .filter(|subscription| matches_entity_filters_memoised(subscription, &self.entity, NoLinkedEntities, memo))
+            .count()
+    }
 }
 
-/// B-1: each filter evaluated over the Vehicle.
+/// B-1: each filter evaluated over the Vehicle, as its reading and as the
+/// preparation the matching path runs.
 fn one_filter_over_one_entity(criterion: &mut Criterion, fixture: &Fixture) {
     let mut group = criterion.benchmark_group("evaluate");
     for (position, expr) in fixture.filters.iter().enumerate() {
         let reading = FilterReading::of(expr, LanguageMatching::TagEquality);
         group.bench_with_input(BenchmarkId::new("filter", position), &reading, |bencher, reading| {
             bencher.iter(|| filter_holds(black_box(reading), &fixture.entity, NoLinkedEntities));
+        });
+    }
+    group.finish();
+    let mut group = criterion.benchmark_group("evaluate-prepared");
+    for (position, expr) in fixture.filters.iter().enumerate() {
+        let prepared = PreparedFilter::new(&FilterReading::of(expr, LanguageMatching::TagEquality));
+        group.bench_with_input(BenchmarkId::new("filter", position), &prepared, |bencher, prepared| {
+            bencher.iter(|| prepared.holds(black_box(&fixture.entity), NoLinkedEntities));
         });
     }
     group.finish();
@@ -255,9 +289,13 @@ fn one_change_against_many_subscriptions(criterion: &mut Criterion, fixture: &Fi
     let mut group = criterion.benchmark_group("match");
     group.sample_size(10);
     for count in [1_000, 10_000, 100_000] {
-        let index = index_of(count, &fixture.filters)?;
+        let index = index_of(count, &fixture.filters, &fixture.terms)?;
         group.bench_with_input(BenchmarkId::new("subscriptions", count), &index, |bencher, index| {
             bencher.iter(|| fixture.notified(black_box(index)));
+        });
+        group.bench_with_input(BenchmarkId::new("subscriptions-memoised", count), &index, |bencher, index| {
+            let mut memo = TermMemo::new(&fixture.terms);
+            bencher.iter(|| fixture.notified_memoised(black_box(index), &mut memo));
         });
     }
     group.finish();
@@ -267,10 +305,14 @@ fn one_change_against_many_subscriptions(criterion: &mut Criterion, fixture: &Fi
 /// B-3: one change against Subscriptions whose filters each need an
 /// Attribute the Vehicle lacks.
 fn one_change_against_subscriptions_needing_an_absent_attribute(criterion: &mut Criterion, fixture: &Fixture) -> Result<(), SetupError> {
-    let index = index_of(10_000, &fixture.absent)?;
+    let index = index_of(10_000, &fixture.absent, &fixture.terms)?;
     let mut group = criterion.benchmark_group("match-absent");
     group.sample_size(10);
     group.bench_function("subscriptions/10000", |bencher| bencher.iter(|| fixture.notified(black_box(&index))));
+    group.bench_function("subscriptions-memoised/10000", |bencher| {
+        let mut memo = TermMemo::new(&fixture.terms);
+        bencher.iter(|| fixture.notified_memoised(black_box(&index), &mut memo));
+    });
     group.finish();
     Ok(())
 }

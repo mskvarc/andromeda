@@ -1,14 +1,6 @@
-//! A temporal q reads every instance before a datasetId narrows the representation.
+//! A temporal q selects through every instance, and q and a datasetId each narrow the representation.
 
-use andromeda_test_suite::{
-    attribute_matcher::any_attribute,
-    broker,
-    evolution_matcher::has_evolution,
-    identity_matcher::has_id,
-    namespace::Namespace,
-    nth::nth,
-    outcome::Upserted,
-};
+use andromeda_test_suite::{broker, evolution_matcher::lacks_evolution, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
@@ -18,12 +10,12 @@ use ngsi_ld::{
 
 /// Pins: over a Meter observed inside a 12:00 to 13:00 window with `n` 10 as its default instance and 60 in a dataset
 /// of its own, Query Temporal Evolution of Entities with q n>50 and datasetId @none selects the Meter through the 60
-/// instance and represents `n` by the default instance 10 alone; q is checked at step S2 against every instance and
-/// the datasetId filters the represented instances at step S8
+/// instance and represents no `n`: the representation holds only the instances which meet the query, the 60 one
+/// (clause 5.7.4.4), and the datasetId keeps only the default instance among them, so none is left
 /// Clause: 5.7.4.4, 4.5.5, 4.9
 #[gtest]
 #[tokio::test]
-async fn n_tmp_qry_9385_a_temporal_q_reads_every_instance_before_a_dataset_id_narrows_the_representation() -> Result<()> {
+async fn n_tmp_qry_9385_a_temporal_q_selects_through_every_instance_and_narrows_the_representation_with_the_dataset_id() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let meter_type = namespace.entity_type("Meter")?;
@@ -51,6 +43,6 @@ async fn n_tmp_qry_9385_a_temporal_q_reads_every_instance_before_a_dataset_id_na
         .await?;
     expect_that!(answer.items(), len(eq(1)));
     expect_that!(answer.items(), nth(0, has_id(&meter_id)));
-    expect_that!(answer.items(), nth(0, has_evolution("n", all!(len(eq(1)), nth(0, any_attribute().value(10))))));
+    expect_that!(answer.items(), nth(0, lacks_evolution("n")));
     Ok(())
 }

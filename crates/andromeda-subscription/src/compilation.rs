@@ -4,6 +4,7 @@ use crate::{
     compiled::{CompiledCsrSubscription, CompiledSubscription},
     geo_filter::SubscriptionGeoFilter,
     stored_subscription::StoredSubscription,
+    subscription_query::SubscriptionQuery,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
@@ -65,7 +66,11 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
         notifying_since: stored.notifying_since,
-        compiled_q: sub.filters.q.clone().map(|q| CompiledFilter::new(q, language_matching)), // clone: compiled state owns its filter AST.
+        compiled_q: sub
+            .filters
+            .q
+            .clone() // clone: compiled state owns its filter AST.
+            .map(|q| SubscriptionQuery::new(CompiledFilter::new(q, language_matching))),
         compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.

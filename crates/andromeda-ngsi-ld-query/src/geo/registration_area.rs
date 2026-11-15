@@ -1,30 +1,14 @@
 //! Matching a geoquery against the geometry a Context Source Registration
 //! declares (clauses 5.10.2.4 and 5.11.2.4).
 //!
-//! A registration's `location`, `observationSpace` and `operationSpace` (Table
-//! 5.2.9-1) bound where the source's Entities are, not where one Entity is.
-//! Both clauses therefore let the geoquery match "if the location directly
-//! matches or if the location possibly contains locations that would match the
-//! geoquery". An Entity geometry `E` lying inside the registration geometry `R`
-//! can meet each relation only if `R` meets a weaker one:
-//!
-//! - `within`, `intersects` and `overlaps` need some part of `E`, hence of `R`,
-//!   to meet the reference: `R` intersects it;
-//! - `contains` and `equals` need the reference inside `E`, hence inside `R`:
-//!   `R` contains it;
-//! - `disjoint` needs some part of `E`, hence of `R`, outside the reference:
-//!   `R` is not within it;
-//! - `near` with a `maxDistance` needs some point of `R` that close: the
-//!   shortest distance from `R` is within it. A `minDistance` alone bounds
-//!   nothing, since `R` may reach arbitrarily far from its nearest point.
-//!
-//! Each weaker condition holds wherever the relation holds for `R` itself, so
-//! a direct match is always kept. Discovery evaluates the condition in the
-//! store, and forwarding and registration subscriptions evaluate it in memory;
-//! all three read it from here.
+//! A registration's geometry bounds where the source's Entities are, so it is
+//! matched by the weaker relation [`RelationReading`] states for each
+//! `georel`. Discovery evaluates that relation in the store, and forwarding and
+//! registration subscriptions evaluate it in memory; all three read it from the
+//! same table.
 
 use crate::geo::query::GeoQuery;
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, planar::PlanarGeometry, relation::matches};
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation_reading::RelationReading};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 
 /// Which of a registration's geometries a geoquery is matched against.
@@ -54,48 +38,6 @@ impl RegistrationGeometry {
     }
 }
 
-/// What a registration geometry has to meet against the reference geometry
-/// for an Entity inside it to possibly match a geoquery.
-#[derive(Debug, Clone, PartialEq)]
-pub enum AreaCondition {
-    /// The registration geometry stands in this relation to the reference.
-    Relation(GeoRel),
-    /// The registration geometry is not within the reference.
-    NotWithin,
-    /// Any registration geometry may hold a match.
-    Unconstrained,
-}
-
-impl AreaCondition {
-    /// The condition a registration geometry has to meet for `geo`.
-    #[must_use]
-    pub const fn of(geo: &GeoQuery) -> AreaCondition {
-        match &geo.georel {
-            GeoRel::Within | GeoRel::Intersects | GeoRel::Overlaps => AreaCondition::Relation(GeoRel::Intersects),
-            GeoRel::Contains | GeoRel::Equals => AreaCondition::Relation(GeoRel::Contains),
-            GeoRel::Disjoint => AreaCondition::NotWithin,
-            GeoRel::Near {
-                max_distance: Some(max_distance),
-                ..
-            } => AreaCondition::Relation(GeoRel::Near {
-                max_distance: Some(*max_distance),
-                min_distance: None,
-            }),
-            GeoRel::Near { max_distance: None, .. } => AreaCondition::Unconstrained,
-        }
-    }
-
-    /// Whether `area` meets this condition against `reference`.
-    #[must_use]
-    pub fn admits(&self, area: &Geometry, reference: &PlanarGeometry) -> bool {
-        match self {
-            AreaCondition::Relation(georel) => matches(georel, &area.planar(), reference),
-            AreaCondition::NotWithin => !matches(&GeoRel::Within, &area.planar(), reference),
-            AreaCondition::Unconstrained => true,
-        }
-    }
-}
-
 impl GeoQuery {
     /// Whether a registration declaring `area` for the geometry
     /// [`RegistrationGeometry::of`] names may hold an Entity this geoquery
@@ -105,17 +47,18 @@ impl GeoQuery {
     /// it is kept.
     #[must_use]
     pub fn admits_registration_area(&self, area: Option<&Geometry>) -> bool {
-        area.is_none_or(|area| AreaCondition::of(self).admits(area, &self.geometry.planar()))
+        area.is_none_or(|area| RelationReading::of(&self.georel).registration.admits(area, &self.geometry.planar()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::geo::{
-        query::GeoQuery,
-        registration_area::{AreaCondition, RegistrationGeometry},
+    use crate::geo::{query::GeoQuery, registration_area::RegistrationGeometry};
+    use andromeda_ngsi_ld_geometry::{
+        geo_rel::GeoRel,
+        geometry::Geometry,
+        relation_reading::{AreaCondition, RelationReading},
     };
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -175,7 +118,7 @@ mod tests {
     fn a_near_query_with_only_a_minimum_distance_keeps_every_registration() {
         let far_from_madrid = query("near;minDistance==100000", point(-3.7, 40.4));
         assert!(far_from_madrid.admits_registration_area(Some(&point(-3.7, 40.4))));
-        assert_eq!(AreaCondition::of(&far_from_madrid), AreaCondition::Unconstrained);
+        assert_eq!(RelationReading::of(&far_from_madrid.georel).registration, AreaCondition::Unconstrained);
     }
 
     /// Clause 5.10.2.4: an area covering Spain possibly contains Entities
