@@ -81,7 +81,7 @@ pub(super) fn build_entity_conditions_for_temporal(
     // Clauses 5.7.4.5 and 6.3.13: an entity the `pick` / `omit` projection
     // would reduce to no member is not selected, so it is left out here, where
     // the count and the page are taken.
-    if let Some(members) = projected_member_condition(branch, compiled, names) {
+    if let Some(members) = projected_member_condition(branch, compiled, names)? {
         condition = condition.add(members);
     }
 

@@ -14,7 +14,8 @@
 use crate::{
     aggregation::{build_aggregation_query, in_listing_order},
     alias::{Ah, An},
-    entity_reads::each_entity,
+    entity_reads::{each_entity, read_entity_of},
+    represented_filters::met_restrictions,
     stream_page::{Walk, in_rendering_order, last_n_history, project_whole_streams, walked_history},
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
@@ -24,6 +25,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     dataset_predicate::dataset_condition,
+    error::RenderError,
     history_source::{
         HistoryBranch,
         HistoryOf,
@@ -52,17 +54,20 @@ struct EntityRows;
 /// ([`each_entity`]), so a page of entities costs one round trip and one
 /// planning, and each Entity's streams are still read through their own
 /// indexes.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`RenderError`] as rendering the geo-query does.
 pub fn build_temporal_history_query(
     branch: &HistoryBranch,
     entity_ids: &[Identifier],
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
-) -> SelectStatement {
+) -> Result<SelectStatement, RenderError> {
     // The ranked, unranked and aggregated shapes read the same entity's rows
     // among the same represented instances, so none can reach a row the others
     // cannot.
-    let condition = represented_instances(compiled, names);
+    let condition = represented_instances(branch, &read_entity_of(), compiled, names)?;
     let mut select = match compiled.representation.format {
         // The grouped extension format runs the same aggregation pipeline; the
         // builder adds the group-key columns when `representation.grouping` is set.
@@ -78,7 +83,7 @@ pub fn build_temporal_history_query(
         }
     };
     select.expr(Expr::col((EntityRows, Asterisk)));
-    select
+    Ok(select)
 }
 
 /// The Attribute instances the temporal representation of an entity carries,
@@ -95,7 +100,19 @@ pub fn build_temporal_history_query(
 /// `deletedAt` exists only on a row that records a deletion, so asking for that
 /// axis asks for those rows and no others; the deletion is recognised by the
 /// axis itself rather than by a sentinel value.
-pub(crate) fn represented_instances(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Condition {
+///
+/// The rows are the history of the Evolution `of` names, read under [`Ah`],
+/// which `q` and the geo-query narrow as [`met_restrictions`] says.
+///
+/// # Errors
+///
+/// Returns [`RenderError`] as rendering the geo-query does.
+pub(crate) fn represented_instances(
+    branch: &HistoryBranch,
+    of: &HistoryOf,
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+) -> Result<Condition, RenderError> {
     let timeproperty = compiled.window.timeproperty;
     let mut condition = Condition::all()
         .add(axis_present(Ah, timeproperty))
@@ -119,11 +136,10 @@ pub(crate) fn represented_instances(compiled: &CompiledTemporalQuery, names: &Qu
         &DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter),
     ));
 
-    // A Scope query selects Entities only (clauses 4.19 and 5.7.4.4 step S4):
-    // the last step of clause 5.7.4.4 keeps the instances that meet "the
-    // temporal, query and geoquery restrictions", so a selected Entity keeps
-    // every in-window instance whatever Scope held when it was observed.
-    condition
+    // The last step of clause 5.7.4.4 keeps the instances that meet "the
+    // temporal, query and geoquery restrictions"; a Scope query selects
+    // Entities only (clauses 4.19 and 5.7.4.4 step S4), so it narrows nothing.
+    Ok(condition.add_option(met_restrictions(branch, of, compiled, names)?))
 }
 
 /// The attribute rows `of` reads beside the name of their attribute, shared by
@@ -219,14 +235,16 @@ fn whole_history(branch: &HistoryBranch, of: &HistoryOf, condition: Condition) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use crate::history::build_temporal_history_query;
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset::DatasetSelector,
         entity_selection::EntitySelection,
         scope::query::ScopeQuery,
         temporal::{
             aggregation_period::AggregationPeriod,
+            compiled::CompiledTemporalQuery,
+            instance_page::InstancePage,
             instance_selection::InstanceSelection,
             representation::Representation,
             window::{TemporalWindow, TimeInterval},
@@ -237,7 +255,7 @@ mod tests {
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
-    use sea_query::{IntoIden, SelectStatement};
+    use sea_query::{Alias, IntoIden, SelectStatement};
     use std::{num::NonZeroU32, slice};
 
     /// The one entity these tests build a history statement for.
@@ -268,6 +286,7 @@ mod tests {
     /// The stage-2 statement over the live branch for the one entity.
     fn statement_of(compiled: &CompiledTemporalQuery) -> SelectStatement {
         build_temporal_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled, &QueryNames::default())
+            .expect("a renderable history read")
     }
 
     #[test]
@@ -383,7 +402,8 @@ mod tests {
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
-        let statement = build_temporal_history_query(&HistoryBranch::live_recorded(), slice::from_ref(&vehicle_id()), &compiled, &names);
+        let statement = build_temporal_history_query(&HistoryBranch::live_recorded(), slice::from_ref(&vehicle_id()), &compiled, &names)
+            .expect("a renderable history read");
         assert_statement_snapshot!("history-build-temporal-history-with-attrs", statement);
     }
 
@@ -467,7 +487,8 @@ mod tests {
             slice::from_ref(&vehicle_id()),
             &minimal_compiled(),
             &QueryNames::default(),
-        );
+        )
+        .expect("a renderable history read");
         assert_statement_snapshot!("history-the-history-read-unions-the-pending-rows-of-the-entity-2", recorded);
     }
 
@@ -492,6 +513,7 @@ mod tests {
             &compiled,
             &QueryNames::default(),
         )
+        .expect("a renderable history read")
     }
 
     /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is the last `n` instances of each
@@ -658,6 +680,7 @@ mod tests {
                 &compiled,
                 &QueryNames::default(),
             )
+            .expect("a renderable history read")
         };
         let hour_whole = aggregated("PT1H", InstancePage::Whole);
         assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-1", hour_whole);
@@ -722,6 +745,7 @@ mod tests {
             &compiled,
             &QueryNames::default(),
         )
+        .expect("a renderable history read")
     }
 
     /// Clause 4.8 has the broker stamp `createdAt` and `modifiedAt` on every

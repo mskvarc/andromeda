@@ -94,7 +94,8 @@ impl TemporalRepository {
         }
         self.stage_answered(&mut tx, entity_id, entity_types, answered).await?;
         let names = self.resolve_query_names(compiled).await?;
-        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), slice::from_ref(entity_id), compiled, &names);
+        let statement = build_temporal_history_query(&HistoryBranch::recorded_in(temporary_schema()), slice::from_ref(entity_id), compiled, &names)
+            .map_err(TemporalStoreError::Render)?;
         let pg_rows = statement.to_query().fetch_all(&mut *tx).await.map_err(TemporalStoreError::from)?;
         let rows = decode_aggregation_rows(&pg_rows, entity_id, compiled)?;
         tx.commit().await.map_err(TemporalStoreError::from)?;

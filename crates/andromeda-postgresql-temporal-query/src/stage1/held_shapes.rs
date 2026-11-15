@@ -94,7 +94,7 @@ pub fn build_held_shapes_query(
     let mut branches = Vec::with_capacity(combinations.len());
     for (position, combination) in (0_i64..).zip(combinations.iter().copied()) {
         let carried = match holders {
-            ShapeHolders::Entity(entity_id) => carrying_instance(branch, &HistoryOf::Entity(Expr::val(entity_id.as_str())), compiled, names, combination),
+            ShapeHolders::Entity(entity_id) => carrying_instance(branch, &HistoryOf::Entity(Expr::val(entity_id.as_str())), compiled, names, combination)?,
             ShapeHolders::Selected => selected_holder(branch, compiled, names, combination)?,
         };
         let mut held = Query::select();
@@ -145,7 +145,7 @@ fn selected_holder(
         .from(narrowed.counted)
         .cond_where(conditions)
         .and_where(Expr::exists(temporal_match_subquery(branch, compiled, names, BesideComparison::Key)))
-        .and_where(Expr::exists(carrying_instance(branch, &evolution, compiled, names, combination)));
+        .and_where(Expr::exists(carrying_instance(branch, &evolution, compiled, names, combination)?));
     Ok(holder.take())
 }
 
@@ -159,17 +159,17 @@ fn carrying_instance(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
     combination: ShapeCombination,
-) -> SelectStatement {
+) -> Result<SelectStatement, RenderError> {
     let mut instance = Query::select();
     instance.expr(int_literal(1));
     instance
         .from(attribute_rows(branch, of, Ah))
-        .cond_where(represented_instances(compiled, names))
+        .cond_where(represented_instances(branch, of, compiled, names)?)
         .and_where(Expr::col((Ah, HistoryGrain::AttributeNameKey)).eq(combination.attribute.get()))
         .and_where(Expr::col((Ah, AttributeHistory::AttributeKind)).eq(combination.kind.code()))
         .and_where(carries_a_value(Ah))
         .and_where(recorded_shape().eq(combination.shape.code()));
-    instance.take()
+    Ok(instance.take())
 }
 
 /// The Evolutions holding a recorded stream of one of `combinations` in a

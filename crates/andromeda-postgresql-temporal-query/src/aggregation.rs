@@ -745,7 +745,8 @@ mod tests {
             slice::from_ref(&"urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("a valid identifier")),
             &aggregated(vec![AggrMethod::Avg], Some("PT1H")),
             &QueryNames::default(),
-        );
+        )
+        .expect("a renderable history read");
         assert_statement_snapshot!("aggregation-the-rows-arrive-ordered-by-attribute-dataset-and-period-2", read);
     }
 

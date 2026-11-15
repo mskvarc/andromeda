@@ -29,7 +29,7 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
-use sea_query::{Condition, Expr as SeaExpr};
+use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// The conjunction of the query's `q`, geo and scope filters over the temporal
 /// entity `e`, with the entities a Context Source contributed to a split query
@@ -66,7 +66,7 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
         ));
         present = true;
     }
-    Ok(present.then(|| exempting_contributed(filters, &compiled.contributed)))
+    Ok(present.then(|| exempting_contributed(filters, &compiled.contributed, SeaExpr::col((E, Entities::Id)))))
 }
 
 /// The Temporal Evolution of the stage 1 row `e`, by its identifier and its
@@ -78,15 +78,15 @@ fn stage1_evolution() -> HistoryOf {
     })
 }
 
-/// `filters`, or an entity a Context Source contributed.
-fn exempting_contributed(filters: Condition, contributed: &ContributedEntities) -> Condition {
+/// `filters`, or the entity identified by `entity_id` being one a Context
+/// Source contributed.
+pub(crate) fn exempting_contributed(filters: Condition, contributed: &ContributedEntities, entity_id: SimpleExpr) -> Condition {
     if contributed.is_empty() {
         return filters;
     }
-    Condition::any().add(filters).add(is_any_of(
-        SeaExpr::col((E, Entities::Id)),
-        contributed.as_slice().iter().map(Identifier::to_string),
-    ))
+    Condition::any()
+        .add(filters)
+        .add(is_any_of(entity_id, contributed.as_slice().iter().map(Identifier::to_string)))
 }
 
 /// The scope-history target a temporal `scopeQ` is read against: a validity

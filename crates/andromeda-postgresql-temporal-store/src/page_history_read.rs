@@ -53,7 +53,7 @@ impl TemporalRepository {
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityAnswers<TemporalHistoryOutcome>, TemporalError> {
         let names = self.resolve_query_names(compiled).await?;
-        let statement = build_temporal_history_query(branch, entity_ids, compiled, &names);
+        let statement = build_temporal_history_query(branch, entity_ids, compiled, &names).map_err(TemporalStoreError::Render)?;
         let rows = self
             .execute_temporal_query(ObservedStatement::TemporalHistory, &statement, entity_read_planning(entity_ids))
             .await?;
@@ -123,7 +123,7 @@ impl TemporalRepository {
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityAnswers<TemporalAggregationOutcome>, TemporalError> {
         let names = self.resolve_query_names(compiled).await?;
-        let statement = build_temporal_history_query(branch, entity_ids, compiled, &names);
+        let statement = build_temporal_history_query(branch, entity_ids, compiled, &names).map_err(TemporalStoreError::Render)?;
         let rows = self
             .execute_temporal_query(ObservedStatement::TemporalAggregation, &statement, entity_read_planning(entity_ids))
             .await?;
