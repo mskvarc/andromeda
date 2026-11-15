@@ -43,22 +43,25 @@ pub const SHORT_WALK: u32 = 200;
 pub const CANDIDATE_BOUND: u64 = 1000;
 
 /// The most candidates a range of a typed value index hands to the page.
-///
-/// A ranged candidate costs an index entry and a heap visit, with no recheck,
-/// so the index answers a term whose matches cluster late in page order far
-/// sooner than the walk well past the rechecked bound.
 pub const RANGED_CANDIDATE_BOUND: u64 = 50_000;
 
 /// The most carriers of an attribute name the index path hands to the page.
-///
-/// A carrier costs a posting of the GIN over the search row's names and one
-/// probe of the grain constraint, far less than a value recheck, so the bound
-/// sits well past the rechecked one: an Entity that holds the attribute among
-/// a selection mostly without it is reached through the index, not the walk.
 pub const PROBED_CANDIDATE_BOUND: u64 = 10_000;
 
-/// The most candidates the index path hands to the page, by what one costs to
+/// The most candidates the index path hands to the page, by how they are
 /// read.
+///
+/// A bound trades two placements of the matches, which no count tells apart
+/// before the read. A term whose matches hold the last identifiers of the
+/// selection makes the walk visit nearly every Entity, so the page reads up
+/// to the bound's candidates through the index first. A term spread through
+/// the selection fills the page after a short walk, so every candidate read
+/// up to the bound is wasted. A candidate costs about the same on every read,
+/// since narrowing the selection to the candidates and ordering them outweighs
+/// reading them, and a term past its bound pays for the read before it walks,
+/// every posting of the term when an inverted index yields them. A bound
+/// derived from the selection's size serves one placement only at the other's
+/// cost.
 ///
 /// A Linked Entity hop's candidates are read whole. Each costs an entry of
 /// the object's index and a heap visit, read from the linked entities its
