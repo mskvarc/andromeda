@@ -78,6 +78,9 @@ mod relayed_join;
 /// What a relayed notification carries of its Linked Entities.
 #[cfg(test)]
 mod relayed_join_tests;
+/// What this broker takes of an entity a source notifies: the Attributes the
+/// source's registration covers.
+mod sender_coverage;
 /// The service tying the parts together.
 pub mod service;
 /// Which sources a subscription's context source filter places its copies at.

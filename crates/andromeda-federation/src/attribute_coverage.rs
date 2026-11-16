@@ -1,4 +1,4 @@
-//! A registration stores the attribute names it covers expanded, and the admitted content of a write names its attributes expanded too, so deciding whether a registration covers an attribute compares two IRIs: what the name means decides, even under a `@context` that aliases a term to an unrelated IRI. A write body may carry no `@context` at all (clause 6.3.5 makes `application/json` without a context `Link` legal, resolving against the core context) while the registration's declared names were expanded under a different one that the registration does not retain. The two then cannot meet on an IRI and the registration does not cover the attribute: clause 5.12 matches expanded names only, so two different IRIs never match, whatever they share at their tail.
+//! A registration stores the attribute names it covers expanded, and the admitted content of a write and an entity a source notifies name their attributes expanded too, so deciding whether a registration covers an attribute compares two IRIs: what the name means decides, even under a `@context` that aliases a term to an unrelated IRI. A write body may carry no `@context` at all (clause 6.3.5 makes `application/json` without a context `Link` legal, resolving against the core context) while the registration's declared names were expanded under a different one that the registration does not retain. The two then cannot meet on an IRI and the registration does not cover the attribute: clause 5.12 matches expanded names only, so two different IRIs never match, whatever they share at their tail.
 
 use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -10,7 +10,8 @@ use std::{borrow::Cow, slice};
 
 /// The attributes a registration covers for one entity, read off the
 /// information entries that match it (clause 5.12).
-enum AttributeCoverage {
+#[derive(Debug)]
+pub enum AttributeCoverage {
     /// No information entry matches the entity: nothing is covered.
     NotMatching,
     /// A matching entry declares no names, so every attribute is covered.
@@ -31,16 +32,30 @@ fn matching_entries<'csr>(csr: &'csr ContextSourceRegistration, entity_types: &[
     .collect()
 }
 
-/// What `csr` covers of an entity's attributes.
-fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[EntityTypeName], entity_id: &Identifier) -> AttributeCoverage {
-    let information = matching_entries(csr, entity_types, entity_id);
-    if information.is_empty() {
-        return AttributeCoverage::NotMatching;
+impl AttributeCoverage {
+    /// What `csr` covers of the attributes of the entity `(entity_types,
+    /// entity_id)`.
+    #[must_use]
+    pub fn of(csr: &ContextSourceRegistration, entity_types: &[EntityTypeName], entity_id: &Identifier) -> AttributeCoverage {
+        let information = matching_entries(csr, entity_types, entity_id);
+        if information.is_empty() {
+            return AttributeCoverage::NotMatching;
+        }
+        if information.iter().any(|entry| entry.attribute_names().next().is_none()) {
+            return AttributeCoverage::Unrestricted;
+        }
+        AttributeCoverage::Names(information.iter().flat_map(|entry| entry.attribute_names()).cloned().collect())
     }
-    if information.iter().any(|entry| entry.attribute_names().next().is_none()) {
-        return AttributeCoverage::Unrestricted;
+
+    /// Whether the attribute `name` is covered.
+    #[must_use]
+    pub fn covers(&self, name: &AttributeName) -> bool {
+        match self {
+            AttributeCoverage::NotMatching => false,
+            AttributeCoverage::Unrestricted => true,
+            AttributeCoverage::Names(declared) => declared.contains(name),
+        }
     }
-    AttributeCoverage::Names(information.iter().flat_map(|entry| entry.attribute_names()).cloned().collect())
 }
 
 /// The attributes among `requested` that a registration declaring `declared`
@@ -88,7 +103,7 @@ pub(crate) fn covered_attributes(
     entity_types: &[EntityTypeName],
     entity_id: &Identifier,
 ) -> Vec<AttributeName> {
-    match attribute_coverage(csr, entity_types, entity_id) {
+    match AttributeCoverage::of(csr, entity_types, entity_id) {
         AttributeCoverage::NotMatching => Vec::new(),
         AttributeCoverage::Unrestricted => document.attributes().keys().cloned().collect(),
         AttributeCoverage::Names(declared) => covered_among(document.attributes().keys(), &declared),
@@ -119,7 +134,7 @@ pub(crate) fn narrowed_document<'d>(
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_coverage::{covered_attributes, matching_attributes, narrowed_document};
+    use crate::attribute_coverage::{AttributeCoverage, covered_attributes, matching_attributes, narrowed_document};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -258,6 +273,30 @@ mod tests {
         }));
         let written = document(&["https://other.example.org/rate"]);
         assert!(narrowed_document(&written, &csr, &[vehicle_type()], &vehicle_id()).is_none());
+    }
+
+    /// A registration covers the names an information entry matching the
+    /// entity declares, every name when such an entry declares none, and no
+    /// name of an entity no entry matches.
+    #[test]
+    fn coverage_answers_for_each_name_of_the_entity() {
+        let speed = name("https://example.org/speed");
+        let colour = name("https://example.org/colour");
+        let naming = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}], "propertyNames": [speed.as_str()]}));
+        let named = AttributeCoverage::of(&naming, &[vehicle_type()], &vehicle_id());
+        pretty_assertions::assert_eq!((named.covers(&speed), named.covers(&colour)), (true, false));
+        let unrestricted = AttributeCoverage::of(
+            &registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]})),
+            &[vehicle_type()],
+            &vehicle_id(),
+        );
+        pretty_assertions::assert_eq!((unrestricted.covers(&speed), unrestricted.covers(&colour)), (true, true));
+        let other = AttributeCoverage::of(
+            &registration(&json!({"entities": [{"type": "https://example.org/Device"}]})),
+            &[vehicle_type()],
+            &vehicle_id(),
+        );
+        assert!(!other.covers(&speed));
     }
 
     /// The attributes a proxied registration claims: the explicit attribute of

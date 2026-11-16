@@ -19,6 +19,7 @@ mod n_sub_cre_6814;
 mod n_sub_cre_6815;
 mod n_sub_cre_6816;
 mod n_sub_cre_6817;
+mod n_sub_cre_6818;
 mod n_sub_cre_7200;
 mod n_sub_cre_7201;
 mod n_sub_cre_7600;

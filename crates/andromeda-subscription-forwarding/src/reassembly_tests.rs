@@ -9,8 +9,10 @@ use crate::reassembly_harness::{
     companion_subscription,
     copy_subscription,
     default_iri,
+    forwarding_maps::ClaimKeeping,
     identifier,
     sender_registration,
+    subscribing_source::SubscribingSource,
 };
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
@@ -394,6 +396,114 @@ async fn a_relayed_entity_the_local_selectors_do_not_select_leaves_the_copy() {
     scene.post(&notification(&data)).await.expect("the notification is handled");
 
     pretty_assertions::assert_eq!(ids(&relayed(&mut scene).await), vec!["urn:ngsi-ld:Vehicle:1"]);
+}
+
+/// The `information` of a sender registration of every `Vehicle` naming the
+/// Property `speed`.
+fn naming_speed() -> Value {
+    json!([{"entities": [{"type": default_iri("Vehicle")}], "propertyNames": [default_iri("speed")]}])
+}
+
+/// Clause 4.3.6.1: a source notifies every Attribute it holds of an entity, the
+/// copy carrying no `notification.attributes` (clause 5.8.1.4), and this broker
+/// relays only those its sender's registration names, with split entities or
+/// without.
+#[tokio::test]
+async fn a_relayed_entity_keeps_only_the_attributes_its_sender_registration_names() {
+    for split in [false, true] {
+        let mut scene = ReassemblyScene::start(SceneSpec {
+            subscription_members: json!({"splitEntities": split}),
+            sender_information: naming_speed(),
+            ..SceneSpec::default()
+        })
+        .await;
+        let data = json!([compact_vehicle(
+            "urn:ngsi-ld:Vehicle:1",
+            &[("speed", property(&json!(40))), ("fuel", property(&json!(12)))]
+        )]);
+
+        scene.post(&notification(&data)).await.expect("the notification is handled");
+
+        let entities = relayed(&mut scene).await;
+        let [entity] = entities.as_slice() else {
+            panic!("one entity is relayed with splitEntities {split}, got {entities:?}");
+        };
+        pretty_assertions::assert_eq!(entity["speed"]["value"], json!(40), "splitEntities {split}: {entity}");
+        assert!(entity.get("fuel").is_none(), "splitEntities {split}: {entity}");
+    }
+}
+
+/// Clause 4.3.6.1: an entity of which the sender's registration covers no
+/// Attribute is no part of what this broker relays.
+#[tokio::test]
+async fn an_entity_its_sender_registration_covers_nothing_of_is_not_relayed() {
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        sender_information: naming_speed(),
+        ..SceneSpec::default()
+    })
+    .await;
+    let data = json!([
+        compact_vehicle("urn:ngsi-ld:Vehicle:1", &[("speed", property(&json!(40)))]),
+        compact_vehicle("urn:ngsi-ld:Vehicle:2", &[("fuel", property(&json!(12)))])
+    ]);
+
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+
+    pretty_assertions::assert_eq!(ids(&relayed(&mut scene).await), vec!["urn:ngsi-ld:Vehicle:1"]);
+}
+
+/// Clause 5.8.1.4 keeps `q` in the copy only without split entities, where the
+/// source decides it on the entity it holds, so the local subscription admits
+/// that entity before it is narrowed to what the registration covers. With
+/// split entities the `q` is decided on the completed entity, which holds
+/// only what each registration covers (clause 5.8.6).
+#[tokio::test]
+async fn a_q_over_an_attribute_the_sender_does_not_cover_is_decided_where_the_copy_carries_it() {
+    let q = format!("\"{}\">10", default_iri("fuel"));
+    for (split, expected) in [(false, vec!["urn:ngsi-ld:Vehicle:1"]), (true, Vec::new())] {
+        let mut scene = ReassemblyScene::start(SceneSpec {
+            subscription_members: json!({"splitEntities": split, "q": q}),
+            sender_information: naming_speed(),
+            ..SceneSpec::default()
+        })
+        .await;
+        let data = json!([compact_vehicle(
+            "urn:ngsi-ld:Vehicle:1",
+            &[("speed", property(&json!(40))), ("fuel", property(&json!(12)))]
+        )]);
+
+        scene.post(&notification(&data)).await.expect("the notification is handled");
+
+        let entities = relayed(&mut scene).await;
+        pretty_assertions::assert_eq!(ids(&entities), expected, "splitEntities {split}");
+        assert!(
+            entities.iter().all(|entity| entity.get("fuel").is_none()),
+            "splitEntities {split}: {entities:?}"
+        );
+    }
+}
+
+/// Clause 4.3.6.1: what a source notifies is taken only as its registration
+/// covers it, so a notification under a copy whose registration no longer
+/// exists relays nothing.
+#[tokio::test]
+async fn a_notification_under_a_copy_whose_registration_is_gone_relays_nothing() {
+    let source = SubscribingSource::start(&identifier("urn:ngsi-ld:ContextSourceRegistration:gone")).await;
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        claims: ClaimKeeping::Kept,
+        ..SceneSpec::default()
+    })
+    .await;
+    scene.place_as_at_creation(&source.stored()).await.expect("the copy is placed");
+    let claimed = scene.maps().claimed();
+    let copy = &claimed.first().expect("a copy was claimed").remote_subscription;
+    let mut posted = notification(&json!([compact_vehicle("urn:ngsi-ld:Vehicle:1", &[("speed", property(&json!(40)))])]));
+    posted["subscriptionId"] = json!(copy.as_str());
+
+    scene.post(&posted).await.expect("the notification is handled");
+
+    assert!(scene.delivered().await.is_none(), "nothing is relayed");
+    pretty_assertions::assert_eq!(scene.slots_claimed(), 0);
 }
 
 /// Clauses 4.21 and 5.8.6: `pick` narrows a relayed entity as it narrows a

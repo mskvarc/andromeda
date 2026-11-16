@@ -12,8 +12,8 @@ mod answer_reading;
 pub mod answer_verdict;
 /// Reading every source's answer of Temporal Evolutions into the model.
 mod answered_temporal;
-/// Which attributes of a forwarded write a registration covers.
-mod attribute_coverage;
+/// Which attributes of an entity a registration covers, for a forwarded write and for a relayed notification.
+pub mod attribute_coverage;
 /// Cached forwarded GET responses (clause 6.3.17).
 pub mod cache;
 /// Federation operation configuration.

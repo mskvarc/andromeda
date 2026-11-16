@@ -17,6 +17,11 @@
 //! the registration lists, and every value it lists when the subscription
 //! names none, since the source provides no other instance (clause 4.3.6.1,
 //! Table 5.2.9-1); a registration listing none is sent the subscription's own.
+//! A periodic copy watches nothing, since Table 5.2.12-1 gives
+//! `watchedAttributes` no place beside `timeInterval`, so no member of it
+//! narrows the Attributes its source notifies, and this broker keeps only the
+//! Attributes the registration covers of what the source sends (clause
+//! 4.3.6.1).
 
 use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::split_entities::SplitEntities;
@@ -73,6 +78,16 @@ fn narrow_names(names: Option<&[AttributeName]>, declared: Option<&[&AttributeNa
         (None, Some(declared)) => Some(declared.iter().map(|name| (*name).clone()).collect()),
         (Some(names), None) => Some(names.to_vec()),
         (Some(names), Some(declared)) => Some(names.iter().filter(|name| declared.contains(name)).cloned().collect()),
+    }
+}
+
+/// The `watchedAttributes` of the copy: the subscription's narrowed to the
+/// names the registration declares, and none for a periodic subscription
+/// (Table 5.2.12-1).
+fn copy_watched_attributes(subscription: &Subscription, declared: Option<&[&AttributeName]>) -> Option<Vec<AttributeName>> {
+    match subscription.delivery.time_interval {
+        Some(_) => None,
+        None => narrow_names(subscription.selection.watched_attributes.as_deref(), declared),
     }
 }
 
@@ -134,7 +149,7 @@ impl ReducedSubscription {
                 subscription_name: Clearable::from_option(subscription.subscription_name.clone()),
                 description: Clearable::from_option(subscription.description.clone()),
                 entities: Clearable::from_option(selectors.filter(|selectors| !selectors.is_empty())),
-                watched_attributes: Clearable::from_option(narrow_names(subscription.selection.watched_attributes.as_deref(), declared.as_deref())),
+                watched_attributes: Clearable::from_option(copy_watched_attributes(subscription, declared.as_deref())),
                 notification_trigger: Clearable::from_option(subscription.selection.notification_trigger.clone()),
                 time_interval: Clearable::from_option(subscription.delivery.time_interval),
                 q: Clearable::from_option(subscription.filters.q.as_ref().filter(|_| keeps_filters).cloned()),
@@ -165,7 +180,9 @@ impl ReducedSubscription {
     /// Attributes or `datasetId`s leaves the copy naming none though no update
     /// deleted the member. The selectors are sent only while the fragment
     /// sets one of them, since a source left with neither would refuse the
-    /// update (clause 5.2.12).
+    /// update (clause 5.2.12). A periodic copy is so sent `watchedAttributes`
+    /// as the NGSI-LD Null beside its `timeInterval`, which clause 5.2.1 makes
+    /// the removal of the member rather than a value of it.
     #[must_use]
     pub fn as_fragment(&self, deleted: &DeletedMembers, carriage: FilterCarriage) -> SubscriptionRequest {
         let mut fragment = SubscriptionRequest {
@@ -756,6 +773,28 @@ mod tests {
             let widened = fragment_under(&json!([{"propertyNames": [SPEED]}]), &local, &nothing_deleted, carriage);
             pretty_assertions::assert_eq!(widened["entities"], json!(["urn:ngsi-ld:null"]), "{carriage:?}");
             pretty_assertions::assert_eq!(widened["watchedAttributes"], json!([SPEED]), "{carriage:?}");
+        }
+    }
+
+    /// Table 5.2.12-1 gives `watchedAttributes` no place beside
+    /// `timeInterval`, so the copy of a periodic subscription at a
+    /// registration naming Attributes watches nothing, and every update states
+    /// the member as the NGSI-LD Null, the removal of a member rather than a
+    /// value of it (clause 5.2.1), which deletes what a copy that watched
+    /// before holds.
+    #[test]
+    fn a_periodic_copy_watches_no_attribute_beside_its_time_interval() {
+        let mut periodic = subscription_selecting(&json!([{"type": VEHICLE}]));
+        periodic.delivery.time_interval = Some(60.0);
+        let naming = json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]);
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let copy = written(&ReducedSubscription::reduce(&periodic, &registration(&naming), &receiver(), &minted(), carriage).request);
+            pretty_assertions::assert_eq!(copy["timeInterval"], json!(60), "{carriage:?}");
+            assert!(copy.get("watchedAttributes").is_none(), "{carriage:?}: {copy}");
+            let fragment = fragment_under(&naming, &periodic, &json!({"subscriptionName": "fleet"}), carriage);
+            pretty_assertions::assert_eq!(fragment["timeInterval"], json!(60), "{carriage:?}");
+            pretty_assertions::assert_eq!(fragment["watchedAttributes"], json!(["urn:ngsi-ld:null"]), "{carriage:?}");
+            pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": VEHICLE}]), "{carriage:?}");
         }
     }
 

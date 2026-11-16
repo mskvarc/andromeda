@@ -21,6 +21,7 @@ mod n_ntf_pay_6819;
 mod n_ntf_pay_6820;
 mod n_ntf_pay_6821;
 mod n_ntf_pay_6822;
+mod n_ntf_pay_6823;
 mod n_ntf_pay_7600;
 mod n_ntf_pay_7601;
 mod n_ntf_pay_7602;
