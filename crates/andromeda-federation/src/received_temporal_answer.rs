@@ -5,6 +5,7 @@ use crate::{
     dropped_entities::DroppedEntities,
     outcome::{ForwardGetOutcome, ForwardedResponse},
     partial_page::PartialPage,
+    read_fan_out::LinkedAnswer,
     source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
     temporal_answer_reading::ReadTemporalEntity,
@@ -43,6 +44,12 @@ pub(crate) struct ReceivedTemporalAnswer<E> {
     /// that named no range says the history is incomplete and nowhere it
     /// resumes.
     pub(crate) partial_pages: Vec<PartialPage>,
+}
+
+impl<E> LinkedAnswer for ReceivedTemporalAnswer<E> {
+    fn unlink(&mut self) {
+        self.linked_map = None;
+    }
 }
 
 impl ReceivedTemporalAnswer<ReadTemporalEntity> {

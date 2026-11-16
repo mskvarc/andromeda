@@ -7,6 +7,7 @@ use crate::{
     dropped_entities::DroppedEntities,
     entity_reading::EntityReading,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse},
+    read_fan_out::LinkedAnswer,
     source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
 };
@@ -38,6 +39,12 @@ pub(crate) struct ReceivedAnswer {
     pub(crate) dropped: DroppedEntities,
     /// The `EntityMap` the source used for the request (clause 5.5.14).
     pub(crate) linked_map: Option<Identifier>,
+}
+
+impl LinkedAnswer for ReceivedAnswer {
+    fn unlink(&mut self) {
+        self.linked_map = None;
+    }
 }
 
 /// What the document a source answers with may be.
