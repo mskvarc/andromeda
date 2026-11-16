@@ -50,3 +50,7 @@ tokio = { version = "1.54.1", features = ["full"] }
 name = "filter_compilation"
 harness = false
 required-features = ["test-support"]
+
+# Snapshot assertions reach insta through a macro that expands in this crate, which cargo-machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["insta"]
