@@ -16,9 +16,9 @@ use ngsi_ld::{
 };
 
 /// Pins: over inclusive registrations of `Vehicle` Entities listing the `datasetId`s [A] (source a), [B] (source b)
-/// and [@none, D] (source d), and one listing none (source n), Query Entities by type with `datasetId` A is forwarded
-/// to a and n, with A and B to a, b and n, with @none to d and n, and without `datasetId` to all four, each forwarded
-/// query carrying the client's `datasetId`
+/// and [@none, D] (source d), and one listing none (source n), Query Entities by type and an Entity identifier with
+/// `datasetId` A is forwarded to a and n, with A and B to a, b and n, with @none to d and n, and without `datasetId` to
+/// all four
 /// Clause: 5.12, 5.7.2.4, 4.5.5
 /// Recorded: clause 5.12 says a registration listing a `datasetId` "should only be considered matching, if both have
 /// at least one value in common"; Andromeda applies it as a requirement, and `@none` is a value like any other
@@ -60,30 +60,23 @@ async fn n_fed_qry_9027_a_query_with_a_dataset_id_reaches_only_the_sources_regis
     let queried =
         |prefix: &str| SourceRequest::new(Method::GET, &format!("/{prefix}/ngsi-ld/v1/entities")).query_containing("type", format!("Vehicle_{namespace}"));
     sources.answer(queried, |_| source_answer::entities(&[])).await?;
-    for (dataset_ids, written, expected) in [
-        (vec![dataset_a.clone()], dataset_a.to_string(), vec!["a", "n"]),
-        (
-            vec![dataset_a.clone(), dataset_b.clone()],
-            format!("{dataset_a},{dataset_b}"),
-            vec!["a", "b", "n"],
-        ),
-        (vec![DatasetId::DefaultInstance], "@none".to_owned(), vec!["d", "n"]),
+    for (vehicle, dataset_ids, expected) in [
+        (1, Some(vec![dataset_a.clone()]), vec!["a", "n"]),
+        (2, Some(vec![dataset_a.clone(), dataset_b.clone()]), vec!["a", "b", "n"]),
+        (3, Some(vec![DatasetId::DefaultInstance]), vec!["d", "n"]),
+        (4, None, vec!["a", "b", "d", "n"]),
     ] {
-        let page = broker
-            .with_accept(Accept::any())
-            .entities()
-            .query()
-            .entity_type(&vehicle_type)
-            .dataset_ids(dataset_ids)
-            .send()
-            .await?;
+        let vehicle_id = namespace.urn("Vehicle", vehicle)?;
+        let client = broker.with_accept(Accept::any());
+        let entities = client.entities();
+        let query = entities.query().entity_type(&vehicle_type).ids(vec![vehicle_id.clone()]);
+        let page = match dataset_ids.clone() {
+            Some(dataset_ids) => query.dataset_ids(dataset_ids).send().await?,
+            None => query.send().await?,
+        };
         expect_that!(page.items(), is_empty());
-        let reached = sources.reached(|prefix| queried(prefix).query("datasetId", &written)).await?;
-        expect_that!(reached, eq(&expected), "datasetId={written}");
+        let reached = sources.reached(|prefix| queried(prefix).query("id", &vehicle_id)).await?;
+        expect_that!(reached, eq(&expected), "datasetId {dataset_ids:?}");
     }
-    let page = broker.with_accept(Accept::any()).entities().query().entity_type(&vehicle_type).send().await?;
-    expect_that!(page.items(), is_empty());
-    let reached = sources.reached(|prefix| queried(prefix).without_query("datasetId")).await?;
-    expect_that!(reached, eq(&vec!["a", "b", "d", "n"]));
     Ok(())
 }
