@@ -13,6 +13,7 @@ use crate::{
     query::temporal_query::TemporalQuery,
     subscription::standing::SubscriptionStanding,
 };
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
@@ -32,7 +33,6 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -289,9 +289,10 @@ pub struct SubscriptionDelivery {
     /// Minimum interval in seconds between consecutive notifications (clause 5.2.12).
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "delivery_seconds::serialize")]
     pub throttling: Option<f64>,
-    /// Preferred language for multi-language properties.
+    /// The clause 4.15 language filter every notified Entity's
+    /// `LanguageProperty` is reduced by (Table 5.2.12-1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lang: Option<LangTagBuf>,
+    pub lang: Option<LanguageFilter>,
     /// The `@context` notifications are rendered with (clause 5.8.1.4), an
     /// absolute URI (Table 5.2.12-1).
     #[serde(skip_serializing_if = "Option::is_none")]

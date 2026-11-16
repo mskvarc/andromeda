@@ -78,7 +78,7 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         notification_join_level: sub.notification.effective_join_level(),
         local_only: sub.delivery.local_only.unwrap_or(false),
         ngsild_conformance: sub.delivery.ngsild_conformance,
-        lang: sub.delivery.lang.clone(), // clone: compiled state owns the language tag.
+        lang: sub.delivery.lang.clone(), // clone: compiled state owns the language filter.
     }
 }
 

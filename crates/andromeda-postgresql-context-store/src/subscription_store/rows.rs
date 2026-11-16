@@ -6,6 +6,7 @@
 //! parsed into its domain type as it is read.
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
@@ -16,7 +17,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use langtag::LangTagBuf;
 
 /// A subscription row read from the `subscriptions` table. Column presence
 /// matches the macro-generated projection list; optional/nullable columns
@@ -63,8 +63,8 @@ pub struct SubscriptionRow {
     pub status: SubscriptionStatus,
     /// Temporal query (nullable).
     pub temporal_q: Option<TemporalQuery>,
-    /// Preferred language.
-    pub lang: Option<LangTagBuf>,
+    /// The clause 4.15 language filter notifications are reduced by.
+    pub lang: Option<LanguageFilter>,
     /// Associated JSON-LD context URI.
     pub jsonld_context: Option<IriBuf>,
     /// Local-only scope flag.

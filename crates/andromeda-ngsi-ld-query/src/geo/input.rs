@@ -93,6 +93,22 @@ impl GeoQueryInput {
             geoproperty,
         })
     }
+
+    /// Read a geo-query from the text of its members as a query string carries
+    /// them (Table 6.4.3.2-1), the coordinates held as the JSON text they are,
+    /// which Table 5.2.13-1 lets a `GeoQuery` member carry as a string.
+    ///
+    /// # Errors
+    ///
+    /// As [`GeoQueryInput::from_wire`] describes.
+    pub fn from_parameters(
+        georel: &str,
+        geometry_type: &str,
+        coordinates: &str,
+        geoproperty: Option<NgsiLdReference>,
+    ) -> Result<GeoQueryInput, GeoQueryInputError> {
+        GeoQueryInput::from_wire(georel, geometry_type, QueryCoordinates::Text(coordinates.to_owned()), geoproperty)
+    }
 }
 
 // A derive cannot combine the `geometry` and `coordinates` wire members into

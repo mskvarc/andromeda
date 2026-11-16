@@ -93,6 +93,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-delivery",
         "andromeda-entity",
         "andromeda-federation",
+        "andromeda-http-headers",
         "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-linked-retrieval",

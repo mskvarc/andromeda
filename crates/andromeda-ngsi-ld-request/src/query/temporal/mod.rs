@@ -2,7 +2,6 @@
 
 use crate::{
     impl_shared_query_params,
-    language_filter::deserialize_optional_language_filter,
     options::TemporalRepresentationOptions,
     pagination::parameters::PageParameters,
     query::{
@@ -200,7 +199,7 @@ pub struct TemporalQueryParameters {
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Clause-4.15 natural-language selection preferences.
     #[serde(rename = "lang")]
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     pub local: Option<bool>,

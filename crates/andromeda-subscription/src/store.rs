@@ -12,6 +12,7 @@ use crate::{
     stored_subscription::StoredSubscription,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
@@ -29,7 +30,6 @@ use andromeda_ngsi_ld_query::{
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
-use langtag::LangTagBuf;
 
 /// Borrowed field values used when creating or updating a subscription.
 #[derive(Debug)]
@@ -73,8 +73,8 @@ pub struct SubscriptionFields<'a> {
     /// Expanded attribute names whose `q` object keys were expanded while
     /// their values were left uninterpreted (Table 5.2.12-1 `jsonKeys`).
     pub json_keys: Option<&'a [AttributeName]>,
-    /// Preferred language for notifications.
-    pub lang: Option<&'a LangTagBuf>,
+    /// The clause 4.15 language filter notifications are reduced by.
+    pub lang: Option<&'a LanguageFilter>,
     /// JSON-LD context URI associated with the subscription.
     pub jsonld_context: Option<&'a IriBuf>,
     /// When true, subscription only matches locally stored entities (clause 5.5.13).

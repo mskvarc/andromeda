@@ -26,12 +26,7 @@ use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::{NotificationData, SysAttrsSnapshot},
 };
-use andromeda_ngsi_ld_render::{
-    notification_data::DataShape,
-    notification_language::NotificationLanguage,
-    notified_changes::HeldAttributes,
-    structural_projection::StructuralProjection,
-};
+use andromeda_ngsi_ld_render::{notification_data::DataShape, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
@@ -137,14 +132,14 @@ async fn notification_payload(
             .map(|index| (graph, index)),
         None => None,
     };
-    let language = sub.lang.as_ref().map(NotificationLanguage::of);
+    let language = sub.lang.as_ref();
     let shape = CarriedShape {
         format: sub.notification_format.unwrap_or_default(),
         join: sub.notification_join,
         projection: StructuralProjection::from(&sub.notification_projection),
         list,
         conformance: sub.ngsild_conformance,
-        language: language.as_ref(),
+        language,
     };
     let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
     carried_entities(from_ref(&rooted.notified), links, shape, data)

@@ -2,6 +2,7 @@
 //! fragment becomes once it is merged with what is stored.
 
 use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason};
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
@@ -14,7 +15,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use langtag::LangTagBuf;
 
 /// Owned, validated values for one subscription persistence write.
 ///
@@ -60,8 +60,8 @@ pub(crate) struct SubscriptionWriteValues {
     /// Attributes whose `q` object keys were expanded while their values were
     /// left uninterpreted (Table 5.2.12-1 `jsonKeys`).
     pub json_keys: Option<Vec<AttributeName>>,
-    /// Validated preferred language.
-    pub lang: Option<LangTagBuf>,
+    /// The clause 4.15 language filter notifications are reduced by.
+    pub lang: Option<LanguageFilter>,
     /// Validated JSON-LD context URL.
     pub jsonld_context: Option<IriBuf>,
     /// Whether the subscription applies only to local entities.

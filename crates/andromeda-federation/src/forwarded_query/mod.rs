@@ -131,6 +131,11 @@ impl ForwardedQuery {
         self.pairs.iter().find(|(name, _)| *name == parameter).map(|(_, value)| value.as_str())
     }
 
+    /// Every written parameter with its value, in the order they are written.
+    pub(crate) fn parameters(&self) -> impl Iterator<Item = (ForwardedParameter, &str)> {
+        self.pairs.iter().map(|(parameter, value)| (*parameter, value.as_str()))
+    }
+
     /// The `application/x-www-form-urlencoded` rendering the forwarded URL carries.
     #[must_use]
     pub fn to_query_string(&self) -> String {
@@ -188,14 +193,9 @@ impl ForwardedQuery {
         self.push_optional(ForwardedParameter::DatasetId, dataset_ids_parameter(datasets));
     }
 
-    /// Write the `lang` preferences comma-separated, when the client gave a filter.
+    /// Write the client's clause 4.15 language filter, when it gave one.
     fn push_lang(&mut self, lang: Option<&LanguageFilter>) {
-        if let Some(lang) = lang {
-            self.push(
-                ForwardedParameter::Lang,
-                lang.preferences().iter().map(ToString::to_string).collect::<Vec<_>>().join(","),
-            );
-        }
+        self.push_optional(ForwardedParameter::Lang, lang.map(ToString::to_string));
     }
 
     /// Clause 4.3.6.1: every source supports the normalized representation and

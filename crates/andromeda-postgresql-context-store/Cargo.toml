@@ -21,6 +21,7 @@ andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-entity-map.workspace = true
 andromeda-health.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-entity.workspace = true
@@ -59,7 +60,6 @@ futures = "0.3.34"
 hex = "0.4.3"
 indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
-langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }
 serde = { version = "1.0.229", features = ["derive", "rc"] }

@@ -26,7 +26,6 @@ use andromeda_ngsi_ld_render::{
     joined_notification::{join_plan, joined_entities},
     notification_data::{DataShape, notification_data},
     notification_entity::NotificationEntity,
-    notification_language::NotificationLanguage,
     notified_changes::{HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
@@ -105,7 +104,7 @@ impl SubscriptionForwardingService {
         let projection = StructuralProjection::from(&compiled.notification_projection);
         // Table 5.2.12-1 `lang`: clause 4.15 reduces every `LanguageProperty`
         // of a notified entity under the subscription's language, relayed or not.
-        let language = subscription.delivery.lang.as_ref().map(NotificationLanguage::of);
+        let language = subscription.delivery.lang.as_ref();
         // Clause 5.8.6: "If the notification.join member value is set then
         // Linked Entity retrieval shall be provided", for a relayed copy as for
         // a notification the broker triggers itself.
@@ -120,7 +119,7 @@ impl SubscriptionForwardingService {
             plan.as_ref(),
             data.iter(),
             |(entity, previous), cursor| {
-                let relayed = NotificationEntity::relayed(entity, format, projection, language.as_ref()).with_fallback(fallback);
+                let relayed = NotificationEntity::relayed(entity, format, projection, language).with_fallback(fallback);
                 // Table 5.2.14-1 `showChanges`: each instance the change touched
                 // carries its value before the change, which the source
                 // reported (clause 5.8.6).
@@ -137,11 +136,7 @@ impl SubscriptionForwardingService {
                     None => relayed,
                 }
             },
-            |linked| {
-                NotificationEntity::linked(linked, format)
-                    .with_fallback(fallback)
-                    .with_language(language.as_ref())
-            },
+            |linked| NotificationEntity::linked(linked, format).with_fallback(fallback).with_language(language),
         );
         Ok(notification_data(&relayed, shape).map_err(ForwardingInvariant::Rendering)?)
     }

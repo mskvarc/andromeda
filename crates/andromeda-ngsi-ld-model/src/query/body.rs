@@ -5,6 +5,7 @@ use crate::{
     entity_selector::EntitySelector,
     query::{aggregation_parameters::AggregationParameters, non_empty_member, temporal_query::TemporalQuery},
 };
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -15,7 +16,6 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
-use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use typed_builder::TypedBuilder;
@@ -105,9 +105,10 @@ pub struct Query {
     /// Linked-entity traversal depth.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join_level: Option<NonZeroU32>,
-    /// Validated RFC 5646 language filter.
+    /// The clause 4.15 language filter (Table 5.2.23-1), a ranked list as the
+    /// `lang` query parameter takes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lang: Option<LangTagBuf>,
+    pub lang: Option<LanguageFilter>,
     /// Entity ordering definition.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_ordering")]
     pub ordering: Option<OrderingParameters>,
@@ -213,5 +214,13 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    /// Table 5.2.23-1 `lang` is the clause 4.15 filter, a ranked list as the
+    /// `lang` query parameter takes it.
+    #[test]
+    fn a_ranked_language_filter_is_read_whole() {
+        let query: Query = serde_json::from_value(serde_json::json!({"type": "Query", "lang": "fr-CH,fr;q=0.9,*;q=0.5"})).expect("a ranked language filter");
+        pretty_assertions::assert_eq!(query.lang.map(|lang| lang.preferences().len()), Some(3));
     }
 }

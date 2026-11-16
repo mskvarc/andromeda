@@ -35,12 +35,7 @@ use andromeda_ngsi_ld_model::{
     subscription::Subscription,
 };
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
-use andromeda_ngsi_ld_render::{
-    notification_data::DataShape,
-    notification_language::NotificationLanguage,
-    notified_changes::HeldAttributes,
-    structural_projection::StructuralProjection,
-};
+use andromeda_ngsi_ld_render::{notification_data::DataShape, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compilation::{notification_attributes, notification_projection};
 use chrono::Utc;
@@ -120,14 +115,14 @@ impl PeriodicPayload<'_> {
                 previous: None,
             })
             .collect();
-        let language = sub.delivery.lang.as_ref().map(NotificationLanguage::of);
+        let language = sub.delivery.lang.as_ref();
         let shape = CarriedShape {
             format: sub.notification.format.unwrap_or_default(),
             join: sub.notification.join,
             projection: StructuralProjection::from(&projection),
             list: rule.list,
             conformance: sub.delivery.ngsild_conformance,
-            language: language.as_ref(),
+            language,
         };
         let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
         carried_entities(&notified, links, shape, data)

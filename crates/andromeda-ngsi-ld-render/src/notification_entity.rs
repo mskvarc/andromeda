@@ -28,11 +28,11 @@ use crate::{
         member_walk::MemberWalk,
         typed_entity::{IdentifierMember, TypedEntity},
     },
-    notification_language::NotificationLanguage,
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
     version::fallback::VersionFallback,
 };
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{
     narrowing::member::MemberRule,
@@ -84,7 +84,7 @@ pub struct NotificationEntity<'a> {
     /// The clause 4.15 `lang` filter of the subscription (Table 5.2.12-1)
     /// every top-level `LanguageProperty` is negotiated against, if it names
     /// one.
-    language: Option<&'a NotificationLanguage>,
+    language: Option<&'a LanguageFilter>,
 }
 
 impl<'a> NotificationEntity<'a> {
@@ -137,7 +137,7 @@ impl<'a> NotificationEntity<'a> {
         entity: &'a Entity,
         format: ResponseFormat,
         projection: StructuralProjection<'a>,
-        language: Option<&'a NotificationLanguage>,
+        language: Option<&'a LanguageFilter>,
     ) -> NotificationEntity<'a> {
         NotificationEntity {
             entity,
@@ -183,7 +183,7 @@ impl<'a> NotificationEntity<'a> {
     /// the subscription's `lang` when it names one (Table 5.2.12-1, clause
     /// 4.15).
     #[must_use]
-    pub const fn with_language(self, language: Option<&'a NotificationLanguage>) -> NotificationEntity<'a> {
+    pub const fn with_language(self, language: Option<&'a LanguageFilter>) -> NotificationEntity<'a> {
         NotificationEntity { language, ..self }
     }
 
@@ -196,11 +196,11 @@ impl<'a> NotificationEntity<'a> {
 
     /// The entity as the typed walk writes it, carrying `context` beside its
     /// own members when the body carries one.
-    pub(crate) fn typed(&self, context: Option<&'a JsonLiteral>) -> TypedEntity<'a> {
+    pub(crate) const fn typed(&self, context: Option<&'a JsonLiteral>) -> TypedEntity<'a> {
         TypedEntity {
             entity: self.entity,
             format: self.format,
-            walk: MemberWalk::new(self.language.map(NotificationLanguage::filter), self.fallback),
+            walk: MemberWalk::new(self.language, self.fallback),
             projection: self.projection,
             identifier: IdentifierMember::Written,
             context,

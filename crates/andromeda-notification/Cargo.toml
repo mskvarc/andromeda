@@ -18,6 +18,7 @@ andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-delivery.workspace = true
 andromeda-entity.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true
@@ -51,7 +52,6 @@ url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-query-evaluation.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync"] }
