@@ -23,3 +23,7 @@ andromeda-architecture-checks.workspace = true
 andromeda-postgresql-seaquery = { workspace = true, features = ["test-support"] }
 insta = "1.49.0"
 pretty_assertions = "1.4.1"
+
+# Snapshot assertions reach insta through a macro that expands in this crate, which cargo-machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["insta"]
