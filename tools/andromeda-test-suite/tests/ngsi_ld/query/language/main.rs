@@ -17,6 +17,7 @@ mod n_qry_lng_4001;
 mod n_qry_lng_4002;
 mod n_qry_lng_4003;
 mod n_qry_lng_9001;
+mod n_qry_lng_9002;
 mod o_qry_lng_0002;
 mod o_qry_lng_0004;
 mod o_qry_lng_0005;

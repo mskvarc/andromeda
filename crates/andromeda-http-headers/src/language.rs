@@ -242,13 +242,16 @@ impl FromStr for LanguageFilter {
 }
 
 /// Typed parse errors for a language filter.
+///
+/// The text names no carrier: the query parameter, the Query and Subscription
+/// members and `Accept-Language` each refuse the filter under their own name.
 #[derive(Debug, Error)]
 pub enum LanguageFilterError {
     /// The preference list was empty.
-    #[error("the `lang` query parameter cannot be empty")]
+    #[error("a language filter cannot be empty")]
     Empty,
     /// One of the comma-delimited preferences was empty.
-    #[error("the `lang` query parameter contains an empty language preference")]
+    #[error("a language filter contains an empty language preference")]
     EmptyPreference,
     /// A parameter segment is empty or not a `name=value` pair.
     #[error("a language preference parameter is not a name=value pair")]
