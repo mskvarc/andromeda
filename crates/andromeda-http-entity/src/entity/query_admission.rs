@@ -46,8 +46,9 @@ use axum::http::Uri as HttpUri;
 /// One query, decoded and admitted: what the protocol headers contributed to
 /// it, the Entity Map it runs under, and the options its response is shaped by.
 pub(crate) struct AdmittedQuery {
-    /// The preferred natural language, from the query or the fallback header.
-    pub(crate) language_filter: Option<LanguageFilter>,
+    /// The natural-language preference the request's header states, which
+    /// the response is rendered by when the query names no `lang`.
+    pub(crate) fallback_language: Option<LanguageFilter>,
     /// The `Prefer` header the response honours (clause 6.3.21).
     pub(crate) prefer: PreferHeader,
     /// The `Via` chain the request arrived with, replayed onto every forwarded
@@ -148,9 +149,8 @@ pub(crate) async fn admit_request(
         .negotiate_language_targeting(target, context, &read, service.language_targeting(), advertised_language_targeting)
         .await
         .with_entity_instance(instance)?;
-    let language_filter = query.take_language().or(protocol.language_filter);
     let admitted = AdmittedQuery {
-        language_filter,
+        fallback_language: protocol.language_filter,
         prefer: protocol.prefer,
         incoming_via: protocol.incoming_via,
         map_use,

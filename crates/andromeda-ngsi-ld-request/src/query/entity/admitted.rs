@@ -61,10 +61,13 @@ impl AdmittedEntityQuery {
         }
     }
 
-    /// Take the natural-language preference out of the query, which the
-    /// response is rendered by rather than the query selecting by it.
-    pub const fn take_language(&mut self) -> Option<LanguageFilter> {
-        self.params.lang.take()
+    /// The natural-language preference the query names, which the response
+    /// is rendered by rather than the query selecting by it. It stays in the
+    /// query, which every source the query is forwarded to reads it from
+    /// (clause 5.7.2.4 forwards the request).
+    #[must_use]
+    pub const fn language(&self) -> Option<&LanguageFilter> {
+        self.params.lang.as_ref()
     }
 
     /// The members an Entity Map holds the query to (clause 5.5.14).

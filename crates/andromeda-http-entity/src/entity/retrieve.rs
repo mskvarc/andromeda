@@ -102,7 +102,7 @@ pub(crate) async fn get(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     TypedPath(EntityId(id)): TypedPath<EntityId>,
-    ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
+    ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_query;
@@ -111,7 +111,6 @@ pub(crate) async fn get(
     let context = admit_user_context(service.engine(), SubmittedContext::from(context))
         .await
         .with_entity_instance(&uri)?;
-    let language_filter = params.lang.take().or(protocol.language_filter);
     let prefer = protocol.prefer;
     let entity_map_header = protocol.entity_map;
 
@@ -231,7 +230,11 @@ pub(crate) async fn get(
             params.geometry_property.as_ref(),
             params.dataset_id.as_deref().unwrap_or_default(),
         ));
-    retrieval_response(answer, rendering, language_filter.as_ref(), warnings, entity_map_uri, &uri)
+    // The `lang` stays in the parameters, which every source the retrieval is
+    // forwarded to reads it from (clause 5.7.1.4 forwards the request); the
+    // header's preference renders the response only when it names none.
+    let language = params.lang.as_ref().or(protocol.language_filter.as_ref());
+    retrieval_response(answer, rendering, language, warnings, entity_map_uri, &uri)
 }
 
 #[cfg(test)]
