@@ -164,9 +164,31 @@ async fn a_split_creation_leaves_the_filters_behind() {
     );
 }
 
+/// Clause 5.14.4.4 refuses a `q` over Linked Entity Attributes without
+/// `join` as too deep a query, so the creation carries the client's Linked
+/// Entity retrieval beside that `q`.
+#[tokio::test]
+async fn an_entity_creation_carries_the_linked_entity_retrieval_of_the_client() {
+    let source = source_creating_maps("/ngsi-ld/v1/entityMaps").await;
+    let service = offline_service(vec![registration(
+        &source,
+        "createEntityMapQueryEntity",
+        &json!([{"entities": [{"type": VEHICLE}]}]),
+    )]);
+    let query = entity_query(
+        "type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2&containedBy=urn:ngsi-ld:Building:1&splitEntities=false",
+    );
+    create(&service, EntityMapQuery::Entities(&query)).await;
+    pretty_assertions::assert_eq!(
+        asked(&source).await,
+        vec!["type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1".to_owned()]
+    );
+}
+
 /// Clause 5.14.5.4 narrows a temporal creation as clause 5.14.4.4 does an
 /// entity one; the temporal query and `lastN` travel, and no representation
-/// or aggregation does (clause 5.14.5.3).
+/// or aggregation does (clause 5.14.5.3). It refuses Linked Entity retrieval,
+/// so a `join` admitted by an extension stays behind.
 #[tokio::test]
 async fn a_temporal_creation_keeps_its_window_and_names_only_what_the_registration_covers() {
     let source = source_creating_maps("/ngsi-ld/v1/temporal/entityMaps").await;
@@ -176,7 +198,7 @@ async fn a_temporal_creation_keeps_its_window_and_names_only_what_the_registrati
         &json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]),
     )]);
     let query: TemporalQueryParameters = serde_urlencoded::from_str(
-        "type=Vehicle,Building&attrs=speed,fuel&timerel=before&timeAt=2022-01-01T00:00:00Z&lastN=2&format=aggregatedValues&aggrMethods=avg&aggrPeriodDuration=PT1H&splitEntities=false",
+        "type=Vehicle,Building&attrs=speed,fuel&timerel=before&timeAt=2022-01-01T00:00:00Z&lastN=2&format=aggregatedValues&aggrMethods=avg&aggrPeriodDuration=PT1H&join=flat&joinLevel=2&splitEntities=false",
     )
     .expect("a valid temporal query");
     let outcome = create(&service, EntityMapQuery::TemporalEntities(&query)).await;
