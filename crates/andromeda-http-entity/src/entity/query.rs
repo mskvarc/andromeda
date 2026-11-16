@@ -272,7 +272,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             .await
             .with_entity_instance(&uri)?
             .with_geometry_selection(geometry_selection(&query));
-        let rendered = answer.render(rendering, admitted.language_filter.as_ref(), &uri)?;
+        let rendered = answer.render(rendering, query.language().or(admitted.fallback_language.as_ref()), &uri)?;
         let links = page.links(total_count, reach, cursor_boundary(&entities));
         binding.hold_for(&links, &state.posted_queries).await.with_entity_instance(&uri)?;
         Ok(query_response(
