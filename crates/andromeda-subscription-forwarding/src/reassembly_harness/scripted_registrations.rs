@@ -1,6 +1,7 @@
 //! The registrations a re-assembly test finds the other holders of an entity
 //! through.
 
+use crate::reassembly_harness::{default_iri, sender_registration};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{
@@ -22,25 +23,56 @@ use andromeda_registration::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// The registration of the source that sends the notifications, of
+/// `information`, or of every `Vehicle` when it is absent.
+pub(crate) fn sender_of(information: &Value) -> ContextSourceRegistration {
+    let information = if information.is_null() {
+        json!([{"entities": [{"type": default_iri("Vehicle")}]}])
+    } else {
+        information.clone()
+    };
+    serde_json::from_value(json!({
+        "id": sender_registration().as_str(),
+        "type": "ContextSourceRegistration",
+        "endpoint": "http://sender.example/",
+        "mode": "inclusive",
+        "operations": ["federationOps"],
+        "information": information,
+        "status": "ok",
+        "createdAt": "2024-01-01T00:00:00Z",
+        "modifiedAt": "2024-01-01T00:00:00Z"
+    }))
+    .expect("a valid registration")
+}
+
 /// A registration store that answers every matching query with its fixed list,
-/// except for the first few, which it fails, and a lookup by identifier and a
-/// listing of the active registrations from the same list. A creation is refused as an unavailable store, and an update
-/// or deletion finds no registration.
+/// except for the first few, which it fails, a listing of the active
+/// registrations from the same list, and a lookup by identifier from the same
+/// list and the registration of the source that sends the notifications. A
+/// creation is refused as an unavailable store, and an update or deletion
+/// finds no registration.
 pub(crate) struct ScriptedRegistrations {
     /// The registrations every matching query answers.
     registrations: Vec<ContextSourceRegistration>,
+    /// The registration of the source that sends the notifications, found by
+    /// a lookup when the list does not hold it.
+    sender: ContextSourceRegistration,
     /// How many of the following matching queries still fail.
     failures_left: AtomicUsize,
 }
 
 impl ScriptedRegistrations {
     /// A store answering matching queries with `registrations`, the first
-    /// `failures` of them with a store failure instead.
-    pub(crate) const fn new(registrations: Vec<ContextSourceRegistration>, failures: usize) -> ScriptedRegistrations {
+    /// `failures` of them with a store failure instead, and a lookup of
+    /// `sender`'s identifier with `sender` when `registrations` does not hold
+    /// it.
+    pub(crate) const fn new(registrations: Vec<ContextSourceRegistration>, sender: ContextSourceRegistration, failures: usize) -> ScriptedRegistrations {
         ScriptedRegistrations {
             registrations,
+            sender,
             failures_left: AtomicUsize::new(failures),
         }
     }
@@ -68,7 +100,12 @@ impl RegistrationStore for ScriptedRegistrations {
     }
 
     async fn get(&self, id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
-        Ok(self.registrations.iter().find(|registration| registration.id == *id).cloned())
+        Ok(self
+            .registrations
+            .iter()
+            .chain([&self.sender])
+            .find(|registration| registration.id == *id)
+            .cloned())
     }
 
     async fn query_compiled(&self, _compiled: &CompiledCsrQuery, _window: &PageWindow) -> Result<RegistrationPage, RegistrationError> {

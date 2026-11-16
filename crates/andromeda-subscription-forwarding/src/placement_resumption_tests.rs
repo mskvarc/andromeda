@@ -7,7 +7,7 @@ use crate::reassembly_harness::{
     SceneSpec,
     forwarding_maps::{ClaimKeeping, ClaimLease},
     identifier,
-    subscribing_source::SubscribingSource,
+    subscribing_source::{SPEED, SubscribingSource},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -116,14 +116,15 @@ fn leased(scene: &ReassemblyScene) -> bool {
     matches!(scene.maps().lease_at(&identifier(SOURCE)), Some(ClaimLease::Until(_)))
 }
 
-/// A notification the source sends under the copy `copy`, of one `Vehicle`.
+/// A notification the source sends under the copy `copy`, of one `Vehicle`
+/// holding the Property its registration names.
 fn notification_under(copy: &Identifier) -> Value {
     json!({
         "id": "urn:ngsi-ld:Notification:resumed",
         "type": "Notification",
         "subscriptionId": copy.as_str(),
         "notifiedAt": "2026-11-09T12:00:00Z",
-        "data": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 40}}]
+        "data": [{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", (SPEED): {"type": "Property", "value": 40}}]
     })
 }
 

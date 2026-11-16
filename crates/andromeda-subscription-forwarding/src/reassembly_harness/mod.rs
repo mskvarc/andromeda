@@ -28,7 +28,7 @@ use crate::{
         inert_ports::{AcceptingEndpoints, NoLocalTypes, offline_engine},
         recording_router::RecordingRouter,
         recording_subscriptions::RecordingSubscriptions,
-        scripted_registrations::ScriptedRegistrations,
+        scripted_registrations::{ScriptedRegistrations, sender_of},
         stored_forms::{stored_companion, stored_subscription},
     },
     receiver::ReceiverEndpoint,
@@ -89,6 +89,9 @@ pub(crate) struct SceneSpec {
     pub(crate) held: Vec<EntityState>,
     /// The registrations a retrieval of a split entity finds holders through.
     pub(crate) registrations: Vec<ContextSourceRegistration>,
+    /// The `information` of the registration of the source that sends the
+    /// notifications, as an array; absent for every `Vehicle`.
+    pub(crate) sender_information: Value,
     /// How many of the first registration queries fail.
     pub(crate) registration_failures: usize,
     /// The copies of the local subscription the sources hold.
@@ -162,6 +165,7 @@ impl ReassemblyScene {
             subscription_members,
             held,
             registrations,
+            sender_information,
             registration_failures,
             copies,
             companion,
@@ -201,7 +205,7 @@ impl ReassemblyScene {
         let held = Arc::new(HeldEntities::new(held));
         let census = RegistrationCensus::new(u64::try_from(registrations.len()).expect("a registration count fits a u64"));
         let federation = FederationService::new(
-            Arc::new(ScriptedRegistrations::new(registrations, registration_failures)),
+            Arc::new(ScriptedRegistrations::new(registrations, sender_of(&sender_information), registration_failures)),
             census,
             Arc::new(NoLocalTypes),
             offline_engine(),
