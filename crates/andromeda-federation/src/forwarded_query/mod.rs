@@ -14,6 +14,9 @@
 //! the same ones. The rest of the client's parameters travel unchanged, except
 //! the filters that read attributes, which clauses 5.7.2.4 and 5.7.4.4 remove
 //! under split entities so they can be applied once to the aggregated result.
+//! A query's Linked Entities are walked by this broker once the sources have
+//! answered (clause 4.5.23), so its `join` travels only beside a `q` that
+//! crosses a Relationship, which a source cannot read without one.
 
 use crate::{
     error::FederationError,
@@ -269,6 +272,7 @@ impl RegistrationForwarding<'_, '_> {
                             return Ok(None);
                         }
                         query.push_q(params.q.as_ref(), params.json_keys.as_deref(), self.names).await?;
+                        query.push_q_join(params.q.as_ref(), params.join_level);
                         query.push_geo(params.geo.0.as_ref(), self.names).await?;
                         query.push_optional(ForwardedParameter::ScopeQ, params.scope_q.as_ref().map(ToString::to_string));
                     }
@@ -879,6 +883,45 @@ mod tests {
                 "attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&join=flat&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1%2Curn%3Angsi-ld%3ABuilding%3A2"
                     .to_string()
             ]
+        );
+    }
+
+    /// Clause 5.7.2.4 refuses a `q` over Linked Entity Attributes without a
+    /// retrieval as deep as its hops as a too deep query, so such a `q`
+    /// travels with `join=inline`, in which the source nests its Linked
+    /// Entities rather than appending them as matches, at the client's
+    /// `joinLevel`. The client's `containedBy` stays behind, and so does its
+    /// `join` beside a `q` crossing no Relationship, since this broker walks
+    /// the Linked Entities of the merged answer itself (clause 4.5.23).
+    #[tokio::test]
+    async fn a_q_crossing_a_relationship_travels_with_an_inline_join_at_the_client_depth() {
+        let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let hop = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2&containedBy=urn:ngsi-ld:Building:1");
+        pretty_assertions::assert_eq!(
+            strings(&narrow(ClientQuery::EntityQuery(&hop), &block, SplitEntities::Complete).await),
+            vec!["type=Vehicle&limit=1000&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline&joinLevel=2".to_string()]
+        );
+        let default_depth = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline");
+        pretty_assertions::assert_eq!(
+            strings(&narrow(ClientQuery::EntityQuery(&default_depth), &block, SplitEntities::Complete).await),
+            vec!["type=Vehicle&limit=1000&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline".to_string()]
+        );
+        let no_hop = entity_query("type=Vehicle&q=speed%3E1&join=flat&joinLevel=2");
+        pretty_assertions::assert_eq!(
+            strings(&narrow(ClientQuery::EntityQuery(&no_hop), &block, SplitEntities::Complete).await),
+            vec!["type=Vehicle&limit=1000&q=speed%3E1".to_string()]
+        );
+    }
+
+    /// Clause 5.7.2.4: under split entities the `q` waits for the aggregation,
+    /// and the retrieval it is read under stays behind with it.
+    #[tokio::test]
+    async fn a_split_query_holds_back_the_join_of_its_q() {
+        let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let hop = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2");
+        pretty_assertions::assert_eq!(
+            strings(&narrow(ClientQuery::EntityQuery(&hop), &block, SplitEntities::Split).await),
+            vec!["type=Vehicle&limit=1000".to_string()]
         );
     }
 
