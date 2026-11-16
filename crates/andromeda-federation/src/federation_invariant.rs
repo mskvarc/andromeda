@@ -1,11 +1,13 @@
 //! None of these is the client's doing: each is a property of a registration the broker admitted or of the broker's own configuration, so a broken one is answered `InternalError`.
 
-use andromeda_http_headers::received_protocol::ReceivedProtocolError;
+use crate::forwarded_parameter::ForwardedParameter;
+use andromeda_http_headers::{language::LanguageFilterError, received_protocol::ReceivedProtocolError};
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
+use andromeda_ngsi_ld_query::geo::input::GeoQueryInputError;
 use andromeda_retry::schedule_error::BackoffScheduleError;
 use mediatype::MediaTypeBuf;
 use thiserror::Error;
@@ -35,6 +37,22 @@ pub enum FederationInvariant {
     /// identifier, although the narrowing took it from a parsed query.
     #[error("an identifier of a forwarded batch query is not an NGSI-LD identifier: {0}")]
     ForwardedIdentifier(#[source] IdentifierParseError),
+    /// The clause 4.10 members a forwarded query writes do not read back as a
+    /// geo-query, although the narrowing wrote them from an admitted one.
+    #[error("the geo-query members of a forwarded query do not read back as a geo-query: {0}")]
+    ForwardedGeoQuery(#[source] GeoQueryInputError),
+    /// A forwarded query writes some of `georel`, `geometry` and `coordinates`
+    /// but not all three, which the narrowing writes together.
+    #[error("a forwarded query writes only part of a geo-query")]
+    PartialForwardedGeoQuery,
+    /// The `lang` a forwarded query writes does not read back as a clause 4.15
+    /// language filter, although the narrowing wrote it from a parsed one.
+    #[error("the lang of a forwarded query does not read back as a language filter: {0}")]
+    ForwardedLanguageFilter(#[source] LanguageFilterError),
+    /// A forwarded entity query writes a parameter the batch binding has no
+    /// place for, which the narrowing of an entity query never writes.
+    #[error("a forwarded batch query has no place for the {0} parameter")]
+    BatchQueryParameter(ForwardedParameter),
     /// The one attribute of a forwarded attribute fragment compacted to no
     /// attribute member, although the fragment names one.
     #[error("a forwarded attribute fragment compacted to no attribute")]

@@ -5,7 +5,6 @@ use crate::{
     pagination::parameters::PageParameters,
     query::{deserialization::OptionalGeoQuery, temporal::TemporalQueryParameters},
 };
-use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -71,7 +70,7 @@ impl TryFrom<Query> for TemporalQueryParameters {
             join_level: query.join_level,
             contained_by: query.contained_by,
             dataset_id: query.dataset_id,
-            lang: query.lang.map(LanguageFilter::from_tag),
+            lang: query.lang,
             local: None,
             entity_map: query.entity_map,
             entity_map_lifetime: query.entity_map_lifetime,

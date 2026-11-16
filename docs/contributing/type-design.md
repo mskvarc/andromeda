@@ -70,6 +70,6 @@ When it isn't clear which side a type is on, treat it as crossing the API until 
 
 ## HTTP headers
 
-Every header the broker reads or writes has a typed form in `andromeda-http-headers`. Most of them, including `Link`, `Accept`, `Warning` and the `NGSILD-*` headers, implement `headers::Header`. A language preference, whether it comes from `Accept-Language` or from the `lang` query parameter, is a `LanguageFilter` ranked by quality. Never read or build a header from a raw string.
+Every header the broker reads or writes has a typed form in `andromeda-http-headers`. Most of them, including `Link`, `Accept`, `Warning` and the `NGSILD-*` headers, implement `headers::Header`. A language preference, whether it comes from `Accept-Language`, the `lang` query parameter or the `lang` member of a Query or a Subscription, is a `LanguageFilter` ranked by quality, which reads and writes itself as the clause 4.15 string. Never read or build a header from a raw string.
 
 Andromeda writes header names in lowercase, and field names in lowercase where a header lists them, as `Vary` does. This is a house convention. Field names are case-insensitive (RFC 9110 section 5.1), so no test asserts their casing and every test looks headers up case-insensitively.

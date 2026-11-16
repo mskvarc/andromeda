@@ -165,7 +165,7 @@ impl<T: fmt::Display> fmt::Display for QualityValue<T> {
         fmt::Display::fmt(&self.value, f)?;
         match self.quality.value() {
             1000 => Ok(()),
-            _ => write!(f, "; {}", self.quality),
+            _ => write!(f, ";{}", self.quality),
         }
     }
 }
@@ -227,7 +227,7 @@ mod tests {
         pretty_assertions::assert_eq!(default.to_string(), "text/html");
 
         let ranked = QualityValue::new("gzip", Quality::new(500).expect("in range"));
-        pretty_assertions::assert_eq!(ranked.to_string(), "gzip; q=0.5");
+        pretty_assertions::assert_eq!(ranked.to_string(), "gzip;q=0.5");
     }
 
     #[test]

@@ -8,6 +8,7 @@
 //! read from, and the walk a query response is written by writes all of it,
 //! the Linked Entities of a `join=inline` subscription included.
 
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::{
     plan::{FlatEntity, InlineCursor},
     typed::TypedEntities,
@@ -15,7 +16,6 @@ use andromeda_linked_retrieval::{
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_render::{
     notification_entity::{NotificationEntity, StampedInstants},
-    notification_language::NotificationLanguage,
     notified_changes::{DeletedInstances, HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
     version::fallback::VersionFallback,
@@ -35,7 +35,7 @@ pub(crate) struct WrittenShape<'a> {
     /// older version.
     pub(crate) fallback: Option<VersionFallback>,
     /// The subscription's `lang`, which every entity is reduced under.
-    pub(crate) language: Option<&'a NotificationLanguage>,
+    pub(crate) language: Option<&'a LanguageFilter>,
 }
 
 /// The instances a change deleted, as the state before it held them.

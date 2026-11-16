@@ -44,7 +44,6 @@ pub mod language_negotiation;
 mod list_as_relationship_tests;
 pub mod notification_data;
 pub mod notification_entity;
-pub mod notification_language;
 pub mod notified_changes;
 #[cfg(test)]
 mod notified_changes_tests;

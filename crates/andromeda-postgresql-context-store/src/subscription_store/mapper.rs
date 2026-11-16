@@ -10,6 +10,7 @@ use crate::{
     subscription_store::{rows::SubscriptionRow, status_code::status_of, stored_subscription_error::StoredSubscriptionError, trigger_code::trigger_of},
 };
 use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
@@ -31,7 +32,6 @@ use andromeda_postgresql_stored_values::{notification_trigger::NotificationTrigg
 use andromeda_subscription::{notifying_since::NotifyingSince, stored_subscription::StoredSubscription};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use langtag::LangTagBuf;
 use sea_query::Iden;
 use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};
@@ -178,7 +178,10 @@ pub fn row_from_pg(row: &PgRow) -> Result<SubscriptionRow, ContextStoreError> {
     let notification: NotificationParams =
         stored_json(row, Subscriptions::Notification, StoredSubscriptionError::Notification)?.ok_or(StoredSubscriptionError::NotificationAbsent)?;
     let lang_raw: Option<String> = row.try_get(Subscriptions::Lang.unquoted())?;
-    let lang = lang_raw.map(LangTagBuf::new).transpose().map_err(StoredSubscriptionError::Lang)?;
+    let lang = lang_raw
+        .map(|raw| raw.parse::<LanguageFilter>())
+        .transpose()
+        .map_err(StoredSubscriptionError::Lang)?;
     let jsonld_context_raw: Option<String> = row.try_get(Subscriptions::JsonldContext.unquoted())?;
     let jsonld_context = jsonld_context_raw
         .map(|raw| IriBuf::new(raw).map_err(StoredSubscriptionError::JsonldContext))

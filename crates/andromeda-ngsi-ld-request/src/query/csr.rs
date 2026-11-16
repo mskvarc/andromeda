@@ -3,7 +3,6 @@
 use crate::{
     error::ParameterError,
     impl_shared_query_params,
-    language_filter::deserialize_optional_language_filter,
     options::SysAttrsOptions,
     pagination::parameters::PageParameters,
     query::{
@@ -86,7 +85,7 @@ pub struct CsrQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
     /// Clause-4.15 natural-language selection preferences (`lang`).
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// The `GeoProperty` a `GeoJSON` response uses as its geometry (`geometryProperty`).
     #[serde(rename = "geometryProperty")]

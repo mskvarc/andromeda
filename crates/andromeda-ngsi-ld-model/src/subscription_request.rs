@@ -46,11 +46,11 @@ use crate::{
     subscription::SubscriptionType,
     subscription_member::SubscriptionMember,
 };
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -159,9 +159,10 @@ pub struct SubscriptionRequest {
     /// Whether the subscription is active.
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
     pub is_active: Clearable<bool>,
-    /// Preferred language for multi-language properties.
+    /// The clause 4.15 language filter every notified Entity's
+    /// `LanguageProperty` is reduced by (Table 5.2.12-1).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
-    pub lang: Clearable<LangTagBuf>,
+    pub lang: Clearable<LanguageFilter>,
     /// The `@context` notifications are rendered with (clause 5.8.1.4), an
     /// absolute URI.
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
@@ -412,6 +413,15 @@ mod tests {
         });
         let written = serde_json::to_value(decode(&body)).expect("the request writes");
         pretty_assertions::assert_eq!(written, body);
+    }
+
+    /// Table 5.2.12-1 `lang` is the clause 4.15 filter, so a ranked list is
+    /// read whole and written back in the order the subscriber ranked it.
+    #[test]
+    fn a_ranked_language_filter_is_read_whole() {
+        let written = serde_json::to_value(decode(&json!({"lang": "fr-CH,fr;q=0.9,*;q=0.5"}))).expect("the request writes");
+        pretty_assertions::assert_eq!(written["lang"], "fr-CH,fr;q=0.9,*;q=0.5");
+        assert!(refused(&json!({"lang": "fr,,en"})));
     }
 
     /// Every member Table 5.2.12-1 gives cardinality `0..1`, beside whether

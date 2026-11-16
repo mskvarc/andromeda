@@ -3,6 +3,7 @@
 //! and written in the format it asks for.
 
 use crate::received_entity::read_notified;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedDocument};
@@ -10,7 +11,6 @@ use andromeda_ngsi_ld_model::received::{ReceivedElement, ReceivedEntities};
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{
     notification_entity::NotificationEntity,
-    notification_language::NotificationLanguage,
     notified_changes::{HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
 };
@@ -29,7 +29,7 @@ pub(crate) async fn relayed(entity: &Value, format: ResponseFormat) -> Value {
 }
 
 /// `entity` relayed in `format` for a subscription naming `language`.
-pub(crate) async fn relayed_under(entity: &Value, format: ResponseFormat, language: Option<&NotificationLanguage>) -> Value {
+pub(crate) async fn relayed_under(entity: &Value, format: ResponseFormat, language: Option<&LanguageFilter>) -> Value {
     relay_outcome(entity, &ContextSpec::core_only(), format, language)
         .await
         .expect("the notified entity is relayed")
@@ -37,12 +37,7 @@ pub(crate) async fn relayed_under(entity: &Value, format: ResponseFormat, langua
 
 /// `entity`, notified under `inbound`, relayed in `format` for a subscription
 /// naming `language` under the core context, or the refusal of it.
-pub(crate) async fn relay_outcome(
-    entity: &Value,
-    inbound: &ContextSpec,
-    format: ResponseFormat,
-    language: Option<&NotificationLanguage>,
-) -> Result<Value, String> {
+pub(crate) async fn relay_outcome(entity: &Value, inbound: &ContextSpec, format: ResponseFormat, language: Option<&LanguageFilter>) -> Result<Value, String> {
     let engine = offline_engine();
     let expansion = EntityExpansion::prepare(&engine, inbound).await.expect("the inbound context processes");
     let elements = ReceivedEntities::from_slice(entity.to_string().as_bytes()).expect("an entity");
@@ -61,7 +56,7 @@ pub(crate) async fn written(
     engine: &JsonLdEngine,
     received: &ReceivedDocument,
     format: ResponseFormat,
-    language: Option<&NotificationLanguage>,
+    language: Option<&LanguageFilter>,
 ) -> Result<Value, String> {
     let context = ContextSpec::core_only();
     let context_compactor = engine.compactor(&context);

@@ -3,7 +3,6 @@
 use crate::{
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
-    language_filter::deserialize_optional_language_filter,
     language_tag::deserialize_optional_language_tag,
     options::{EntityRepresentationOptions, OverwritePolicy},
     query::deserialization::{
@@ -168,7 +167,7 @@ pub struct GetEntityParams {
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
     /// Clause-4.15 natural-language selection preferences.
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]

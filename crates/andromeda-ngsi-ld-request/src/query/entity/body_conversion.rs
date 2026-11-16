@@ -5,7 +5,6 @@ use crate::{
     pagination::parameters::PageParameters,
     query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters},
 };
-use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, written_entity_selector::WrittenEntitySelector};
 
@@ -50,7 +49,7 @@ impl TryFrom<Query> for EntityQueryParameters {
             omit: query.omit,
             ordering: query.ordering.unwrap_or_default(),
             scope_q: query.scope_q,
-            lang: query.lang.map(LanguageFilter::from_tag),
+            lang: query.lang,
             dataset_id: query.dataset_id,
             expand_values: query.expand_values,
             json_keys: query.json_keys,

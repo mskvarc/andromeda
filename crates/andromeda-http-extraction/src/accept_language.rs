@@ -135,7 +135,7 @@ mod tests {
         let response = send(AcceptLanguageReading::Honoured, &[("accept-language", "fr-CH, fr;q=0.9, en;q=0.8")]).await;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
         assert!(varies_on_language(&response));
-        pretty_assertions::assert_eq!(body_text(response).await, "fr-CH, fr; q=0.9, en; q=0.8");
+        pretty_assertions::assert_eq!(body_text(response).await, "fr-CH,fr;q=0.9,en;q=0.8");
     }
 
     /// RFC 9110 section 12.5.5: the selection depends on the header whether or

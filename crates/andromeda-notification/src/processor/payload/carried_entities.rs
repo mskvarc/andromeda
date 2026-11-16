@@ -16,6 +16,7 @@ use crate::{
     error::NotificationError,
     processor::payload::notified_entity::{NotifiedEntity, WrittenShape, linked_entity},
 };
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::{
     graph::LinkedGraph,
     narrowing::{list::ListInForce, member::MemberRule},
@@ -26,7 +27,6 @@ use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
     joined_notification::{join_plan, joined_entities},
     notification_data::{DataShape, notification_data},
-    notification_language::NotificationLanguage,
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
@@ -47,7 +47,7 @@ pub(crate) struct CarriedShape<'a> {
     pub(crate) conformance: Option<SpecVersion>,
     /// The subscription's `lang` every entity is reduced under (Table
     /// 5.2.12-1, clause 4.15).
-    pub(crate) language: Option<&'a NotificationLanguage>,
+    pub(crate) language: Option<&'a LanguageFilter>,
 }
 
 /// The Linked Entities a subscription's `join` reached, with the expansion of
@@ -112,7 +112,7 @@ mod tests {
         carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         notified_entity::NotifiedEntity,
     };
-    use andromeda_http_headers::media_type::ResponseMediaType;
+    use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
     use andromeda_linked_retrieval::{
         graph::{LinkedGraph, RootEdges},
         narrowing::list::ListInForce,
@@ -125,7 +125,6 @@ mod tests {
         geometry_selection::GeometrySelection,
         notification_data::DataShape,
         notification_entity::StampedInstants,
-        notification_language::NotificationLanguage,
         notified_changes::HeldAttributes,
         structural_projection::StructuralProjection,
     };
@@ -372,7 +371,7 @@ mod tests {
             "type": "Place",
             "name": {"type": "LanguageProperty", "languageMap": {"en": "Tower", "de": "Turm"}}
         }))];
-        let german = NotificationLanguage::of(&"de".parse().expect("a language tag"));
+        let german = LanguageFilter::parse("de").expect("a language filter");
         let reduced = carried(
             &places,
             None,

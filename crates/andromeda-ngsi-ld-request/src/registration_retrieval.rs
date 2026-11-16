@@ -9,7 +9,6 @@
 
 use crate::{
     error::ParameterError,
-    language_filter::deserialize_optional_language_filter,
     options::SysAttrsOptions,
     query::deserialization::deserialize_optional_projection_terms,
     query_parameter::{QueryParameter, QueryParameterSet},
@@ -31,7 +30,7 @@ pub struct RegistrationRetrieveParams {
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
     /// Clause 4.15 natural-language selection preferences (`lang`).
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// The system-attribute selection (clause 6.3.11 `options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,

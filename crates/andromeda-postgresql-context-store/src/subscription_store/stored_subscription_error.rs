@@ -6,11 +6,11 @@
 //! manual surgery. Each names the column and carries the parser's own rejection.
 
 use andromeda_context_commit::subscription_key::SubscriptionKeyOutOfRange;
+use andromeda_http_headers::language::LanguageFilterError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, spec_version::SpecVersionParseError};
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use iri_rs::InvalidIri;
-use langtag::InvalidLangTag;
 use thiserror::Error;
 
 /// A stored subscription column that does not parse back into its domain type.
@@ -66,9 +66,9 @@ pub enum StoredSubscriptionError {
     /// The `temporal_q` column does not deserialize.
     #[error("the stored subscription temporalQ does not deserialize: {0}")]
     TemporalQ(#[source] serde_json::Error),
-    /// The `lang` column is not a language tag.
-    #[error("a stored subscription lang is not a language tag: {0}")]
-    Lang(#[source] InvalidLangTag<String>),
+    /// The `lang` column is not a clause 4.15 language filter.
+    #[error("a stored subscription lang is not a language filter: {0}")]
+    Lang(#[source] LanguageFilterError),
     /// The `jsonld_context` column is not an absolute IRI.
     #[error("a stored subscription jsonldContext is not an absolute IRI: {0}")]
     JsonldContext(#[source] InvalidIri<String>),

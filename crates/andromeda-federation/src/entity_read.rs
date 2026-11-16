@@ -6,7 +6,6 @@ use crate::{
     cache::Cacheability,
     error::FederationError,
     forwarded_batch_query::batch_query,
-    forwarded_parameter::ForwardedParameter,
     forwarded_query::ForwardedQuery,
     forwarding_context::BodyPresence,
     forwarding_url::{build_batch_query_url, build_query_url, build_retrieve_url},
@@ -21,7 +20,6 @@ use crate::{
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
     retrieval_answer::{document, settle, shape_of},
     source_reach::SourceReach,
-    source_walk::SOURCE_PAGE_SIZE,
     split_entities::SplitEntities,
     term_resolver::TermResolver,
 };
@@ -322,24 +320,20 @@ const fn read_intent(delivery: QueryDelivery) -> ReadIntent {
 
 /// The forwarded read one registration receives for a query, through the
 /// binding it advertises (clauses 4.3.6.1, 6.23.1): a GET query, or a POST
-/// batch query.
+/// batch query, and none when the batch query selects no entity.
 fn query_read(registration: &ContextSourceRegistration, query: ForwardedQuery, binding: ReadBinding) -> Vec<ForwardedRead> {
     let endpoint = registration.access.endpoint.url();
     match binding {
         ReadBinding::Query => get_reads(registration, query, build_query_url),
-        ReadBinding::BatchQuery => {
-            // Clause 6.23 carries the query in the body; the page size travels
-            // as the URI parameter clause 6.3.10 defines for it.
-            let page = format!("{}={}", ForwardedParameter::Limit, SOURCE_PAGE_SIZE);
-            vec![match batch_query(&query) {
-                Ok(body) => ForwardedRead::PostQuery {
-                    url: build_batch_query_url(endpoint, &page),
-                    body: Box::new(body),
-                },
-                // A query that cannot be written is the registration's failure
-                // to prepare, which a read reports as its own.
-                Err(error) => ForwardedRead::Get(Err(error)),
-            }]
-        }
+        ReadBinding::BatchQuery => match batch_query(&query) {
+            Ok(Some(batch)) => vec![ForwardedRead::PostQuery {
+                url: build_batch_query_url(endpoint, &batch.parameters),
+                body: Box::new(batch.body),
+            }],
+            Ok(None) => Vec::new(),
+            // A query that cannot be written is the registration's failure
+            // to prepare, which a read reports as its own.
+            Err(error) => vec![ForwardedRead::Get(Err(error))],
+        },
     }
 }

@@ -262,7 +262,7 @@ impl<'a> ForwardedNames<'a> {
 /// name grammar accepts, so a refusal here means the forwarding context maps a
 /// name to text no NGSI-LD name can be: a broken context, not a value to
 /// forward as written.
-fn forwarded_name<N>(spelling: &str) -> Result<N, FederationError>
+pub(crate) fn forwarded_name<N>(spelling: &str) -> Result<N, FederationError>
 where
     N: FromStr<Err = NgsiLdReferenceError>,
 {

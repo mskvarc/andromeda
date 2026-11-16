@@ -118,6 +118,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity",
         "andromeda-entity-map",
         "andromeda-health",
+        "andromeda-http-headers",
         "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-entity",

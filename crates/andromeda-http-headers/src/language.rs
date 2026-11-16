@@ -1,9 +1,11 @@
 //! Language negotiation over BCP 47 ranges (clause 5.7.2.5).
 //!
-//! The same value reaches a request two ways, the `lang` query parameter of
-//! clause 4.15 and, under the `accept_language` extension, `Accept-Language`
-//! itself. Both spell it with the `Accept-Language` syntax of RFC 9110 section
-//! 12.5.4, so the grammar is owned here rather than by either carrier.
+//! The same value reaches the broker four ways: the `lang` query parameter of
+//! clause 4.15, the `lang` member of a Query (Table 5.2.23-1) and of a
+//! Subscription (Table 5.2.12-1), and, under the `accept_language` extension,
+//! `Accept-Language` itself. Every one spells it with the `Accept-Language`
+//! syntax of RFC 9110 section 12.5.4, so the grammar and its rendering are
+//! owned here rather than by any carrier.
 
 use crate::quality::{Quality, QualityParseError, QualityValue};
 use http::{
@@ -11,7 +13,8 @@ use http::{
     header::{InvalidHeaderValue, ToStrError},
 };
 use langtag::{InvalidLangTag, LangTag, LangTagBuf};
-use std::{cmp::Reverse, fmt};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
+use std::{cmp::Reverse, fmt, str::FromStr};
 use thiserror::Error;
 
 /// A language preference: either a wildcard or a typed BCP 47 language tag.
@@ -124,22 +127,15 @@ impl fmt::Display for LanguageRange {
 ///
 /// Non-emptiness is the type's invariant rather than a caller's obligation:
 /// every constructor rejects an empty list, so a filter that exists always has
-/// something to negotiate against.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// something to negotiate against. A filter serializes as the clause 4.15
+/// string it renders as, and deserializes from that string.
+#[derive(Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub struct LanguageFilter {
     /// The ranges as written, in wire order; never empty.
     preferences: Vec<QualityValue<LanguageRange>>,
 }
 
 impl LanguageFilter {
-    /// Build a single-preference filter from an already validated BCP 47 tag.
-    #[must_use]
-    pub fn from_tag(tag: LangTagBuf) -> LanguageFilter {
-        LanguageFilter {
-            preferences: vec![QualityValue::new(LanguageRange::Tag(tag), Quality::default())],
-        }
-    }
-
     /// Parse a comma-separated preference list (clause 4.15).
     ///
     /// # Errors
@@ -184,7 +180,7 @@ impl LanguageFilter {
     /// Returns the [`InvalidHeaderValue`] of a rendering that is no header
     /// value, which a filter built from validated tags never produces.
     pub fn to_header_value(&self) -> Result<HeaderValue, InvalidHeaderValue> {
-        HeaderValue::from_str(&self.preferences.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+        HeaderValue::from_str(&self.to_string())
     }
 
     /// Build a filter from already-parsed preferences.
@@ -219,6 +215,29 @@ impl LanguageFilter {
             .collect::<Vec<_>>();
         preferences.sort_by_key(|(ordinal, preference)| (Reverse(preference.quality()), *ordinal));
         preferences.into_iter().map(|(_, preference)| preference).collect()
+    }
+}
+
+// The rendering joins a variable-length list, which no derive's format string
+// expresses. It is the form clause 4.15 writes its examples in: the ranges in
+// wire order, comma-separated, each weight written as `;q=` without spaces.
+impl fmt::Display for LanguageFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut preferences = self.preferences.iter();
+        if let Some(first) = preferences.next() {
+            fmt::Display::fmt(first, f)?;
+        }
+        preferences.try_for_each(|preference| write!(f, ",{preference}"))
+    }
+}
+
+// Parsing lives in `LanguageFilter::parse`; this adapter exists because the
+// serde derive reads the filter through `FromStr`.
+impl FromStr for LanguageFilter {
+    type Err = LanguageFilterError;
+
+    fn from_str(raw: &str) -> Result<LanguageFilter, LanguageFilterError> {
+        LanguageFilter::parse(raw)
     }
 }
 
@@ -416,7 +435,31 @@ mod tests {
     #[test]
     fn the_header_value_lists_the_preferences_in_wire_order() {
         let filter = LanguageFilter::parse("en;q=0.5,fr,*;q=0.1").expect("valid");
-        pretty_assertions::assert_eq!(filter.to_header_value().expect("a header value"), "en; q=0.5, fr, *; q=0.1");
+        pretty_assertions::assert_eq!(filter.to_header_value().expect("a header value"), "en;q=0.5,fr,*;q=0.1");
+    }
+
+    /// Clause 4.15 EXAMPLE 4 renders back as written, and spaces around the
+    /// separators are dropped.
+    #[test]
+    fn a_filter_renders_as_clause_4_15_writes_it() {
+        for (written, rendered) in [
+            ("fr-CH,fr;q=0.9,en;q=0.8,*;q=0.5", "fr-CH,fr;q=0.9,en;q=0.8,*;q=0.5"),
+            ("fr-CH, fr; q=0.9", "fr-CH,fr;q=0.9"),
+            ("de", "de"),
+        ] {
+            pretty_assertions::assert_eq!(LanguageFilter::parse(written).expect("valid").to_string(), rendered);
+        }
+    }
+
+    /// A Query or Subscription member holds the filter as the string it
+    /// renders as, and reads a ranked list as the query parameter does.
+    #[test]
+    fn a_filter_serializes_as_its_string_and_deserializes_from_it() {
+        let filter: LanguageFilter = serde_json::from_str(r#""fr-CH,fr;q=0.9,*;q=0.5""#).expect("a ranked filter");
+        pretty_assertions::assert_eq!(filter.preferences().len(), 3);
+        pretty_assertions::assert_eq!(serde_json::to_string(&filter).expect("writes"), r#""fr-CH,fr;q=0.9,*;q=0.5""#);
+        assert!(serde_json::from_str::<LanguageFilter>(r#""not_a_language""#).is_err());
+        assert!(serde_json::from_str::<LanguageFilter>(r#""""#).is_err());
     }
 
     #[test]

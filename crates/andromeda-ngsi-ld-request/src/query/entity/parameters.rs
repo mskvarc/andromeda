@@ -2,7 +2,6 @@
 
 use crate::{
     impl_shared_query_params,
-    language_filter::deserialize_optional_language_filter,
     options::EntityRepresentationOptions,
     pagination::parameters::PageParameters,
     query::{
@@ -106,7 +105,7 @@ pub struct EntityQueryParameters {
     #[serde(rename = "scopeQ")]
     pub scope_q: Option<ScopeQuery>,
     /// Clause-4.15 natural-language selection preferences.
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]

@@ -120,6 +120,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-context-commit",
         "andromeda-context-space",
+        "andromeda-http-headers",
         "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-linked-retrieval",

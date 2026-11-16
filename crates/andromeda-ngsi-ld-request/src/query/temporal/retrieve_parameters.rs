@@ -15,7 +15,6 @@
 //! not define (clause 6.3.20).
 
 use crate::{
-    language_filter::deserialize_optional_language_filter,
     options::TemporalRepresentationOptions,
     query::{
         deserialization::{
@@ -91,7 +90,7 @@ pub struct TemporalRetrieveParameters {
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Clause-4.15 natural-language selection preferences.
-    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// The aggregation methods, comma-separated (clause 4.5.19 `aggrMethods`).
     #[serde(rename = "aggrMethods")]

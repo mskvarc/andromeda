@@ -210,17 +210,14 @@ mod tests {
         received_entity::read_notified,
         relay_fixture::{offline_engine, received, relayed, relayed_under, relayed_with_changes},
     };
+    use andromeda_http_headers::language::LanguageFilter;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_model::received::{ReceivedElement, ReceivedEntities};
     use andromeda_ngsi_ld_query::projection::compiled::Projection;
-    use andromeda_ngsi_ld_render::{
-        notification_entity::NotificationEntity,
-        notification_language::NotificationLanguage,
-        structural_projection::StructuralProjection,
-    };
+    use andromeda_ngsi_ld_render::{notification_entity::NotificationEntity, structural_projection::StructuralProjection};
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use serde_json::json;
 
@@ -234,7 +231,7 @@ mod tests {
             "type": "Vehicle",
             "name": {"type": "LanguageProperty", "languageMap": {"en": "Tower", "de": "Turm"}}
         });
-        let english = NotificationLanguage::of(&"en".parse().expect("a language tag"));
+        let english = LanguageFilter::parse("en").expect("a language filter");
         let reduced = relayed_under(&notified, ResponseFormat::Normalized, Some(&english)).await;
         pretty_assertions::assert_eq!(reduced["name"], json!({"type": "Property", "value": "Tower", "lang": "en"}), "{reduced}");
         let simplified = relayed_under(&notified, ResponseFormat::Simplified, Some(&english)).await;
