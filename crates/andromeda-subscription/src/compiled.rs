@@ -83,6 +83,10 @@ pub struct CompiledCsrSubscription {
     pub geo_q: SubscriptionGeoFilter,
     /// The `scopeQ` matched against the registration's `scope` (clause 5.11.2.4).
     pub scope_q: Option<ScopeQuery>,
+    /// The `datasetId`s matched against the registration's `datasetId` (clause
+    /// 5.12): a registration listing `datasetId`s is selected only when it
+    /// shares one, and `None` selects every registration.
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Minimum seconds between notifications.
     pub throttling_secs: Option<f64>,
     /// Periodic notification interval in seconds.

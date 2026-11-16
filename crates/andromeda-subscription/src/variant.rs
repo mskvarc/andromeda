@@ -16,25 +16,16 @@ use andromeda_ngsi_ld_model::{subscription::Subscription, subscription_request::
 use andromeda_ngsi_ld_query::filter::compilation::AdmittedFilter;
 use futures::future::BoxFuture;
 
-/// Controls whether a subscription variant persists clause 5.8 `datasetId`
-/// filtering.
+/// What the members a Subscription matches Context Source Registrations by,
+/// its `csf` and its `datasetId` (clause 5.12), decide for one kind of
+/// Subscription.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DatasetIdPolicy {
-    /// Retain validated dataset identifiers for entity subscriptions.
-    Retain,
-    /// Discard dataset identifiers for context-source subscriptions, whose
-    /// contract does not define this filter.
-    Discard,
-}
-
-/// What a Subscription's `csf` decides for one kind of Subscription.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CsfReach {
+pub enum RegistrationMatchReach {
     /// Which Context Source Registrations the Subscription is notified of
-    /// (clause 5.11.2.4), so a new `csf` changes what it selects.
+    /// (clauses 5.11.2.4 and 5.12), so a new value changes what it selects.
     NotifiedRegistrations,
-    /// Which Context Sources an entity Subscription reaches (clauses 5.2.12
-    /// and 5.8.1.4), never which Entities it is notified of.
+    /// Which Context Sources an entity Subscription reaches (clauses 5.2.12,
+    /// 5.8.1.4 and 5.12), never which Entities it is notified of.
     ReachedSources,
 }
 
@@ -84,11 +75,8 @@ pub trait SubscriptionVariant: Send + Sync {
     /// already in the past.
     fn validate_update_extra(&self, request: &SubscriptionRequest) -> Result<(), SubscriptionError>;
 
-    /// Select how this subscription variant handles the `datasetId` field.
-    fn dataset_id_policy(&self) -> DatasetIdPolicy;
-
-    /// What this subscription variant's `csf` decides.
-    fn csf_reach(&self) -> CsfReach;
+    /// What this subscription variant's `csf` and `datasetId` decide.
+    fn registration_match_reach(&self) -> RegistrationMatchReach;
 
     /// Build an "upserted" change event for a subscription that was created or
     /// updated, as `kind` says.

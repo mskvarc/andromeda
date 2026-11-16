@@ -34,7 +34,7 @@ pub(crate) fn unexpired_at(at: SimpleExpr) -> Cond {
 /// Every active, unexpired periodic subscription of `kind` owed a grid point
 /// at `cutoff`, in the read-side projection.
 pub(super) fn due_interval_select(kind: StoredKind, target: &ContextTarget, cutoff: DateTime<Utc>) -> SelectStatement {
-    let mut select = projected_select(kind, target);
+    let mut select = projected_select(target);
     select
         .and_where(status_is(SubscriptionStatus::Active))
         .and_where(of_kind(kind))

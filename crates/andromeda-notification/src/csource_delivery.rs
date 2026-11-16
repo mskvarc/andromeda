@@ -285,6 +285,7 @@ mod tests {
             temporal_q: None,
             geo_q: SubscriptionGeoFilter::Unrestricted,
             scope_q: None,
+            dataset_id: None,
             throttling_secs: None,
             time_interval_secs: None,
             jsonld_context: None,

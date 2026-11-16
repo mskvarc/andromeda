@@ -181,7 +181,7 @@ where
             self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
 
             let status = compute_updated_status(SubscriptionStatus::Active, &requested_status_change(&request));
-            let values = SubscriptionWriteValues::from_create(request, self.variant.dataset_id_policy())?;
+            let values = SubscriptionWriteValues::from_create(request)?;
             let fields = values.to_fields();
 
             self.repo.create_subscription(target, &id, &fields, status).await?;
@@ -250,9 +250,9 @@ where
             let restart = NotifyingRestart::of_update(
                 existing_status,
                 status,
-                SinceRestart::of_selection(&request, &existing, self.variant.csf_reach()),
+                SinceRestart::of_selection(&request, &existing, self.variant.registration_match_reach()),
             );
-            let merged = SubscriptionWriteValues::merged(request, existing, self.variant.dataset_id_policy())?;
+            let merged = SubscriptionWriteValues::merged(request, existing)?;
             validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();
 

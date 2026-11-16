@@ -20,11 +20,12 @@
 //! the rows its uncompressed chunks hold.
 //!
 //! A check that restates one its table already held takes the place of a
-//! check a dropped column took with it, and every row that met the dropped
-//! check meets it. Reading the table to add it, or to validate it later, would
-//! learn nothing, so on a hypertable and on any other table it is added
-//! `not valid` and never validated. PostgreSQL tests every row written later
-//! against it all the same.
+//! check a dropped column took with it, or of one it drops, without a term the
+//! table no longer requires, and every row that met the check it replaces
+//! meets it. Reading the table to add it, or to validate it later, would learn
+//! nothing, so on a hypertable and on any other table it is added `not valid`
+//! and never validated. PostgreSQL tests every row written later against it
+//! all the same.
 
 use crate::{
     declared_schema::constraint::{ConstraintKind, DeclaredConstraint},
@@ -33,11 +34,15 @@ use crate::{
 
 /// The checks that restate one their table already held, as
 /// `(table, constraint)`. Each is the check of the same name without a column
-/// the statement adding it drops.
+/// the statement adding it drops, or without a term the table no longer
+/// requires.
 const RESTATED_CHECKS: &[(&str, &str)] = &[
     // A tombstone that held none of its members, `proof_seals` among them,
     // holds none of the members left.
     ("attribute_history", "chk_attribute_history_tombstone_members"),
+    // A context-source row that held no `dataset_ids` and no `local_only`
+    // holds no `local_only`.
+    ("subscriptions", "chk_subscriptions_csource_defaults"),
 ];
 
 /// A constraint added to a sealed table the costly way.
@@ -318,6 +323,30 @@ mod tests {
                 &[HISTORY.0, HISTORY_HYPERTABLE.0]
             )?,
             ["migrations/tenant/0003_history_without_proof_seals.sql:3:9"]
+        );
+        Ok(())
+    }
+
+    const SUBSCRIPTIONS: (&str, &str) = (
+        "tenant/0001_subscriptions.sql",
+        "create table subscriptions (\n    kind smallint not null,\n    local_only boolean not null default false,\n    dataset_ids text[],\n    constraint chk_subscriptions_csource_defaults check (kind = 1 or (dataset_ids is null and not local_only))\n);\n",
+    );
+
+    /// A check its statement drops and adds again without a term the table no
+    /// longer requires holds for every row the dropped one admitted.
+    #[test]
+    fn a_check_restated_without_a_term_is_accepted_not_valid_and_never_validated() -> Result<(), FixtureError> {
+        let restated = (
+            "tenant/0002_subscription_dataset_ids.sql",
+            "alter table subscriptions\n    drop constraint chk_subscriptions_csource_defaults,\n    add constraint chk_subscriptions_csource_defaults check (kind = 1 or not local_only) not valid;\n",
+        );
+        let findings = findings_sealing(Rule::ConstraintOnSealedTable, &[SUBSCRIPTIONS, restated], &[SUBSCRIPTIONS.0])?;
+        // The check the sealed create declares is reported here, never by a
+        // lint run, which reports nothing in a sealed migration.
+        assert_eq!(
+            findings.iter().filter(|finding| finding.starts_with("migrations/tenant/0002")).count(),
+            0,
+            "{findings:?}"
         );
         Ok(())
     }

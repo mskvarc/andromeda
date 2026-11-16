@@ -32,8 +32,6 @@ pub enum DeletableMember {
     ScopeQ,
     /// `csf`.
     Csf,
-    /// `datasetId`.
-    DatasetId,
     /// `throttling`.
     Throttling,
     /// `expiresAt`.
@@ -59,7 +57,6 @@ impl DeletedMembers {
             (DeletableMember::GeoQ, fragment.geo_q.is_ngsi_ld_null()),
             (DeletableMember::ScopeQ, fragment.scope_q.is_ngsi_ld_null()),
             (DeletableMember::Csf, fragment.csf.is_ngsi_ld_null()),
-            (DeletableMember::DatasetId, fragment.dataset_id.is_ngsi_ld_null()),
             (DeletableMember::Throttling, fragment.throttling.is_ngsi_ld_null()),
             (DeletableMember::ExpiresAt, fragment.expires_at.is_ngsi_ld_null()),
         ];
@@ -101,8 +98,8 @@ mod tests {
     /// NGSI-LD Null deletes the member.
     #[test]
     fn an_array_of_one_ngsi_ld_null_deletes_an_array_member() {
-        let deleted = DeletedMembers::of(&fragment(&json!({"datasetId": ["urn:ngsi-ld:null"]})));
-        assert!(deleted.contains(DeletableMember::DatasetId));
+        let deleted = DeletedMembers::of(&fragment(&json!({"watchedAttributes": ["urn:ngsi-ld:null"]})));
+        assert!(deleted.contains(DeletableMember::WatchedAttributes));
     }
 
     #[test]

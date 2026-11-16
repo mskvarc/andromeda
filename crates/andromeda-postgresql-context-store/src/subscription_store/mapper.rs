@@ -1,19 +1,13 @@
 //! Row-to-domain mapping for subscriptions.
 //!
-//! The PgRow reader lives here because the `subscriptions` table is shared
-//! between entity and context-source subscriptions, with a conditionally
-//! present `dataset_ids` column.
+//! Entity and context-source subscriptions share the `subscriptions` table
+//! and its columns, so one PgRow reader serves both, each stored value parsed
+//! into its domain type as it is read.
 
 use crate::{
     error::ContextStoreError,
     json_text::JsonText,
-    subscription_store::{
-        params::DatasetIdPresence,
-        rows::SubscriptionRow,
-        status_code::status_of,
-        stored_subscription_error::StoredSubscriptionError,
-        trigger_code::trigger_of,
-    },
+    subscription_store::{rows::SubscriptionRow, status_code::status_of, stored_subscription_error::StoredSubscriptionError, trigger_code::trigger_of},
 };
 use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError, spec_version::SpecVersion};
@@ -147,7 +141,7 @@ fn stored_q(row: &PgRow) -> Result<Option<Expr>, ContextStoreError> {
     })
 }
 
-/// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
+/// Read a `SubscriptionRow` from a `PgRow`.
 ///
 /// # Errors
 ///
@@ -157,11 +151,8 @@ fn stored_q(row: &PgRow) -> Result<Option<Expr>, ContextStoreError> {
 /// a watched attribute name, a notification trigger code, the `q`, `scopeQ` or
 /// `csf` filter, the notification parameters, the language tag, the JSON-LD
 /// context URL, or the status code.
-pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
-    let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
-        DatasetIdPresence::Present => row.try_get(Subscriptions::DatasetIds.unquoted())?,
-        DatasetIdPresence::Absent => None,
-    };
+pub fn row_from_pg(row: &PgRow) -> Result<SubscriptionRow, ContextStoreError> {
+    let dataset_id_raw: Option<Vec<String>> = row.try_get(Subscriptions::DatasetIds.unquoted())?;
     let dataset_id = dataset_id_raw
         .map(|ids| {
             ids.iter()
@@ -248,10 +239,10 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
 ///
 /// Returns the [`ContextStoreError`] of the first row whose stored columns do
 /// not decode back into a [`SubscriptionRow`].
-pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: DatasetIdPresence) -> Result<Vec<StoredSubscription>, ContextStoreError> {
+pub fn rows_to_stored_subscriptions(rows: &[PgRow]) -> Result<Vec<StoredSubscription>, ContextStoreError> {
     let mut subscriptions = Vec::with_capacity(rows.len());
     for pg_row in rows {
-        subscriptions.push(row_to_stored_subscription(row_from_pg(pg_row, dataset_id_presence)?));
+        subscriptions.push(row_to_stored_subscription(row_from_pg(pg_row)?));
     }
     Ok(subscriptions)
 }

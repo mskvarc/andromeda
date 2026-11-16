@@ -1,7 +1,7 @@
 //! Typed subscription persistence values: what a create body or an update
 //! fragment becomes once it is merged with what is stored.
 
-use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason, variant::DatasetIdPolicy};
+use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
@@ -101,7 +101,7 @@ impl SubscriptionWriteValues {
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
     /// notification names no endpoint.
-    pub(crate) fn from_create(request: SubscriptionRequest, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    pub(crate) fn from_create(request: SubscriptionRequest) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let SubscriptionRequest {
             id: _,
             type_: _,
@@ -143,10 +143,7 @@ impl SubscriptionWriteValues {
             geo_q: geo_q.into_created(),
             scope_q: scope_q.into_created(),
             csf: csf.into_created(),
-            dataset_id: match dataset_id_policy {
-                DatasetIdPolicy::Retain => dataset_id.into_created(),
-                DatasetIdPolicy::Discard => None,
-            },
+            dataset_id: dataset_id.into_created(),
             is_active: is_active.into_created().unwrap_or(true),
             notification: notification_params(notification)?,
             expires_at: expires_at.into_created(),
@@ -172,11 +169,7 @@ impl SubscriptionWriteValues {
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
     /// fragment's notification names no endpoint.
-    pub(crate) fn merged(
-        request: SubscriptionRequest,
-        existing: Subscription,
-        dataset_id_policy: DatasetIdPolicy,
-    ) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    pub(crate) fn merged(request: SubscriptionRequest, existing: Subscription) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let Subscription {
             subscription_name,
             description,
@@ -229,10 +222,7 @@ impl SubscriptionWriteValues {
             geo_q: geo_q.applied_over(filters.geo_q),
             scope_q: scope_q.applied_over(filters.scope_q),
             csf: csf.applied_over(filters.csf),
-            dataset_id: match dataset_id_policy {
-                DatasetIdPolicy::Retain => dataset_id.applied_over(filters.dataset_id),
-                DatasetIdPolicy::Discard => None,
-            },
+            dataset_id: dataset_id.applied_over(filters.dataset_id),
             is_active: is_active.applied_over(lifecycle.is_active).unwrap_or(true),
             notification: notification_params(requested_notification)?.or(Some(notification)),
             expires_at: expires_at.applied_over(lifecycle.standing.expires_at),
@@ -285,7 +275,6 @@ mod tests {
         fields::SubscriptionWriteValues,
         merged_validation::validate_merged_subscription,
         subscription_validation_reason::SubscriptionValidationReason,
-        variant::DatasetIdPolicy,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription::Subscription, subscription_request::SubscriptionRequest};
@@ -300,16 +289,16 @@ mod tests {
 
     /// The values a create body of `wire` describes, whose notification names
     /// an endpoint.
-    fn created(mut wire: Value, policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    fn created(mut wire: Value) -> Result<SubscriptionWriteValues, SubscriptionError> {
         if let Some(members) = wire.as_object_mut() {
             members.insert("notification".to_owned(), json!({"endpoint": {"uri": "https://receiver.example.com/notify"}}));
         }
-        SubscriptionWriteValues::from_create(request(&wire), policy)
+        SubscriptionWriteValues::from_create(request(&wire))
     }
 
     #[test]
-    fn entity_subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
-        let values = created(json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Retain)?;
+    fn subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
+        let values = created(json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}))?;
 
         assert_eq!(
             values.dataset_id,
@@ -321,8 +310,8 @@ mod tests {
     /// Table 5.2.12-1 types `datasetId` as "Valid URIs, '@none' for including
     /// the default Attribute instances", so `@none` is admitted beside a URI.
     #[test]
-    fn entity_subscription_creation_admits_the_none_dataset_selector() -> Result<(), SubscriptionError> {
-        let values = created(json!({"datasetId": ["@none", "urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Retain)?;
+    fn subscription_creation_admits_the_none_dataset_selector() -> Result<(), SubscriptionError> {
+        let values = created(json!({"datasetId": ["@none", "urn:ngsi-ld:Dataset:one"]}))?;
 
         assert_eq!(
             values.dataset_id,
@@ -339,14 +328,6 @@ mod tests {
         let refused = SubscriptionRequest::from_request_text(br#"{"datasetId": ["not a uri"]}"#, ContextReading::keyword_spellings());
 
         assert!(refused.is_err(), "got {refused:?}");
-    }
-
-    #[test]
-    fn context_source_subscription_creation_discards_dataset_identifiers() -> Result<(), SubscriptionError> {
-        let values = created(json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Discard)?;
-
-        assert!(values.dataset_id.is_none());
-        Ok(())
     }
 
     /// An entity subscription as it stands in the store, whose opt-in lists
@@ -371,7 +352,7 @@ mod tests {
 
     /// The values `fragment` describes once merged over [`stored`].
     fn merged(fragment: &Value) -> Result<SubscriptionWriteValues, SubscriptionError> {
-        SubscriptionWriteValues::merged(request(fragment), stored(), DatasetIdPolicy::Retain)
+        SubscriptionWriteValues::merged(request(fragment), stored())
     }
 
     /// One merged opt-in list, as wire text.
@@ -415,7 +396,7 @@ mod tests {
 
     /// The values `fragment` describes once merged over `existing`.
     fn merged_over(existing: Subscription, fragment: &Value) -> Result<SubscriptionWriteValues, SubscriptionError> {
-        SubscriptionWriteValues::merged(request(fragment), existing, DatasetIdPolicy::Retain)
+        SubscriptionWriteValues::merged(request(fragment), existing)
     }
 
     /// Clause 5.5.8, which clause 5.8.2.4 applies: "for each member of the
@@ -616,7 +597,7 @@ mod tests {
 
     #[test]
     fn a_creation_naming_no_expiration_has_none() -> Result<(), SubscriptionError> {
-        let values = created(json!({}), DatasetIdPolicy::Retain)?;
+        let values = created(json!({}))?;
 
         assert!(values.expires_at.is_none() && values.is_active && !values.local_only);
         Ok(())
@@ -626,7 +607,7 @@ mod tests {
     /// well-formed one is carried through to the write values.
     #[test]
     fn a_well_formed_ngsild_conformance_is_parsed_into_a_spec_version() -> Result<(), SubscriptionError> {
-        let values = created(json!({"ngsildConformance": "1.4"}), DatasetIdPolicy::Retain)?;
+        let values = created(json!({"ngsildConformance": "1.4"}))?;
 
         pretty_assertions::assert_eq!(values.ngsild_conformance, Some(SpecVersion::V1_4));
         Ok(())
@@ -638,7 +619,7 @@ mod tests {
     /// older, which is what decides what `1.5` receives.
     #[test]
     fn a_version_the_fallback_tables_do_not_name_is_still_admitted() -> Result<(), SubscriptionError> {
-        let values = created(json!({"ngsildConformance": "1.5"}), DatasetIdPolicy::Retain)?;
+        let values = created(json!({"ngsildConformance": "1.5"}))?;
 
         pretty_assertions::assert_eq!(values.ngsild_conformance, Some(SpecVersion::new(1, 5)));
         Ok(())
@@ -665,7 +646,7 @@ mod tests {
     /// fall back to.
     #[test]
     fn an_absent_ngsild_conformance_leaves_no_version() -> Result<(), SubscriptionError> {
-        let values = created(json!({}), DatasetIdPolicy::Retain)?;
+        let values = created(json!({}))?;
 
         assert!(values.ngsild_conformance.is_none());
         Ok(())
@@ -674,7 +655,7 @@ mod tests {
     /// A create naming no endpoint is no set of notification parameters.
     #[test]
     fn a_creation_whose_notification_names_no_endpoint_is_refused() {
-        let refused = SubscriptionWriteValues::from_create(request(&json!({"notification": {"format": "normalized"}})), DatasetIdPolicy::Retain);
+        let refused = SubscriptionWriteValues::from_create(request(&json!({"notification": {"format": "normalized"}})));
 
         assert!(matches!(refused, Err(SubscriptionError::Validation(_))), "{refused:?}");
     }

@@ -21,7 +21,6 @@ use crate::{
         failure::create_error,
         interned_attributes::intern_attribute_lists,
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
-        params::DatasetIdPresence,
         periodic_due::{due_interval_select, interval_anchors_select},
         projection::{count_of_kind, listing_page, one_of, projected_select},
         status_code::{status_is, status_is_not, stored_status},
@@ -71,7 +70,6 @@ macro_rules! impl_subscription_store {
     (
         $type:ty,
         kind: $kind:expr,
-        has_dataset_id: $hdi:expr,
         writes: $writes:ident,
         create: $create:path,
         update: $update:path,
@@ -80,7 +78,7 @@ macro_rules! impl_subscription_store {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
             async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
-                let mut select = projected_select($kind, target);
+                let mut select = projected_select(target);
                 select.cond_where(one_of(id, $kind));
                 let pg_row = select
                     .to_query()
@@ -89,7 +87,7 @@ macro_rules! impl_subscription_store {
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 match pg_row {
                     Some(pg) => {
-                        let row = row_from_pg(&pg, $hdi).map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                        let row = row_from_pg(&pg).map_err(|error| persistence_error::<SubscriptionError>(error))?;
                         Ok(Some(row_to_stored_subscription(row)))
                     }
                     None => Ok(None),
@@ -107,7 +105,7 @@ macro_rules! impl_subscription_store {
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 // A listing renders resources, so the surrogate key each row
                 // carries is dropped rather than threaded into the response.
-                let mut subscriptions: Vec<Subscription> = rows_to_stored_subscriptions(&pg_rows, $hdi)
+                let mut subscriptions: Vec<Subscription> = rows_to_stored_subscriptions(&pg_rows)
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?
                     .into_iter()
                     .map(|stored| stored.subscription)
@@ -147,14 +145,14 @@ macro_rules! impl_subscription_store {
             }
 
             async fn list_active(&self, target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-                let mut select = projected_select($kind, target);
+                let mut select = projected_select(target);
                 select.and_where(status_is(SubscriptionStatus::Active)).and_where(of_kind($kind));
                 let pg_rows = select
                     .to_query()
                     .fetch_all(&self.pool)
                     .await
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(|error| persistence_error::<SubscriptionError>(error))
+                rows_to_stored_subscriptions(&pg_rows).map_err(|error| persistence_error::<SubscriptionError>(error))
             }
 
             async fn claim_notification_slot(
@@ -304,7 +302,7 @@ macro_rules! impl_subscription_store {
                     .fetch_all(&self.pool)
                     .await
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(|error| persistence_error::<SubscriptionError>(error))
+                rows_to_stored_subscriptions(&pg_rows).map_err(|error| persistence_error::<SubscriptionError>(error))
             }
 
             async fn next_interval_due(
@@ -356,7 +354,6 @@ macro_rules! impl_subscription_store {
 impl_subscription_store!(
     SubscriptionRepository,
     kind: StoredKind::Entity,
-    has_dataset_id: DatasetIdPresence::Present,
     writes: pool,
     create: entity_create,
     update: entity_update,
@@ -366,7 +363,6 @@ impl_subscription_store!(
 impl_subscription_store!(
     CsourceSubscriptionRepository,
     kind: StoredKind::Csource,
-    has_dataset_id: DatasetIdPresence::Absent,
     writes: clock_writers,
     create: csource_create,
     update: csource_update,

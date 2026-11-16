@@ -16,6 +16,7 @@ use crate::{
     store_fault::persistence_error,
     subscription_store::{
         conformance_text::stored_conformance,
+        dataset_text::stored_dataset_ids,
         interned_attributes::InternedAttributeLists,
         json_document::json_document,
         notifying_columns::{created_since, restarted_since},
@@ -60,10 +61,7 @@ fn written_columns(
         (Subscriptions::Csf, Expr::val(fields.csf.map(ToString::to_string))),
         (Subscriptions::ExpandValues, Expr::val(interned.expand_values)),
         (Subscriptions::JsonKeys, Expr::val(interned.json_keys)),
-        (
-            Subscriptions::DatasetIds,
-            Expr::val(fields.dataset_id.map(|selectors| selectors.iter().map(ToString::to_string).collect::<Vec<_>>())),
-        ),
+        (Subscriptions::DatasetIds, Expr::val(stored_dataset_ids(fields.dataset_id))),
         (Subscriptions::Notification, json_document(fields.notification)?),
         (Subscriptions::ExpiresAt, Expr::val(fields.expires_at)),
         (Subscriptions::Throttling, Expr::val(fields.throttling)),
