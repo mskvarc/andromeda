@@ -3,11 +3,12 @@
 //! (clause 6.23). Clause 6.23.1 makes it the same operation as the GET
 //! binding, so it carries every parameter the narrowing wrote for the GET
 //! binding, already spelled in the registration's forwarding context (clause
-//! 4.3.6.6): the selection and the filters as members of the clause 5.2.23
-//! [`Query`] body, and the page (clause 6.3.10) and the `options` (clause
-//! 6.3.11), which the Query has no member for, as URI parameters. Which filters
-//! travel is the narrowing's to say: clause 5.7.2.4 forwards the client's
-//! filters unless split entities apply.
+//! 4.3.6.6): the selection, the filters and the Linked Entity retrieval a `q`
+//! is read under as members of the clause 5.2.23 [`Query`] body, and the page
+//! (clause 6.3.10) and the `options` (clause 6.3.11), which the Query has no
+//! member for, as URI parameters. Which filters travel is the narrowing's to
+//! say: clause 5.7.2.4 forwards the client's filters unless split entities
+//! apply.
 
 use crate::{
     error::FederationError,
@@ -27,6 +28,8 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
 };
+use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+use std::num::NonZeroU32;
 use url::form_urlencoded;
 
 /// A forwarded query as the batch binding sends it (clause 6.23.3.1).
@@ -47,9 +50,10 @@ pub(crate) struct BatchQuery {
 ///
 /// Returns [`FederationError::Query`] when a narrowed type selection, id
 /// pattern, `q`, `scopeQ`, `csf` or `datasetId` does not parse, and
-/// [`FederationError::Internal`] when a narrowed name, identifier, geo-query or
-/// language filter does not read back, or when the query carries a parameter
-/// the batch binding has no place for, none of which the narrowing produces.
+/// [`FederationError::Internal`] when a narrowed name, identifier, geo-query,
+/// language filter, `join` or `joinLevel` does not read back, or when the query
+/// carries a parameter the batch binding has no place for, none of which the
+/// narrowing produces.
 pub(crate) fn batch_query(query: &ForwardedQuery) -> Result<Option<BatchQuery>, FederationError> {
     let mut gathered = Gathered::default();
     for (parameter, value) in query.parameters() {
@@ -79,6 +83,10 @@ struct Gathered<'q> {
     dataset_id: Option<Vec<DatasetSelector>>,
     /// The `lang` member.
     lang: Option<LanguageFilter>,
+    /// The `join` member, written beside a `q` that crosses a Relationship.
+    join: Option<JoinMode>,
+    /// The `joinLevel` member.
+    join_level: Option<NonZeroU32>,
     /// The parameters that travel in the URI, in the order they were written.
     uri: Vec<(ForwardedParameter, &'q str)>,
 }
@@ -88,8 +96,8 @@ impl<'q> Gathered<'q> {
     ///
     /// The match names every parameter, so a parameter a forwarded query may
     /// carry is never left out of the batch binding unnoticed. The temporal,
-    /// representation, Linked Entity and projection parameters are not written
-    /// by the narrowing of an entity query.
+    /// representation and projection parameters and `containedBy` are not
+    /// written by the narrowing of an entity query.
     ///
     /// # Errors
     ///
@@ -121,6 +129,8 @@ impl<'q> Gathered<'q> {
                 self.dataset_id = Some(value.split(',').map(DatasetSelector::parse).collect::<Result<_, _>>()?);
             }
             ForwardedParameter::Lang => self.lang = Some(value.parse::<LanguageFilter>().map_err(FederationInvariant::ForwardedLanguageFilter)?),
+            ForwardedParameter::Join => self.join = Some(value.parse::<JoinMode>().map_err(FederationInvariant::ForwardedJoin)?),
+            ForwardedParameter::JoinLevel => self.join_level = Some(value.parse::<NonZeroU32>().map_err(FederationInvariant::ForwardedJoinLevel)?),
             ForwardedParameter::Format
             | ForwardedParameter::Timerel
             | ForwardedParameter::TimeAt
@@ -129,8 +139,6 @@ impl<'q> Gathered<'q> {
             | ForwardedParameter::LastN
             | ForwardedParameter::AggrMethods
             | ForwardedParameter::AggrPeriodDuration
-            | ForwardedParameter::Join
-            | ForwardedParameter::JoinLevel
             | ForwardedParameter::ContainedBy
             | ForwardedParameter::ExpandValues
             | ForwardedParameter::Pick
@@ -166,6 +174,8 @@ impl<'q> Gathered<'q> {
             .csf(self.csf)
             .dataset_id(self.dataset_id)
             .lang(self.lang)
+            .join(self.join)
+            .join_level(self.join_level)
             .build();
         Ok(Some(BatchQuery {
             body,
@@ -466,6 +476,33 @@ mod tests {
             serde_json::to_value(&batch.body).expect("the query writes"),
             json!({"type": "Query", "entities": [{"type": "Vehicle"}], "csf": "mode==\"inclusive\"", "lang": "en"})
         );
+    }
+
+    /// Clause 5.7.2.4 refuses a `q` over Linked Entity Attributes without a
+    /// retrieval as deep as its hops, and Table 5.2.23-1 has a `join` and a
+    /// `joinLevel` member, so the posted Query carries the retrieval the GET
+    /// binding carries beside the `q`.
+    #[tokio::test]
+    async fn a_q_crossing_a_relationship_is_posted_with_its_join() {
+        let batch = batched(
+            &registration(&vehicles()),
+            "type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2&containedBy=urn:ngsi-ld:Building:1",
+            SplitEntities::Complete,
+            None,
+        )
+        .await
+        .expect("selects");
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&batch.body).expect("the query writes"),
+            json!({
+                "type": "Query",
+                "entities": [{"type": "Vehicle"}],
+                "q": "isParkedIn{category}==\"commercial\"",
+                "join": "inline",
+                "joinLevel": 2
+            })
+        );
+        pretty_assertions::assert_eq!(batch.parameters, format!("limit={SOURCE_PAGE_SIZE}"));
     }
 
     /// Clause 4.9 EXAMPLE 11: `jsonKeys` names the members `q` reads as

@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use andromeda_ngsi_ld_query::geo::input::GeoQueryInputError;
 use andromeda_retry::schedule_error::BackoffScheduleError;
 use mediatype::MediaTypeBuf;
+use std::num::ParseIntError;
 use thiserror::Error;
 use url::Url;
 
@@ -49,6 +50,14 @@ pub enum FederationInvariant {
     /// language filter, although the narrowing wrote it from a parsed one.
     #[error("the lang of a forwarded query does not read back as a language filter: {0}")]
     ForwardedLanguageFilter(#[source] LanguageFilterError),
+    /// The `join` a forwarded query writes does not read back as a clause
+    /// 4.5.23 retrieval, although the narrowing wrote it from one.
+    #[error("the join of a forwarded query does not read back as a Linked Entity retrieval: {0}")]
+    ForwardedJoin(#[source] strum::ParseError),
+    /// The `joinLevel` a forwarded query writes does not read back as a
+    /// positive depth, although the narrowing wrote it from one.
+    #[error("the joinLevel of a forwarded query does not read back as a positive depth: {0}")]
+    ForwardedJoinLevel(#[source] ParseIntError),
     /// A forwarded entity query writes a parameter the batch binding has no
     /// place for, which the narrowing of an entity query never writes.
     #[error("a forwarded batch query has no place for the {0} parameter")]

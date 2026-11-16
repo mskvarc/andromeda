@@ -1,6 +1,7 @@
 //! The name-bearing filters a forwarded query carries (the clause 4.9 query
 //! with its `jsonKeys`, the context source filter and the clause 4.10 geo-query),
-//! each spelled in the registration's forwarding context (clause 4.3.6.6).
+//! each spelled in the registration's forwarding context (clause 4.3.6.6), and
+//! the Linked Entity retrieval a query crossing a Relationship is read under.
 
 use crate::{
     error::FederationError,
@@ -11,6 +12,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput};
+use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+use std::num::NonZeroU32;
 
 impl ForwardedQuery {
     /// Write the clause 4.9 query, spelled in the forwarding context, and the
@@ -36,6 +39,25 @@ impl ForwardedQuery {
             self.push(ForwardedParameter::JsonKeys, spelled.join(","));
         }
         Ok(())
+    }
+
+    /// Write the Linked Entity retrieval a `q` crossing a Relationship is
+    /// read under, `join=inline` at the client's `joinLevel`, and nothing for
+    /// a `q` that crosses none.
+    ///
+    /// Clause 5.7.2.4 refuses a `q` over Linked Entity Attributes without a
+    /// retrieval as deep as its hops as a too deep query, and the client's
+    /// `joinLevel` admitted those hops here. With `inline` the source nests
+    /// its Linked Entities under the Relationships that target them, so its
+    /// array holds only the Entities the query matched, and this broker walks
+    /// the merged Entities once and renders them in the client's `join`
+    /// (clause 4.5.23). `containedBy` stays behind, because it shapes only the
+    /// rendering, which is this broker's.
+    pub(super) fn push_q_join(&mut self, q: Option<&Expr>, join_level: Option<NonZeroU32>) {
+        if q.is_some_and(Expr::contains_linked_hop) {
+            self.push(ForwardedParameter::Join, JoinMode::Inline.to_string());
+            self.push_optional(ForwardedParameter::JoinLevel, join_level.map(|level| level.to_string()));
+        }
     }
 
     /// Write the context source filter, whose names are Context Source Property
