@@ -17,7 +17,7 @@ use crate::{
     entity_read::mode_admitted,
     error::FederationError,
     expanded_registration_filters::ExpandedRegistrationFilters,
-    forwarded_query::client_query::ClientQuery,
+    forwarded_query::{client_query::ClientQuery, entity_map_creation::CreationMembers},
     forwarding_context::BodyPresence,
     forwarding_url::{build_entity_map_url, build_temporal_entity_map_url},
     operation::ForwardingOperation,
@@ -32,7 +32,7 @@ use crate::{
 };
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
@@ -90,12 +90,20 @@ impl<'a> EntityMapQuery<'a> {
         }
     }
 
-    /// The lifetime the client suggested for the map (clauses 5.14.4.3 and
-    /// 5.14.5.3), which every source is suggested too.
-    const fn lifetime(self) -> Option<&'a Iso8601Duration> {
+    /// What every creation forwarded for this query adds to its narrowed
+    /// query: the client's Linked Entity retrieval and the lifetime it
+    /// suggested for the map (clauses 5.14.4.3 and 5.14.5.3).
+    fn creation_members(self) -> CreationMembers<'a> {
         match self {
-            EntityMapQuery::Entities(params) => params.entity_map_lifetime.as_ref(),
-            EntityMapQuery::TemporalEntities(params) => params.entity_map_lifetime.as_ref(),
+            EntityMapQuery::Entities(params) => CreationMembers::builder()
+                .join(params.join)
+                .join_level(params.join_level)
+                .contained_by(params.contained_by.as_deref())
+                .lifetime(params.entity_map_lifetime.as_ref())
+                .build(),
+            // Clause 5.14.5.4 refuses Linked Entity retrieval in a temporal
+            // creation, so a source is never asked for one.
+            EntityMapQuery::TemporalEntities(params) => CreationMembers::builder().lifetime(params.entity_map_lifetime.as_ref()).build(),
         }
     }
 }
@@ -269,7 +277,7 @@ impl FederationService {
             let reads = self
                 .registration_queries(&registration, &narrowing)
                 .await?
-                .into_reads(|narrowed| get_reads(&registration, narrowed.into_entity_map_creation(query.lifetime()), query.creation_url()));
+                .into_reads(|narrowed| get_reads(&registration, narrowed.into_entity_map_creation(query.creation_members()), query.creation_url()));
             expand_registration_targets(registration, reads, &mut targets);
         }
         Ok(targets)
