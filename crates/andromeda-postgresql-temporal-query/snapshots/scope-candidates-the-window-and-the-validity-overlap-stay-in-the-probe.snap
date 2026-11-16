@@ -137,8 +137,8 @@ WITH
   FROM
     "scope_history"
   WHERE
-    "scope_history"."value_kind" = $6
-    AND ("scope_history"."scope_path" ~ ($7::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($6::lquery))
   LIMIT
     10001
 )
@@ -156,7 +156,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $8
+      ) >= $7
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -192,7 +192,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $9
+            $8
           FROM
             (
               SELECT
@@ -214,11 +214,11 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."modified_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($10::lquery))
+            AND ("sh"."scope_path" ~ ($9::lquery))
             AND (
               NOT EXISTS (
                 SELECT
-                  $11
+                  $10
                 FROM
                   (
                     SELECT
@@ -240,7 +240,7 @@ UNION ALL
                   ) AS "sh_next"
                 WHERE
                   "sh_next"."modified_at" > "sh"."modified_at"
-                  AND "sh_next"."modified_at" <= $12
+                  AND "sh_next"."modified_at" <= $11
               )
             )
         )
@@ -249,13 +249,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $13
+        ) < $12
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $14
+        ) <= $13
         AND EXISTS (
           SELECT
             1
@@ -299,7 +299,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."modified_at" >= $15
+            "ah"."modified_at" >= $14
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -330,7 +330,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $16
+            $15
           FROM
             (
               SELECT
@@ -352,11 +352,11 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."modified_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($17::lquery))
+            AND ("sh"."scope_path" ~ ($16::lquery))
             AND (
               NOT EXISTS (
                 SELECT
-                  $18
+                  $17
                 FROM
                   (
                     SELECT
@@ -378,7 +378,7 @@ UNION ALL
                   ) AS "sh_next"
                 WHERE
                   "sh_next"."modified_at" > "sh"."modified_at"
-                  AND "sh_next"."modified_at" <= $19
+                  AND "sh_next"."modified_at" <= $18
               )
             )
         )
@@ -387,13 +387,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $20
+        ) < $19
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $21
+        ) > $20
         AND EXISTS (
           SELECT
             1
@@ -437,7 +437,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."modified_at" >= $22
+            "ah"."modified_at" >= $21
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -451,20 +451,19 @@ UNION ALL
 3: Int 1
 4: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
 5: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-6: SmallInt 1
-7: String 'city.moved1'
-8: BigUnsigned 20
-9: Int 1
-10: String 'city.moved1'
-11: Int 1
-12: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-13: BigUnsigned 20
-14: BigUnsigned 10000
-15: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-16: Int 1
-17: String 'city.moved1'
-18: Int 1
-19: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-20: BigUnsigned 20
-21: BigUnsigned 10000
-22: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+6: String 'city.moved1'
+7: BigUnsigned 20
+8: Int 1
+9: String 'city.moved1'
+10: Int 1
+11: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+12: BigUnsigned 20
+13: BigUnsigned 10000
+14: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+15: Int 1
+16: String 'city.moved1'
+17: Int 1
+18: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+19: BigUnsigned 20
+20: BigUnsigned 10000
+21: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'

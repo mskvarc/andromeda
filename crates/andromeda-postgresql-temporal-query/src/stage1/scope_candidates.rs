@@ -9,7 +9,10 @@
 //! its intervals, so the rows matching any path are a superset the per-Entity
 //! probe rechecks with the window and the overlap. The read states
 //! `value_kind = 1`, the predicate of `idx_scope_history_scope_path`,
-//! which the probe never states, so the index serves this read alone.
+//! which the probe never states, so the index serves this read alone. The
+//! kind is written as a literal because the page keeps a generic plan, which
+//! uses a partial index only when the statement's text implies its predicate
+//! and reads every Scope row otherwise.
 //!
 //! Clause 5.7.4.4 applies the Scope query of a split query only once the
 //! parts from the Context Sources are aggregated, so an Entity a source
@@ -22,16 +25,26 @@ use andromeda_postgresql_query::{
     scope_predicate::{ScopeTarget, pattern_condition},
 };
 use andromeda_postgresql_schema::{current::Entities, temporal::ScopeHistory};
-use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_seaquery::{branch::qualified, literal::int_literal};
 use andromeda_postgresql_stored_values::scope_value_kind::ScopeValueKind;
 use sea_query::{Condition, Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
-/// How many Evolutions a Scope page walks before it reads the candidates:
-/// matches that come early in identifier order fill the page there.
+/// How many Evolutions a Scope page walks before it reads the candidates.
+///
+/// A Scope probe costs under a microsecond an Evolution, so a walk that falls
+/// short costs a fraction of a millisecond, and a Scope one Evolution in five
+/// holds fills the page within it in about half a millisecond at every size.
 pub(super) const SCOPE_SHORT_WALK: u32 = 200;
 
-/// The most Scope rows a page reads before it walks instead, which the index
-/// reads whole in about a millisecond.
+/// The most Scope rows a page reads before it walks instead.
+///
+/// A row costs about 3 µs to read from the Scope path index and narrow the
+/// walk to, so the bound's rows cost about 30 ms among 1 000 000 Evolutions.
+/// Past the bound the page walks, which trades the two placements of the
+/// matches that no count tells apart. 20 000 matches spread through
+/// identifier order cost 9.5 ms with the walk, the read that stopped at the
+/// bound included, against 57 ms read in full, while 20 000 matches holding
+/// the last identifiers walk in 690 ms against 26 ms read in full.
 pub(super) const SCOPE_CANDIDATE_BOUND: u64 = 10_000;
 
 /// The Evolutions of `branch` with a recorded Scope matching a path of
@@ -76,7 +89,7 @@ fn recorded_scope_matches(branch: &HistoryBranch, scope_q: &ScopeQuery) -> Selec
         }
     }
     matches
-        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::ValueKind)).eq(ScopeValueKind::ScopePath.code()))
+        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::ValueKind)).eq(int_literal(i64::from(ScopeValueKind::ScopePath.code()))))
         .cond_where(paths);
     matches
 }

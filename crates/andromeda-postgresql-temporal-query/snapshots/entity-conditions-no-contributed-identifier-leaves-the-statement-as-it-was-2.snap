@@ -989,8 +989,8 @@ WITH
     "scope_history"
     JOIN "entities" ON "entities"."entity_key" = "scope_history"."entity_key"
   WHERE
-    "scope_history"."value_kind" = $10
-    AND ("scope_history"."scope_path" ~ ($11::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($10::lquery))
   UNION ALL
   (
     SELECT
@@ -1015,7 +1015,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $12
+      ) >= $11
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -1137,7 +1137,7 @@ UNION ALL
             "id" ASC OFFSET 0
         ) AS "e"
       WHERE
-        "e"."id" = $13
+        "e"."id" = $12
         AND (
           EXISTS (
             SELECT
@@ -1303,19 +1303,19 @@ UNION ALL
                 )
               ) AS "qh"
             WHERE
-              "qh"."attribute_name_key" = $14
+              "qh"."attribute_name_key" = $13
               AND (
-                "qh"."value_number" > $15
+                "qh"."value_number" > $14
                 AND "qh"."value_number" <> ('NaN'::numeric)
               )
               AND "qh"."value_kind" <> (0)
               AND "qh"."observed_at" IS NOT NULL
-              AND "qh"."observed_at" >= $16
+              AND "qh"."observed_at" >= $15
           )
           AND (FALSE)
           AND EXISTS (
             SELECT
-              $17
+              $16
             FROM
               (
                 SELECT
@@ -1573,11 +1573,11 @@ UNION ALL
               ) AS "sh"
             WHERE
               "sh"."observed_at" IS NOT NULL
-              AND ("sh"."scope_path" ~ ($18::lquery))
+              AND ("sh"."scope_path" ~ ($17::lquery))
               AND (
                 NOT EXISTS (
                   SELECT
-                    $19
+                    $18
                   FROM
                     (
                       SELECT
@@ -1835,7 +1835,7 @@ UNION ALL
                     ) AS "sh_next"
                   WHERE
                     "sh_next"."observed_at" > "sh"."observed_at"
-                    AND "sh_next"."observed_at" <= $20
+                    AND "sh_next"."observed_at" <= $19
                 )
               )
           )
@@ -1845,13 +1845,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $21
+        ) < $20
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $22
+        ) <= $21
         AND EXISTS (
           SELECT
             1
@@ -2016,7 +2016,7 @@ UNION ALL
               )
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $23
+            "ah"."observed_at" >= $22
         )
       ORDER BY
         "e"."id" ASC
@@ -2126,7 +2126,7 @@ UNION ALL
             )
         ) AS "e"
       WHERE
-        "e"."id" = $24
+        "e"."id" = $23
         AND (
           EXISTS (
             SELECT
@@ -2292,19 +2292,19 @@ UNION ALL
                 )
               ) AS "qh"
             WHERE
-              "qh"."attribute_name_key" = $25
+              "qh"."attribute_name_key" = $24
               AND (
-                "qh"."value_number" > $26
+                "qh"."value_number" > $25
                 AND "qh"."value_number" <> ('NaN'::numeric)
               )
               AND "qh"."value_kind" <> (0)
               AND "qh"."observed_at" IS NOT NULL
-              AND "qh"."observed_at" >= $27
+              AND "qh"."observed_at" >= $26
           )
           AND (FALSE)
           AND EXISTS (
             SELECT
-              $28
+              $27
             FROM
               (
                 SELECT
@@ -2562,11 +2562,11 @@ UNION ALL
               ) AS "sh"
             WHERE
               "sh"."observed_at" IS NOT NULL
-              AND ("sh"."scope_path" ~ ($29::lquery))
+              AND ("sh"."scope_path" ~ ($28::lquery))
               AND (
                 NOT EXISTS (
                   SELECT
-                    $30
+                    $29
                   FROM
                     (
                       SELECT
@@ -2824,7 +2824,7 @@ UNION ALL
                     ) AS "sh_next"
                   WHERE
                     "sh_next"."observed_at" > "sh"."observed_at"
-                    AND "sh_next"."observed_at" <= $31
+                    AND "sh_next"."observed_at" <= $30
                 )
               )
           )
@@ -2834,13 +2834,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $32
+        ) < $31
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $33
+        ) > $32
         AND EXISTS (
           SELECT
             1
@@ -3005,7 +3005,7 @@ UNION ALL
               )
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $34
+            "ah"."observed_at" >= $33
         )
       ORDER BY
         "e"."id" ASC
@@ -3022,28 +3022,27 @@ UNION ALL
 7: Int 1
 8: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
 9: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-10: SmallInt 1
-11: String 'Madrid'
-12: BigUnsigned 20
-13: String 'urn:ngsi-ld:Vehicle:9'
-14: Int 7
-15: BigDecimal 100
-16: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-17: Int 1
-18: String 'Madrid'
-19: Int 1
-20: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-21: BigUnsigned 20
-22: BigUnsigned 10000
-23: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-24: String 'urn:ngsi-ld:Vehicle:9'
-25: Int 7
-26: BigDecimal 100
-27: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-28: Int 1
-29: String 'Madrid'
-30: Int 1
-31: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
-32: BigUnsigned 20
-33: BigUnsigned 10000
-34: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+10: String 'Madrid'
+11: BigUnsigned 20
+12: String 'urn:ngsi-ld:Vehicle:9'
+13: Int 7
+14: BigDecimal 100
+15: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+16: Int 1
+17: String 'Madrid'
+18: Int 1
+19: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+20: BigUnsigned 20
+21: BigUnsigned 10000
+22: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+23: String 'urn:ngsi-ld:Vehicle:9'
+24: Int 7
+25: BigDecimal 100
+26: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+27: Int 1
+28: String 'Madrid'
+29: Int 1
+30: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'
+31: BigUnsigned 20
+32: BigUnsigned 10000
+33: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'

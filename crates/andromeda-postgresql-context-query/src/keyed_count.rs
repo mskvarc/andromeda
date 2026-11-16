@@ -5,10 +5,14 @@
 //! find them cost differently. Read from the term's index, the count costs
 //! the candidates, each rechecked and looked up in the selection; walked, it
 //! costs the selection, each Entity probed for the whole `q`. The index wins
-//! by orders of magnitude while the candidates are few against the selection
-//! and loses once they approach it, and the planner cannot tell the two
-//! apart. The statement therefore reads at most [`COUNT_CANDIDATE_BOUND`] + 1
-//! rechecked or probed candidates, or [`RANGED_COUNT_CANDIDATE_BOUND`] + 1
+//! by orders of magnitude while the candidates are few against the selection,
+//! and loses past a share of it that depends on the read. That share is about
+//! 5 % for an Attribute's carriers, 2 % for an identifier pattern among
+//! 1 000 000 Entities and a fifth among fewer, between a fifth and two thirds
+//! for a pattern on a value, and 2 % for a range of a typed value index. The
+//! planner cannot tell the two apart. The statement therefore reads at most
+//! [`COUNT_CANDIDATE_BOUND`] + 1 rechecked or probed candidates, or
+//! [`RANGED_COUNT_CANDIDATE_BOUND`] + 1
 //! from a range of a typed value index, behind a
 //! [`one_time_gate`](andromeda_postgresql_query::one_time_gate): when they number at most the
 //! bound they are every candidate, and the selection narrowed to them is
@@ -25,8 +29,15 @@ use andromeda_postgresql_schema::current::Entities;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, WithClause};
 
 /// The most candidates a count reads from a range of a typed value index
-/// before it walks the selection instead; such a candidate needs no recheck.
-pub const RANGED_COUNT_CANDIDATE_BOUND: u64 = 50_000;
+/// before it walks the selection instead.
+///
+/// A ranged candidate needs no recheck, but the walk is planned with the
+/// range's values and reads the same index while the range is narrow, so the
+/// two reads cost about the same up to 2 % of the selection and the walk wins
+/// past it. Among 1 000 000 Entities 50 000 matches count in 75 ms walked
+/// against 148 ms read. A count past the bound pays about 12 ms for its read
+/// before the walk, so those 50 000 matches count in 87 ms.
+pub const RANGED_COUNT_CANDIDATE_BOUND: u64 = 20_000;
 
 /// The most candidates a count reads, by what one costs to read.
 pub(crate) const fn count_bound(read: CandidateRead) -> CandidateBound {
