@@ -8,8 +8,8 @@ WITH
   FROM
     "scope_history"
   WHERE
-    "scope_history"."value_kind" = $1
-    AND ("scope_history"."scope_path" ~ ($2::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($1::lquery))
   LIMIT
     10001
 )
@@ -48,7 +48,7 @@ FROM
               COUNT(*)
             FROM
               "candidates"
-          ) <= $3
+          ) <= $2
         UNION ALL
         (
           SELECT
@@ -70,7 +70,7 @@ FROM
                 COUNT(*)
               FROM
                 "candidates"
-            ) > $4
+            ) > $3
         )
       ) AS "k"
       JOIN LATERAL (
@@ -92,7 +92,7 @@ FROM
 WHERE
   EXISTS (
     SELECT
-      $5
+      $4
     FROM
       (
         SELECT
@@ -114,8 +114,8 @@ WHERE
       ) AS "sh"
     WHERE
       "sh"."observed_at" IS NOT NULL
-      AND ("sh"."scope_path" ~ ($6::lquery))
-      AND "sh"."observed_at" < $7
+      AND ("sh"."scope_path" ~ ($5::lquery))
+      AND "sh"."observed_at" < $6
   )
   AND EXISTS (
     SELECT
@@ -159,14 +159,13 @@ WHERE
           JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
       ) AS "ah"
     WHERE
-      "ah"."observed_at" < $8
+      "ah"."observed_at" < $7
       AND "ah"."entity_key" = "e"."entity_key"
   )
-1: SmallInt 1
-2: String 'city.moved1'
+1: String 'city.moved1'
+2: BigUnsigned 10000
 3: BigUnsigned 10000
-4: BigUnsigned 10000
-5: Int 1
-6: String 'city.moved1'
+4: Int 1
+5: String 'city.moved1'
+6: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
 7: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-8: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

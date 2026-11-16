@@ -814,8 +814,8 @@ WITH
     "scope_history"
     JOIN "entities" ON "entities"."entity_key" = "scope_history"."entity_key"
   WHERE
-    "scope_history"."value_kind" = $8
-    AND ("scope_history"."scope_path" ~ ($9::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($8::lquery))
   UNION ALL
   (
     SELECT
@@ -840,7 +840,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $10
+      ) >= $9
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -964,7 +964,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $11
+            $10
           FROM
             (
               SELECT
@@ -1222,12 +1222,12 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($12::lquery))
-            AND "sh"."observed_at" < $13
+            AND ("sh"."scope_path" ~ ($11::lquery))
+            AND "sh"."observed_at" < $12
             AND (
               NOT EXISTS (
                 SELECT
-                  $14
+                  $13
                 FROM
                   (
                     SELECT
@@ -1485,7 +1485,7 @@ UNION ALL
                   ) AS "sh_next"
                 WHERE
                   "sh_next"."observed_at" > "sh"."observed_at"
-                  AND "sh_next"."observed_at" <= $15
+                  AND "sh_next"."observed_at" <= $14
               )
             )
         )
@@ -1494,13 +1494,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $16
+        ) < $15
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $17
+        ) <= $16
         AND EXISTS (
           SELECT
             1
@@ -1665,8 +1665,8 @@ UNION ALL
               )
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $18
-            AND "ah"."observed_at" < $19
+            "ah"."observed_at" >= $17
+            AND "ah"."observed_at" < $18
         )
       ORDER BY
         "e"."id" ASC
@@ -1778,7 +1778,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $20
+            $19
           FROM
             (
               SELECT
@@ -2036,12 +2036,12 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($21::lquery))
-            AND "sh"."observed_at" < $22
+            AND ("sh"."scope_path" ~ ($20::lquery))
+            AND "sh"."observed_at" < $21
             AND (
               NOT EXISTS (
                 SELECT
-                  $23
+                  $22
                 FROM
                   (
                     SELECT
@@ -2299,7 +2299,7 @@ UNION ALL
                   ) AS "sh_next"
                 WHERE
                   "sh_next"."observed_at" > "sh"."observed_at"
-                  AND "sh_next"."observed_at" <= $24
+                  AND "sh_next"."observed_at" <= $23
               )
             )
         )
@@ -2308,13 +2308,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $25
+        ) < $24
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $26
+        ) > $25
         AND EXISTS (
           SELECT
             1
@@ -2479,8 +2479,8 @@ UNION ALL
               )
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $27
-            AND "ah"."observed_at" < $28
+            "ah"."observed_at" >= $26
+            AND "ah"."observed_at" < $27
         )
       ORDER BY
         "e"."id" ASC
@@ -2495,24 +2495,23 @@ UNION ALL
 5: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
 6: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
 7: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
-8: SmallInt 1
-9: String 'A'
-10: BigUnsigned 20
-11: Int 1
-12: String 'A'
-13: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
-14: Int 1
-15: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
-16: BigUnsigned 20
-17: BigUnsigned 10000
-18: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
-19: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
-20: Int 1
-21: String 'A'
-22: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
-23: Int 1
-24: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
-25: BigUnsigned 20
-26: BigUnsigned 10000
-27: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
-28: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
+8: String 'A'
+9: BigUnsigned 20
+10: Int 1
+11: String 'A'
+12: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
+13: Int 1
+14: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+15: BigUnsigned 20
+16: BigUnsigned 10000
+17: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+18: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
+19: Int 1
+20: String 'A'
+21: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'
+22: Int 1
+23: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+24: BigUnsigned 20
+25: BigUnsigned 10000
+26: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+27: ChronoDateTimeUtc '2024-06-01 00:00:00.000000 +00:00'

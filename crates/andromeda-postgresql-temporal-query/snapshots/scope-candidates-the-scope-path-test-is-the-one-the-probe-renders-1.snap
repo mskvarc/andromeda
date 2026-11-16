@@ -110,8 +110,8 @@ WITH
   FROM
     "scope_history"
   WHERE
-    "scope_history"."value_kind" = $5
-    AND ("scope_history"."scope_path" ~ ($6::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($5::lquery))
   LIMIT
     10001
 )
@@ -129,7 +129,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $7
+      ) >= $6
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -165,7 +165,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $8
+            $7
           FROM
             (
               SELECT
@@ -187,21 +187,21 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($9::lquery))
-            AND "sh"."observed_at" < $10
+            AND ("sh"."scope_path" ~ ($8::lquery))
+            AND "sh"."observed_at" < $9
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $11
+        ) < $10
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $12
+        ) <= $11
         AND EXISTS (
           SELECT
             1
@@ -245,7 +245,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."observed_at" < $13
+            "ah"."observed_at" < $12
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -276,7 +276,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $14
+            $13
           FROM
             (
               SELECT
@@ -298,21 +298,21 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($15::lquery))
-            AND "sh"."observed_at" < $16
+            AND ("sh"."scope_path" ~ ($14::lquery))
+            AND "sh"."observed_at" < $15
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $17
+        ) < $16
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $18
+        ) > $17
         AND EXISTS (
           SELECT
             1
@@ -356,7 +356,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."observed_at" < $19
+            "ah"."observed_at" < $18
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -369,18 +369,17 @@ UNION ALL
 2: String 'city.moved1'
 3: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
 4: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-5: SmallInt 1
-6: String 'city.moved1'
-7: BigUnsigned 20
-8: Int 1
-9: String 'city.moved1'
-10: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-11: BigUnsigned 20
-12: BigUnsigned 10000
-13: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-14: Int 1
-15: String 'city.moved1'
-16: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-17: BigUnsigned 20
-18: BigUnsigned 10000
-19: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+5: String 'city.moved1'
+6: BigUnsigned 20
+7: Int 1
+8: String 'city.moved1'
+9: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+10: BigUnsigned 20
+11: BigUnsigned 10000
+12: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+13: Int 1
+14: String 'city.moved1'
+15: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+16: BigUnsigned 20
+17: BigUnsigned 10000
+18: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

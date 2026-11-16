@@ -51,15 +51,21 @@ pub struct TotalCount {
 }
 
 /// The selection walked and counted without reading candidates, and the
-/// steps of the page after which that is the cheaper count.
+/// steps of the page after which it is the count run.
 ///
 /// A short walk that fills the page found the matches dense where the
-/// selection starts, and a dense term almost always passes the count's
-/// candidate bound, so reading the candidates first would only find too many
-/// of them; a term whose few matches cluster at the start is walked too, at
-/// the cost the walk has without the candidates. A page cut by its full walk
-/// found more candidates than its bound, which passes the count's own bound
-/// whenever that is no larger.
+/// selection starts. A keyed page's short walk of 200 fills for a term about
+/// a tenth of the selection holds, which among 1 000 000 Entities passes the
+/// count's candidate bound, so reading the candidates first would only find
+/// too many of them. In a smaller selection, or behind the 5 000 identifiers
+/// of an `idPattern` page, the term can stay within the bound, and the walk
+/// then costs what the candidates would save. A pattern 5 000 of 1 000 000
+/// identifiers match counts in 86 ms walked against 21 ms from its
+/// candidates, and a value pattern a fifth of 10 000 Entities match in 11 ms
+/// against 3 ms. A term whose few matches cluster at the start is walked too,
+/// at the cost the walk has without the candidates. A page cut by its full
+/// walk found more candidates than its bound, which passes the count's own
+/// bound whenever that is no larger.
 pub struct WalkedCount {
     /// `SELECT COUNT(*)` over the selection under the whole filter.
     pub select: SelectStatement,

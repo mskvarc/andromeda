@@ -25,11 +25,22 @@ use andromeda_postgresql_seaquery::branch::qualified;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Query, SelectStatement, UnionType};
 
-/// How many Evolutions a windowed page walks before it reads the candidates:
-/// a window most Evolutions answer fills the page within them.
+/// How many Evolutions a windowed page walks before it reads the candidates.
+///
+/// A window probe costs about 5 µs an Evolution, so a walk that falls short
+/// costs 1 to 2 ms. A window one Evolution in five answers fills the page
+/// within it in about 1 ms at every size.
 pub(super) const WINDOW_SHORT_WALK: u32 = 200;
 
 /// The most candidate Evolutions a page reads before it walks instead.
+///
+/// Even when the horizons name only Evolutions the window keeps, the
+/// bound's candidates cost about 30 ms among 1 000 000 Evolutions. A window
+/// spread through identifier order with more of them is sent to the walk
+/// unread by the dense projection, so the read stops at the bound mostly for
+/// a window whose matches cluster late in identifier order, which the walk
+/// then probes Evolution by Evolution. 20 000 such matches take 5 s walked
+/// against about 120 ms read in full.
 pub(super) const WINDOW_CANDIDATE_BOUND: u64 = 10_000;
 
 /// The most Evolutions a windowed page walks in place of reading the
@@ -37,9 +48,13 @@ pub(super) const WINDOW_CANDIDATE_BOUND: u64 = 10_000;
 /// within them.
 ///
 /// The candidates are every Evolution written since the hour before the
-/// window's start, up to the bound, however few of them the window keeps;
-/// a window dense enough to fill the page within this walk finds its page
-/// for fewer probes than reading them costs.
+/// window's start, up to the bound, however few of them the window keeps.
+/// The projected walk costs the same at every size, while the candidates a
+/// window of a given density yields grow with the selection, so the walk
+/// trades a small selection for a large one. Among 1 000 000 Evolutions it
+/// finds the page of a window one in a hundred answers in 11 ms against 32 ms
+/// for the candidates, and of one in twenty in 4 ms against 11 ms. Among
+/// 100 000 the same one in a hundred costs 10 ms walked against 7 ms read.
 pub(super) const WINDOW_DENSE_WALK: u32 = 1_500;
 
 /// The horizon read a temporal window opening at an instant admits.

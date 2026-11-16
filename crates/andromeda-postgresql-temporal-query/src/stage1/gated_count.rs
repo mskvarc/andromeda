@@ -7,6 +7,13 @@
 //! keys of the walk narrowed to them are counted; when more qualify, the keys
 //! of the whole walk are.
 //!
+//! Both ways test every Evolution they count against the window, and a broad
+//! window matches by a semi-join that reads the history of every stream, so
+//! among 1 000 000 Evolutions counting the candidates takes 0.7 s for a few
+//! hundred and 1.3 to 2.2 s for a fifth of the walk, while walking takes 1.6
+//! to 4.7 s whatever the share. The index stops paying only when the candidates are
+//! about seven in ten of the walk.
+//!
 //! One count reads the keys either gate admits, each Evolution looked up by
 //! its key and tested for every filter, those the step answers included. A
 //! count per gate would be planned in full on every execution, and the

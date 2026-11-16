@@ -176,8 +176,8 @@ WITH
   FROM
     "scope_history"
   WHERE
-    "scope_history"."value_kind" = $14
-    AND ("scope_history"."scope_path" ~ ($15::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($14::lquery))
   LIMIT
     10001
 )
@@ -195,7 +195,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $16
+      ) >= $15
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -273,31 +273,31 @@ UNION ALL
                 "rs"."entity_key" = "e"."entity_key"
             ) AS "qh"
           WHERE
-            "qh"."attribute_name_key" = $17
+            "qh"."attribute_name_key" = $16
             AND (
               (
                 COALESCE(
                   "qh"."value_geometry_reach",
                   "qh"."value_geometry_valid",
                   "qh"."value_geometry"
-                )::box2d && ST_MakeEnvelope($18, $19, $20, $21, $22)::box2d
+                )::box2d && ST_MakeEnvelope($17, $18, $19, $20, $21)::box2d
               )
               AND _ST_DWithin(
                 COALESCE(
                   "qh"."value_geometry_valid",
                   "qh"."value_geometry"
                 )::geography,
-                ST_MakeValid(ST_GeomFromEWKB($23))::geography,
-                $24
+                ST_MakeValid(ST_GeomFromEWKB($22))::geography,
+                $23
               )
             )
             AND "qh"."value_kind" <> (0)
             AND "qh"."observed_at" IS NOT NULL
-            AND "qh"."observed_at" < $25
+            AND "qh"."observed_at" < $24
         )
         AND EXISTS (
           SELECT
-            $26
+            $25
           FROM
             (
               SELECT
@@ -319,21 +319,21 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($27::lquery))
-            AND "sh"."observed_at" < $28
+            AND ("sh"."scope_path" ~ ($26::lquery))
+            AND "sh"."observed_at" < $27
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $29
+        ) < $28
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $30
+        ) <= $29
         AND EXISTS (
           SELECT
             1
@@ -377,7 +377,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."observed_at" < $31
+            "ah"."observed_at" < $30
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -450,31 +450,31 @@ UNION ALL
                 "rs"."entity_key" = "e"."entity_key"
             ) AS "qh"
           WHERE
-            "qh"."attribute_name_key" = $32
+            "qh"."attribute_name_key" = $31
             AND (
               (
                 COALESCE(
                   "qh"."value_geometry_reach",
                   "qh"."value_geometry_valid",
                   "qh"."value_geometry"
-                )::box2d && ST_MakeEnvelope($33, $34, $35, $36, $37)::box2d
+                )::box2d && ST_MakeEnvelope($32, $33, $34, $35, $36)::box2d
               )
               AND _ST_DWithin(
                 COALESCE(
                   "qh"."value_geometry_valid",
                   "qh"."value_geometry"
                 )::geography,
-                ST_MakeValid(ST_GeomFromEWKB($38))::geography,
-                $39
+                ST_MakeValid(ST_GeomFromEWKB($37))::geography,
+                $38
               )
             )
             AND "qh"."value_kind" <> (0)
             AND "qh"."observed_at" IS NOT NULL
-            AND "qh"."observed_at" < $40
+            AND "qh"."observed_at" < $39
         )
         AND EXISTS (
           SELECT
-            $41
+            $40
           FROM
             (
               SELECT
@@ -496,21 +496,21 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($42::lquery))
-            AND "sh"."observed_at" < $43
+            AND ("sh"."scope_path" ~ ($41::lquery))
+            AND "sh"."observed_at" < $42
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $44
+        ) < $43
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $45
+        ) > $44
         AND EXISTS (
           SELECT
             1
@@ -554,7 +554,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."observed_at" < $46
+            "ah"."observed_at" < $45
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -576,36 +576,35 @@ UNION ALL
 11: String 'city.moved1'
 12: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
 13: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-14: SmallInt 1
-15: String 'city.moved1'
-16: BigUnsigned 20
-17: Int 2
-18: Double 4.4702749827517545
-19: Double 52.48191161045816
-20: Double 4.5297250172482455
-21: Double 52.51808838954184
-22: Int 4326
-23: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-24: Double 2000
-25: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-26: Int 1
-27: String 'city.moved1'
-28: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-29: BigUnsigned 20
-30: BigUnsigned 10000
-31: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-32: Int 2
-33: Double 4.4702749827517545
-34: Double 52.48191161045816
-35: Double 4.5297250172482455
-36: Double 52.51808838954184
-37: Int 4326
-38: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-39: Double 2000
-40: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-41: Int 1
-42: String 'city.moved1'
-43: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
-44: BigUnsigned 20
-45: BigUnsigned 10000
-46: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+14: String 'city.moved1'
+15: BigUnsigned 20
+16: Int 2
+17: Double 4.4702749827517545
+18: Double 52.48191161045816
+19: Double 4.5297250172482455
+20: Double 52.51808838954184
+21: Int 4326
+22: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+23: Double 2000
+24: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+25: Int 1
+26: String 'city.moved1'
+27: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+28: BigUnsigned 20
+29: BigUnsigned 10000
+30: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+31: Int 2
+32: Double 4.4702749827517545
+33: Double 52.48191161045816
+34: Double 4.5297250172482455
+35: Double 52.51808838954184
+36: Int 4326
+37: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+38: Double 2000
+39: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+40: Int 1
+41: String 'city.moved1'
+42: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+43: BigUnsigned 20
+44: BigUnsigned 10000
+45: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

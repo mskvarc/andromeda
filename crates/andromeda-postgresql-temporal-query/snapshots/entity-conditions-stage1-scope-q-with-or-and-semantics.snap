@@ -979,11 +979,11 @@ WITH
     "scope_history"
     JOIN "entities" ON "entities"."entity_key" = "scope_history"."entity_key"
   WHERE
-    "scope_history"."value_kind" = $7
+    "scope_history"."value_kind" = (1)
     AND (
-      ("scope_history"."scope_path" ~ ($8::lquery))
+      ("scope_history"."scope_path" ~ ($7::lquery))
+      OR ("scope_history"."scope_path" ~ ($8::lquery))
       OR ("scope_history"."scope_path" ~ ($9::lquery))
-      OR ("scope_history"."scope_path" ~ ($10::lquery))
     )
   UNION ALL
   (
@@ -1009,7 +1009,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $11
+      ) >= $10
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -1135,7 +1135,7 @@ UNION ALL
           (
             EXISTS (
               SELECT
-                $12
+                $11
               FROM
                 (
                   SELECT
@@ -1393,11 +1393,11 @@ UNION ALL
                 ) AS "sh"
               WHERE
                 "sh"."observed_at" IS NOT NULL
-                AND ("sh"."scope_path" ~ ($13::lquery))
+                AND ("sh"."scope_path" ~ ($12::lquery))
             )
             AND EXISTS (
               SELECT
-                $14
+                $13
               FROM
                 (
                   SELECT
@@ -1655,12 +1655,12 @@ UNION ALL
                 ) AS "sh"
               WHERE
                 "sh"."observed_at" IS NOT NULL
-                AND ("sh"."scope_path" ~ ($15::lquery))
+                AND ("sh"."scope_path" ~ ($14::lquery))
             )
           )
           OR EXISTS (
             SELECT
-              $16
+              $15
             FROM
               (
                 SELECT
@@ -1918,7 +1918,7 @@ UNION ALL
               ) AS "sh"
             WHERE
               "sh"."observed_at" IS NOT NULL
-              AND ("sh"."scope_path" ~ ($17::lquery))
+              AND ("sh"."scope_path" ~ ($16::lquery))
           )
         )
         AND (
@@ -1926,13 +1926,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $18
+        ) < $17
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $19
+        ) <= $18
         AND EXISTS (
           SELECT
             1
@@ -2114,7 +2114,7 @@ UNION ALL
           (
             EXISTS (
               SELECT
-                $20
+                $19
               FROM
                 (
                   SELECT
@@ -2372,11 +2372,11 @@ UNION ALL
                 ) AS "sh"
               WHERE
                 "sh"."observed_at" IS NOT NULL
-                AND ("sh"."scope_path" ~ ($21::lquery))
+                AND ("sh"."scope_path" ~ ($20::lquery))
             )
             AND EXISTS (
               SELECT
-                $22
+                $21
               FROM
                 (
                   SELECT
@@ -2634,12 +2634,12 @@ UNION ALL
                 ) AS "sh"
               WHERE
                 "sh"."observed_at" IS NOT NULL
-                AND ("sh"."scope_path" ~ ($23::lquery))
+                AND ("sh"."scope_path" ~ ($22::lquery))
             )
           )
           OR EXISTS (
             SELECT
-              $24
+              $23
             FROM
               (
                 SELECT
@@ -2897,7 +2897,7 @@ UNION ALL
               ) AS "sh"
             WHERE
               "sh"."observed_at" IS NOT NULL
-              AND ("sh"."scope_path" ~ ($25::lquery))
+              AND ("sh"."scope_path" ~ ($24::lquery))
           )
         )
         AND (
@@ -2905,13 +2905,13 @@ UNION ALL
             COUNT(*)
           FROM
             "short_walk"
-        ) < $26
+        ) < $25
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $27
+        ) > $26
         AND EXISTS (
           SELECT
             1
@@ -2993,24 +2993,23 @@ UNION ALL
 4: String 'B'
 5: Int 1
 6: String 'C'
-7: SmallInt 1
-8: String 'A'
-9: String 'B'
-10: String 'C'
-11: BigUnsigned 20
-12: Int 1
-13: String 'A'
-14: Int 1
-15: String 'B'
-16: Int 1
-17: String 'C'
-18: BigUnsigned 20
-19: BigUnsigned 10000
-20: Int 1
-21: String 'A'
-22: Int 1
-23: String 'B'
-24: Int 1
-25: String 'C'
-26: BigUnsigned 20
-27: BigUnsigned 10000
+7: String 'A'
+8: String 'B'
+9: String 'C'
+10: BigUnsigned 20
+11: Int 1
+12: String 'A'
+13: Int 1
+14: String 'B'
+15: Int 1
+16: String 'C'
+17: BigUnsigned 20
+18: BigUnsigned 10000
+19: Int 1
+20: String 'A'
+21: Int 1
+22: String 'B'
+23: Int 1
+24: String 'C'
+25: BigUnsigned 20
+26: BigUnsigned 10000

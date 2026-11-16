@@ -17,16 +17,23 @@ use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern,
 ///
 /// A visit reads one entry of a primary key and tests the pattern on the
 /// identifier it holds, with no other relation, so the walk is far longer
-/// than a keyed page's: a pattern one identifier in fifty matches fills a
-/// page here, and walking it costs a few milliseconds.
+/// than a keyed page's. A visit costs about a quarter of a microsecond, so a
+/// walk that falls short costs 2 to 3 ms before the index is read, and a
+/// pattern one identifier in two hundred matches fills a page of twenty
+/// within it in under 2 ms, where reading its matches at 1 000 000 Entities
+/// costs over 20 ms.
 pub const ID_PATTERN_SHORT_WALK: u32 = 5_000;
 
 /// The most matches of the trigram index a page reads.
 ///
 /// The index is a GIN, whose matches are gathered in full before the first
-/// is returned, so a bound of more matches saves no read; past it, the
-/// pattern is dense enough that the walk fills the page sooner than the
-/// matches are sorted.
+/// is returned, so a bound of more matches saves no read. Past the bound the
+/// page walks, which trades the two placements of the matches that no count
+/// tells apart. Matches spread through identifier order fill the page early
+/// in the walk, so 2 000 of them among 1 000 000 Entities walk to the page in
+/// about 6 ms against 9 ms through the index. Matches holding the last
+/// identifiers make the walk test every one, so 2 000 such matches take
+/// about 270 ms walked against 4 ms through the index.
 pub const ID_PATTERN_CANDIDATE_BOUND: u64 = 1_000;
 
 /// The pattern of a selector's identifier `axis` when the trigram index

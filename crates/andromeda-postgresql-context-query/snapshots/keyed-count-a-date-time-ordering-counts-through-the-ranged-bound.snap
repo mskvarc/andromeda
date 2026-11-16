@@ -20,7 +20,7 @@ WITH
         AND "ca"."value_date_time" > $2
     ) AS "matches"
   LIMIT
-    50001
+    20001
 )
 SELECT
   (
@@ -81,6 +81,6 @@ SELECT
   )
 1: Int 12
 2: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'
-3: BigUnsigned 50000
+3: BigUnsigned 20000
 4: Int 12
 5: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'

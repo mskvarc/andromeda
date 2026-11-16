@@ -451,8 +451,8 @@ WITH
     "scope_history"
     JOIN "entities" ON "entities"."entity_key" = "scope_history"."entity_key"
   WHERE
-    "scope_history"."value_kind" = $3
-    AND ("scope_history"."scope_path" ~ ($4::lquery))
+    "scope_history"."value_kind" = (1)
+    AND ("scope_history"."scope_path" ~ ($3::lquery))
   UNION ALL
   (
     SELECT
@@ -477,7 +477,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $5
+      ) >= $4
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -601,7 +601,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $6
+            $5
           FROM
             (
               SELECT
@@ -859,20 +859,20 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($7::lquery))
+            AND ("sh"."scope_path" ~ ($6::lquery))
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $8
+        ) < $7
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $9
+        ) <= $8
         AND EXISTS (
           SELECT
             1
@@ -1052,7 +1052,7 @@ UNION ALL
       WHERE
         EXISTS (
           SELECT
-            $10
+            $9
           FROM
             (
               SELECT
@@ -1310,20 +1310,20 @@ UNION ALL
             ) AS "sh"
           WHERE
             "sh"."observed_at" IS NOT NULL
-            AND ("sh"."scope_path" ~ ($11::lquery))
+            AND ("sh"."scope_path" ~ ($10::lquery))
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $12
+        ) < $11
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $13
+        ) > $12
         AND EXISTS (
           SELECT
             1
@@ -1401,14 +1401,13 @@ UNION ALL
 )
 1: Int 1
 2: String 'Madrid'
-3: SmallInt 1
-4: String 'Madrid'
-5: BigUnsigned 20
-6: Int 1
-7: String 'Madrid'
-8: BigUnsigned 20
-9: BigUnsigned 10000
-10: Int 1
-11: String 'Madrid'
-12: BigUnsigned 20
-13: BigUnsigned 10000
+3: String 'Madrid'
+4: BigUnsigned 20
+5: Int 1
+6: String 'Madrid'
+7: BigUnsigned 20
+8: BigUnsigned 10000
+9: Int 1
+10: String 'Madrid'
+11: BigUnsigned 20
+12: BigUnsigned 10000

@@ -29,9 +29,24 @@ pub struct ShortWalkMatches;
 /// The most rechecked or probed candidates a count reads before it walks the
 /// selection instead.
 ///
-/// A count needs every match, so its bound is the one past which counting
-/// the candidates, each rechecked or probed and looked up in the selection,
-/// costs more than walking the selection.
+/// A count needs every match, so its walk reads the whole selection, while
+/// its index read costs the candidates, each rechecked or probed and looked
+/// up in the selection. Among 1 000 000 Entities the bound's candidates count
+/// in 40 to 85 ms against 100 to 650 ms walked, and stage 1 of a temporal
+/// count counts them in about 0.8 s against 1.7 to 4.5 s walked. Below the
+/// bound the index wins wherever measured, except for an Attribute a fifth
+/// of 10 000 Entities carry, 2.4 ms against 1.7 ms walked. The walk overtakes
+/// the index past about 5 % of the selection for an Attribute's carriers, 2 %
+/// for an identifier pattern among 1 000 000 Entities, between a fifth and
+/// two thirds for a pattern on a value, and about seven in ten for stage 1.
+///
+/// A count past the bound pays the read of its candidates before the walk,
+/// 15 to 45 ms among 1 000 000 Entities, and a larger bound reads more before
+/// it walks. At 20 000, identifier patterns that 50 000 and 200 000 of those
+/// Entities match count a tenth slower. Reading every candidate in stage 1 counts a Scope seven in ten
+/// Evolutions hold a twentieth slower, though it counts the Scopes, patterns
+/// and geo-queries between the bound and a fifth of the selection 1.3 to 5.5
+/// times faster.
 pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
 
 /// `(SELECT COUNT(*) FROM <cte>)`.
@@ -63,6 +78,11 @@ pub fn wrapped(branch: SelectStatement, alias: &str) -> SelectStatement {
 
 /// `<query> LIMIT <bound> + 1`: enough rows to tell whether more than `bound`
 /// qualify, and every row when they do not.
+///
+/// The limit is part of the statement's text, and a plan made without the
+/// values takes it as the estimate of the candidates. A page of stage 1 that
+/// reads 500 candidates among 1 000 000 Evolutions takes 111 ms under a limit
+/// of 10 000 001 and 2.7 ms under 10 001.
 #[must_use]
 pub fn bounded(mut query: SelectStatement, bound: u64) -> SelectStatement {
     query.limit(bound + 1);
