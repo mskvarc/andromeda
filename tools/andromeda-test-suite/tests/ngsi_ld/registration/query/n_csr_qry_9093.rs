@@ -194,5 +194,5 @@ async fn n_csr_qry_9093_a_context_source_property_reads_alike_in_every_written_f
             selects: &[r6],
         },
     ];
-    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, &corpus, &cases).await
+    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, None, &corpus, &cases).await
 }

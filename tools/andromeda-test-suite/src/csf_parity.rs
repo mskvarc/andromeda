@@ -27,7 +27,7 @@ use ngsi_ld::{
         operation::{QueryRegistrations, RegisterContextSource},
     },
     model::{EntityTypeName, Input, NgsiLdMediaType, RawJson},
-    query::{q::Query, type_selection::TypeSelection},
+    query::{q::Query, temporal_query::TemporalQuery, type_selection::TypeSelection},
     registration::{CSourceRegistration, RegistrationId},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
@@ -74,7 +74,9 @@ struct Answers {
 
 /// Subscribes to the registrations of `entity_type` once for each case, with its `csf`, registers `registrations`,
 /// and expects Query Context Source Registrations by `entity_type` with each `csf`, and the notifications each
-/// Subscription receives, to name exactly the registrations the case selects.
+/// Subscription receives, to name exactly the registrations the case selects. Both are asked with the temporal query
+/// `period` when there is one, without which clauses 5.10.2.4 and 5.11.2.4 consider no registration declaring a time
+/// interval.
 ///
 /// # Errors
 ///
@@ -83,11 +85,12 @@ pub async fn expect_registration_query_and_subscription_alike(
     broker: &BrokerClient,
     namespace: &Namespace,
     entity_type: &EntityTypeName,
+    period: Option<&TemporalQuery>,
     registrations: &[CsfRegistration<'_>],
     cases: &[CsfCase<'_>],
 ) -> Result<()> {
     let terms: Vec<&str> = cases.iter().map(|case| case.csf).collect();
-    let answers = answer_every_term(broker, namespace, entity_type, registrations, &terms, |index, _| {
+    let answers = answer_every_term(broker, namespace, entity_type, period, registrations, &terms, |index, _| {
         cases.get(index).map_or(0, |case| case.selects.len())
     })
     .await?;
@@ -118,7 +121,7 @@ pub async fn expect_registration_query_and_subscription_agree(
     registrations: &[CsfRegistration<'_>],
     terms: &[&str],
 ) -> Result<()> {
-    let answers = answer_every_term(broker, namespace, entity_type, registrations, terms, |_, queried| queried.len()).await?;
+    let answers = answer_every_term(broker, namespace, entity_type, None, registrations, terms, |_, queried| queried.len()).await?;
     for (term, answer) in terms.iter().zip(&answers) {
         expect_that!(
             answer.notified,
@@ -129,14 +132,16 @@ pub async fn expect_registration_query_and_subscription_agree(
     Ok(())
 }
 
-/// The two answers each of `terms` receives over `registrations`: every Subscription exists before the first
-/// registration, so each registration is matched against every term, and each endpoint is watched until it holds
+/// The two answers each of `terms` receives over `registrations`, each asked with the temporal query `period` when
+/// there is one: every Subscription exists before the first registration, so each registration is matched against
+/// every term, and each endpoint is watched until it holds
 /// the notifications `owed` counts for it, given the term's index and its query answer, and for the quiet window
 /// beyond. A notification owed but never delivered shows as a missing registration after the delivery deadline.
 async fn answer_every_term(
     broker: &BrokerClient,
     namespace: &Namespace,
     entity_type: &EntityTypeName,
+    period: Option<&TemporalQuery>,
     registrations: &[CsfRegistration<'_>],
     terms: &[&str],
     owed: impl Fn(usize, &HashSet<RegistrationId>) -> usize,
@@ -148,7 +153,12 @@ async fn answer_every_term(
         let subscription = Subscription::registration_builder()
             .id(subscription_id.clone())
             .entities([entity_type.as_str()])
-            .csf(term.parse::<Query>()?)
+            .csf(term.parse::<Query>()?);
+        let subscription = match period {
+            Some(period) => subscription.temporal_q(period.clone()),
+            None => subscription,
+        };
+        let subscription = subscription
             .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(endpoint)?).accept(NgsiLdMediaType::Json).build()?).build()?)
             .build()?;
         broker.registration_subscriptions().create(&subscription).send().await?;
@@ -179,7 +189,12 @@ async fn answer_every_term(
     let mut queried = Vec::with_capacity(terms.len());
     for term in terms {
         let csf = term.parse::<Query>()?;
-        let query = QueryRegistrations::builder().entity_type(&selection).csf(&csf).limit(MAX_LIMIT).build();
+        let query = QueryRegistrations::builder()
+            .entity_type(&selection)
+            .csf(&csf)
+            .maybe_temporal_q(period)
+            .limit(MAX_LIMIT)
+            .build();
         let answer = listing.send_unchecked(listing.unchecked(&query)?).await?;
         queried.push(registration_ids::listed(answer.body())?);
     }

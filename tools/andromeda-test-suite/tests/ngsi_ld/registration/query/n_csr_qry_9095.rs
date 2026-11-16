@@ -190,5 +190,5 @@ async fn n_csr_qry_9095_a_declared_time_value_is_read_in_its_form_alike_in_a_que
             selects: &[],
         },
     ];
-    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, &corpus, &cases).await
+    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, None, &corpus, &cases).await
 }

@@ -1,6 +1,13 @@
 //! A `datasetId` on a csource subscription notifies the registrations that list it or list none.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, context_source::ContextSource, namespace::Namespace, notification_sink::NotificationSink};
+use andromeda_test_suite::{
+    body_pattern::BodyPattern,
+    broker,
+    cleanup::Cleanup,
+    context_source::ContextSource,
+    namespace::Namespace,
+    notification_sink::NotificationSink,
+};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{DatasetId, NgsiLdMediaType, Output},
@@ -27,7 +34,7 @@ async fn notified_registrations(sink: &NotificationSink, number: u32) -> Result<
 /// Pins: Over registrations of the type listing dataset a, listing dataset b and listing none, a Context Source
 /// Registration Subscription with `datasetId` a is notified `newlyMatching` of the first and the third, one with
 /// `datasetId` `@none` of the third alone, and one with no `datasetId` of all three
-/// Clause: 5.12, 4.3.6.1, 5.2.12, 5.2.9
+/// Clause: 5.12, 4.3.6.1, 5.2.12, 5.2.9, 5.11.2.4
 #[gtest]
 #[tokio::test]
 async fn n_css_ntf_9014_a_dataset_id_on_a_csource_subscription_notifies_the_registrations_that_list_it_or_list_none() -> Result<()> {
@@ -81,9 +88,18 @@ async fn n_css_ntf_9014_a_dataset_id_on_a_csource_subscription_notifies_the_regi
         };
         broker.registrations().register(&registration).send().await?;
     }
-    sink.wait_for_at_least(3, 3).await?;
-    sink.wait_for_at_least(1, 2).await?;
-    sink.wait_for_at_least(2, 1).await?;
+    // Clause 5.11.2.4 lets one notification carry several registrations, and a Subscription notified initially after
+    // the registrations committed carries them together, so each registration is awaited by its identifier.
+    for (number, awaited) in [
+        (3, vec![&registration_b_id, &registration_a_id, &registration_unlisted_id]),
+        (1, vec![&registration_a_id, &registration_unlisted_id]),
+        (2, vec![&registration_unlisted_id]),
+    ] {
+        for registration_id in awaited {
+            let carrying = BodyPattern::Selects(format!("$.data[?(@.id == '{registration_id}')]").parse()?);
+            sink.wait_for_at_least_where(number, &[carrying], 1).await?;
+        }
+    }
     expect_that!(
         notified_registrations(&sink, 1).await?,
         unordered_elements_are![eq(&registration_a_id), eq(&registration_unlisted_id)]

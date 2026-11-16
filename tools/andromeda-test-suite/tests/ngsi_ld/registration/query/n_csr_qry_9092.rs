@@ -110,5 +110,5 @@ async fn n_csr_qry_9092_a_csf_selects_the_same_registrations_in_a_query_and_a_su
             selects: &[],
         },
     ];
-    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, &corpus, &cases).await
+    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, None, &corpus, &cases).await
 }
