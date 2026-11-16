@@ -90,5 +90,5 @@ async fn n_csr_qry_9096_a_year_zero_time_value_is_read_alike_in_a_query_and_a_su
             selects: &[r2],
         },
     ];
-    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, &corpus, &cases).await
+    expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, None, &corpus, &cases).await
 }
