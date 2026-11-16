@@ -158,12 +158,14 @@ impl ReducedSubscription {
     ///
     /// A member the copy never carries is not sent as a Null: the notification
     /// members always, and `q`, `geoQ` and `scopeQ` when `carriage` strips
-    /// them. The `datasetId` is always sent, as the NGSI-LD Null when the copy
-    /// names none: it follows the registration as well as the subscription, so
-    /// a registration that stops listing `datasetId`s leaves the copy naming
-    /// none though no update deleted the member. The selectors are deleted
-    /// only while the fragment still sets the other one, since a source left
-    /// with neither would refuse the update (clause 5.2.12).
+    /// them. The members the registration narrows, `entities`,
+    /// `watchedAttributes` and `datasetId`, are always sent, as the NGSI-LD
+    /// Null when the copy names none: they follow the registration as well as
+    /// the subscription, so a registration that stops naming entities,
+    /// Attributes or `datasetId`s leaves the copy naming none though no update
+    /// deleted the member. The selectors are sent only while the fragment
+    /// sets one of them, since a source left with neither would refuse the
+    /// update (clause 5.2.12).
     #[must_use]
     pub fn as_fragment(&self, deleted: &DeletedMembers, carriage: FilterCarriage) -> SubscriptionRequest {
         let mut fragment = SubscriptionRequest {
@@ -176,10 +178,7 @@ impl ReducedSubscription {
         fragment.notification_trigger = deleting(fragment.notification_trigger, DeletableMember::NotificationTrigger, deleted);
         fragment.time_interval = deleting(fragment.time_interval, DeletableMember::TimeInterval, deleted);
         fragment.csf = deleting(fragment.csf, DeletableMember::Csf, deleted);
-        fragment.dataset_id = match fragment.dataset_id {
-            Clearable::Absent => Clearable::NgsiLdNull,
-            stated @ (Clearable::NgsiLdNull | Clearable::Set(_)) => stated,
-        };
+        fragment.dataset_id = narrowed(fragment.dataset_id);
         fragment.throttling = deleting(fragment.throttling, DeletableMember::Throttling, deleted);
         fragment.expires_at = deleting(fragment.expires_at, DeletableMember::ExpiresAt, deleted);
         match carriage {
@@ -192,8 +191,8 @@ impl ReducedSubscription {
         }
         match (&fragment.entities, &fragment.watched_attributes) {
             (Clearable::Set(_), _) | (_, Clearable::Set(_)) => {
-                fragment.entities = deleting(fragment.entities, DeletableMember::Entities, deleted);
-                fragment.watched_attributes = deleting(fragment.watched_attributes, DeletableMember::WatchedAttributes, deleted);
+                fragment.entities = narrowed(fragment.entities);
+                fragment.watched_attributes = narrowed(fragment.watched_attributes);
             }
             (Clearable::Absent | Clearable::NgsiLdNull, Clearable::Absent | Clearable::NgsiLdNull) => {}
         }
@@ -208,6 +207,17 @@ fn deleting<T>(member: Clearable<T>, kind: DeletableMember, deleted: &DeletedMem
     match member {
         Clearable::Absent if deleted.contains(kind) => Clearable::NgsiLdNull,
         other @ (Clearable::Absent | Clearable::NgsiLdNull | Clearable::Set(_)) => other,
+    }
+}
+
+/// A member the registration narrows as the fragment sends it: absent becomes
+/// the NGSI-LD Null, which deletes the value the copy at the source holds and
+/// leaves a copy holding none as it is (clause 5.5.8), anything else is as the
+/// reduction left it.
+fn narrowed<T>(member: Clearable<T>) -> Clearable<T> {
+    match member {
+        Clearable::Absent => Clearable::NgsiLdNull,
+        stated @ (Clearable::NgsiLdNull | Clearable::Set(_)) => stated,
     }
 }
 
@@ -702,6 +712,51 @@ mod tests {
         local.selection.entities = None;
         let fragment = fragment_after(&local, &json!({"entities": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
         pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": VEHICLE}]));
+    }
+
+    /// Clauses 5.5.8 and 5.8.1.4: the copy watches what the registration
+    /// names while the subscription names nothing, so once the registration
+    /// names no Attribute the update deletes `watchedAttributes` at the source
+    /// and keeps the selectors, whatever the carriage.
+    #[test]
+    fn a_registration_that_stops_naming_attributes_deletes_the_watched_attributes_it_narrowed() {
+        let local = subscription_selecting(&json!([{"type": VEHICLE}]));
+        let nothing_deleted = json!({"throttling": 5});
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let narrowing = fragment_under(
+                &json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]),
+                &local,
+                &nothing_deleted,
+                carriage,
+            );
+            pretty_assertions::assert_eq!(narrowing["watchedAttributes"], json!([SPEED]), "{carriage:?}");
+            let widened = fragment_after(&local, &nothing_deleted, carriage);
+            pretty_assertions::assert_eq!(widened["watchedAttributes"], json!(["urn:ngsi-ld:null"]), "{carriage:?}");
+            pretty_assertions::assert_eq!(widened["entities"], json!([{"type": VEHICLE}]), "{carriage:?}");
+        }
+    }
+
+    /// Clauses 5.5.8 and 5.8.1.4: the copy of a subscription naming no
+    /// entities selects what the registration registers, so once the
+    /// registration registers none the update deletes `entities` at the
+    /// source and keeps the watched Attributes, whatever the carriage.
+    #[test]
+    fn a_registration_that_stops_naming_entities_deletes_the_selectors_it_narrowed() {
+        let mut local = subscription();
+        local.selection.entities = None;
+        let nothing_deleted = json!({"throttling": 5});
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let narrowing = fragment_under(
+                &json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]),
+                &local,
+                &nothing_deleted,
+                carriage,
+            );
+            pretty_assertions::assert_eq!(narrowing["entities"], json!([{"type": VEHICLE}]), "{carriage:?}");
+            let widened = fragment_under(&json!([{"propertyNames": [SPEED]}]), &local, &nothing_deleted, carriage);
+            pretty_assertions::assert_eq!(widened["entities"], json!(["urn:ngsi-ld:null"]), "{carriage:?}");
+            pretty_assertions::assert_eq!(widened["watchedAttributes"], json!([SPEED]), "{carriage:?}");
+        }
     }
 
     #[test]
