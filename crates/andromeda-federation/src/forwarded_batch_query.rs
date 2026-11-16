@@ -3,19 +3,21 @@
 use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarded_parameter::ForwardedParameter, forwarded_query::ForwardedQuery};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_selector::EntitySelector, query::body::Query};
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, type_selection::grammar::TypeExprRaw};
 
 /// The clause 5.2.23 `Query` of a forwarded batch query: one entity selector
 /// per covered identifier (each carrying the covered type), or a single
-/// type-only selector when the query names no identifier, and the narrowed
-/// attribute list when present. A query naming no type selects every type
-/// (clause 4.17 wildcard), since a selector's type is mandatory (Table
-/// 5.2.33-1).
+/// type-only selector when the query names no identifier, the narrowed
+/// attribute list when present, and the `datasetId`s the registration is asked
+/// for when the narrowing names any (clause 4.3.6.1). A query naming no type
+/// selects every type (clause 4.17 wildcard), since a selector's type is
+/// mandatory (Table 5.2.33-1).
 ///
 /// # Errors
 ///
-/// Returns [`FederationError::Query`] when the narrowed type selection does not
-/// parse, and [`FederationInvariant::ForwardedName`] or
+/// Returns [`FederationError::Query`] when the narrowed type selection or a
+/// narrowed `datasetId` does not parse, and
+/// [`FederationInvariant::ForwardedName`] or
 /// [`FederationInvariant::ForwardedIdentifier`] when a narrowed attribute or
 /// identifier is none, which the narrowing never produces.
 pub(crate) fn batch_query(query: &ForwardedQuery) -> Result<Query, FederationError> {
@@ -53,7 +55,11 @@ pub(crate) fn batch_query(query: &ForwardedQuery) -> Result<Query, FederationErr
         ),
         None => None,
     };
-    Ok(Query::builder().entities(Some(selectors)).attrs(attrs).build())
+    let dataset_id = query
+        .value_of(ForwardedParameter::DatasetId)
+        .map(|datasets| datasets.split(',').map(DatasetSelector::parse).collect::<Result<Vec<_>, _>>())
+        .transpose()?;
+    Ok(Query::builder().entities(Some(selectors)).attrs(attrs).dataset_id(dataset_id).build())
 }
 
 #[cfg(test)]
@@ -74,7 +80,12 @@ mod tests {
     use serde_json::{Value, json};
 
     fn registration(information: &Value) -> ContextSourceRegistration {
-        serde_json::from_value(json!({
+        listing(information, None)
+    }
+
+    /// A registration of `information` whose `datasetId` member is `dataset_ids`.
+    fn listing(information: &Value, dataset_ids: Option<&[&str]>) -> ContextSourceRegistration {
+        let mut document = json!({
             "id": "urn:ngsi-ld:csr:1",
             "type": "ContextSourceRegistration",
             "endpoint": "https://peer.example.org",
@@ -82,14 +93,22 @@ mod tests {
             "status": "ok",
             "createdAt": "2024-01-01T00:00:00Z",
             "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid registration")
+        });
+        if let Some(dataset_ids) = dataset_ids {
+            document["datasetId"] = json!(dataset_ids);
+        }
+        serde_json::from_value(document).expect("valid registration")
     }
 
     /// The `Query` written for a forwarded query of `query_string` narrowed by
     /// a registration of `information`.
     async fn written(information: &Value, query_string: &str) -> Value {
-        let by_type = registration(information);
+        written_for(&registration(information), query_string).await
+    }
+
+    /// The `Query` written for a forwarded query of `query_string` narrowed by
+    /// `by_type`.
+    async fn written_for(by_type: &ContextSourceRegistration, query_string: &str) -> Value {
         let params: EntityQueryParameters = serde_urlencoded::from_str(query_string).expect("valid query");
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         let context = ContextSpec::none();
@@ -99,7 +118,7 @@ mod tests {
             .expect("the forwarding context processes");
         let forwarded = ForwardedQuery::for_registration(
             ClientQuery::EntityQuery(&params),
-            &by_type,
+            by_type,
             SplitEntities::Complete,
             None,
             TemporalAnswer::AsRequested,
@@ -183,5 +202,31 @@ mod tests {
         let value = serde_json::to_value(batch_query(&forwarded[0]).expect("the query builds")).expect("the query writes");
         pretty_assertions::assert_eq!(value["entities"].as_array().map(Vec::len), Some(1));
         pretty_assertions::assert_eq!(value["entities"][0]["type"], "Beta");
+    }
+
+    /// Clause 4.3.6.1 and Table 5.2.9-1: a batch query carries the `datasetId`
+    /// a query string would, the client's ones the registration lists, every
+    /// listed one when the client names none, and none when neither names any.
+    #[tokio::test]
+    async fn a_batch_query_names_only_the_dataset_ids_its_registration_lists() {
+        let vehicles = json!([{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}]}]);
+        let listing_default_and_a = listing(&vehicles, Some(&["@none", "urn:ngsi-ld:Dataset:a"]));
+        for (query, source, dataset_id) in [
+            (
+                "type=Vehicle&datasetId=urn:ngsi-ld:Dataset:b,urn:ngsi-ld:Dataset:a",
+                &listing_default_and_a,
+                Some(json!(["urn:ngsi-ld:Dataset:a"])),
+            ),
+            ("type=Vehicle", &listing_default_and_a, Some(json!(["@none", "urn:ngsi-ld:Dataset:a"]))),
+            (
+                "type=Vehicle&datasetId=urn:ngsi-ld:Dataset:b",
+                &registration(&vehicles),
+                Some(json!(["urn:ngsi-ld:Dataset:b"])),
+            ),
+            ("type=Vehicle", &registration(&vehicles), None),
+        ] {
+            let value = written_for(source, query).await;
+            pretty_assertions::assert_eq!(value.get("datasetId").cloned(), dataset_id, "{query}");
+        }
     }
 }

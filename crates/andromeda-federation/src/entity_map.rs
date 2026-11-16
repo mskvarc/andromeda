@@ -13,7 +13,7 @@ use crate::{
     entity_read::mode_admitted,
     error::FederationError,
     expanded_registration_filters::ExpandedRegistrationFilters,
-    forwarded_query::client_query::ClientQuery,
+    forwarded_query::{client_query::ClientQuery, dataset_ids::with_forwarded_dataset_ids},
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
@@ -29,11 +29,15 @@ use crate::{
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_model::{
+    entity_map::EntityMap,
+    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
+};
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use futures::{StreamExt, stream};
 use thiserror::Error;
 use tracing::warn;
+use url::Url;
 
 /// A source answered the creation of an `EntityMap` with a body that is none.
 #[derive(Debug, Error)]
@@ -175,15 +179,7 @@ impl FederationService {
         let resolver = &resolver;
         let (answers, failures): (Vec<_>, Vec<_>) = stream::iter(registrations)
             .map(|registration| async move {
-                // Clause 4.3.6.6: the query's names are spelled in the
-                // registration's forwarding context.
-                let url = match self
-                    .spelled_query_string(&registration, context, resolver, query_string, BodyPresence::Absent)
-                    .await
-                {
-                    Ok(spelled) => forwarding_url(registration.access.endpoint.url(), query.path(), Some(&spelled)),
-                    Err(error) => Err(error),
-                };
+                let url = self.creation_url(&registration, query, context, resolver, query_string).await;
                 let read = SourceRead::builder()
                     .registration(&registration)
                     .inbound(context)
@@ -238,5 +234,34 @@ impl FederationService {
             return Err(failure);
         }
         Ok(read_outcome(answers, matched))
+    }
+
+    /// The URL the creation is forwarded to `registration` by: the client's
+    /// `query_string` with its names spelled in the registration's forwarding
+    /// context (clause 4.3.6.6), asking the source only for the `datasetId`s
+    /// its registration lists (clause 4.3.6.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns the failures of [`FederationService::spelled_query_string`] and
+    /// of [`forwarding_url`].
+    async fn creation_url(
+        &self,
+        registration: &ContextSourceRegistration,
+        query: EntityMapQuery<'_>,
+        context: &ContextSpec,
+        resolver: &TermResolver<'_>,
+        query_string: &str,
+    ) -> Result<Url, FederationError> {
+        let spelled = self
+            .spelled_query_string(registration, context, resolver, query_string, BodyPresence::Absent)
+            .await?;
+        let client_query = query.client_query();
+        let datasets = registration.coverage.dataset_overlap(client_query.dataset_ids());
+        forwarding_url(
+            registration.access.endpoint.url(),
+            query.path(),
+            Some(&with_forwarded_dataset_ids(&spelled, datasets)),
+        )
     }
 }

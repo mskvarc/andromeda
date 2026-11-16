@@ -1,6 +1,9 @@
 //! What a registered Context Source answers for, in space, time and selection (ETSI GS CIM 009 clauses 5.2.9 and 5.2.10).
 
-use crate::{registration::info::RegistrationInfo, time_interval::TimeInterval};
+use crate::{
+    registration::{dataset_overlap::DatasetOverlap, info::RegistrationInfo},
+    time_interval::TimeInterval,
+};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
@@ -99,17 +102,12 @@ impl RegistrationCoverage {
         relevant.is_some_and(|interval| interval.meets(&temporal_q.interval))
     }
 
-    /// Whether the source may provide an Attribute instance of one of the
-    /// `requested` datasets (clause 5.12): a registration declaring
-    /// `datasetId`s matches a request naming some only when the two share one,
-    /// and matches whenever either side names none. `@none` is a value like
-    /// any other, the default instance (Table 5.2.9-1).
+    /// How the `requested` `datasetId`s meet the ones the registration lists
+    /// (clauses 4.3.6.1 and 5.12): whether its source is contacted, and which
+    /// `datasetId`s it is asked for.
     #[must_use]
-    pub fn admits_dataset_ids(&self, requested: &[DatasetSelector]) -> bool {
-        match self.dataset_id.as_deref() {
-            Some(declared) if !declared.is_empty() && !requested.is_empty() => requested.iter().any(|selector| declared.contains(selector)),
-            Some(_) | None => true,
-        }
+    pub fn dataset_overlap<'a>(&'a self, requested: Option<&'a [DatasetSelector]>) -> DatasetOverlap<'a> {
+        DatasetOverlap::of(requested, self.dataset_id.as_deref())
     }
 }
 
@@ -161,29 +159,18 @@ mod tests {
             .build()
     }
 
-    /// Clause 5.12: a registration declaring `datasetId`s matches a request
-    /// naming some only when they share one, `@none` included; one declaring
-    /// none, or a request naming none, matches.
+    /// Table 5.2.9-1: the overlap reads the `datasetId`s the registration
+    /// lists, so a source listing [A] is asked for A alone of A and B, and for
+    /// A when the request selects every instance.
     #[test]
-    fn the_dataset_match_table() {
-        let a = datasets(&["urn:ngsi-ld:Dataset:a"]);
+    fn the_dataset_overlap_reads_the_listed_dataset_ids() {
+        let listing_a = declaring(Some(&["urn:ngsi-ld:Dataset:a"]));
         let a_and_b = datasets(&["urn:ngsi-ld:Dataset:a", "urn:ngsi-ld:Dataset:b"]);
-        let default = datasets(&["@none"]);
-        for (declared, requested, admitted) in [
-            (Some(&["urn:ngsi-ld:Dataset:a"][..]), &a[..], true),
-            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &a[..], false),
-            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &a_and_b[..], true),
-            (Some(&["urn:ngsi-ld:Dataset:b", "@none"][..]), &default[..], true),
-            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &default[..], false),
-            (Some(&["@none"][..]), &a[..], false),
-            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &[][..], true),
-            (Some(&[][..]), &a[..], true),
-            (None, &a[..], true),
-            (None, &default[..], true),
-            (None, &[][..], true),
-        ] {
-            assert_eq!(declaring(declared).admits_dataset_ids(requested), admitted, "{declared:?} for {requested:?}");
-        }
+        let forwarded = |requested: Option<&[DatasetSelector]>| listing_a.dataset_overlap(requested).forwarded().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(forwarded(Some(&a_and_b)), ["urn:ngsi-ld:Dataset:a"]);
+        assert_eq!(forwarded(None), ["urn:ngsi-ld:Dataset:a"]);
+        assert!(!listing_a.dataset_overlap(Some(&datasets(&["urn:ngsi-ld:Dataset:b"]))).matches());
+        assert!(declaring(None).dataset_overlap(Some(&datasets(&["urn:ngsi-ld:Dataset:b"]))).matches());
     }
 
     #[test]

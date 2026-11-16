@@ -13,6 +13,7 @@ pub mod access;
 pub mod context_source_properties;
 pub mod context_source_property_document;
 pub mod coverage;
+pub mod dataset_overlap;
 pub mod forwarding_mode;
 pub mod health;
 pub mod info;

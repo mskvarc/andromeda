@@ -97,7 +97,7 @@ impl RegistrationFilters<'_> {
         if !temporal
             || !self.scope.admits(coverage)
             || self.geo.is_some_and(|geo| !coverage.admits_geo_query(geo))
-            || self.dataset.is_some_and(|requested| !coverage.admits_dataset_ids(requested))
+            || !coverage.dataset_overlap(self.dataset).matches()
         {
             return Ok(false);
         }
