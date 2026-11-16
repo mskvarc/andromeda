@@ -9,6 +9,8 @@ mod n_sub_upd_6806;
 mod n_sub_upd_6807;
 mod n_sub_upd_6808;
 mod n_sub_upd_6809;
+mod n_sub_upd_6810;
+mod n_sub_upd_6811;
 mod n_sub_upd_7600;
 mod n_sub_upd_7601;
 mod n_sub_upd_7602;
