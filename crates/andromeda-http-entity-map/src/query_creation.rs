@@ -5,7 +5,6 @@
 use crate::{
     creation::{CreationRendering, MapCreation, create_map, registration_filters},
     error::EntityMapResultExt,
-    forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
     membership_window::membership_window,
     state::{EntityMapRouteServices, EntityMapTenantState},
     validation::{validate_entity_map_query, validate_temporal_entity_map_query},
@@ -50,8 +49,8 @@ use std::sync::Arc;
 /// because a locally held part that fails the other filters may belong to an
 /// Entity that meets them once gathered; each request that later runs under
 /// the map evaluates them over the merged result.
-fn candidate_filters(state: &EntityMapRouteServices, split_entities: Option<bool>, scope: ExecutionScope) -> CandidateFilters {
-    match (state.forwarding.split_entities(split_entities), scope) {
+const fn candidate_filters(split: SplitEntities, scope: ExecutionScope) -> CandidateFilters {
+    match (split, scope) {
         (SplitEntities::Split, ExecutionScope::Distributed) => CandidateFilters::Deferred,
         (SplitEntities::Split, ExecutionScope::Local) | (SplitEntities::Complete, ExecutionScope::Distributed | ExecutionScope::Local) => {
             CandidateFilters::Applied
@@ -96,7 +95,6 @@ async fn create_from_entity_query(
     state: &Arc<EntityMapRouteServices>,
     query: &AdmittedEntityQuery,
     window: &PageWindow,
-    forwarded_query: String,
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
@@ -111,7 +109,7 @@ async fn create_from_entity_query(
         csf: registration_filters.csf(),
     })
     .with_entity_map_instance(rendering.uri)?;
-    let filters = candidate_filters(state, query.split_entities, query.execution_scope());
+    let filters = candidate_filters(state.forwarding.split_entities(query.split_entities), query.execution_scope());
     let local_ids = local_entity_ids(state, query, window, filters, rendering).await?;
     create_map(
         state,
@@ -121,7 +119,6 @@ async fn create_from_entity_query(
             fingerprint,
             filters: registration_filters,
             query: EntityMapQuery::Entities(query),
-            forwarded_query,
             local: query.is_local(),
         },
         rendering,
@@ -135,7 +132,6 @@ async fn create_from_temporal_query(
     state: &Arc<EntityMapRouteServices>,
     params: &AdmittedTemporalRequest,
     window: &PageWindow,
-    forwarded_query: String,
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
@@ -172,7 +168,7 @@ async fn create_from_temporal_query(
                 language_targeting: state.temporal.language_targeting(),
             },
             RequestedIdentifiers::Narrow,
-            candidate_filters(state, params.split_entities, params.execution_scope()),
+            candidate_filters(state.forwarding.split_entities(params.split_entities), params.execution_scope()),
         )
         .await
         .with_entity_map_instance(rendering.uri)?;
@@ -184,7 +180,6 @@ async fn create_from_temporal_query(
             fingerprint,
             filters: registration_filters,
             query: EntityMapQuery::TemporalEntities(params),
-            forwarded_query,
             local: params.is_local(),
         },
         rendering,
@@ -208,13 +203,10 @@ pub(crate) async fn create_from_query(
         .with_entity_map_instance(&uri)?;
     let query = validate_entity_map_query(query, state.entity_query.filter_admission(), accept.media_type(), &uri)?;
     let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
-    let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
-    let forwarded_query = forwarded_query_string(&uri, filters);
     create_from_entity_query(
         &state,
         &query,
         &window,
-        forwarded_query,
         &CreationRendering::builder()
             .context(&context)
             .accept(accept)
@@ -247,13 +239,10 @@ pub(crate) async fn create_from_query_post(
     let query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     let query = validate_entity_map_query(query, state.entity_query.filter_admission(), accept.media_type(), &uri)?;
     let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
-    let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
-    let forwarded_query = body_query_string(&query, filters, &uri);
     create_from_entity_query(
         &state,
         &query,
         &window,
-        forwarded_query,
         &CreationRendering::builder()
             .context(&context)
             .accept(accept)
@@ -284,13 +273,10 @@ pub(crate) async fn create_temporal_from_query(
         .with_entity_map_instance(&uri)?;
     let params = validate_temporal_entity_map_query(params, state.temporal.linked_retrieval(), state.temporal.filter_admission(), &uri)?;
     let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
-    let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
-    let forwarded_query = forwarded_temporal_query_string(&uri, filters);
     create_from_temporal_query(
         &state,
         &params,
         &window,
-        forwarded_query,
         &CreationRendering::builder()
             .context(&context)
             .accept(accept)
@@ -323,13 +309,10 @@ pub(crate) async fn create_temporal_from_query_post(
     let params = admitted_body_parameters(body, url, &admission).map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
     let params = validate_temporal_entity_map_query(params, state.temporal.linked_retrieval(), state.temporal.filter_admission(), &uri)?;
     let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
-    let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
-    let forwarded_query = temporal_body_query_string(&params, filters);
     create_from_temporal_query(
         &state,
         &params,
         &window,
-        forwarded_query,
         &CreationRendering::builder()
             .context(&context)
             .accept(accept)

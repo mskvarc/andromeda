@@ -21,12 +21,6 @@ pub enum SplitEntities {
 }
 
 impl SplitEntities {
-    /// Whether filters are deferred until after the aggregation.
-    #[must_use]
-    pub const fn is_split(self) -> bool {
-        matches!(self, SplitEntities::Split)
-    }
-
     /// The Scope query a read under `self` selects its registrations by.
     ///
     /// Clauses 5.7.2.4 and 5.7.4.4: under [`SplitEntities::Split`] the Scope
@@ -68,8 +62,6 @@ mod tests {
         pretty_assertions::assert_eq!(resolve_split_entities(SplitEntitiesDefault::Split, Some(false)), SplitEntities::Complete);
         pretty_assertions::assert_eq!(resolve_split_entities(SplitEntitiesDefault::Split, None), SplitEntities::Split);
         pretty_assertions::assert_eq!(resolve_split_entities(SplitEntitiesDefault::Complete, None), SplitEntities::Complete);
-        assert!(SplitEntities::Split.is_split());
-        assert!(!SplitEntities::Complete.is_split());
     }
 
     #[test]

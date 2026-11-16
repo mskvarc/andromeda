@@ -715,7 +715,6 @@ dependencies = [
  "tokio",
  "tower",
  "typed-builder",
- "url",
 ]
 
 [[package]]

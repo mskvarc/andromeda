@@ -134,7 +134,8 @@ impl<'q> Gathered<'q> {
             | ForwardedParameter::ContainedBy
             | ForwardedParameter::ExpandValues
             | ForwardedParameter::Pick
-            | ForwardedParameter::Omit => return Err(FederationInvariant::BatchQueryParameter(parameter).into()),
+            | ForwardedParameter::Omit
+            | ForwardedParameter::EntityMapLifetime => return Err(FederationInvariant::BatchQueryParameter(parameter).into()),
         }
         Ok(())
     }

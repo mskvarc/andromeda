@@ -34,6 +34,9 @@ pub mod discovery_result;
 mod dropped_entities;
 /// EntityMap creation forwarding (clauses 5.14.4 and 5.14.5).
 pub mod entity_map;
+/// A forwarded EntityMap creation names only what each registration covers.
+#[cfg(test)]
+mod entity_map_forwarding_tests;
 /// Current-entity query and retrieve execution.
 pub mod entity_read;
 /// Why one entity a source answered is not read into the model.

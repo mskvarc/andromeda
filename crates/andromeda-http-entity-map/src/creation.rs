@@ -46,10 +46,8 @@ pub(crate) struct MapCreation<'a> {
     /// request's context.
     pub(crate) filters: ExpandedRegistrationFilters,
     /// The query the map is created for, which also decides the creation
-    /// resource the peers are asked through.
+    /// resource the peers are asked through and what each is asked for.
     pub(crate) query: EntityMapQuery<'a>,
-    /// The query string forwarded to each source.
-    pub(crate) forwarded_query: String,
     /// Whether the request asked for local scope (clause 5.5.13).
     pub(crate) local: bool,
 }
@@ -90,7 +88,6 @@ pub(crate) async fn create_map(
             .forward_entity_map_query(ForwardEntityMapRequest {
                 query: creation.query,
                 filters: &creation.filters,
-                query_string: &creation.forwarded_query,
                 context: rendering.context,
                 triggering,
             })
@@ -107,9 +104,7 @@ pub(crate) async fn create_map(
         }
         for contribution in forwarded.results {
             warnings.extend(contribution.warnings);
-            if let Some(remote) = contribution.map {
-                map.add_remote(&contribution.registration_id, &remote);
-            }
+            map.add_contribution(&contribution.registration_id, contribution.entity_ids, contribution.linked_map);
         }
     }
     state.entity_maps.store(&map).await.with_entity_map_instance(rendering.uri)?;

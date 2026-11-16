@@ -90,6 +90,8 @@ pub enum ForwardedParameter {
     Pick,
     /// The clause 4.21 projection removing members.
     Omit,
+    /// The suggested lifetime of the `EntityMap` a request creates.
+    EntityMapLifetime,
 }
 
 impl ForwardedParameter {
@@ -123,7 +125,8 @@ impl ForwardedParameter {
             | ForwardedParameter::AggrPeriodDuration
             | ForwardedParameter::Join
             | ForwardedParameter::JoinLevel
-            | ForwardedParameter::ContainedBy => ParameterNames::Nothing,
+            | ForwardedParameter::ContainedBy
+            | ForwardedParameter::EntityMapLifetime => ParameterNames::Nothing,
         }
     }
 }
@@ -149,6 +152,7 @@ mod tests {
             (ForwardedParameter::LastN, "lastN"),
             (ForwardedParameter::AggrPeriodDuration, "aggrPeriodDuration"),
             (ForwardedParameter::ContainedBy, "containedBy"),
+            (ForwardedParameter::EntityMapLifetime, "entityMapLifetime"),
         ] {
             pretty_assertions::assert_eq!(parameter.to_string(), spelled);
             pretty_assertions::assert_eq!(spelled.parse::<ForwardedParameter>(), Ok(parameter));

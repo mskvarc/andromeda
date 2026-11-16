@@ -3,9 +3,13 @@
 //!
 //! A registration that advertises `createEntityMapQueryEntity` (or the
 //! temporal twin) answers the same query with an EntityMap of its own. The
-//! caller folds each returned map into the local one: the registration maps to
-//! the remote map's identifier in `linkedMaps`, and every entity the remote map
-//! lists is attributed to the registration in `entityMap`.
+//! query is narrowed to each registration as the query itself is forwarded
+//! (clause 4.3.6.1): one creation per information block that covers part of
+//! it, naming only the types, identifiers and Attributes the block covers. The
+//! caller folds each returned map into the local one: every entity the remote
+//! map lists is attributed to the registration in `entityMap`, and the remote
+//! map's identifier joins `linkedMaps` when it is the only map the registration
+//! was asked for.
 
 use crate::{
     FederationService,
@@ -13,28 +17,27 @@ use crate::{
     entity_read::mode_admitted,
     error::FederationError,
     expanded_registration_filters::ExpandedRegistrationFilters,
-    forwarded_query::{client_query::ClientQuery, dataset_ids::with_forwarded_dataset_ids},
+    forwarded_query::client_query::ClientQuery,
     forwarding_context::BodyPresence,
-    forwarding_url::forwarding_url,
+    forwarding_url::{build_entity_map_url, build_temporal_entity_map_url},
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome},
-    read_fan_out::{SourceAnswer, read_outcome},
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer, expand_registration_targets, read_outcome},
+    registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     single_source_failure::single_source_read_failure,
     source_reach::SourceReach,
-    source_read::SourceRead,
     term_resolver::TermResolver,
 };
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
-use futures::{StreamExt, stream};
 use thiserror::Error;
 use tracing::warn;
 use url::Url;
@@ -69,11 +72,12 @@ impl<'a> EntityMapQuery<'a> {
         }
     }
 
-    /// The resource path below the API base.
-    const fn path(self) -> &'static [&'static str] {
+    /// How the creation resource is addressed below a registration's endpoint
+    /// (clauses 6.34.3.1 and 6.35.3.1).
+    const fn creation_url(self) -> fn(&Url, &str) -> Result<Url, FederationError> {
         match self {
-            EntityMapQuery::Entities(_) => &["entityMaps"],
-            EntityMapQuery::TemporalEntities(_) => &["temporal", "entityMaps"],
+            EntityMapQuery::Entities(_) => build_entity_map_url,
+            EntityMapQuery::TemporalEntities(_) => build_temporal_entity_map_url,
         }
     }
 
@@ -85,58 +89,82 @@ impl<'a> EntityMapQuery<'a> {
             EntityMapQuery::TemporalEntities(params) => ClientQuery::TemporalQuery(params),
         }
     }
+
+    /// The lifetime the client suggested for the map (clauses 5.14.4.3 and
+    /// 5.14.5.3), which every source is suggested too.
+    const fn lifetime(self) -> Option<&'a Iso8601Duration> {
+        match self {
+            EntityMapQuery::Entities(params) => params.entity_map_lifetime.as_ref(),
+            EntityMapQuery::TemporalEntities(params) => params.entity_map_lifetime.as_ref(),
+        }
+    }
 }
 
 /// Parameters for forwarding an `EntityMap` creation.
 pub struct ForwardEntityMapRequest<'a> {
     /// The query the map is created for: its entity selectors are matched by
     /// clause 5.12 and, unless its entities may be split, its Scope query
-    /// against each registration's `scope`.
+    /// against each registration's `scope`. Each source is sent the part of it
+    /// its registration covers, without the filters clauses 5.14.4.4 and
+    /// 5.14.5.4 remove when its entities may be split.
     pub query: EntityMapQuery<'a>,
     /// The query's context source filter and geoquery, expanded under
     /// `context`, which a registration has to pass to be contacted.
     pub filters: &'a ExpandedRegistrationFilters,
-    /// The query string forwarded to each source: the full query for a
-    /// non-split query, the entity selectors alone when split entities apply
-    /// (clause 5.14.4.4 strips the filters before forwarding).
-    pub query_string: &'a str,
     /// The JSON-LD context the triggering request resolved to.
     pub context: &'a ContextSpec,
     /// The request that triggered this forwarding.
     pub triggering: TriggeringRequest<'a>,
 }
 
-/// The `EntityMap` one registration's context source created for the query.
+/// What one creation forwarded to a registration's context source contributed.
 pub struct ForwardedEntityMap {
-    /// The contributing registration.
+    /// The registration whose context source was asked.
     pub registration_id: Identifier,
-    /// The map the source created, absent when the attempt failed.
-    pub map: Option<EntityMap>,
+    /// The entities the map the source created lists, in its order; none when
+    /// the attempt failed or the source declined to create a map.
+    pub entity_ids: Vec<Identifier>,
+    /// The map the source created, when it is the only creation the
+    /// registration was sent. Table 5.2.39-2 links one map to a registration,
+    /// and a map pins the query that created it (clause 5.5.14), so a
+    /// registration sent one creation per covering block or per run of
+    /// identifiers is linked to none of the maps they created.
+    pub linked_map: Option<Identifier>,
     /// Protocol warnings generated by the attempt.
     pub warnings: Vec<NgsiLdWarning>,
 }
 
+/// What one forwarded creation answered, before the creation is decided.
+struct CreationAnswer {
+    /// What the creation contributed.
+    contribution: ForwardedEntityMap,
+    /// The failure of an exclusive or redirect source, which is the whole
+    /// creation's when that source alone holds the data (clause 6.3.17).
+    failure: Option<FederationError>,
+}
+
 impl FederationService {
     /// Ask every matching context source that advertises `EntityMap` creation
-    /// for its map of the same query.
+    /// for its map of the part of the query its registration covers.
     ///
     /// # Errors
     ///
     /// Returns [`FederationError::Query`] when a selector's type cannot be
-    /// expanded against the request's context, and
-    /// [`FederationError::Registration`] when the matching registrations
-    /// cannot be read. When the only matching registration is exclusive or
-    /// redirect, its failure is the creation's (clause 6.3.17):
+    /// expanded against the request's context,
+    /// [`FederationError::JsonLd`] when a name the narrowing writes cannot,
+    /// and [`FederationError::Registration`] when the matching registrations
+    /// cannot be read. When a single creation reaches an exclusive or redirect
+    /// registration and no other registration holding data is asked, its
+    /// failure is the creation's (clause 6.3.17):
     /// [`FederationError::LoopDetected`], [`FederationError::GatewayTimeout`]
     /// or [`FederationError::BadGateway`], except for the 501 Table 6.34.3.1-1
     /// relays, which the returned [`ForwardReadOutcome`] carries on its
     /// `sources`. Any other source that fails to answer does not fail the call:
-    /// its attempt is reported as a [`ForwardedEntityMap`] without a map.
+    /// its attempt is reported as a [`ForwardedEntityMap`] listing no entity.
     pub async fn forward_entity_map_query(&self, request: ForwardEntityMapRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntityMap>, FederationError> {
         let ForwardEntityMapRequest {
             query,
             filters,
-            query_string,
             context,
             triggering,
         } = request;
@@ -165,103 +193,148 @@ impl FederationService {
                 },
             )
             .await?;
-        if registrations.is_empty() {
+        let targets = self.creation_targets(query, registrations, context).await?;
+        if targets.is_empty() {
             return Ok(ForwardReadOutcome::empty());
         }
-        // Clause 6.3.17 counts the registrations that hold the data; an
-        // auxiliary one only supplements it.
-        let matched = registrations
+        // Clause 6.3.17 counts the requests to registrations that hold the
+        // data; an auxiliary one only supplements it.
+        let matched = targets
             .iter()
-            .filter(|registration| mode_admitted(registration, CsrModeFilter::ExcludeAuxiliary))
+            .filter(|(registration, _)| mode_admitted(registration, CsrModeFilter::ExcludeAuxiliary))
             .count();
-        let lone = matched == 1;
-        let resolver = TermResolver::new(&self.engine, context);
-        let resolver = &resolver;
-        let (answers, failures): (Vec<_>, Vec<_>) = stream::iter(registrations)
-            .map(|registration| async move {
-                let url = self.creation_url(&registration, query, context, resolver, query_string).await;
-                let read = SourceRead::builder()
-                    .registration(&registration)
-                    .inbound(context)
-                    .triggering(triggering)
-                    .build();
-                // Clause 6.3.17 allows caching for `/entities` only.
-                let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
-                let error_status = outcome.error_status();
-                let mode = registration.access.mode.unwrap_or_default();
-                let failure = if lone && matches!(mode, ForwardingMode::Exclusive | ForwardingMode::Redirect) {
-                    single_source_read_failure(&registration.id, &outcome)
-                } else {
-                    None
-                };
-                let (map, warnings) = match outcome {
-                    ForwardGetOutcome::Success(response) => match serde_json::from_slice::<EntityMap>(&response.body) {
-                        Ok(map) => (Some(map), response.warnings),
-                        Err(error) => {
-                            warn!("Context source {} returned an invalid EntityMap: {}", registration.id, error);
-                            let mut warnings = response.warnings;
-                            warnings.push(NgsiLdWarning::new(
-                                WarnCode::RevalidationFailed,
-                                InvalidEntityMap {
-                                    registration: &registration.id,
-                                    error,
-                                },
-                            ));
-                            (None, warnings)
-                        }
-                    },
-                    // A source that declines to create a map is not abnormal (clause 5.5.14).
-                    ForwardGetOutcome::NotFound(_) => (None, Vec::new()),
-                    other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
-                        (None, other.warning(&registration.id).into_iter().collect())
-                    }
-                };
-                let answer = SourceAnswer {
-                    mode,
-                    error_status,
-                    entry: Some(ForwardedEntityMap {
-                        registration_id: registration.id,
-                        map,
-                        warnings,
-                    }),
-                };
-                (answer, failure)
-            })
-            .buffer_unordered(self.csr_concurrency)
-            .unzip()
+        let answers = self
+            .fan_out_read(
+                targets,
+                |registration, outcome| Some(creation_answer(registration, outcome)),
+                ForwardedGetConditions {
+                    context,
+                    triggering,
+                    // Clause 6.3.17 allows caching for `/entities` only.
+                    cacheability: Cacheability::Uncacheable,
+                    entity_map: EntityMapInUse::None,
+                },
+            )
             .await;
-        if let Some(failure) = failures.into_iter().flatten().next() {
+        let mut failures = Vec::new();
+        let answers: Vec<SourceAnswer<ForwardedEntityMap>> = answers
+            .into_iter()
+            .map(|SourceAnswer { mode, error_status, entry }| SourceAnswer {
+                mode,
+                error_status,
+                entry: entry.map(|CreationAnswer { contribution, failure }| {
+                    failures.extend(failure);
+                    contribution
+                }),
+            })
+            .collect();
+        if matched == 1
+            && let Some(failure) = failures.into_iter().next()
+        {
             return Err(failure);
         }
-        Ok(read_outcome(answers, matched))
+        let mut outcome = read_outcome(answers, matched);
+        link_sole_creations(&mut outcome.results);
+        Ok(outcome)
     }
 
-    /// The URL the creation is forwarded to `registration` by: the client's
-    /// `query_string` with its names spelled in the registration's forwarding
-    /// context (clause 4.3.6.6), asking the source only for the `datasetId`s
-    /// its registration lists (clause 4.3.6.1).
+    /// The creations forwarded for `query` to `registrations`: one for each
+    /// information block that covers part of the query, and for each run of
+    /// its identifiers that fits a URL (clauses 4.3.6.1 and 4.3.6.7), each
+    /// naming only what the block covers, in the names of the registration's
+    /// forwarding context (clause 4.3.6.6).
     ///
     /// # Errors
     ///
-    /// Returns the failures of [`FederationService::spelled_query_string`] and
-    /// of [`forwarding_url`].
-    async fn creation_url(
+    /// Returns [`FederationError::JsonLd`] when a client type or attribute
+    /// cannot be expanded against the request context, and
+    /// [`FederationError::Query`] when a name in the client's query cannot.
+    async fn creation_targets(
         &self,
-        registration: &ContextSourceRegistration,
         query: EntityMapQuery<'_>,
+        registrations: Vec<ContextSourceRegistration>,
         context: &ContextSpec,
-        resolver: &TermResolver<'_>,
-        query_string: &str,
-    ) -> Result<Url, FederationError> {
-        let spelled = self
-            .spelled_query_string(registration, context, resolver, query_string, BodyPresence::Absent)
-            .await?;
-        let client_query = query.client_query();
-        let datasets = registration.coverage.dataset_overlap(client_query.dataset_ids());
-        forwarding_url(
-            registration.access.endpoint.url(),
-            query.path(),
-            Some(&with_forwarded_dataset_ids(&spelled, datasets)),
-        )
+    ) -> Result<Vec<(ContextSourceRegistration, ForwardedRead)>, FederationError> {
+        let client = query.client_query();
+        let resolver = TermResolver::new(&self.engine, context);
+        let narrowing = Narrowing::builder()
+            .client(client)
+            .inbound(context)
+            .resolver(&resolver)
+            .split(self.split_entities(client.split_entities()))
+            .presence(BodyPresence::Absent)
+            .build();
+        let mut targets = Vec::with_capacity(registrations.len());
+        for registration in registrations {
+            let reads = self
+                .registration_queries(&registration, &narrowing)
+                .await?
+                .into_reads(|narrowed| get_reads(&registration, narrowed.into_entity_map_creation(query.lifetime()), query.creation_url()));
+            expand_registration_targets(registration, reads, &mut targets);
+        }
+        Ok(targets)
+    }
+}
+
+/// Read what `registration`'s source answered one creation with.
+fn creation_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> CreationAnswer {
+    let failure = match registration.access.mode.unwrap_or_default() {
+        ForwardingMode::Exclusive | ForwardingMode::Redirect => single_source_read_failure(&registration.id, &outcome),
+        ForwardingMode::Inclusive | ForwardingMode::Auxiliary => None,
+    };
+    let (map, warnings) = match outcome {
+        ForwardGetOutcome::Success(response) => match serde_json::from_slice::<EntityMap>(&response.body) {
+            Ok(map) => (Some(map), response.warnings),
+            Err(error) => {
+                warn!("Context source {} returned an invalid EntityMap: {}", registration.id, error);
+                let mut warnings = response.warnings;
+                warnings.push(NgsiLdWarning::new(
+                    WarnCode::RevalidationFailed,
+                    InvalidEntityMap {
+                        registration: &registration.id,
+                        error,
+                    },
+                ));
+                (None, warnings)
+            }
+        },
+        // A source that declines to create a map is not abnormal (clause 5.5.14).
+        ForwardGetOutcome::NotFound(_) => (None, Vec::new()),
+        other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
+            (None, other.warning(&registration.id).into_iter().collect())
+        }
+    };
+    let (entity_ids, linked_map) = match map {
+        Some(EntityMap { id, entity_map, .. }) => (entity_map.into_keys().collect(), Some(id)),
+        None => (Vec::new(), None),
+    };
+    CreationAnswer {
+        contribution: ForwardedEntityMap {
+            registration_id: registration.id.clone(), // clone: the contribution owns the identifier of the registration it is attributed to
+            entity_ids,
+            linked_map,
+            warnings,
+        },
+        failure,
+    }
+}
+
+/// Keep linked only the maps of registrations sent a single creation, as
+/// [`ForwardedEntityMap::linked_map`] describes.
+fn link_sole_creations(contributions: &mut [ForwardedEntityMap]) {
+    let shared: Vec<bool> = contributions
+        .iter()
+        .map(|contribution| {
+            contributions
+                .iter()
+                .filter(|other| other.registration_id == contribution.registration_id)
+                .nth(1)
+                .is_some()
+        })
+        .collect();
+    for (contribution, shared) in contributions.iter_mut().zip(shared) {
+        if shared {
+            contribution.linked_map = None;
+        }
     }
 }
