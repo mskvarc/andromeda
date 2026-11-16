@@ -43,16 +43,28 @@ fn charged_pages(
 ) -> Result<Vec<SourceAnswer<ReceivedTemporalAnswer<ContextualEntity>>>, ResultBudgetExceeded> {
     received
         .into_iter()
-        .map(|SourceAnswer { mode, error_status, entry }| {
-            let entry = match entry {
-                Some((answer, sent)) => {
-                    budget.charge_page(sent, answer.entities.iter().map(ReceivedTemporalAnswer::identifier))?;
-                    Some(answer)
-                }
-                None => None,
-            };
-            Ok(SourceAnswer { mode, error_status, entry })
-        })
+        .map(
+            |SourceAnswer {
+                 registration,
+                 mode,
+                 error_status,
+                 entry,
+             }| {
+                let entry = match entry {
+                    Some((answer, sent)) => {
+                        budget.charge_page(sent, answer.entities.iter().map(ReceivedTemporalAnswer::identifier))?;
+                        Some(answer)
+                    }
+                    None => None,
+                };
+                Ok(SourceAnswer {
+                    registration,
+                    mode,
+                    error_status,
+                    entry,
+                })
+            },
+        )
         .collect()
 }
 

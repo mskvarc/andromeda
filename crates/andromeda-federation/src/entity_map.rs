@@ -22,7 +22,7 @@ use crate::{
     forwarding_url::{build_entity_map_url, build_temporal_entity_map_url},
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome},
-    read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer, expand_registration_targets, read_outcome},
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, LinkedAnswer, SourceAnswer, expand_registration_targets, read_outcome},
     registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
@@ -142,6 +142,12 @@ pub struct ForwardedEntityMap {
     pub warnings: Vec<NgsiLdWarning>,
 }
 
+impl LinkedAnswer for ForwardedEntityMap {
+    fn unlink(&mut self) {
+        self.linked_map = None;
+    }
+}
+
 /// What one forwarded creation answered, before the creation is decided.
 struct CreationAnswer {
     /// What the creation contributed.
@@ -227,23 +233,29 @@ impl FederationService {
         let mut failures = Vec::new();
         let answers: Vec<SourceAnswer<ForwardedEntityMap>> = answers
             .into_iter()
-            .map(|SourceAnswer { mode, error_status, entry }| SourceAnswer {
-                mode,
-                error_status,
-                entry: entry.map(|CreationAnswer { contribution, failure }| {
-                    failures.extend(failure);
-                    contribution
-                }),
-            })
+            .map(
+                |SourceAnswer {
+                     registration,
+                     mode,
+                     error_status,
+                     entry,
+                 }| SourceAnswer {
+                    registration,
+                    mode,
+                    error_status,
+                    entry: entry.map(|CreationAnswer { contribution, failure }| {
+                        failures.extend(failure);
+                        contribution
+                    }),
+                },
+            )
             .collect();
         if matched == 1
             && let Some(failure) = failures.into_iter().next()
         {
             return Err(failure);
         }
-        let mut outcome = read_outcome(answers, matched);
-        link_sole_creations(&mut outcome.results);
-        Ok(outcome)
+        Ok(read_outcome(answers, matched))
     }
 
     /// The creations forwarded for `query` to `registrations`: one for each
@@ -324,25 +336,5 @@ fn creation_answer(registration: &ContextSourceRegistration, outcome: ForwardGet
             warnings,
         },
         failure,
-    }
-}
-
-/// Keep linked only the maps of registrations sent a single creation, as
-/// [`ForwardedEntityMap::linked_map`] describes.
-fn link_sole_creations(contributions: &mut [ForwardedEntityMap]) {
-    let shared: Vec<bool> = contributions
-        .iter()
-        .map(|contribution| {
-            contributions
-                .iter()
-                .filter(|other| other.registration_id == contribution.registration_id)
-                .nth(1)
-                .is_some()
-        })
-        .collect();
-    for (contribution, shared) in contributions.iter_mut().zip(shared) {
-        if shared {
-            contribution.linked_map = None;
-        }
     }
 }

@@ -93,6 +93,9 @@ pub mod language_negotiation;
 /// An identifier list over the URL budget is forwarded as several requests.
 #[cfg(test)]
 mod large_id_list_forwarding_tests;
+/// A forwarded query links a source's map only for a registration read once.
+#[cfg(test)]
+mod linked_map_forwarding_tests;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
 /// This broker as a Context Source, seen from the tenant a service serves.

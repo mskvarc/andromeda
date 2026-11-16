@@ -46,12 +46,22 @@ impl FederationService {
         &self,
         answer: SourceAnswer<ReceivedTemporalAnswer<ContextualEntity>>,
     ) -> SourceAnswer<ReceivedTemporalAnswer<ReadTemporalEntity>> {
-        let SourceAnswer { mode, error_status, entry } = answer;
+        let SourceAnswer {
+            registration,
+            mode,
+            error_status,
+            entry,
+        } = answer;
         let entry = match entry {
             Some(received) => Some(self.read_temporal_answer(received).await),
             None => None,
         };
-        SourceAnswer { mode, error_status, entry }
+        SourceAnswer {
+            registration,
+            mode,
+            error_status,
+            entry,
+        }
     }
 
     /// Read every evolution of `answer`, each one that does not read left out

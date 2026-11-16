@@ -253,6 +253,7 @@ impl FederationService {
         position.advance(first_sent);
         let Some(mut gathered) = answer else {
             return Ok(SourceAnswer {
+                registration: registration.id.clone(), // clone: the answer names the registration it came from after the walk returns
                 mode,
                 error_status,
                 entry: None,
@@ -327,6 +328,7 @@ impl FederationService {
             };
         }
         Ok(SourceAnswer {
+            registration: registration.id.clone(), // clone: the answer names the registration it came from after the walk returns
             mode,
             error_status,
             entry: Some(gathered),

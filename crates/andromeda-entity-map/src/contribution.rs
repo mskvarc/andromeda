@@ -18,6 +18,9 @@ pub struct SourceContribution {
     pub registration: Identifier,
     /// The entities it returned.
     pub entity_ids: Vec<Identifier>,
-    /// The `EntityMap` it used, when it returned one.
+    /// The `EntityMap` it used, when it returned one for the only read its
+    /// registration was sent: a map pins the request that created it (clause
+    /// 5.5.14), so none of the maps of a registration sent several reads is
+    /// linked.
     pub linked_map: Option<Identifier>,
 }
