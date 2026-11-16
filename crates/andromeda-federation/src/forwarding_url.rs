@@ -120,6 +120,18 @@ pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Identifier
     forwarding_url(endpoint, &["temporal", "entities", entity_id.as_str()], Some(query_string))
 }
 
+/// Build a forwarding URL creating an `EntityMap` for Query Entities (clause
+/// 6.34.3.1).
+pub(crate) fn build_entity_map_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
+    forwarding_url(endpoint, &["entityMaps"], Some(query_string))
+}
+
+/// Build a forwarding URL creating an `EntityMap` for Query Temporal Evolution
+/// of Entities (clause 6.35.3.1).
+pub(crate) fn build_temporal_entity_map_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
+    forwarding_url(endpoint, &["temporal", "entityMaps"], Some(query_string))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::forwarding_url::{build_retrieve_url, forwarding_url, with_local_scope, with_offset};

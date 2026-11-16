@@ -3,7 +3,6 @@
 mod creation;
 pub mod error;
 mod expiry_update_refusal;
-mod forwarded_query_string;
 mod handler;
 mod membership_window;
 mod query_creation;

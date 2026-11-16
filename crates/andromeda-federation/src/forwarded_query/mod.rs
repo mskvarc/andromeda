@@ -43,6 +43,7 @@ use url::form_urlencoded;
 pub mod block_footprint;
 pub mod client_query;
 pub(crate) mod dataset_ids;
+mod entity_map_creation;
 mod filter_parameters;
 pub(crate) mod id_chunks;
 mod temporal_parameters;

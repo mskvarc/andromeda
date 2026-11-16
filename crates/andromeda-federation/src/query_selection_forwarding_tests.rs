@@ -135,12 +135,12 @@ async fn contacted(selecting: Selecting, query: &str, registrations: Vec<(Source
         Selecting::EntityMap => {
             let params: EntityQueryParameters = serde_urlencoded::from_str(query).expect("a valid entity query");
             let filters = expanded(&service, &context, params.csf.as_ref(), params.geo.0.as_ref()).await;
-            create_map(&service, EntityMapQuery::Entities(&params), &filters, query, &context).await;
+            create_map(&service, EntityMapQuery::Entities(&params), &filters, &context).await;
         }
         Selecting::TemporalEntityMap => {
             let params: TemporalQueryParameters = serde_urlencoded::from_str(query).expect("a valid temporal query");
             let filters = expanded(&service, &context, params.csf.as_ref(), params.geo.0.as_ref()).await;
-            create_map(&service, EntityMapQuery::TemporalEntities(&params), &filters, query, &context).await;
+            create_map(&service, EntityMapQuery::TemporalEntities(&params), &filters, &context).await;
         }
     }
     let mut reached = Vec::new();
@@ -176,12 +176,11 @@ async fn expanded(service: &FederationService, context: &ContextSpec, csf: Optio
         .expect("the filters expand")
 }
 
-async fn create_map(service: &FederationService, query: EntityMapQuery<'_>, filters: &ExpandedRegistrationFilters, query_string: &str, context: &ContextSpec) {
+async fn create_map(service: &FederationService, query: EntityMapQuery<'_>, filters: &ExpandedRegistrationFilters, context: &ContextSpec) {
     service
         .forward_entity_map_query(ForwardEntityMapRequest {
             query,
             filters,
-            query_string,
             context,
             triggering: TriggeringRequest::default(),
         })
@@ -348,14 +347,7 @@ async fn an_entity_map_from_a_query_body_asks_the_store_with_each_selector() {
     let store = Arc::new(FixedRegistrationStore::new(vec![registration]));
     let service = service(Arc::clone(&store));
     let context = context();
-    create_map(
-        &service,
-        EntityMapQuery::Entities(&params),
-        &ExpandedRegistrationFilters::default(),
-        "",
-        &context,
-    )
-    .await;
+    create_map(&service, EntityMapQuery::Entities(&params), &ExpandedRegistrationFilters::default(), &context).await;
     let asked = store.asked_specifications();
     pretty_assertions::assert_eq!(asked.len(), 1, "the store was asked {asked:?}");
     pretty_assertions::assert_eq!(asked[0].len(), 2, "the store was asked {asked:?}");

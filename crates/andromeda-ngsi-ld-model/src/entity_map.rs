@@ -175,21 +175,15 @@ impl EntityMap {
     }
 
     /// Fold in what one registration's context source contributed to a read
-    /// (clauses 5.7.1.4 to 5.7.4.4): the entities it returned are attributed
-    /// to it, and the map it answered with, if any, joins `linkedMaps`.
+    /// (clauses 5.7.1.4 to 5.7.4.4) or to the creation of this map (clauses
+    /// 5.14.4.4 and 5.14.5.4): the entities it returned or listed are
+    /// attributed to it, and the map it used or created, if any, joins
+    /// `linkedMaps`.
     pub fn add_contribution(&mut self, registration: &Identifier, entity_ids: impl IntoIterator<Item = Identifier>, linked_map: Option<Identifier>) {
         self.add_remote_entities(registration, entity_ids);
         if let Some(linked_map) = linked_map {
             self.link(registration.clone(), linked_map); // clone: the link owns the registration identifier
         }
-    }
-
-    /// Fold in the `EntityMap` a registration's context source created for the
-    /// same query (clause 5.14.4.4): its identifier joins `linkedMaps`, and every
-    /// entity it lists is attributed to the registration.
-    pub fn add_remote(&mut self, registration: &Identifier, remote: &EntityMap) {
-        self.link(registration.clone(), remote.id.clone()); // clone: the link owns both identifiers
-        self.add_remote_entities(registration, remote.entity_ids().cloned()); // clone: the entries own their identifiers
     }
 
     /// Returns whether this map has already expired.
@@ -240,29 +234,6 @@ mod tests {
             })
         );
         assert!(rendered.get("ids").is_none());
-    }
-
-    #[test]
-    fn a_remote_map_adds_a_link_and_attributes_its_entities_to_the_registration() {
-        let mut map = local_map();
-        let registration = uri("urn:ngsi-ld:ContextSourceRegistration:b");
-        let remote = EntityMap::local(
-            uri("urn:ngsi-ld:EntityMap:remote"),
-            Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).single().expect("valid instant"),
-            [uri("urn:ngsi-ld:Vehicle:2"), uri("urn:ngsi-ld:Vehicle:3")],
-        );
-        map.add_remote(&registration, &remote);
-        pretty_assertions::assert_eq!(map.linked_map_for(&registration), Some(&uri("urn:ngsi-ld:EntityMap:remote")));
-        pretty_assertions::assert_eq!(
-            sources_of(&map, "urn:ngsi-ld:Vehicle:2"),
-            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())]
-        );
-        pretty_assertions::assert_eq!(
-            sources_of(&map, "urn:ngsi-ld:Vehicle:3"),
-            vec![&EntityMapSource::Registration(registration.clone())]
-        );
-        pretty_assertions::assert_eq!(map.registrations().collect::<Vec<_>>(), vec![&registration]);
-        pretty_assertions::assert_eq!(map.entity_ids().count(), 3);
     }
 
     #[test]
