@@ -104,7 +104,8 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
             .as_ref()
             .and_then(|temporal_q| compile_temporal_q(temporal_q, sub.id.as_ref())),
         geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
-        scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
+        scope_q: sub.filters.scope_q.clone(),       // clone: compiled state owns its scope AST.
+        dataset_id: sub.filters.dataset_id.clone(), // clone: compiled state owns dataset identifiers.
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.

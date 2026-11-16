@@ -49,6 +49,7 @@ pub mod cut_stream;
 pub mod data_integrity_proof;
 pub mod database_name;
 pub mod database_proxy;
+pub mod dataset_copy_source;
 pub mod dataset_instance_time;
 pub mod dataset_sources;
 pub mod deferred_creation;

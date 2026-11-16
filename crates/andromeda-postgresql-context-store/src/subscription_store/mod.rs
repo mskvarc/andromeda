@@ -1,7 +1,6 @@
 //! Shared subscription persistence layer.
 //!
 //! - [`rows`]: `SubscriptionRow` persistence struct.
-//! - [`params`]: borrowed input structs.
 //! - [`mapper`]: PgRow → row → domain conversion.
 //! - [`stored_subscription_error`]: a stored row that does not read back.
 //! - [`stored_kind`]: which family a statement addresses.
@@ -10,6 +9,7 @@
 //! - [`entity_statements`]: the entity create and replace statements and binders.
 //! - [`csource_statements`]: the context-source create and replace statements and binders.
 //! - [`conformance_text`]: the text `ngsildConformance` is stored as.
+//! - [`dataset_text`]: the text `datasetId` selectors are stored as.
 //! - [`delivery_state`]: the delivery counters and their statements.
 //! - [`projection`]: the read-side projection every subscription query shares.
 //! - [`failure`]: how adapter failures surface at the policy boundary.
@@ -22,6 +22,8 @@ mod bare_fields_fixture;
 mod conformance_text;
 /// The create and replace statements of a context-source subscription row.
 mod csource_statements;
+/// The text a subscription's `datasetId` selectors are stored as.
+mod dataset_text;
 /// The delivery counters and the statements that read and move them.
 pub(crate) mod delivery_state;
 /// The create and replace statements of an entity subscription row.
@@ -36,8 +38,6 @@ mod json_document;
 pub mod mapper;
 /// The `active_since` and `selected_since` values a subscription write stores.
 mod notifying_columns;
-/// Borrowed input structs for subscription operations.
-pub mod params;
 /// Which periodic subscriptions are owed a notification.
 pub(crate) mod periodic_due;
 /// Direct PostgreSQL implementations of the subscription persistence ports.

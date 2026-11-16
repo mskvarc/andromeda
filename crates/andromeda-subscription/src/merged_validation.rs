@@ -63,7 +63,6 @@ mod tests {
         fields::SubscriptionWriteValues,
         merged_validation::validate_merged_subscription,
         subscription_validation_reason::SubscriptionValidationReason,
-        variant::DatasetIdPolicy,
     };
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
@@ -71,20 +70,20 @@ mod tests {
 
     /// The write values a create body of `members` describes, over a
     /// notification that names its endpoint.
-    fn extract_create_fields(members: &Value, policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    fn extract_create_fields(members: &Value) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let mut wire = json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}});
         if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
             target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
-        SubscriptionWriteValues::from_create(request, policy)
+        SubscriptionWriteValues::from_create(request)
     }
 
     /// Clause 5.2.12, Table 5.2.12-1: a throttled subscription a PATCH gives a
     /// `timeInterval` is refused once merged, though the fragment alone is valid.
     #[test]
     fn a_merged_subscription_with_throttling_and_a_time_interval_is_refused() -> Result<(), SubscriptionError> {
-        let mut merged = extract_create_fields(&json!({"throttling": 5}), DatasetIdPolicy::Retain)?;
+        let mut merged = extract_create_fields(&json!({"throttling": 5}))?;
         merged.time_interval = Some(10.0);
         assert!(matches!(
             validate_merged_subscription(&merged),
@@ -96,7 +95,7 @@ mod tests {
     /// Clause 5.2.12, Table 5.2.12-1: `timeInterval` excludes `watchedAttributes`.
     #[test]
     fn a_merged_subscription_with_watched_attributes_and_a_time_interval_is_refused() -> Result<(), SubscriptionError> {
-        let mut merged = extract_create_fields(&json!({"watchedAttributes": ["https://example.org/speed"]}), DatasetIdPolicy::Retain)?;
+        let mut merged = extract_create_fields(&json!({"watchedAttributes": ["https://example.org/speed"]}))?;
         merged.time_interval = Some(10.0);
         assert!(matches!(
             validate_merged_subscription(&merged),
@@ -107,10 +106,7 @@ mod tests {
 
     #[test]
     fn a_merged_subscription_that_only_throttles_is_admitted() -> Result<(), SubscriptionError> {
-        let merged = extract_create_fields(
-            &json!({"throttling": 5, "watchedAttributes": ["https://example.org/speed"]}),
-            DatasetIdPolicy::Retain,
-        )?;
+        let merged = extract_create_fields(&json!({"throttling": 5, "watchedAttributes": ["https://example.org/speed"]}))?;
         validate_merged_subscription(&merged)
     }
 
@@ -119,7 +115,7 @@ mod tests {
     /// merged, though the fragment alone names nothing wrong.
     #[test]
     fn a_merged_subscription_without_entities_or_watched_attributes_is_refused() -> Result<(), SubscriptionError> {
-        let merged = extract_create_fields(&json!({}), DatasetIdPolicy::Retain)?;
+        let merged = extract_create_fields(&json!({}))?;
         assert!(matches!(
             validate_merged_subscription(&merged),
             Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorRequired))
@@ -132,7 +128,7 @@ mod tests {
     /// selector and is refused.
     #[test]
     fn a_merged_periodic_subscription_without_entities_is_refused() -> Result<(), SubscriptionError> {
-        let merged = extract_create_fields(&json!({"timeInterval": 10}), DatasetIdPolicy::Retain)?;
+        let merged = extract_create_fields(&json!({"timeInterval": 10}))?;
         assert!(matches!(
             validate_merged_subscription(&merged),
             Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorRequired))
@@ -144,17 +140,14 @@ mod tests {
     /// `entities` or `watchedAttributes` satisfies the first.
     #[test]
     fn a_merged_local_subscription_or_one_with_a_selector_is_admitted() -> Result<(), SubscriptionError> {
-        validate_merged_subscription(&extract_create_fields(&json!({"localOnly": true}), DatasetIdPolicy::Retain)?)?;
-        validate_merged_subscription(&extract_create_fields(&json!({"entities": [{"type": "Vehicle"}]}), DatasetIdPolicy::Retain)?)?;
-        validate_merged_subscription(&extract_create_fields(
-            &json!({"timeInterval": 10, "entities": [{"type": "Vehicle"}]}),
-            DatasetIdPolicy::Retain,
-        )?)
+        validate_merged_subscription(&extract_create_fields(&json!({"localOnly": true}))?)?;
+        validate_merged_subscription(&extract_create_fields(&json!({"entities": [{"type": "Vehicle"}]}))?)?;
+        validate_merged_subscription(&extract_create_fields(&json!({"timeInterval": 10, "entities": [{"type": "Vehicle"}]}))?)
     }
 
     #[test]
     fn a_merged_non_positive_time_interval_is_refused() -> Result<(), SubscriptionError> {
-        let mut merged = extract_create_fields(&json!({}), DatasetIdPolicy::Retain)?;
+        let mut merged = extract_create_fields(&json!({}))?;
         merged.time_interval = Some(0.0);
         assert!(matches!(
             validate_merged_subscription(&merged),

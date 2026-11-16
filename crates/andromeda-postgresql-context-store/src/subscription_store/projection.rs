@@ -32,10 +32,10 @@ fn attribute_list(column: Subscriptions) -> SimpleExpr {
 }
 
 /// Add the stored-subscription projection to `select`, in the column set the
-/// mapper reads by name; `dataset_ids` only for the family that stores it. The
-/// delivery counters come from the joined state row, and the three attribute
-/// lists are resolved from their dictionary keys under their own column names.
-fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: &ContextTarget) {
+/// mapper reads by name, which both families share. The delivery counters come
+/// from the joined state row, and the three attribute lists are resolved from
+/// their dictionary keys under their own column names.
+fn project_subscription(select: &mut SelectStatement, target: &ContextTarget) {
     select
         .column((Subscriptions::Table, Subscriptions::Id))
         .column((Subscriptions::Table, Subscriptions::SubscriptionKey))
@@ -52,6 +52,7 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::Csf))
         .expr_as(attribute_list(Subscriptions::ExpandValues), Subscriptions::ExpandValues)
         .expr_as(attribute_list(Subscriptions::JsonKeys), Subscriptions::JsonKeys)
+        .column((Subscriptions::Table, Subscriptions::DatasetIds))
         .column((Subscriptions::Table, Subscriptions::Notification))
         .column((Subscriptions::Table, Subscriptions::ExpiresAt))
         .column((Subscriptions::Table, Subscriptions::Throttling))
@@ -66,18 +67,15 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::ModifiedAt))
         .column((Subscriptions::Table, Subscriptions::ActiveSince))
         .column((Subscriptions::Table, Subscriptions::SelectedSince));
-    if kind.has_dataset_id() {
-        select.column((Subscriptions::Table, Subscriptions::DatasetIds));
-    }
     join_delivery_state(select, target);
 }
 
-/// A projecting select of one family with its state row joined, ready for a
-/// caller's `WHERE`, in the target's branch schema.
-pub(super) fn projected_select(kind: StoredKind, target: &ContextTarget) -> SelectStatement {
+/// A projecting select with its state row joined, in the target's branch
+/// schema, ready for a caller's `WHERE`, which pins the family.
+pub(super) fn projected_select(target: &ContextTarget) -> SelectStatement {
     let mut select = Query::select();
     select.from(table_of(target, Subscriptions::Table));
-    project_subscription(&mut select, kind, target);
+    project_subscription(&mut select, target);
     select
 }
 
@@ -115,7 +113,7 @@ pub(super) async fn count_of_kind(pool: &sqlx::PgPool, target: &ContextTarget, k
 /// descending so one index scan serves it, and presented ascending by the
 /// caller.
 pub(super) fn listing_page(kind: StoredKind, target: &ContextTarget, window: &PageWindow) -> (SelectStatement, ReadOrder) {
-    let mut select = projected_select(kind, target);
+    let mut select = projected_select(target);
     select.and_where(of_kind(kind));
     let read_order = apply_identifier_window(&mut select, Expr::col((Subscriptions::Table, Subscriptions::Id)), window);
     (select, read_order)
@@ -211,7 +209,7 @@ mod tests {
 
     #[test]
     fn every_projection_reads_the_delivery_counters_from_the_joined_state_row() {
-        let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
+        let sql = projected_select(&ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"LEFT JOIN "subscription_delivery_state""#), "{sql}");
         assert!(sql.contains(r#""subscriptions"."dataset_ids""#), "{sql}");
         for counter in ["times_sent", "last_notification", "last_success", "last_failure"] {
@@ -220,8 +218,6 @@ mod tests {
                 "the subscription row carries no {counter}: {sql}"
             );
         }
-        let csource = projected_select(StoredKind::Csource, &ContextTarget::Live).to_string(PostgresQueryBuilder);
-        assert!(!csource.contains("dataset_ids"), "{csource}");
     }
 
     /// The three attribute lists are stored as dictionary keys and read back as
@@ -229,7 +225,7 @@ mod tests {
     /// an absent list reads back absent rather than empty.
     #[test]
     fn the_projection_resolves_the_interned_attribute_lists_in_order() {
-        let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
+        let sql = projected_select(&ContextTarget::Live).to_string(PostgresQueryBuilder);
         for column in ["watched_attributes", "expand_values", "json_keys"] {
             assert!(
                 sql.contains(&format!(
@@ -242,7 +238,7 @@ mod tests {
 
     #[test]
     fn the_projection_reads_the_status_code_without_a_cast() {
-        let sql = projected_select(StoredKind::Entity, &ContextTarget::Live).to_string(PostgresQueryBuilder);
+        let sql = projected_select(&ContextTarget::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""subscriptions"."status","#), "{sql}");
         assert!(!sql.contains("::text"), "{sql}");
     }

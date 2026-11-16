@@ -3,8 +3,8 @@
 //!
 //! A create returns the surrogate key it minted, because the delivery-state
 //! row that completes the subscription is inserted under it in the same
-//! transaction. A context-source subscription stores no `dataset_ids`, no
-//! `local_only` and no `split_entities`.
+//! transaction. A context-source subscription stores no `local_only` and no
+//! `split_entities`.
 //!
 //! Neither statement draws the write's revision. The write ends with
 //! [`csource_revision_stamp`], which advances the tenant's context source change
@@ -20,6 +20,7 @@ use crate::{
     store_fault::persistence_error,
     subscription_store::{
         conformance_text::stored_conformance,
+        dataset_text::stored_dataset_ids,
         interned_attributes::InternedAttributeLists,
         json_document::json_document,
         notifying_columns::{created_since, restarted_since},
@@ -64,6 +65,7 @@ fn written_columns(
         (Subscriptions::Csf, Expr::val(fields.csf.map(ToString::to_string))),
         (Subscriptions::ExpandValues, Expr::val(interned.expand_values)),
         (Subscriptions::JsonKeys, Expr::val(interned.json_keys)),
+        (Subscriptions::DatasetIds, Expr::val(stored_dataset_ids(fields.dataset_id))),
         (Subscriptions::Notification, json_document(fields.notification)?),
         (Subscriptions::ExpiresAt, Expr::val(fields.expires_at)),
         (Subscriptions::Throttling, Expr::val(fields.throttling)),
@@ -208,15 +210,18 @@ mod tests {
     }
 
     #[test]
-    fn the_create_carries_its_kind_code_and_omits_the_dataset_and_local_only_columns() {
+    fn the_create_carries_its_kind_code_and_omits_the_local_only_column() {
         let (sql, values) = create_sql();
         assert!(sql.contains("VALUES ($1, $2, $3"), "the identifier then the context-source kind code: {sql}");
         assert!(!sql.contains("::subscription_status"), "no enum cast remains: {sql}");
         assert_eq!(
-            values, 23,
+            values, 24,
             "the create binds every column but the two timestamps and the committed revision: {sql}"
         );
-        assert!(!sql.contains("dataset_ids"), "a context-source subscription stores no datasetId: {sql}");
+        assert!(
+            sql.contains(r#""dataset_ids""#),
+            "clause 5.12 matches a context-source subscription by its datasetId: {sql}"
+        );
         assert!(!sql.contains("local_only"), "a context-source subscription stores no localOnly: {sql}");
     }
 
@@ -293,8 +298,8 @@ mod tests {
     #[test]
     fn the_update_pins_the_row_by_id_and_kind() {
         let (sql, _) = update_sql();
-        assert!(sql.contains(r#""id" = $22"#), "{sql}");
-        assert!(sql.contains(r#""subscriptions"."kind" = $23"#), "{sql}");
+        assert!(sql.contains(r#""id" = $23"#), "{sql}");
+        assert!(sql.contains(r#""subscriptions"."kind" = $24"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
     }
 

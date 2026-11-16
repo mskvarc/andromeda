@@ -2,8 +2,8 @@
 //! subscription (clauses 5.8.1.4, 5.8.2.4 and 5.8.5.4).
 //!
 //! A local subscription that is not `localOnly` is mirrored by a registration
-//! subscription over the same entities, attributes and context source filter
-//! whose notifications reach this broker's receiver; those notifications drive
+//! subscription over the same entities, attributes, context source filter and
+//! `datasetId` whose notifications reach this broker's receiver; those notifications drive
 //! the reduced copies placed at the matching context sources. An update
 //! follows the original, and a deletion or an expiry tears down the companion
 //! together with every forwarded copy.
@@ -42,14 +42,17 @@ use futures::future::BoxFuture;
 use tracing::debug;
 
 /// The companion fragment mirroring `subscription` (clause 5.11.2): the same
-/// entity selectors, watched attributes, notified attributes and context
-/// source filter, matched against registrations rather than entities,
-/// notifying this broker.
+/// entity selectors, watched attributes, notified attributes, context source
+/// filter and `datasetId`, matched against registrations rather than
+/// entities, notifying this broker.
 ///
 /// The `csf` is mirrored because Table 5.2.12-1 has it "met by Context Source
 /// Registrations describing Context Sources to be used for Entity
 /// Subscriptions", and clause 5.11.2.4 matches a registration to the companion
-/// only where it is met. Each mirrored member the subscription does not hold
+/// only where it is met. The `datasetId` is mirrored because clause 5.12
+/// matches a registration listing `datasetId`s only when it shares one, and
+/// clause 4.3.6.1 has every constraint a registration specifies respected.
+/// Each mirrored member the subscription does not hold
 /// is the NGSI-LD Null, so an update leaves the companion holding what the
 /// subscription holds and nothing it deleted.
 fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -> SubscriptionRequest {
@@ -57,6 +60,7 @@ fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -
         entities: Clearable::replacing(subscription.selection.entities.clone()),
         watched_attributes: Clearable::replacing(subscription.selection.watched_attributes.clone()),
         csf: Clearable::replacing(subscription.filters.csf.clone()),
+        dataset_id: Clearable::replacing(subscription.filters.dataset_id.clone()),
         notification: Some(NotificationRequest {
             attributes: subscription.notification.attributes.clone(),
             endpoint: Some(receiver.notification_endpoint()),
@@ -497,15 +501,43 @@ mod tests {
         }
     }
 
+    /// Clause 5.12: a companion holding the subscription's `datasetId` keeps
+    /// the copy at a source whose registration shares one or lists none, and
+    /// relieves one whose registration lists only others.
+    #[test]
+    fn an_update_keeps_the_copies_only_at_the_sources_sharing_a_dataset_id() {
+        let companion = local_subscription(&json!({"entities": [{"type": "https://example.org/Device"}], "datasetId": ["urn:ngsi-ld:Dataset:a"]}));
+        let compiled = compile_csource_subscription(&companion);
+        let kept = ForwardDecision::Update {
+            remote: copy().remote_subscription,
+        };
+        let relieved = ForwardDecision::Delete {
+            remote: copy().remote_subscription,
+        };
+        for (members, expected) in [
+            (json!({"datasetId": ["urn:ngsi-ld:Dataset:b", "urn:ngsi-ld:Dataset:a"]}), &kept),
+            (json!({}), &kept),
+            (json!({"datasetId": ["urn:ngsi-ld:Dataset:b", "@none"]}), &relieved),
+        ] {
+            let registration = registration_with("https://example.org/Device", "inclusive", &members);
+            pretty_assertions::assert_eq!(
+                &SubscriptionForwardingService::decision_after_update(&compiled, &registration, &copy()),
+                expected,
+                "{members}"
+            );
+        }
+    }
+
     /// Clauses 5.11.2 and 5.2.12: the companion is created with the
-    /// subscription's selectors, notified attributes and `csf`, notifying this
-    /// broker, and with no NGSI-LD Null, which a create refuses.
+    /// subscription's selectors, notified attributes, `csf` and `datasetId`,
+    /// notifying this broker, and with no NGSI-LD Null, which a create refuses.
     #[test]
     fn the_companion_mirrors_the_selection_and_notifies_the_receiver() {
         let subscription = local_subscription(&json!({
             "entities": [{"type": "https://example.org/Vehicle"}],
             "watchedAttributes": ["https://example.org/speed"],
             "csf": GOLD_TIER,
+            "datasetId": ["urn:ngsi-ld:Dataset:a", "@none"],
             "notification": {"attributes": ["https://example.org/speed"], "endpoint": {"uri": "http://subscriber/notify"}}
         }));
         let request = companion_creation(&subscription, &receiver(), "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI"));
@@ -517,6 +549,7 @@ mod tests {
                 "entities": [{"type": "https://example.org/Vehicle"}],
                 "watchedAttributes": ["https://example.org/speed"],
                 "csf": GOLD_TIER,
+                "datasetId": ["urn:ngsi-ld:Dataset:a", "@none"],
                 "notification": {
                     "attributes": ["https://example.org/speed"],
                     "endpoint": {"uri": "http://broker-a:1056/ngsi-ld/andromeda/v1/notifications", "accept": "application/json"}
@@ -532,8 +565,9 @@ mod tests {
     }
 
     /// Clause 5.5.8: the companion update deletes each mirrored member the
-    /// subscription no longer holds, so a deleted `csf` or `watchedAttributes`
-    /// stops narrowing the registrations the companion matches.
+    /// subscription no longer holds, so a deleted `csf`, `datasetId` or
+    /// `watchedAttributes` stops narrowing the registrations the companion
+    /// matches.
     #[test]
     fn the_companion_update_deletes_what_the_subscription_no_longer_holds() {
         let subscription = local_subscription(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
@@ -541,9 +575,12 @@ mod tests {
         pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": "https://example.org/Vehicle"}]));
         pretty_assertions::assert_eq!(fragment["watchedAttributes"], json!(["urn:ngsi-ld:null"]));
         pretty_assertions::assert_eq!(fragment["csf"], json!("urn:ngsi-ld:null"));
-        let filtered = local_subscription(&json!({"watchedAttributes": ["https://example.org/speed"], "csf": GOLD_TIER}));
+        pretty_assertions::assert_eq!(fragment["datasetId"], json!(["urn:ngsi-ld:null"]));
+        let filtered =
+            local_subscription(&json!({"watchedAttributes": ["https://example.org/speed"], "csf": GOLD_TIER, "datasetId": ["urn:ngsi-ld:Dataset:a"]}));
         let fragment = serde_json::to_value(companion_request(&filtered, &receiver())).expect("the fragment writes");
         pretty_assertions::assert_eq!(fragment["entities"], json!(["urn:ngsi-ld:null"]));
         pretty_assertions::assert_eq!(fragment["csf"], json!(GOLD_TIER));
+        pretty_assertions::assert_eq!(fragment["datasetId"], json!(["urn:ngsi-ld:Dataset:a"]));
     }
 }

@@ -42,6 +42,7 @@ fn subscription_with(status: SubscriptionStatus, time_interval_secs: Option<f64>
         temporal_q: None,
         geo_q: SubscriptionGeoFilter::Unrestricted,
         scope_q: None,
+        dataset_id: None,
         throttling_secs: None,
         time_interval_secs,
         jsonld_context: None,

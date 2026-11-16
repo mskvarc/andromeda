@@ -16,7 +16,7 @@
 //! instant of every change they are compared with, so brokers sharing the
 //! tenant database order them alike.
 
-use crate::variant::CsfReach;
+use crate::variant::RegistrationMatchReach;
 use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -73,11 +73,12 @@ pub enum SinceRestart {
 impl SinceRestart {
     /// Whether the update fragment `request` changes the value of what the
     /// `existing` Subscription selects: `entities`, `watchedAttributes`,
-    /// `notificationTrigger`, `q`, `geoQ`, `scopeQ`, `localOnly`, and `csf`
-    /// where `csf_reach` makes it select what the Subscription is notified of
-    /// (Table 5.2.12-1), each compared after its terms were expanded.
+    /// `notificationTrigger`, `q`, `geoQ`, `scopeQ`, `localOnly`, and `csf` and
+    /// `datasetId` where `reach` makes them select what the Subscription is
+    /// notified of (Table 5.2.12-1, clause 5.12), each compared after its terms
+    /// were expanded.
     #[must_use]
-    pub fn of_selection(request: &SubscriptionRequest, existing: &Subscription, csf_reach: CsfReach) -> SinceRestart {
+    pub fn of_selection(request: &SubscriptionRequest, existing: &Subscription, reach: RegistrationMatchReach) -> SinceRestart {
         let selection = &existing.selection;
         let filters = &existing.filters;
         let changed = request.entities.changes(selection.entities.as_ref())
@@ -86,9 +87,11 @@ impl SinceRestart {
             || request.q.changes(filters.q.as_ref())
             || request.geo_q.changes(filters.geo_q.as_ref())
             || request.scope_q.changes(filters.scope_q.as_ref())
-            || match csf_reach {
-                CsfReach::NotifiedRegistrations => request.csf.changes(filters.csf.as_ref()),
-                CsfReach::ReachedSources => false,
+            || match reach {
+                RegistrationMatchReach::NotifiedRegistrations => {
+                    request.csf.changes(filters.csf.as_ref()) || request.dataset_id.changes(filters.dataset_id.as_ref())
+                }
+                RegistrationMatchReach::ReachedSources => false,
             }
             || local_only_changes(&request.local_only, existing.delivery.local_only);
         if changed { SinceRestart::Restarted } else { SinceRestart::Kept }
@@ -135,7 +138,7 @@ impl NotifyingRestart {
 mod tests {
     use crate::{
         notifying_since::{NotifyingRestart, NotifyingSince, SelectionJudged, SinceRestart},
-        variant::CsfReach,
+        variant::RegistrationMatchReach,
     };
     use andromeda_context_commit::store_instant::StoreInstant;
     use andromeda_ngsi_ld_model::{
@@ -231,14 +234,14 @@ mod tests {
         .expect("the fixture is a valid subscription")
     }
 
-    fn restart_under(fragment: &Value, csf_reach: CsfReach) -> SinceRestart {
+    fn restart_under(fragment: &Value, reach: RegistrationMatchReach) -> SinceRestart {
         let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
-        SinceRestart::of_selection(&request, &stored(), csf_reach)
+        SinceRestart::of_selection(&request, &stored(), reach)
     }
 
     /// What an update of an entity Subscription restarts.
     fn restart_of(fragment: &Value) -> SinceRestart {
-        restart_under(fragment, CsfReach::ReachedSources)
+        restart_under(fragment, RegistrationMatchReach::ReachedSources)
     }
 
     /// A member left out, or written with the value it holds, leaves the
@@ -284,7 +287,19 @@ mod tests {
     #[test]
     fn a_new_csf_restarts_only_what_it_selects() {
         let fragment = json!({"csf": "brand==\"ACME\""});
-        pretty_assertions::assert_eq!(restart_under(&fragment, CsfReach::ReachedSources), SinceRestart::Kept);
-        pretty_assertions::assert_eq!(restart_under(&fragment, CsfReach::NotifiedRegistrations), SinceRestart::Restarted);
+        pretty_assertions::assert_eq!(restart_under(&fragment, RegistrationMatchReach::ReachedSources), SinceRestart::Kept);
+        pretty_assertions::assert_eq!(restart_under(&fragment, RegistrationMatchReach::NotifiedRegistrations), SinceRestart::Restarted);
+    }
+
+    /// An entity Subscription's `datasetId` selects the Attribute instances its
+    /// notifications carry and the sources it reaches, never which changes
+    /// trigger one (clause 5.8.6), so a new one keeps the selected instant; a
+    /// Context Source Registration Subscription's selects the registrations it
+    /// is notified of (clause 5.12), so a new one restarts it.
+    #[test]
+    fn a_new_dataset_id_restarts_only_what_it_selects() {
+        let fragment = json!({"datasetId": ["urn:ngsi-ld:Dataset:a"]});
+        pretty_assertions::assert_eq!(restart_under(&fragment, RegistrationMatchReach::ReachedSources), SinceRestart::Kept);
+        pretty_assertions::assert_eq!(restart_under(&fragment, RegistrationMatchReach::NotifiedRegistrations), SinceRestart::Restarted);
     }
 }

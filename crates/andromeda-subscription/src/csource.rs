@@ -3,7 +3,7 @@ use crate::{
     error::SubscriptionError,
     request_validation,
     term_expansion,
-    variant::{CsfReach, DatasetIdPolicy, SubscriptionVariant},
+    variant::{RegistrationMatchReach, SubscriptionVariant},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -56,12 +56,8 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         Ok(())
     }
 
-    fn dataset_id_policy(&self) -> DatasetIdPolicy {
-        DatasetIdPolicy::Discard
-    }
-
-    fn csf_reach(&self) -> CsfReach {
-        CsfReach::NotifiedRegistrations
+    fn registration_match_reach(&self) -> RegistrationMatchReach {
+        RegistrationMatchReach::NotifiedRegistrations
     }
 
     fn make_upserted(&self, target: ContextTarget, id: Identifier, kind: UpsertKind) -> CsourceSubscriptionChange {

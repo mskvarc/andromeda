@@ -3,7 +3,9 @@
 //!
 //! The entity selectors and the attribute identifiers match the registration's
 //! `information` as clause 5.12 describes; the `temporalQ`, `geoQ`, `scopeQ`
-//! and `csf` match the registration's own members as clause 5.11.2.4 describes.
+//! and `csf` match the registration's own members as clause 5.11.2.4
+//! describes, and the `datasetId` matches the registration's `datasetId` as
+//! clause 5.12 describes.
 
 use crate::{compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
 use andromeda_ngsi_ld_model::{
@@ -51,9 +53,7 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
         scope: sub.scope_q.as_ref().map_or(ScopeFilter::Unfiltered, ScopeFilter::DeclaredScope),
         geo,
         csf: sub.compiled_csf.as_ref(),
-        // Clause 5.12 compares the `datasetId` parameter of the request that
-        // triggered the matching, and a subscription is matched with none.
-        dataset: None,
+        dataset: sub.dataset_id.as_deref(),
         temporal: TemporalPartition::Applied(sub.temporal_q.as_ref()),
     };
     specification.covers(registration)
@@ -128,6 +128,7 @@ mod tests {
             temporal_q: None,
             geo_q: SubscriptionGeoFilter::Unrestricted,
             scope_q: None,
+            dataset_id: None,
             throttling_secs: None,
             time_interval_secs: None,
             jsonld_context: None,
@@ -262,6 +263,28 @@ mod tests {
             &sub,
             &registration(&json!({"location": {"type": "Point", "coordinates": [13.404, 52.520]}}))
         ));
+    }
+
+    /// Clause 5.12: a subscription naming `datasetId`s is notified of a
+    /// registration sharing one or listing none, `@none` being a value like
+    /// any other, and one naming none is notified of every registration.
+    #[test]
+    fn the_dataset_id_is_matched_against_the_registration_dataset_ids() {
+        let listing_a = registration(&json!({"datasetId": ["urn:ngsi-ld:Dataset:a"]}));
+        let listing_b_and_default = registration(&json!({"datasetId": ["urn:ngsi-ld:Dataset:b", "@none"]}));
+        let listing_none = registration(&json!({}));
+        for (named, notified) in [
+            (Some(&["urn:ngsi-ld:Dataset:a"][..]), [true, false, true]),
+            (Some(&["@none"][..]), [false, true, true]),
+            (Some(&["urn:ngsi-ld:Dataset:c", "urn:ngsi-ld:Dataset:b"][..]), [false, true, true]),
+            (Some(&["urn:ngsi-ld:Dataset:c"][..]), [false, false, true]),
+            (None, [true, true, true]),
+        ] {
+            let mut sub = subscription();
+            sub.dataset_id = named.map(|raw| raw.iter().map(|selector| selector.parse().expect("a valid datasetId")).collect());
+            let selected = [&listing_a, &listing_b_and_default, &listing_none].map(|registration| notified_of_change(&sub, registration));
+            pretty_assertions::assert_eq!(selected, notified, "{named:?}");
+        }
     }
 
     #[test]

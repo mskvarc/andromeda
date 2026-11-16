@@ -14,4 +14,6 @@ mod registration;
 #[cfg(test)]
 mod seal;
 #[cfg(test)]
+mod subscription;
+#[cfg(test)]
 mod tenancy;

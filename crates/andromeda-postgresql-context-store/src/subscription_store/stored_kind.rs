@@ -8,9 +8,9 @@ use sea_query::{Expr, ExprTrait, SimpleExpr};
 /// table and are told apart by `kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StoredKind {
-    /// An entity subscription (clause 5.8), which narrows by `datasetId`.
+    /// An entity subscription (clause 5.8).
     Entity,
-    /// A context-source subscription (clause 5.11), which does not.
+    /// A context-source subscription (clause 5.11).
     Csource,
 }
 
@@ -21,11 +21,6 @@ impl StoredKind {
             StoredKind::Entity => SubscriptionKindCode::Entity,
             StoredKind::Csource => SubscriptionKindCode::Csource,
         }
-    }
-
-    /// Whether this family stores a `datasetId` column.
-    pub(crate) const fn has_dataset_id(self) -> bool {
-        matches!(self, StoredKind::Entity)
     }
 }
 

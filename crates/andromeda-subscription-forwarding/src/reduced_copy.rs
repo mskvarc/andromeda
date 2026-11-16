@@ -13,7 +13,10 @@
 //! source. The context source filter `csf` goes as the subscription holds it
 //! whatever the carriage: it decides no entity, only the further sources the
 //! copy reaches from the source it is placed at (Table 5.2.12-1), and clause
-//! 5.8.1.4 reduces no member but those.
+//! 5.8.1.4 reduces no member but those. The `datasetId` names only the values
+//! the registration lists, and every value it lists when the subscription
+//! names none, since the source provides no other instance (clause 4.3.6.1,
+//! Table 5.2.9-1); a registration listing none is sent the subscription's own.
 
 use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::split_entities::SplitEntities;
@@ -26,6 +29,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{Subscription, SubscriptionType},
     subscription_request::SubscriptionRequest,
 };
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_subscription::deleted_members::{DeletableMember, DeletedMembers};
 
@@ -70,6 +74,21 @@ fn narrow_names(names: Option<&[AttributeName]>, declared: Option<&[&AttributeNa
         (Some(names), None) => Some(names.to_vec()),
         (Some(names), Some(declared)) => Some(names.iter().filter(|name| declared.contains(name)).cloned().collect()),
     }
+}
+
+/// The `datasetId`s the copy placed at `registration`'s source names (clause
+/// 4.3.6.1): the subscription's that the registration lists, in the
+/// subscription's order, every one it lists when the subscription names none,
+/// and the subscription's own when it lists none; `None` when that leaves no
+/// value.
+fn copy_dataset_ids(subscription: &Subscription, registration: &ContextSourceRegistration) -> Option<Vec<DatasetSelector>> {
+    let named: Vec<DatasetSelector> = registration
+        .coverage
+        .dataset_overlap(subscription.filters.dataset_id.as_deref())
+        .forwarded()
+        .cloned()
+        .collect();
+    (!named.is_empty()).then_some(named)
 }
 
 /// The reduced subscription placed at a context source.
@@ -122,7 +141,7 @@ impl ReducedSubscription {
                 geo_q: Clearable::from_option(subscription.filters.geo_q.as_ref().filter(|_| keeps_filters).cloned()),
                 scope_q: Clearable::from_option(subscription.filters.scope_q.as_ref().filter(|_| keeps_filters).cloned()),
                 csf: Clearable::from_option(subscription.filters.csf.clone()),
-                dataset_id: Clearable::from_option(subscription.filters.dataset_id.clone()),
+                dataset_id: Clearable::from_option(copy_dataset_ids(subscription, registration)),
                 notification: Some(notification),
                 throttling: Clearable::from_option(subscription.delivery.throttling),
                 expires_at: Clearable::from_option(subscription.lifecycle.standing.expires_at),
@@ -139,9 +158,12 @@ impl ReducedSubscription {
     ///
     /// A member the copy never carries is not sent as a Null: the notification
     /// members always, and `q`, `geoQ` and `scopeQ` when `carriage` strips
-    /// them. The selectors are deleted only while the fragment still sets the
-    /// other one, since a source left with neither would refuse the update
-    /// (clause 5.2.12).
+    /// them. The `datasetId` is always sent, as the NGSI-LD Null when the copy
+    /// names none: it follows the registration as well as the subscription, so
+    /// a registration that stops listing `datasetId`s leaves the copy naming
+    /// none though no update deleted the member. The selectors are deleted
+    /// only while the fragment still sets the other one, since a source left
+    /// with neither would refuse the update (clause 5.2.12).
     #[must_use]
     pub fn as_fragment(&self, deleted: &DeletedMembers, carriage: FilterCarriage) -> SubscriptionRequest {
         let mut fragment = SubscriptionRequest {
@@ -154,7 +176,10 @@ impl ReducedSubscription {
         fragment.notification_trigger = deleting(fragment.notification_trigger, DeletableMember::NotificationTrigger, deleted);
         fragment.time_interval = deleting(fragment.time_interval, DeletableMember::TimeInterval, deleted);
         fragment.csf = deleting(fragment.csf, DeletableMember::Csf, deleted);
-        fragment.dataset_id = deleting(fragment.dataset_id, DeletableMember::DatasetId, deleted);
+        fragment.dataset_id = match fragment.dataset_id {
+            Clearable::Absent => Clearable::NgsiLdNull,
+            stated @ (Clearable::NgsiLdNull | Clearable::Set(_)) => stated,
+        };
         fragment.throttling = deleting(fragment.throttling, DeletableMember::Throttling, deleted);
         fragment.expires_at = deleting(fragment.expires_at, DeletableMember::ExpiresAt, deleted);
         match carriage {
@@ -487,6 +512,103 @@ mod tests {
                 .as_fragment(&DeletedMembers::default(), FilterCarriage::Keep),
         );
         pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
+    }
+
+    const DATASET_A: &str = "urn:ngsi-ld:Dataset:a";
+    const DATASET_B: &str = "urn:ngsi-ld:Dataset:b";
+    const DEFAULT_INSTANCE: &str = "@none";
+
+    /// A subscription of vehicles naming the `datasetId`s `named`, when it
+    /// names any.
+    fn subscription_naming(named: Option<&[&str]>) -> Subscription {
+        let mut document = json!({
+            "id": "urn:ngsi-ld:Subscription:local",
+            "type": "Subscription",
+            "entities": [{"type": VEHICLE}],
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        });
+        if let (Some(target), Some(named)) = (document.as_object_mut(), named) {
+            target.insert("datasetId".to_owned(), json!(named));
+        }
+        serde_json::from_value(document).expect("valid subscription")
+    }
+
+    /// A registration of vehicles listing the `datasetId`s `listed`, when it
+    /// lists any.
+    fn registration_listing(listed: Option<&[&str]>) -> ContextSourceRegistration {
+        let mut document = json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:b",
+            "type": "ContextSourceRegistration",
+            "endpoint": "http://broker-b:1056",
+            "information": [{"entities": [{"type": VEHICLE}]}],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        });
+        if let (Some(target), Some(listed)) = (document.as_object_mut(), listed) {
+            target.insert("datasetId".to_owned(), json!(listed));
+        }
+        serde_json::from_value(document).expect("valid registration")
+    }
+
+    /// Clause 4.3.6.1 and Table 5.2.9-1: the copy names the subscription's
+    /// `datasetId`s its registration lists, in the subscription's order, every
+    /// listed one when the subscription names none, and the subscription's own
+    /// when the registration lists none.
+    #[test]
+    fn the_copy_names_only_the_dataset_ids_its_registration_lists() {
+        for (named, listed, carried) in [
+            (
+                Some(&[DATASET_B, DATASET_A][..]),
+                Some(&[DATASET_A, DEFAULT_INSTANCE, DATASET_B][..]),
+                Some(json!([DATASET_B, DATASET_A])),
+            ),
+            (Some(&[DATASET_A, DATASET_B][..]), Some(&[DATASET_A][..]), Some(json!([DATASET_A]))),
+            (None, Some(&[DEFAULT_INSTANCE, DATASET_A][..]), Some(json!([DEFAULT_INSTANCE, DATASET_A]))),
+            (Some(&[DATASET_A, DATASET_B][..]), None, Some(json!([DATASET_A, DATASET_B]))),
+            (None, None, None),
+        ] {
+            for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+                let copy = ReducedSubscription::reduce(&subscription_naming(named), &registration_listing(listed), &receiver(), &minted(), carriage);
+                pretty_assertions::assert_eq!(
+                    written(&copy.request).get("datasetId"),
+                    carried.as_ref(),
+                    "{named:?} against {listed:?} under {carriage:?}"
+                );
+            }
+        }
+    }
+
+    /// The copy's `datasetId` follows the registration as well as the
+    /// subscription, so every update fragment states it: the values the copy
+    /// names, or the NGSI-LD Null when it names none, which a registration
+    /// that stops listing `datasetId`s leaves it naming (clause 5.5.8).
+    #[test]
+    fn every_update_fragment_states_the_copy_dataset_ids() {
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let narrowed = ReducedSubscription::reduce(
+                &subscription_naming(None),
+                &registration_listing(Some(&[DATASET_A])),
+                &receiver(),
+                &minted(),
+                carriage,
+            );
+            pretty_assertions::assert_eq!(
+                written(&narrowed.as_fragment(&DeletedMembers::default(), carriage))["datasetId"],
+                json!([DATASET_A]),
+                "{carriage:?}"
+            );
+            let unnarrowed = ReducedSubscription::reduce(&subscription_naming(None), &registration_listing(None), &receiver(), &minted(), carriage);
+            let fragment = written(&unnarrowed.as_fragment(&DeletedMembers::default(), carriage));
+            pretty_assertions::assert_eq!(fragment["datasetId"], json!(["urn:ngsi-ld:null"]), "{carriage:?}");
+            assert!(
+                written(&unnarrowed.request).get("datasetId").is_none(),
+                "a create names no NGSI-LD Null: {carriage:?}"
+            );
+        }
     }
 
     #[test]

@@ -2,10 +2,8 @@
 //!
 //! The table holds both entity and context-source subscriptions; they are
 //! discriminated via the `kind` column. Rows are produced by hand-assembled
-//! query readers rather than `sqlx::FromRow` because the `dataset_ids` column
-//! is only present for entity subscriptions (see [`DatasetIdPresence`]).
-//!
-//! [`DatasetIdPresence`]: crate::subscription_store::params::DatasetIdPresence
+//! query readers rather than `sqlx::FromRow` because each stored value is
+//! parsed into its domain type as it is read.
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
@@ -53,7 +51,7 @@ pub struct SubscriptionRow {
     pub expand_values: Option<Vec<AttributeName>>,
     /// Expanded attribute names whose `q` object keys were expanded (clause 5.2.12 `jsonKeys`).
     pub json_keys: Option<Vec<AttributeName>>,
-    /// `datasetId` selectors (entity subscriptions only; `None` when absent).
+    /// `datasetId` selectors; `None` when absent.
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Notification endpoint configuration JSON.
     pub notification: NotificationParams,
