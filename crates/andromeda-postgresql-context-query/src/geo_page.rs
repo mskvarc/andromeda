@@ -160,7 +160,7 @@ pub(crate) fn geo_page(source: &PageSource<'_>, matches: GeoMatches<'_>, columns
         .map(|q| compile(q.reading(), &InstanceScan::Current(&walked), source.names));
     let walk = PageWalk {
         source: walked_source,
-        walked: walked_source.condition(QFilter::Omitted, GeoFilter::Omitted)?,
+        walked: walked_source.conditions(QFilter::Omitted, GeoFilter::Omitted)?,
         probe: Condition::all()
             .add_option(q)
             .add(geo_sql::probe(matches.geo, &walked, &source.names.attributes)?),

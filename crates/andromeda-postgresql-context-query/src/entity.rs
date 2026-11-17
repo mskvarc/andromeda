@@ -215,6 +215,30 @@ pub(crate) enum GeoFilter {
     Omitted,
 }
 
+/// A query's filters, split by what each does to the Entities a statement
+/// reads.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct EntityConditions {
+    /// Which Entities are read: the considered set and the selectors, tests
+    /// of the Entity's own rows an index can narrow the read by.
+    pub(crate) selection: Vec<Condition>,
+    /// What each Entity read is tested by: `attrs`, the projected members,
+    /// `q` and the geo-query as the statement asks, and `scopeQ`.
+    pub(crate) tested: Vec<Condition>,
+}
+
+impl EntityConditions {
+    /// Every filter in one condition, the selection's first.
+    pub(crate) fn whole(self) -> Condition {
+        all_of(self.selection.into_iter().chain(self.tested))
+    }
+}
+
+/// Every condition of `conditions`, each a term of one conjunction.
+pub(crate) fn all_of(conditions: impl IntoIterator<Item = Condition>) -> Condition {
+    conditions.into_iter().fold(Condition::all(), Condition::add)
+}
+
 /// Builds sea-query `Condition` from compiled entity query filters.
 ///
 /// The branch a statement runs against is chosen by the schema its relations
@@ -230,7 +254,20 @@ pub(crate) fn build_entity_conditions(
     q: QFilter<'_>,
     geo: GeoFilter,
 ) -> Result<Condition, RenderError> {
-    let mut condition = Condition::all();
+    Ok(entity_conditions(query, names, rows, source, q, geo)?.whole())
+}
+
+/// The filters of [`build_entity_conditions`], split into the selection and
+/// what each Entity it reads is tested by.
+pub(crate) fn entity_conditions(
+    query: &CompiledEntityQuery,
+    names: &QueryNames,
+    rows: &EntityRowRefs,
+    source: &RowSource,
+    q: QFilter<'_>,
+    geo: GeoFilter,
+) -> Result<EntityConditions, RenderError> {
+    let mut conditions = EntityConditions::default();
 
     // Clause 5.5.14: a request narrowed to an empty identifier set considers no
     // entity, so nothing can match it whatever the selectors and filters admit.
@@ -240,31 +277,29 @@ pub(crate) fn build_entity_conditions(
     // row at all.
     match query.selection.considered {
         ConsideredEntities::Selected => {}
-        ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
+        ConsideredEntities::NoEntity => conditions.selection.push(false_literal().into()),
     }
 
     if let Some(selectors) = selector_condition(&query.selection, rows, &names.types, source) {
-        condition = condition.add(selectors);
+        conditions.selection.push(selectors);
     }
 
     if let Some(attrs) = attrs_condition(&query.selection, names, rows) {
-        condition = condition.add(attrs);
+        conditions.tested.push(attrs);
     }
 
     // Clauses 5.7.2.5 and 6.3.13: an entity the `pick` / `omit` projection
     // would reduce to no member is not selected, so it is left out here, where
     // the count and the page are taken.
     if let Some(members) = projected_member_condition(&query.selection.projected_members, names, rows) {
-        condition = condition.add(members);
+        conditions.tested.push(members);
     }
 
     if let Some(compiled) = &query.selection.q {
         let scan = InstanceScan::Current(rows);
         match q {
-            QFilter::Whole => condition = condition.add(q_filter::compile(compiled.reading(), &scan, names)),
-            QFilter::Except(answered) => {
-                condition = condition.add(q_filter::compile_except(compiled.reading(), answered, &scan, names));
-            }
+            QFilter::Whole => conditions.tested.push(q_filter::compile(compiled.reading(), &scan, names)),
+            QFilter::Except(answered) => conditions.tested.push(q_filter::compile_except(compiled.reading(), answered, &scan, names)),
             QFilter::Omitted => {}
         }
     }
@@ -272,17 +307,21 @@ pub(crate) fn build_entity_conditions(
     if let Some(geo_query) = &query.selection.geo {
         match geo {
             GeoFilter::Matched => {
-                condition = condition.add(geo_sql::condition(geo_query, rows, &query.selection.default_location, &names.attributes)?);
+                conditions
+                    .tested
+                    .push(geo_sql::condition(geo_query, rows, &query.selection.default_location, &names.attributes)?);
             }
             GeoFilter::Omitted => {}
         }
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        condition = condition.add(scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))));
+        conditions
+            .tested
+            .push(scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))));
     }
 
-    Ok(condition)
+    Ok(conditions)
 }
 
 #[cfg(test)]

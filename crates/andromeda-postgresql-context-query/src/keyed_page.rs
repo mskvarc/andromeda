@@ -99,7 +99,7 @@ pub(crate) fn keyed_page(
     let walked = walked_rows(source.rows);
     let walk = PageWalk {
         source: *source,
-        walked: source.condition(QFilter::Omitted, GeoFilter::Matched)?,
+        walked: source.conditions(QFilter::Omitted, GeoFilter::Matched)?,
         probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
         short: SHORT_WALK,
     };
@@ -133,6 +133,7 @@ mod tests {
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
 
     fn names() -> QueryNames {
         QueryNames {
@@ -456,7 +457,7 @@ mod tests {
     }
 
     /// The index branch looks each candidate up by key, so it keeps the plain
-    /// join of the search row.
+    /// join of the search row and its filters.
     #[test]
     fn a_keyed_page_beside_attrs_walks_in_identifier_order() {
         let built = build_query(
@@ -483,6 +484,25 @@ mod tests {
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
         assert_statement_snapshot!("keyed-page-a-keyed-page-without-a-type-beside-attrs-walks-the-identifier-index", built.select);
+    }
+
+    /// Both walks test `attrs` on each Entity they visit behind a fence of
+    /// their own, which the planner cannot turn into a semi-join over every
+    /// `attrs` row; a walk with nothing beside its selectors has no fence.
+    #[test]
+    fn a_walk_tests_its_filters_on_each_entity_it_visits() {
+        let fences = |query: &CompiledEntityQuery| {
+            build_query(&ContextTarget::Live, query, &PageWindow::offset(100, 0), CountPolicy::Omit, &names())
+                .expect("valid entity query")
+                .select
+                .to_string(PostgresQueryBuilder)
+                .matches(r#"AS "filtered" ON TRUE"#)
+                .count()
+        };
+        assert_eq!(fences(&failing_beside_attrs(&["Sensor"])), 2);
+        let mut typed = failing_beside_attrs(&["Sensor"]);
+        typed.selection.attrs = Vec::new();
+        assert_eq!(fences(&typed), 0);
     }
 
     #[test]

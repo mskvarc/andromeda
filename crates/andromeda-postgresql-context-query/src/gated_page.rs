@@ -32,18 +32,21 @@
 //! array ([`narrowed_to`](andromeda_postgresql_query::one_time_gate::narrowed_to)),
 //! looked up one by one.
 //!
-//! A walk whose filters read the search row looks it up for each Entity the
-//! selection yields, in a lateral subquery behind `OFFSET 0` keyed on the
-//! Entity's `entity_key`. The full walk, fenced by `OFFSET 0` alone, is
-//! planned to yield every row, so joined plainly to the search row it
-//! becomes a merge join of every Entity with every search row, sorted by
-//! identifier before the first probe. Among 500 000 Entities that join takes
-//! 343 ms with a 22 MB external sort, and a keyed page beside `attrs` takes
-//! 529 ms where the same page without `attrs` takes 71 ms. Looked up per
-//! Entity, the walk stays an ordered scan of the identifier or membership
-//! index. A walk that fills its page from matches one Entity in ten holds
-//! takes 2.0 ms that way, against 290 ms joined plainly. The index branches
-//! keep the plain join, since they look each candidate up by its key.
+//! The full walk, fenced by `OFFSET 0` alone, is planned to yield every row,
+//! so whatever it reads beside the selection is planned as a join of every
+//! Entity, sorted by identifier before the first probe. A walk therefore
+//! reads its selection by the selectors alone, looks the search row up for
+//! each Entity it yields in a lateral subquery behind `OFFSET 0` keyed on the
+//! Entity's `entity_key`, and tests every other filter (`attrs`, the
+//! projected members, `scopeQ`) on each Entity in one more such subquery.
+//! Joined plainly, the search row makes a merge join of every Entity with
+//! every search row, 343 ms among 500 000 Entities with a 22 MB external
+//! sort, and the standing instance `attrs` reads makes a semi-join over every
+//! `attrs` row, 946 ms: a keyed page beside `attrs` took 757 to 817 ms, and
+//! takes 45 ms tested per Entity, as without `attrs`. A walk that fills its
+//! page from matches one Entity in ten holds takes 2.0 ms looked up per
+//! Entity, against 290 ms joined plainly. The index branches keep the plain
+//! join and filters, since they look each candidate up by its key.
 //!
 //! A counted page's index branch carries the total (clause 6.3.13) as
 //! `COUNT(*) OVER ()`: it reads every candidate before it cuts the window,
@@ -54,7 +57,7 @@
 //! what the page found.
 
 use crate::{
-    entity::{GeoFilter, QFilter, build_entity_conditions, window_and_sort_keys},
+    entity::{EntityConditions, GeoFilter, QFilter, all_of, build_entity_conditions, entity_conditions, window_and_sort_keys},
     entity_page::{GATED_STEP_COLUMN, GatedStep, ProjectedPage, StepColumn, TOTAL_COUNT_COLUMN, projected_page},
     entity_relations::EntityRelations,
 };
@@ -84,6 +87,12 @@ pub(crate) struct Walked;
 #[derive(Iden, Clone, Copy)]
 #[iden = "kept"]
 struct Kept;
+
+/// The name of the filters a walk tests each Entity of its selection by, one
+/// row when the Entity passes and none otherwise.
+#[derive(Iden, Clone, Copy)]
+#[iden = "filtered"]
+struct Filtered;
 
 /// The statement a page is cut from: its relations, in the branch they are
 /// read in, and the query and window it answers.
@@ -125,6 +134,11 @@ impl PageSource<'_> {
         build_entity_conditions(self.query, self.names, self.rows, &self.relations.source, q, geo)
     }
 
+    /// The filters of [`PageSource::condition`], split as a walk reads them.
+    pub(crate) fn conditions(&self, q: QFilter<'_>, geo: GeoFilter) -> Result<EntityConditions, RenderError> {
+        entity_conditions(self.query, self.names, self.rows, &self.relations.source, q, geo)
+    }
+
     /// How many matches the page needs from where the walk starts: every
     /// Entity an offset skips and the page itself, or the page past a cursor.
     pub(crate) fn need(&self) -> u64 {
@@ -147,10 +161,10 @@ pub(crate) struct PageWalk<'a> {
     /// What the walks read: the selection's relations, or fewer when the
     /// probe reads the rest.
     pub(crate) source: PageSource<'a>,
-    /// The filter the walks keep every Entity they visit by, which must not
-    /// narrow the selection, or the short walk would visit more than `short`
-    /// Entities to find them.
-    pub(crate) walked: Condition,
+    /// The filters the walks keep every Entity they visit by: the selection
+    /// they read, and the rest, tested on each Entity it yields, so the short
+    /// walk visits `short` Entities of the selection at most.
+    pub(crate) walked: EntityConditions,
     /// The filter each visited Entity is probed for, over [`walked_rows`].
     pub(crate) probe: Condition,
     /// How many Entities the short walk visits.
@@ -325,11 +339,12 @@ fn full_walk(walk: PageWalk<'_>, window: &PageWindow, fell_short: Vec<SimpleExpr
 /// keeps the planner from merging either into the other: it visits the
 /// Entities in page order, probes each in turn, and stops once the statement
 /// has its rows. The selection reads the walked relations
-/// ([`EntityRelations::walked`]), so a search row it reads is looked up for
-/// each Entity it yields.
+/// ([`EntityRelations::walked`]) by its selectors, so a search row it reads is
+/// looked up for each Entity it yields, and tests the rest of `walked` on each
+/// Entity in a lateral subquery of its own.
 fn walked_in_order(
     source: &PageSource<'_>,
-    walked: Condition,
+    walked: EntityConditions,
     probe: Condition,
     gates: Vec<SimpleExpr>,
     window: &PageWindow,
@@ -339,9 +354,10 @@ fn walked_in_order(
         PageStart::Offset(_) => PageStart::Offset(0),
         PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
     };
+    let EntityConditions { selection: selectors, tested } = walked;
     let (selection, read_order) = source.page_through(
         source.relations.walked(),
-        walked,
+        all_of(selectors),
         &PageWindow {
             limit: length.unwrap_or(0),
             start,
@@ -354,13 +370,14 @@ fn walked_in_order(
             selection.reset_limit().offset(0);
         }
     }
-    let mut kept = Query::select();
-    kept.expr(int_literal(1)).cond_where(probe).offset(0);
+    if !tested.is_empty() {
+        selection.join_lateral(JoinType::InnerJoin, fenced(all_of(tested)), Filtered, Condition::all());
+    }
     let mut matches = Query::select();
     matches
         .column((Walked, Asterisk))
         .from_subquery(selection, Walked)
-        .join_lateral(JoinType::InnerJoin, kept.take(), Kept, Condition::all());
+        .join_lateral(JoinType::InnerJoin, fenced(probe), Kept, Condition::all());
     for gate in gates {
         matches.and_where(gate);
     }
@@ -368,4 +385,12 @@ fn walked_in_order(
         key_order.order_by(&mut matches, Expr::col((Walked, column.clone())));
     }
     Ok((ProjectedPage { select: matches.take(), order }, read_order))
+}
+
+/// `SELECT 1` when `condition` holds, behind `OFFSET 0`, which the planner can
+/// neither merge into the statement it is joined to nor turn into a join.
+fn fenced(condition: Condition) -> SelectStatement {
+    let mut fence = Query::select();
+    fence.expr(int_literal(1)).cond_where(condition).offset(0);
+    fence.take()
 }
