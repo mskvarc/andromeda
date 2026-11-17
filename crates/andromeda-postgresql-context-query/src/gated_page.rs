@@ -32,6 +32,19 @@
 //! array ([`narrowed_to`](andromeda_postgresql_query::one_time_gate::narrowed_to)),
 //! looked up one by one.
 //!
+//! A walk whose filters read the search row looks it up for each Entity the
+//! selection yields, in a lateral subquery behind `OFFSET 0` keyed on the
+//! Entity's `entity_key`. The full walk, fenced by `OFFSET 0` alone, is
+//! planned to yield every row, so joined plainly to the search row it
+//! becomes a merge join of every Entity with every search row, sorted by
+//! identifier before the first probe. Among 500 000 Entities that join takes
+//! 343 ms with a 22 MB external sort, and a keyed page beside `attrs` takes
+//! 529 ms where the same page without `attrs` takes 71 ms. Looked up per
+//! Entity, the walk stays an ordered scan of the identifier or membership
+//! index. A walk that fills its page from matches one Entity in ten holds
+//! takes 2.0 ms that way, against 290 ms joined plainly. The index branches
+//! keep the plain join, since they look each candidate up by its key.
+//!
 //! A counted page's index branch carries the total (clause 6.3.13) as
 //! `COUNT(*) OVER ()`: it reads every candidate before it cuts the window,
 //! so the count costs no second read of them. The walks carry no total, the
@@ -94,8 +107,14 @@ impl PageSource<'_> {
     /// The page cut from the selection filtered by `condition` over `window`,
     /// projected, with the order it is read in.
     pub(crate) fn page(&self, condition: Condition, window: &PageWindow) -> Result<(ProjectedPage, ReadOrder), RenderError> {
+        self.page_through(self.relations.clone(), condition, window)
+    }
+
+    /// The page cut from the selection read through `relations`, filtered by
+    /// `condition` over `window`, projected, with the order it is read in.
+    fn page_through(&self, relations: EntityRelations, condition: Condition, window: &PageWindow) -> Result<(ProjectedPage, ReadOrder), RenderError> {
         let mut page = Query::select();
-        self.relations.clone().apply_from(&mut page, self.schema, self.rows.standing());
+        relations.apply_from(&mut page, self.schema, self.rows.standing());
         page.cond_where(condition);
         let (keys, read_order) = window_and_sort_keys(&mut page, self.rows, self.query, window, &self.names.attributes)?;
         Ok((projected_page(page, self.rows, keys, CountPolicy::Omit), read_order))
@@ -305,7 +324,9 @@ fn full_walk(walk: PageWalk<'_>, window: &PageWindow, fell_short: Vec<SimpleExpr
 /// without one, and the probe a lateral subquery behind `OFFSET 0`, which
 /// keeps the planner from merging either into the other: it visits the
 /// Entities in page order, probes each in turn, and stops once the statement
-/// has its rows.
+/// has its rows. The selection reads the walked relations
+/// ([`EntityRelations::walked`]), so a search row it reads is looked up for
+/// each Entity it yields.
 fn walked_in_order(
     source: &PageSource<'_>,
     walked: Condition,
@@ -318,7 +339,8 @@ fn walked_in_order(
         PageStart::Offset(_) => PageStart::Offset(0),
         PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
     };
-    let (selection, read_order) = source.page(
+    let (selection, read_order) = source.page_through(
+        source.relations.walked(),
         walked,
         &PageWindow {
             limit: length.unwrap_or(0),
