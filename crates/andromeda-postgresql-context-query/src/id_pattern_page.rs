@@ -17,10 +17,9 @@
 //! 3. the full walk tests every member.
 
 use crate::{
-    entity::QFilter,
     entity_page::{ProjectedPage, sort_column},
     entity_relations::{EntityRelations, RowSource},
-    gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
+    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
 };
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -101,21 +100,20 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
     // Ordered by nothing but the identifier, the walk projects it as its
     // first sort key.
     let walked_identifier = Expr::col((Walked, sort_column(0)));
-    let short = ShortWalk {
+    let walk = PageWalk {
         source: *source,
         walked: Condition::all(),
         probe: Condition::all().add(pattern_predicate(walked_identifier, matches.pattern, PatternIndexes::None)),
-        length: ID_PATTERN_SHORT_WALK,
+        short: ID_PATTERN_SHORT_WALK,
     };
-    let rest = IndexOrWalk {
+    let read = IndexRead {
         candidates: matches.select,
         bound: CandidateBound::AtMost(ID_PATTERN_CANDIDATE_BOUND),
         // The pattern is the one filter, and every match the index yields is
         // rechecked against it.
         narrowed: Condition::all(),
-        whole: source.condition(QFilter::Whole)?,
     };
-    gated_page(source, short, rest, columns)
+    gated_page(source, walk, vec![read], columns)
 }
 
 #[cfg(test)]

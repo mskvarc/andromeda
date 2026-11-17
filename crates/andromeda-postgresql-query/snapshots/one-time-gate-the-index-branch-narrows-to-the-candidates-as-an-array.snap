@@ -1,0 +1,16 @@
+---
+source: crates/andromeda-postgresql-query/src/one_time_gate.rs
+---
+SELECT
+  "entity_key"
+FROM
+  "entities"
+WHERE
+  "entity_key" = ANY(
+    ARRAY (
+      SELECT
+        "entity_key"
+      FROM
+        "candidates_2"
+    )
+  )

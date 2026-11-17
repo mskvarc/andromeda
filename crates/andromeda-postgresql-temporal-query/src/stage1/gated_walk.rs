@@ -94,7 +94,7 @@ pub(super) fn gated_walk(
         }
         None => wrapped(indexed, "indexed"),
     };
-    ctes.cte(materialized(bounded(step.candidates(branch), step.bound()), Candidates));
+    ctes.cte(materialized(bounded(step.candidates(branch), step.bound()), Candidates::FIRST.iden()));
     union.union(UnionType::All, wrapped(walk, "walk")).with_cte(ctes);
     Ok((union.take(), read_order))
 }
@@ -154,22 +154,32 @@ impl Gates {
         let bound = step.bound();
         if length.visited == 0 {
             return Gates {
-                indexed: vec![within(Candidates, bound)],
-                walk: vec![count_of(Candidates).gt(bound)],
+                indexed: vec![within(Candidates::FIRST.iden(), bound)],
+                walk: vec![count_of(Candidates::FIRST.iden()).gt(bound)],
             };
         }
         let Some(least) = dense_matches(step.dense_walk(), length) else {
             let walked_short = count_of(ShortWalkMatches).lt(length.need);
             return Gates {
-                indexed: vec![walked_short.clone(), within(Candidates, bound)],
-                walk: vec![walked_short, count_of(Candidates).gt(bound)],
+                indexed: vec![walked_short.clone(), within(Candidates::FIRST.iden(), bound)],
+                walk: vec![walked_short, count_of(Candidates::FIRST.iden()).gt(bound)],
             };
         };
         let filled = || count_of(ShortWalkMatches).gte(length.need);
         let dense = || count_of(ShortWalkMatches).gte(least);
         Gates {
-            indexed: vec![Expr::case(filled(), false).case(dense(), false).finally(within(Candidates, bound)).into()],
-            walk: vec![Expr::case(filled(), false).case(dense(), true).finally(count_of(Candidates).gt(bound)).into()],
+            indexed: vec![
+                Expr::case(filled(), false)
+                    .case(dense(), false)
+                    .finally(within(Candidates::FIRST.iden(), bound))
+                    .into(),
+            ],
+            walk: vec![
+                Expr::case(filled(), false)
+                    .case(dense(), true)
+                    .finally(count_of(Candidates::FIRST.iden()).gt(bound))
+                    .into(),
+            ],
         }
     }
 }

@@ -34,8 +34,9 @@ pub(crate) enum PageShape<'q> {
     /// One statement over the selection, ordered and windowed, the plan left
     /// to the planner.
     Plain,
-    /// The gated page of a `q` whose conjunct an index answers.
-    Keyed(&'q CompiledFilter, KeyedCandidates<'q>),
+    /// The gated page of a `q` whose conjuncts an index answers, read in the
+    /// order listed.
+    Keyed(&'q CompiledFilter, Vec<KeyedCandidates<'q>>),
     /// The gated page of a selection by `attrs` alone, the statement reading
     /// the Entities that carry one of the Attributes.
     Carriers(SelectStatement),
@@ -80,7 +81,8 @@ impl<'q> PageShape<'q> {
             .selection
             .q
             .as_ref()
-            .and_then(|q| keyed_candidates(q.reading(), rows, names, page_bound).map(|keyed| (q, keyed)));
+            .map(|q| (q, keyed_candidates(q.reading(), rows, names, page_bound)))
+            .filter(|(_, keyed)| !keyed.is_empty());
         match keyed {
             Some((q, keyed)) => PageShape::Keyed(q, keyed),
             None => carriers(query, names, schema)
@@ -148,10 +150,7 @@ impl<'q> PageShape<'q> {
             }
             PageShape::Keyed(q, keyed) => {
                 let keyed_total = match count {
-                    CountPolicy::Emit => Some(TotalCandidates::Term(KeyedCandidates {
-                        select: keyed.select.clone(),
-                        ..keyed
-                    })),
+                    CountPolicy::Emit => Some(TotalCandidates::Terms(keyed.clone())),
                     CountPolicy::Omit => None,
                 };
                 let (page, read_order) = keyed_page(source, q, keyed, gated_columns(count, counted_on_page))?;
@@ -167,7 +166,7 @@ impl<'q> PageShape<'q> {
             }
             PageShape::IdPattern(matches) => {
                 let matches_total = match count {
-                    CountPolicy::Emit => Some(TotalCandidates::IdPattern(matches.select.clone())),
+                    CountPolicy::Emit => Some(TotalCandidates::IdPattern(Box::new(matches.select.clone()))),
                     CountPolicy::Omit => None,
                 };
                 let (page, read_order) = id_pattern_page(source, matches, gated_columns(count, counted_on_page))?;

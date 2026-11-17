@@ -5,19 +5,47 @@
 //! selection by what a bounded read found, because the planner cannot price
 //! the term. The bounded read is a `MATERIALIZED` CTE, so it runs once however
 //! many gates read it, and each gate an uncorrelated scalar subquery on it,
-//! which PostgreSQL evaluates once and turns into a one-time filter: a branch
-//! whose gate fails reads nothing. Each branch of a gated page keeps its own
-//! order and window inside the `UNION ALL` that joins them. The Entity query
-//! and stage 1 of the temporal query gate their statements the same way, each
-//! over its own key column, and share the bound a count reads candidates to.
+//! which PostgreSQL evaluates once, when a gate first needs it, and turns into
+//! a one-time filter: a branch whose gate fails reads nothing. A statement
+//! that tries several reads in turn holds one CTE for each, and a read whose
+//! gates all fail before it is never run. Each branch of a gated page keeps
+//! its own order and window inside the `UNION ALL` that joins them. The Entity
+//! query and stage 1 of the temporal query gate their statements the same
+//! way, each over its own key column, and share the bound a count reads
+//! candidates to.
 
+use andromeda_postgresql_seaquery::pg_array::{any, array_of_subquery};
 use sea_query::{Alias, Asterisk, CommonTableExpression, Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
+use std::num::NonZeroUsize;
 
-/// The CTE holding the candidates a keyed term's index yields, read up to
-/// one more than the statement's bound.
-#[derive(Iden, Clone, Copy)]
-#[iden = "candidates"]
-pub struct Candidates;
+/// The CTE holding the candidates one keyed read yields, read up to one more
+/// than the statement's bound for that read.
+///
+/// A statement names each read by its place in the order it tries them: the
+/// first `candidates`, every later one `candidates_<n>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Candidates(NonZeroUsize);
+
+impl Candidates {
+    /// The candidates of a statement's only read, or of the first it tries.
+    pub const FIRST: Candidates = Candidates(NonZeroUsize::MIN);
+
+    /// The candidates of the read at `position` in the order a statement
+    /// tries them, the first at 0.
+    #[must_use]
+    pub const fn at(position: usize) -> Candidates {
+        Candidates(NonZeroUsize::MIN.saturating_add(position))
+    }
+
+    /// The CTE's name.
+    #[must_use]
+    pub fn iden(self) -> Alias {
+        match self.0.get() {
+            1 => Alias::new("candidates"),
+            ordinal => Alias::new(format!("candidates_{ordinal}")),
+        }
+    }
+}
 
 /// The CTE holding what a gated page's short walk kept: the first rows of the
 /// selection in page order that every filter keeps, at most as many as the
@@ -60,6 +88,20 @@ pub fn count_of(cte: impl Iden + 'static) -> SimpleExpr {
 #[must_use]
 pub fn column_of(cte: impl Iden + 'static, column: impl Iden + 'static) -> SelectStatement {
     Query::select().column(column).from(cte).take()
+}
+
+/// `<column> = ANY(ARRAY(<keys>))`: the rows whose key is one of the
+/// candidates `keys` reads.
+///
+/// The planner takes the rows of `<column> IN (<keys>)` from the bounded
+/// read's `LIMIT`, so under a bound of 50 000 it hashes a scan of the whole
+/// selection even for a few dozen candidates: a page of 47 among 500 000
+/// Entities takes 29 to 52 ms that way. An array is one value whose length it
+/// does not guess, so it looks each candidate up through the key's index, and
+/// the same page takes about a millisecond.
+#[must_use]
+pub fn narrowed_to(column: SimpleExpr, keys: SelectStatement) -> SimpleExpr {
+    column.eq(any(array_of_subquery(keys)))
 }
 
 /// `<name> AS MATERIALIZED (<query>)`: computed once, however many gates read
@@ -148,26 +190,27 @@ impl CandidateBound {
 
 #[cfg(test)]
 mod tests {
-    use crate::one_time_gate::{Candidates, beyond, bounded, column_of, within};
+    use crate::one_time_gate::{Candidates, beyond, bounded, column_of, narrowed_to, within};
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use sea_query::Query;
+    use pretty_assertions::assert_eq;
+    use sea_query::{Expr, Iden, Query};
 
     #[test]
     fn a_bounded_read_takes_one_row_past_its_bound() {
-        let read = bounded(Query::select().column(Candidates).from(Candidates).take(), 1000);
+        let read = bounded(Query::select().column(Candidates::FIRST.iden()).from(Candidates::FIRST.iden()).take(), 1000);
         assert_statement_snapshot!("one-time-gate-a-bounded-read-takes-one-row-past-its-bound", read);
     }
 
     #[test]
     fn the_gate_admits_a_read_that_stayed_within_its_bound() {
-        let gate = Query::select().expr(within(Candidates, 1000)).take();
+        let gate = Query::select().expr(within(Candidates::FIRST.iden(), 1000)).take();
         assert_statement_snapshot!("one-time-gate-the-gate-admits-a-read-that-stayed-within-its-bound", gate);
     }
 
     #[test]
     fn the_gate_past_the_bound_admits_a_read_that_stopped_short() {
-        let gate = Query::select().expr(beyond(Candidates, 1000)).take();
+        let gate = Query::select().expr(beyond(Candidates::FIRST.iden(), 1000)).take();
         assert_statement_snapshot!("one-time-gate-the-gate-past-the-bound-admits-a-read-that-stopped-short", gate);
     }
 
@@ -175,7 +218,29 @@ mod tests {
     fn the_candidate_column_is_the_one_the_caller_names() {
         assert_statement_snapshot!(
             "one-time-gate-the-candidate-column-is-the-one-the-caller-names",
-            column_of(Candidates, Entities::EntityKey)
+            column_of(Candidates::FIRST.iden(), Entities::EntityKey)
         );
+    }
+
+    #[test]
+    fn each_read_has_its_own_candidates() {
+        assert_eq!(
+            [0, 1, 2].map(|position| Candidates::at(position).iden().unquoted().to_owned()),
+            ["candidates", "candidates_2", "candidates_3"]
+        );
+        assert_eq!(Candidates::at(0), Candidates::FIRST);
+    }
+
+    #[test]
+    fn the_index_branch_narrows_to_the_candidates_as_an_array() {
+        let narrowed = Query::select()
+            .column(Entities::EntityKey)
+            .from(Entities::Table)
+            .and_where(narrowed_to(
+                Expr::col(Entities::EntityKey),
+                column_of(Candidates::at(1).iden(), Entities::EntityKey),
+            ))
+            .take();
+        assert_statement_snapshot!("one-time-gate-the-index-branch-narrows-to-the-candidates-as-an-array", narrowed);
     }
 }

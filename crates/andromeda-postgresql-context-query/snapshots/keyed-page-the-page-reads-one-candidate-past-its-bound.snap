@@ -190,11 +190,13 @@ FROM
               OR "entities"."expires_at" > NOW()
             )
             AND TRUE
-            AND "entities"."entity_key" IN (
-              SELECT
-                "entity_key"
-              FROM
-                "candidates"
+            AND "entities"."entity_key" = ANY(
+              ARRAY (
+                SELECT
+                  "entity_key"
+                FROM
+                  "candidates"
+              )
             )
             AND (
               SELECT
@@ -221,17 +223,25 @@ FROM
       FROM
         (
           SELECT
-            "entities"."entity_key",
-            "entities"."id" AS "sort_0"
+            "walked".*
           FROM
-            "entities"
+            (
+              SELECT
+                "entities"."entity_key",
+                "entities"."id" AS "sort_0"
+              FROM
+                "entities"
+              WHERE
+                "entities"."created_at" IS NOT NULL
+                AND (
+                  "entities"."expires_at" IS NULL
+                  OR "entities"."expires_at" > NOW()
+                )
+              ORDER BY
+                "sort_0" ASC OFFSET 0
+            ) AS "walked"
           WHERE
-            "entities"."created_at" IS NOT NULL
-            AND (
-              "entities"."expires_at" IS NULL
-              OR "entities"."expires_at" > NOW()
-            )
-            AND EXISTS (
+            EXISTS (
               SELECT
                 1
               FROM
@@ -268,7 +278,7 @@ FROM
                       ("ls"."value" ->> ('@value')) ~ $17
                   )
                 )
-                AND "ca"."entity_key" = "entities"."entity_key"
+                AND "ca"."entity_key" = "walked"."entity_key"
             )
             AND (
               SELECT
@@ -283,7 +293,7 @@ FROM
                 "candidates"
             ) > $19
           ORDER BY
-            "sort_0" ASC
+            "walked"."sort_0" ASC
           LIMIT
             100 OFFSET 0
         ) AS "walk"

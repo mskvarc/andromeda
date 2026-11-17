@@ -5,7 +5,7 @@ use crate::{
     entity::{QFilter, build_entity_conditions},
     entity_page::GatedStep,
     entity_relations::EntityRelations,
-    keyed_count::{KeyedCountFilters, count_bound, keyed_count},
+    keyed_count::{CountedRead, count_bound, keyed_count},
     keyed_page::page_bound as keyed_page_bound,
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, standing_instant::StandingInstant};
@@ -88,11 +88,12 @@ impl TotalCount {
 /// The candidates a total reads its matches from, in place of walking the
 /// selection.
 pub(crate) enum TotalCandidates<'q> {
-    /// The term of `q` an index answers, and its candidates.
-    Term(KeyedCandidates<'q>),
+    /// The terms of `q` an index answers, in the order the page reads them,
+    /// and their candidates.
+    Terms(Vec<KeyedCandidates<'q>>),
     /// The trigram matches of an `idPattern`, the selection's one filter,
     /// each rechecked against the pattern as it is read.
-    IdPattern(SelectStatement),
+    IdPattern(Box<SelectStatement>),
 }
 
 /// The query a total counts the matches of, and how its fragments reach the
@@ -136,29 +137,34 @@ pub(crate) fn entity_total(
             walked: None,
         },
         Some(candidates) => {
-            let (remainder, select, read, page_bound) = match candidates {
-                TotalCandidates::Term(KeyedCandidates { term, select, read }) => (
-                    build_entity_conditions(source.query, source.names, source.rows, &relations.source, QFilter::Except(term))?,
-                    select,
-                    read,
-                    keyed_page_bound(read),
-                ),
-                TotalCandidates::IdPattern(select) => (
-                    Condition::all(),
-                    select,
-                    CandidateRead::Rechecked,
-                    CandidateBound::AtMost(ID_PATTERN_CANDIDATE_BOUND),
-                ),
-            };
-            let after: &'static [GatedStep] = if count_bound(read).reads_no_more_than(page_bound) {
-                &[GatedStep::ShortWalk, GatedStep::FullWalk]
-            } else {
-                &[GatedStep::ShortWalk]
+            let (reads, after) = match candidates {
+                TotalCandidates::Terms(terms) => {
+                    let after = walked_after(terms.iter().map(|keyed| keyed.read), keyed_page_bound);
+                    let reads = terms
+                        .into_iter()
+                        .map(|KeyedCandidates { term, select, read }| {
+                            Ok(CountedRead {
+                                remainder: build_entity_conditions(source.query, source.names, source.rows, &relations.source, QFilter::Except(term))?,
+                                candidates: select,
+                                read,
+                            })
+                        })
+                        .collect::<Result<Vec<CountedRead>, RenderError>>()?;
+                    (reads, after)
+                }
+                TotalCandidates::IdPattern(select) => {
+                    let read = CountedRead {
+                        remainder: Condition::all(),
+                        candidates: *select,
+                        read: CandidateRead::Rechecked,
+                    };
+                    let after = walked_after([read.read], |_| CandidateBound::AtMost(ID_PATTERN_CANDIDATE_BOUND));
+                    (vec![read], after)
+                }
             };
             let walked = count_over(relations.clone(), source.schema, source.rows.standing(), whole.clone());
-            let filters = KeyedCountFilters { remainder, whole };
             TotalCount {
-                count: keyed_count(&relations, source.schema, source.rows, filters, select, read),
+                count: keyed_count(&relations, source.schema, source.rows, reads, whole),
                 walked: Some(WalkedCount { select: walked, after }),
             }
         }
@@ -167,6 +173,21 @@ pub(crate) fn entity_total(
         CountPolicy::Emit => EntityTotal::OnPageRows { uncounted: total },
         CountPolicy::Omit => EntityTotal::Counted(total),
     })
+}
+
+/// The steps of a gated page after which its total is counted by walking,
+/// for a page that read `reads` in turn, each under `page_bound`.
+///
+/// A page cut by its full walk found more candidates than every read's page
+/// bound, which passes every count bound no larger, so the count would only
+/// read them all to walk; a read whose count bound is larger may still
+/// answer the count.
+fn walked_after(reads: impl IntoIterator<Item = CandidateRead>, page_bound: impl Fn(CandidateRead) -> CandidateBound) -> &'static [GatedStep] {
+    if reads.into_iter().all(|read| count_bound(read).reads_no_more_than(page_bound(read))) {
+        &[GatedStep::ShortWalk, GatedStep::FullWalk]
+    } else {
+        &[GatedStep::ShortWalk]
+    }
 }
 
 /// `SELECT COUNT(*)` over `relations` in the branch `schema` (`None` for the
@@ -243,11 +264,14 @@ mod tests {
         );
     }
 
-    fn after_of(q: &str, attribute: &str) -> &'static [GatedStep] {
+    fn after_of(q: &str) -> &'static [GatedStep] {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
         query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
         let names = QueryNames {
-            attributes: ResolvedNames::from_pairs([(attribute.parse().expect("valid name"), AttributeNameKey::from(12))]),
+            attributes: ResolvedNames::from_pairs(
+                [("temperature", 12), ("observedOn", 13)]
+                    .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
+            ),
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
@@ -260,16 +284,18 @@ mod tests {
 
     /// A rechecked term's page reads 1,000 candidates and its count 10,000,
     /// so a page past its bound may still be counted from candidates; a
-    /// ranged term's page and count read the same bound, so its count walks.
+    /// ranged term's count reads no more than its page, so its count walks.
+    /// A conjunction walks its count only when every read does.
     #[test]
-    fn a_full_walk_is_counted_by_walking_only_when_the_count_reads_no_more_candidates_than_the_page() {
+    fn a_full_walk_is_counted_by_walking_only_when_every_count_reads_no_more_candidates_than_its_page() {
+        assert_eq!(after_of("\"https://example.com/temperature\"~=\"text-71.*\""), &[GatedStep::ShortWalk]);
         assert_eq!(
-            after_of("\"https://example.com/temperature\"~=\"text-71.*\"", "https://example.com/temperature"),
-            &[GatedStep::ShortWalk]
+            after_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z"),
+            &[GatedStep::ShortWalk, GatedStep::FullWalk]
         );
         assert_eq!(
-            after_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z", "https://example.com/temperature"),
-            &[GatedStep::ShortWalk, GatedStep::FullWalk]
+            after_of("\"https://example.com/temperature\"~=\"text-71.*\";\"https://example.com/observedOn\">2024-01-15T12:00:00Z"),
+            &[GatedStep::ShortWalk]
         );
     }
 

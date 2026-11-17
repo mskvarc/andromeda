@@ -218,11 +218,13 @@ FROM
               )
               AND TRUE
             )
-            AND "entities"."entity_key" IN (
-              SELECT
-                "entity_key"
-              FROM
-                "candidates"
+            AND "entities"."entity_key" = ANY(
+              ARRAY (
+                SELECT
+                  "entity_key"
+                FROM
+                  "candidates"
+              )
             )
             AND (
               SELECT
@@ -249,69 +251,75 @@ FROM
       FROM
         (
           SELECT
-            "entities"."entity_key",
-            "entities"."id" AS "sort_0"
+            "walked".*
           FROM
-            "entities"
+            (
+              SELECT
+                "entities"."entity_key",
+                "entities"."id" AS "sort_0"
+              FROM
+                "entities"
+              WHERE
+                "entities"."created_at" IS NOT NULL
+                AND (
+                  "entities"."expires_at" IS NULL
+                  OR "entities"."expires_at" > NOW()
+                )
+              ORDER BY
+                "sort_0" ASC OFFSET 0
+            ) AS "walked"
           WHERE
-            "entities"."created_at" IS NOT NULL
-            AND (
-              "entities"."expires_at" IS NULL
-              OR "entities"."expires_at" > NOW()
+            EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $16
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND "ca"."entity_key" = "walked"."entity_key"
             )
-            AND (
-              EXISTS (
-                SELECT
-                  1
-                FROM
-                  "current_attributes" AS "ca"
-                WHERE
-                  "ca"."attribute_name_key" = $16
-                  AND (
-                    "ca"."expires_at" IS NULL
-                    OR "ca"."expires_at" > NOW()
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $17
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND (
+                  (
+                    ((("ca"."value_string") COLLATE "default") ~ $18)
+                    AND nullif("ca"."value_kind" = (2), FALSE)
                   )
-                  AND "ca"."entity_key" = "entities"."entity_key"
-              )
-              AND EXISTS (
-                SELECT
-                  1
-                FROM
-                  "current_attributes" AS "ca"
-                WHERE
-                  "ca"."attribute_name_key" = $17
-                  AND (
-                    "ca"."expires_at" IS NULL
-                    OR "ca"."expires_at" > NOW()
-                  )
-                  AND (
+                  OR (
                     (
-                      ((("ca"."value_string") COLLATE "default") ~ $18)
-                      AND nullif("ca"."value_kind" = (2), FALSE)
+                      (("ca"."value_long_text") COLLATE "default") ~ $19
                     )
-                    OR (
-                      (
-                        (("ca"."value_long_text") COLLATE "default") ~ $19
-                      )
-                      AND nullif("ca"."value_kind" = (2), FALSE)
-                    )
-                    OR EXISTS (
-                      SELECT
-                        1
-                      FROM
-                        jsonb_array_elements(
-                          (
-                            CASE
-                              WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                            END
-                          )
-                        ) AS "ls"
-                      WHERE
-                        ("ls"."value" ->> ('@value')) ~ $20
-                    )
+                    AND nullif("ca"."value_kind" = (2), FALSE)
                   )
-                  AND "ca"."entity_key" = "entities"."entity_key"
-              )
+                  OR EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      jsonb_array_elements(
+                        (
+                          CASE
+                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                          END
+                        )
+                      ) AS "ls"
+                    WHERE
+                      ("ls"."value" ->> ('@value')) ~ $20
+                  )
+                )
+                AND "ca"."entity_key" = "walked"."entity_key"
             )
             AND (
               SELECT
@@ -326,7 +334,7 @@ FROM
                 "candidates"
             ) > $22
           ORDER BY
-            "sort_0" ASC
+            "walked"."sort_0" ASC
           LIMIT
             100 OFFSET 0
         ) AS "walk"

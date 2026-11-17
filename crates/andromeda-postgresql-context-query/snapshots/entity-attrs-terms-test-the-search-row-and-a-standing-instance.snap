@@ -137,11 +137,13 @@ FROM
                   AND "ca"."entity_key" = "entities"."entity_key"
               )
             )
-            AND "entities"."entity_key" IN (
-              SELECT
-                "entity_key"
-              FROM
-                "candidates"
+            AND "entities"."entity_key" = ANY(
+              ARRAY (
+                SELECT
+                  "entity_key"
+                FROM
+                  "candidates"
+              )
             )
             AND (
               SELECT
@@ -168,52 +170,63 @@ FROM
       FROM
         (
           SELECT
-            "entities"."entity_key",
-            "entities"."id" AS "sort_0"
+            "walked".*
           FROM
-            "entities"
-            JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
-          WHERE
-            "entities"."created_at" IS NOT NULL
-            AND (
-              "entities"."expires_at" IS NULL
-              OR "entities"."expires_at" > NOW()
-            )
-            AND (
-              (
-                (
-                  "entity_search"."attribute_name_keys" @> (ARRAY[11])
+            (
+              SELECT
+                "entities"."entity_key",
+                "entities"."id" AS "sort_0"
+              FROM
+                "entities"
+              WHERE
+                "entities"."created_at" IS NOT NULL
+                AND (
+                  "entities"."expires_at" IS NULL
+                  OR "entities"."expires_at" > NOW()
                 )
-                OR (FALSE)
-              )
-              AND EXISTS (
-                SELECT
-                  1
-                FROM
-                  "current_attributes" AS "ca"
-                WHERE
-                  "ca"."attribute_name_key" = $7
-                  AND (
-                    "ca"."expires_at" IS NULL
-                    OR "ca"."expires_at" > NOW()
-                  )
-                  AND "ca"."entity_key" = "entities"."entity_key"
-              )
+              ORDER BY
+                "sort_0" ASC OFFSET 0
+            ) AS "walked"
+          WHERE
+            EXISTS (
+              SELECT
+                $7
+              FROM
+                "entity_search" AS "probed"
+              WHERE
+                (
+                  ("probed"."attribute_name_keys" @> (ARRAY[11]))
+                  OR (FALSE)
+                )
+                AND EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $8
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
+                    )
+                    AND "ca"."entity_key" = "walked"."entity_key"
+                )
+                AND "probed"."entity_key" = "walked"."entity_key"
             )
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "short_walk"
-            ) < $8
+            ) < $9
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) > $9
+            ) > $10
           ORDER BY
-            "sort_0" ASC
+            "walked"."sort_0" ASC
           LIMIT
             20 OFFSET 0
         ) AS "walk"
@@ -245,6 +258,7 @@ ORDER BY
 4: Int 11
 5: BigUnsigned 20
 6: BigUnsigned 50000
-7: Int 11
-8: BigUnsigned 20
-9: BigUnsigned 50000
+7: Int 1
+8: Int 11
+9: BigUnsigned 20
+10: BigUnsigned 50000
