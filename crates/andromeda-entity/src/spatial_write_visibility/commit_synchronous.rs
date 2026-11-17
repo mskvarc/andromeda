@@ -7,7 +7,7 @@ use crate::{
     side_effect::SideEffectPlacement,
     spatial_acceleration::SpatialAcceleration,
     spatial_write_visibility::{
-        geo_query::{create, narrowed_ids, near_origin, uri, vehicle_at, warm_index},
+        geo_query::{create, narrowed_ids, near_origin, near_origin_among, uri, vehicle_at, warm_index},
         write_service::indexed_service,
     },
     write_kind::{BatchCreate, MergeEntity},
@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_model::{
     attribute::merge_member::MergeMember,
     entity::{Entity, EntityPatch},
 };
+use andromeda_ngsi_ld_query::geo::default_location_narrowing::LocationCandidates;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::sync::Arc;
@@ -107,6 +108,47 @@ async fn under_commit_synchronous_an_enqueued_batch_create_is_a_candidate_before
         narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &near_origin("urn:ngsi-ld:Vehicle:batched")).await,
         Some(vec![uri("urn:ngsi-ld:Vehicle:batched")])
     );
+}
+
+/// The store reads its own spatial index for more candidates than a narrowing
+/// names, so the index stops at the first one past them and narrows nothing.
+#[tokio::test]
+async fn under_commit_synchronous_a_geo_query_more_entities_meet_than_a_narrowing_names_is_left_unnarrowed() {
+    let index = warm_index();
+    let service = indexed_service(&index);
+    let fleet = |from: usize, to: usize| -> Vec<Entity> {
+        (from..to)
+            .map(|n| {
+                let longitude = 0.0001 * f64::from(u32::try_from(n).expect("a small fleet"));
+                serde_json::from_value(vehicle_at(&format!("urn:ngsi-ld:Vehicle:fleet-{n}"), longitude)).expect("a valid entity")
+            })
+            .collect()
+    };
+    let every_vehicle = near_origin_among(Vec::new());
+    let admitted = admitted_batch(&service, BatchCreate, fleet(0, LocationCandidates::MAX), &ContextSpec::core_only()).await;
+    service
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
+        .await
+        .expect("the batch create lands");
+    assert_eq!(
+        narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &every_vehicle)
+            .await
+            .map(|candidates| candidates.len()),
+        Some(LocationCandidates::MAX)
+    );
+
+    let admitted = admitted_batch(
+        &service,
+        BatchCreate,
+        fleet(LocationCandidates::MAX, LocationCandidates::MAX + 1),
+        &ContextSpec::core_only(),
+    )
+    .await;
+    service
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
+        .await
+        .expect("the batch create lands");
+    assert_eq!(narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &every_vehicle).await, None);
 }
 
 /// Clause 5.7.2.4: any `location` instance meeting the restriction is enough.

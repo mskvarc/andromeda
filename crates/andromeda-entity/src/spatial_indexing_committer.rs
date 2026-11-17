@@ -334,7 +334,7 @@ mod tests {
             ])
             .expect("a test square is a closed ring"),
         ]));
-        index.query(&key, &GeoRel::Within, &square)
+        index.query(&key, &GeoRel::Within, &square, usize::MAX)
     }
 
     fn deleted() -> WriteOutcome {

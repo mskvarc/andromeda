@@ -7,7 +7,10 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::EntitySelector,
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+    geo::{
+        default_location_narrowing::{DefaultLocationNarrowing, LocationCandidates},
+        query::GeoQuery,
+    },
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_spatial_index::{
@@ -63,9 +66,11 @@ impl EntityQueryService {
     ///
     /// Returns the query unchanged when it is not geo-accelerable, when no index
     /// may narrow it, when the index declines the relation, a `near` with
-    /// only a `minDistance`, which no envelope bounds, or for a Snapshot
-    /// branch, which the live index does not describe; the store then
-    /// evaluates every instance in full.
+    /// only a `minDistance`, which no envelope bounds, when more entities may
+    /// meet it than a narrowing names ([`LocationCandidates::MAX`]), which the
+    /// index knows at the first one past them, or for a Snapshot branch, which
+    /// the live index does not describe; the store then evaluates every
+    /// instance in full.
     ///
     /// [`SpatialAcceleration`]: crate::spatial_acceleration::SpatialAcceleration
     pub(crate) async fn spatial_prefilter(&self, target: &ContextTarget, compiled: &Arc<CompiledEntityQuery>) -> Arc<CompiledEntityQuery> {
@@ -90,6 +95,9 @@ impl EntityQueryService {
             let requested: HashSet<&Identifier> = accelerable.selector.ids.iter().collect();
             candidates.into_iter().filter(|id| requested.contains(id)).collect()
         };
+        let Some(candidates) = LocationCandidates::new(candidates) else {
+            return Arc::clone(compiled);
+        };
         tracing::debug!(
             "spatial prefilter hit: {} default-location candidate(s) for geoQ={:?}",
             candidates.len(),
@@ -100,17 +108,24 @@ impl EntityQueryService {
         Arc::new(narrowed)
     }
 
-    /// The union of every type partition's candidates, or `None` when any one
-    /// partition declines to answer.
+    /// The union of every type partition's candidates, at most
+    /// [`LocationCandidates::MAX`] of them, or `None` when any one partition
+    /// declines to answer or finds more than the union has room for.
+    ///
+    /// An entity of two of the types counts against each partition it is
+    /// found in, so a union near the bound can decline where its distinct
+    /// candidates would fit; the store then evaluates every instance, which
+    /// answers the same.
     fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>) -> Option<HashSet<Identifier>> {
         let mut union: HashSet<Identifier> = HashSet::new();
         for type_iri in &accelerable.type_iris {
             let key = SpatialKey::new(self.tenant.clone(), type_iri.clone(), accelerable.geo.geoproperty.clone());
+            let room = LocationCandidates::MAX.saturating_sub(union.len());
             // A partition that declines for any one type would otherwise
             // contribute an empty candidate set, which is indistinguishable from
             // that type having no default instance in range. The store then
             // evaluates every instance in full.
-            union.extend(index.query(&key, &accelerable.geo.georel, accelerable.geo.geometry.form())?);
+            union.extend(index.query(&key, &accelerable.geo.georel, accelerable.geo.geometry.form(), room)?);
         }
         Some(union)
     }
