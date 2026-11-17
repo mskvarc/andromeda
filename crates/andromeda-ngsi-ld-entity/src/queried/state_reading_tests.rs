@@ -51,7 +51,8 @@ fn vehicle() -> Value {
     }])
 }
 
-/// An entity of every attribute family, with a sub-attribute.
+/// An entity of every attribute family, with a sub-attribute on a
+/// Relationship and on a `LanguageProperty`.
 fn rich() -> Value {
     json!([{
         "@id": "urn:ngsi-ld:Device:1",
@@ -63,7 +64,8 @@ fn rich() -> Value {
         }],
         "https://example.com/description": [{
             "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
-            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "en", "@value": "Door"}, {"@language": "de", "@value": "Tuer"}]
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "en", "@value": "Door"}, {"@language": "de", "@value": "Tuer"}],
+            "https://example.com/source": [{"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 5}]}]
         }],
         "https://example.com/tags": [{
             "@type": [PROPERTY],
@@ -212,7 +214,24 @@ fn rich_cases() -> Vec<(&'static str, bool)> {
         ("\"https://example.com/gender\"!=\"https://example.com/Male\"", false),
         ("\"https://example.com/owner\"~=\"urn:.*\"", false),
         ("\"https://example.com/owner\".\"https://example.com/since\"==2020", true),
+        ("\"https://example.com/description\".\"https://example.com/source\"==5", true),
         ("\"https://example.com/myJson\"[city]==\"Berlin\"", true),
+        // Each name after the first is a sub-Property or a sub-Relationship
+        // (clause 4.9), and a family's value member is neither.
+        ("\"https://example.com/owner\".\"https://uri.etsi.org/ngsi-ld/hasObject\"", false),
+        (
+            "\"https://example.com/owner\".\"https://uri.etsi.org/ngsi-ld/hasObject\"==\"urn:ngsi-ld:Person:42\"",
+            false,
+        ),
+        (
+            "\"https://example.com/owner\".\"https://uri.etsi.org/ngsi-ld/hasObject\"!=\"urn:ngsi-ld:Person:1\"",
+            false,
+        ),
+        ("\"https://example.com/description\".\"https://uri.etsi.org/ngsi-ld/hasLanguageMap\"", false),
+        ("\"https://example.com/colors\".\"https://uri.etsi.org/ngsi-ld/hasValueList\"", false),
+        ("\"https://example.com/parts\".\"https://uri.etsi.org/ngsi-ld/hasObjectList\"", false),
+        ("\"https://example.com/myJson\".\"https://uri.etsi.org/ngsi-ld/hasJSON\"", false),
+        ("\"https://example.com/gender\".\"https://uri.etsi.org/ngsi-ld/hasVocab\"", false),
     ]
 }
 

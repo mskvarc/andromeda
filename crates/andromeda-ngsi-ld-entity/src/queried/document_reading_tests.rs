@@ -112,6 +112,14 @@ fn the_document_reading_answers_every_written_instance() {
         ("\"https://example.com/label\"[fr]==\"Portail\"", true),
         ("\"https://example.com/label\"[en]==\"Portail\"", false),
         ("\"https://example.com/label\"[de]", false),
+        // Each name after the first is a sub-Property or a sub-Relationship
+        // (clause 4.9), and a family's value member is neither.
+        ("\"https://example.com/owner\".\"https://uri.etsi.org/ngsi-ld/hasObject\"", false),
+        (
+            "\"https://example.com/owner\".\"https://uri.etsi.org/ngsi-ld/hasObject\"==\"urn:ngsi-ld:Person:42\"",
+            false,
+        ),
+        ("\"https://example.com/label\".\"https://uri.etsi.org/ngsi-ld/hasLanguageMap\"", false),
     ] {
         let expr = parse(q).expect("the Query Term parses");
         pretty_assertions::assert_eq!(
