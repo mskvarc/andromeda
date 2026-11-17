@@ -43,18 +43,23 @@ use andromeda_postgresql_stored_form::{
     memberships::Memberships,
 };
 use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
-use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, SelectStatement, SimpleExpr, TableRef};
+use sea_query::{Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr};
 
 /// The type-membership walk a type-driven statement reads, `selected`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "selected"]
 pub struct Selected;
 
-/// Whether a relation takes part in the statement.
+/// Whether a relation takes part in the statement, and how it meets the
+/// driving row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Demand {
     /// The relation is joined to the driving row on `entity_key`.
     Joined,
+    /// The relation's row of each driving row is read on its own, in a
+    /// lateral subquery behind `OFFSET 0` keyed on that row's `entity_key`,
+    /// which the planner cannot flatten into a join of the two relations.
+    JoinedPerRow,
     /// The relation is not named in the statement.
     NotJoined,
 }
@@ -126,11 +131,31 @@ impl EntityRelations {
         }
     }
 
+    /// These relations as a walk of the selection in page order reads them,
+    /// with a joined search row joined to each walked Entity on its own.
+    ///
+    /// A walk fenced by `OFFSET 0` alone is planned to yield every row, so a
+    /// search row joined to it plainly makes it a merge join of every driving
+    /// row with every search row, sorted by identifier before the first is
+    /// probed. Joined per Entity, the walk stays an ordered scan of its index.
+    #[must_use]
+    pub fn walked(&self) -> EntityRelations {
+        let search = match self.search {
+            Demand::Joined | Demand::JoinedPerRow => Demand::JoinedPerRow,
+            Demand::NotJoined => Demand::NotJoined,
+        };
+        EntityRelations {
+            source: self.source.clone(),
+            search,
+        }
+    }
+
     /// Add the driving relation and the joins this demand asks for to
     /// `select`, every relation qualified by the branch schema (`None` for the
     /// live branch), the driving Entity standing at `standing`.
     pub fn apply_from(self, select: &mut SelectStatement, schema: Option<&DynIden>, standing: StandingInstant) {
-        let driving_key: SimpleExpr = match self.source {
+        let driving_key = self.rows(schema.cloned(), standing).entity_key_column();
+        match self.source {
             RowSource::Entities => {
                 // An identity row whose current state a core deletion removed
                 // keeps only its Temporal Evolution, which no core read sees,
@@ -138,31 +163,16 @@ impl EntityRelations {
                 select
                     .from(qualified(schema, Entities::Table))
                     .and_where(holds_standing_state(Entities::Table, instant_of(standing)));
-                Expr::col((Entities::Table, Entities::EntityKey))
             }
             RowSource::TypeMembers { walk, entities } => {
                 select.from_subquery(*walk, Selected);
-                let key = Expr::col((Selected, Entities::EntityKey));
-                join_on_key(
-                    select,
-                    entities,
-                    qualified(schema, Entities::Table),
-                    (Entities::Table, Entities::EntityKey),
-                    &key,
-                );
+                join_on_key(select, entities, schema, (Entities::Table, Entities::EntityKey), &driving_key);
                 // The walk reads current-side memberships alone, so only the
                 // clause 4.22 expiry is left to test.
-                select.and_where(not_expired(key.clone(), schema, instant_of(standing)));
-                key
+                select.and_where(not_expired(driving_key.clone(), schema, instant_of(standing)));
             }
-        };
-        join_on_key(
-            select,
-            self.search,
-            qualified(schema, EntitySearch::Table),
-            (EntitySearch::Table, EntitySearch::EntityKey),
-            &driving_key,
-        );
+        }
+        join_on_key(select, self.search, schema, (EntitySearch::Table, EntitySearch::EntityKey), &driving_key);
     }
 }
 
@@ -216,12 +226,20 @@ fn search_demand(selection: &EntitySelection, source: &RowSource) -> bool {
     typed || !selection.attrs.is_empty() || selection.projected_members.constrains() || selection.geo.is_some() || selection.scope_q.is_some()
 }
 
-/// Join `table` on its `entity_key` column `key` to the driving `driving_key`
-/// when `demand` asks for it.
-fn join_on_key(select: &mut SelectStatement, demand: Demand, table: TableRef, key: (impl IntoIden, impl IntoIden), driving_key: &SimpleExpr) {
+/// Join `table`, in the branch `schema`, on its `entity_key` column `key` to
+/// the driving row's `driving_key`, as `demand` asks.
+fn join_on_key<T: IntoIden + Copy>(select: &mut SelectStatement, demand: Demand, schema: Option<&DynIden>, (table, key): (T, T), driving_key: &SimpleExpr) {
     match demand {
         Demand::Joined => {
-            select.join(JoinType::Join, table, Expr::col(key).eq(driving_key.clone()));
+            select.join(JoinType::Join, qualified(schema, table), Expr::col((table, key)).eq(driving_key.clone()));
+        }
+        Demand::JoinedPerRow => {
+            let mut row = Query::select();
+            row.column(Asterisk)
+                .from(qualified(schema, table))
+                .and_where(Expr::col((table, key)).eq(driving_key.clone()))
+                .offset(0);
+            select.join_lateral(JoinType::InnerJoin, row.take(), table, Condition::all());
         }
         Demand::NotJoined => {}
     }
@@ -523,5 +541,37 @@ mod tests {
     #[test]
     fn the_joins_are_on_the_surrogate_key() {
         assert_statement_snapshot!("entity-relations-the-joins-are-on-the-surrogate-key", from_clause(joined(Demand::Joined)));
+    }
+
+    #[test]
+    fn a_walk_joins_the_search_row_of_each_entity_it_visits() {
+        let walked = joined(Demand::Joined).walked();
+        assert_eq!(walked, joined(Demand::JoinedPerRow));
+        assert_statement_snapshot!("entity-relations-a-walk-joins-the-search-row-of-each-entity-it-visits", from_clause(walked));
+    }
+
+    #[test]
+    fn a_membership_walk_joins_the_search_row_of_each_member() {
+        let mut query = typed_query();
+        query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
+        let walked = relations(&query).walked();
+        assert_eq!(walked.search, Demand::JoinedPerRow);
+        assert!(matches!(
+            walked.source,
+            RowSource::TypeMembers {
+                entities: Demand::NotJoined,
+                ..
+            }
+        ));
+        assert_statement_snapshot!("entity-relations-a-membership-walk-joins-the-search-row-of-each-member", from_clause(walked));
+    }
+
+    #[test]
+    fn a_walk_without_a_search_filter_joins_no_search_row() {
+        for query in [empty_query(), typed_query()] {
+            let relations = relations(&query);
+            assert_eq!(relations.search, Demand::NotJoined, "{query:?}");
+            assert_eq!(relations.walked(), relations, "{query:?}");
+        }
     }
 }

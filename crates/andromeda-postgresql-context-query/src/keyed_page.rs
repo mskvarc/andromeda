@@ -123,22 +123,24 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        entity_selection::EntitySelection,
+        entity_selection::{EntitySelection, EntitySelector},
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
+        type_selection::grammar::TypeExpr,
     };
     use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
-    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
 
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs(
-                [("temperature", 12), ("source", 13), ("hasTrip", 14)]
+                [("temperature", 12), ("source", 13), ("hasTrip", 14), ("status", 15)]
                     .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
             ),
-            types: ResolvedNames::default(),
+            types: ResolvedNames::from_pairs([("https://example.com/Sensor".parse().expect("valid type name"), EntityTypeNameKey::from(3))]),
             ..QueryNames::default()
         }
     }
@@ -146,6 +148,21 @@ mod tests {
     fn query(q: &str) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
         query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
+        query
+    }
+
+    fn iri(name: &str) -> IriBuf {
+        IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")
+    }
+
+    /// `q=status=="fail"` beside `attrs=temperature`, of `selected` types.
+    fn failing_beside_attrs(selected: &[&str]) -> CompiledEntityQuery {
+        let mut query = query("\"https://example.com/status\"==\"fail\"");
+        query.selection.selectors = selected
+            .iter()
+            .map(|ty| EntitySelector::builder().type_expr(Some(TypeExpr::Type(iri(ty)))).build())
+            .collect();
+        query.selection.attrs = vec![iri("temperature")];
         query
     }
 
@@ -436,6 +453,36 @@ mod tests {
         )
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
+    }
+
+    /// The index branch looks each candidate up by key, so it keeps the plain
+    /// join of the search row.
+    #[test]
+    fn a_keyed_page_beside_attrs_walks_in_identifier_order() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &failing_beside_attrs(&["Sensor"]),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        assert_statement_snapshot!("keyed-page-a-keyed-page-beside-attrs-walks-in-identifier-order", built.select);
+    }
+
+    #[test]
+    fn a_keyed_page_without_a_type_beside_attrs_walks_the_identifier_index() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &failing_beside_attrs(&[]),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        assert_statement_snapshot!("keyed-page-a-keyed-page-without-a-type-beside-attrs-walks-the-identifier-index", built.select);
     }
 
     #[test]
