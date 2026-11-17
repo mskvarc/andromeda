@@ -2,7 +2,7 @@
 
 use crate::{
     q::{
-        family_target::{family_target, first_family_value, held_target},
+        family_target::{family_target, held_target},
         geometry_member::geometry_member,
         target_value::{ResolvedTarget, json_member},
     },
@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
-    reading::family_reading::{MemberSource, MultiValueReading, TargetOrigin, family_reading},
+    reading::family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueLayout, family_reading},
     trailing_path::MemberPath,
 };
 
@@ -24,8 +24,10 @@ use andromeda_ngsi_ld_query::filter::{
 /// shapes, and both are addressed by the same `q` path:
 ///
 /// * A structured Property value is a node whose members are keyed by expanded
-///   IRI, so `city` is a member *hop*: the first value, then the member's
-///   first value, down to a literal. This is the shape a notification payload and a stored entity carry.
+///   IRI, so `city` is a member *hop* from the instance's one value through
+///   members each holding one value, down to the target member
+///   ([`seed_value`]). This is the shape a notification payload and a stored
+///   entity carry.
 /// * A `JsonProperty`'s value, and a Property value held as an opaque JSON
 ///   object, are raw JSON, where `city` is an ordinary object key. The NGSI-LD
 ///   data model puts no constraint on those keys, so they are read verbatim.
@@ -45,8 +47,24 @@ pub(crate) fn resolve_compound_member<'a, I: QueriedInstance<'a>>(instance: I, m
     match family_reading(instance.family()).members {
         MemberSource::Geometry => geometry_member(instance.geometry()?, members),
         MemberSource::Value => {
-            resolve_member_hops(first_family_value(instance), &members.addressed).or_else(|| json_member(&family_target(instance)?, &members.written))
+            resolve_member_hops(seed_value(instance), &members.addressed).or_else(|| json_member(&family_target(instance)?, &members.written))
         }
+    }
+}
+
+/// The value a trailing path enters at `instance`, the seed target value of
+/// clause 4.9, when it is one value; `None` when the instance holds none or
+/// several.
+///
+/// Clause 4.9 evaluates a trailing path "against the seed target value" as an
+/// ECMA 262 `MemberExpression`, and a Property holding several values holds an
+/// array, which has no named member, so the path reaches nothing in it. A
+/// list family holds its items inside one list, which has neither a literal
+/// nor members of its own, so a path into it addresses nothing either.
+fn seed_value<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ValueItem<'a, I::Node>> {
+    match family_reading(instance.family()).layout {
+        ValueLayout::Nodes => sole_value(instance.values()),
+        ValueLayout::OrderedList => None,
     }
 }
 

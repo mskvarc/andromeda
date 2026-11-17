@@ -121,4 +121,9 @@ corpus_cases! {
     n_qry_qlg_9198_an_ordering_never_selects_a_compound_member_holding_an_array => "C-98",
     n_qry_qlg_9199_a_compound_member_declared_a_year_zero_date_time_precedes_year_one => "C-99",
     n_qry_qlg_9200_a_compound_member_declared_a_year_zero_date_time_equals_its_instant => "C-100",
+    n_qry_qlg_9211_a_trailing_path_reaches_no_member_of_several_structured_values => "C-111",
+    n_qry_qlg_9212_a_member_of_the_first_of_several_structured_values_is_no_target => "C-112",
+    n_qry_qlg_9213_a_member_of_the_second_of_several_structured_values_is_no_target => "C-113",
+    n_qry_qlg_9214_a_value_list_reads_a_member_of_a_single_structured_value_alone => "C-114",
+    n_qry_qlg_9215_an_inequality_never_selects_several_structured_values => "C-115",
 }

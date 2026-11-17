@@ -556,6 +556,43 @@ fn a_step_through_a_member_holding_several_values_reaches_nothing() {
     ));
 }
 
+/// Clause 4.9 evaluates a trailing path against the seed target value as an
+/// ECMA 262 `MemberExpression`. A Property holding the structured values
+/// `{a: 5}` and `{a: 6}` holds an array, which has no member `a`, so the
+/// target element does not exist and no operator holds, `!=` included; one
+/// holding the single value `{a: 5}` is entered.
+#[test]
+fn a_trailing_path_into_a_property_holding_several_structured_values_reaches_nothing() {
+    let entity = |values: Value| {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Company:1",
+            "@type": ["https://example.com/Company"],
+            "https://example.com/p": [{"https://uri.etsi.org/ngsi-ld/hasValue": values}]
+        }])
+    };
+    let several = entity(serde_json::json!([
+        {"https://example.com/a": [{"@value": 5}]},
+        {"https://example.com/a": [{"@value": 6}]}
+    ]));
+    let one = entity(serde_json::json!([{"https://example.com/a": [{"@value": 5}]}]));
+    let path = "\"https://example.com/p\"[\"https://example.com/a\"]";
+    for q in [
+        String::from(path),
+        format!("{path}==5"),
+        format!("{path}==6"),
+        format!("{path}==5,6"),
+        format!("{path}!=7"),
+    ] {
+        let expr = parse(&q).expect("parses");
+        assert!(!holds(&expr, &several), "{q} holds over several structured values");
+    }
+    for q in [String::from(path), format!("{path}==5"), format!("{path}==5,6"), format!("{path}!=7")] {
+        let expr = parse(&q).expect("parses");
+        assert!(holds(&expr, &one), "{q} does not hold over one structured value");
+    }
+    assert!(!holds(&parse(&format!("{path}==6")).expect("parses"), &one));
+}
+
 /// A member holding only a node is the target element, and its value is an
 /// Object, which clause 4.9 makes unequal to an operand of another data type.
 #[test]
