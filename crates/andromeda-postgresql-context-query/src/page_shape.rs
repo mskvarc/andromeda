@@ -9,24 +9,18 @@ use crate::{
     entity_relations::EntityRelations,
     entity_total::TotalCandidates,
     gated_page::{GatedColumns, PageSource},
-    geo_page::{GeoMatches, geo_matches, geo_page},
+    geo_page::{GeoMatches, geo_matches, geo_page, matches_of},
     id_pattern_page::{PatternMatches, id_pattern_page, pattern_matches},
-    keyed_page::{keyed_page, page_bound},
+    keyed_page::{KeyedReads, keyed_page, page_bound},
     value_walk_page::{ValueWalkOrder, value_walk_order, value_walk_page},
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
-    filter::compiled_filter::CompiledFilter,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
-use andromeda_postgresql_query::{
-    entity_row_refs::EntityRowRefs,
-    error::RenderError,
-    q_predicate::keyed_term::{KeyedCandidates, keyed_candidates},
-    query_names::QueryNames,
-};
+use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, error::RenderError, q_predicate::keyed_term::keyed_candidates, query_names::QueryNames};
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::{Condition, DynIden, Query, SelectStatement};
 
@@ -36,8 +30,8 @@ pub(crate) enum PageShape<'q> {
     /// to the planner.
     Plain,
     /// The gated page of a `q` whose conjuncts an index answers, read in the
-    /// order listed.
-    Keyed(&'q CompiledFilter, Vec<KeyedCandidates<'q>>),
+    /// order listed after the matches of a geo-query beside them.
+    Keyed(KeyedReads<'q>),
     /// The gated page of a selection filtered by a geo-query, the statement
     /// reading the geo-query's matches.
     Geo(GeoMatches<'q>),
@@ -94,8 +88,12 @@ impl<'q> PageShape<'q> {
             .as_ref()
             .map(|q| (q, keyed_candidates(q.reading(), rows, names, page_bound)))
             .filter(|(_, keyed)| !keyed.is_empty());
-        if let Some((q, keyed)) = keyed {
-            return Ok(PageShape::Keyed(q, keyed));
+        if let Some((q, terms)) = keyed {
+            return Ok(PageShape::Keyed(KeyedReads {
+                q,
+                terms,
+                geo: matches_of(query, names, rows)?,
+            }));
         }
         if let Some(matches) = geo_matches(query, names, window, count, rows)? {
             return Ok(PageShape::Geo(matches));
@@ -149,12 +147,12 @@ impl<'q> PageShape<'q> {
                     total_candidates: None,
                 });
             }
-            PageShape::Keyed(q, keyed) => {
+            PageShape::Keyed(reads) => {
                 let keyed_total = match count {
-                    CountPolicy::Emit => Some(TotalCandidates::Terms(keyed.clone())),
+                    CountPolicy::Emit => Some(TotalCandidates::Terms(reads.terms.clone())),
                     CountPolicy::Omit => None,
                 };
-                let (page, read_order) = keyed_page(source, q, keyed, gated_columns(count, counted_on_page))?;
+                let (page, read_order) = keyed_page(source, reads, gated_columns(count, counted_on_page))?;
                 (page, read_order, StatementPlanning::BoundValues, keyed_total)
             }
             PageShape::Geo(matches) => {
@@ -232,6 +230,7 @@ mod tests {
         entity_relations::EntityRelations,
         entity_total::EntityTotal,
         geo_page_fixtures::{built, filtered, first_page, names, past_first_sensor, sensors_within_square},
+        keyed_page::KeyedReads,
         page_shape::PageShape,
     };
     use andromeda_ngsi_ld_query::{
@@ -244,6 +243,9 @@ mod tests {
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
+
+    /// An equality the value indexes answer.
+    const FAILING: &str = "\"https://example.com/status\"==\"fail\"";
 
     /// How the page of `query` over `window` is cut when `count` asks for its
     /// total, on the live branch.
@@ -264,8 +266,31 @@ mod tests {
 
     #[test]
     fn a_geo_query_beside_a_keyed_term_keeps_the_keyed_page() {
-        let query = filtered(sensors_within_square(), "\"https://example.com/status\"==\"fail\"");
-        assert!(matches!(shape_of(&query, &first_page(), CountPolicy::Omit), PageShape::Keyed(..)));
+        let query = filtered(sensors_within_square(), FAILING);
+        assert!(matches!(
+            shape_of(&query, &first_page(), CountPolicy::Omit),
+            PageShape::Keyed(KeyedReads { geo: Some(_), .. })
+        ));
+    }
+
+    #[test]
+    fn a_keyed_term_beside_an_unrecorded_geoproperty_reads_no_geo_matches() {
+        let mut query = filtered(sensors_within_square(), FAILING);
+        query.selection.geo.as_mut().expect("a geo-query").geoproperty = "https://example.com/neverRecorded".parse().expect("valid attribute name");
+        assert!(matches!(
+            shape_of(&query, &first_page(), CountPolicy::Omit),
+            PageShape::Keyed(KeyedReads { geo: None, .. })
+        ));
+    }
+
+    #[test]
+    fn a_keyed_term_beside_a_geo_query_of_no_entity_reads_no_geo_matches() {
+        let mut query = filtered(sensors_within_square(), FAILING);
+        query.selection.considered = ConsideredEntities::NoEntity;
+        assert!(matches!(
+            shape_of(&query, &first_page(), CountPolicy::Omit),
+            PageShape::Keyed(KeyedReads { geo: None, .. })
+        ));
     }
 
     #[test]
