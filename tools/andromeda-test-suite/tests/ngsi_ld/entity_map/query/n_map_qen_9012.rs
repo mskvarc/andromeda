@@ -13,7 +13,7 @@ use ngsi_ld::{
 
 /// Pins: Query Entities through POST with one `EntitySelector` of a type under an `EntityMap` that Create `EntityMap`
 /// for Query Entities through GET created by that type answers the mapped Entity, and through POST with one
-/// `EntitySelector` of another type answers 400 `InvalidRequest`
+/// `EntitySelector` of another type answers 400 `BadRequestData`
 /// Clause: 5.5.14, 5.7.2.3, 5.2.33, 6.23.3.1
 #[gtest]
 #[tokio::test]
@@ -57,7 +57,7 @@ async fn n_map_qen_9012_a_map_created_through_get_serves_a_post_query_of_its_typ
         .entity_map(&entity_map_request)
         .send()
         .await;
-    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest));
+    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     broker.entity_maps().delete(&created.body().id).send().await?;
     Ok(())
 }

@@ -29,6 +29,7 @@ use andromeda_entity_map::{
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_query::filter::reading::filter_reading::FilterReading;
+use andromeda_ngsi_ld_request::follow_up_inputs::{ContextReference, FollowUpInputs};
 use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use axum::http::Uri;
 
@@ -36,10 +37,11 @@ use axum::http::Uri;
 ///
 /// Clause 5.5.14: a referenced live map fixes the entities the query considers
 /// and the sources it contacts, and holds the query to the creating request's
-/// filters (the temporal window excepted); an expired or unknown one yields no
-/// inference, so a fresh map is created instead. The fingerprint is taken over
-/// `query` and `csf`, the compiled query as written before it is narrowed,
-/// which compiles only for a read that runs under a map. A map-scoped follow-up
+/// parameters (the temporal window excepted); an expired or unknown one yields
+/// no inference, so a fresh map is created instead. The fingerprint is taken
+/// over `query` and `csf`, the compiled query as written before it is
+/// narrowed, which compiles only for a read that runs under a map, and over
+/// the request's other inputs under the `@context` `query` expands under. A map-scoped follow-up
 /// may omit the temporal window, which then stands for all history up to a
 /// far-future horizon.
 ///
@@ -62,9 +64,11 @@ pub(super) async fn resolve_query_map(
     if !target.permits_federation() || !flag.involves_a_map(referenced) {
         return Ok(EntityMapUse::None);
     }
+    let context_key = query.context().context_key();
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal {
         query: query.compiled().await?,
         csf,
+        inputs: &FollowUpInputs::of_temporal(params, ContextReference::new(&context_key)),
     })
     .with_instance(instance)?;
     let map_use = entity_maps

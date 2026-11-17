@@ -1,4 +1,4 @@
-//! A request over a map with another filter is an invalid request.
+//! A request over a map with another filter is bad request data.
 
 use andromeda_test_suite::{broker, header_matcher::present, namespace::Namespace, outcome::Done, problem::problem, received_status::ExpectedStatus};
 use googletest::prelude::*;
@@ -10,13 +10,15 @@ use ngsi_ld::{
 };
 
 /// Pins: Query Entities by type naming an `EntityMap` built without q and adding q speed>99 answers 400
-/// `InvalidRequest`
-/// Clause: 5.5.14, 6.3.20
+/// `BadRequestData`
+/// Clause: 5.5.14, 5.5.9.1, 5.5.9.3
 /// Recorded: 5.5.14 requires a request over an `EntityMap` to repeat the parameters that created it and names no
-/// error for one that does not; Andromeda answers `InvalidRequest` as 6.3.20 does for incompatible parameters
+/// error for one that does not; Andromeda answers `BadRequestData`, as 5.5.9.1 answers a different `@context` during
+/// the pagination 5.5.9.3 makes the requests over an `EntityMap`, since a changed parameter is input data that does
+/// not meet the requirements of the operation rather than a parameter the operation does not take (6.3.20)
 #[gtest]
 #[tokio::test]
-async fn o_map_qen_6403_a_request_over_a_map_with_another_filter_is_an_invalid_request() -> Result<()> {
+async fn o_map_qen_6403_a_request_over_a_map_with_another_filter_is_bad_request_data() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -51,6 +53,6 @@ async fn o_map_qen_6403_a_request_over_a_map_with_another_filter_is_an_invalid_r
         .entity_map(&entity_map_request_2)
         .send()
         .await;
-    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest));
+    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     Ok(())
 }

@@ -10,9 +10,14 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 pub fn classify_entity_map_error(error: &EntityMapError) -> ClassifiedReport {
     match error {
         EntityMapError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
-        // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
-        // the request that created the map are an invalid request.
-        EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        // Clause 5.5.14 names no error for a request under a map that does
+        // not repeat the parameters of the one that created it. Clause 5.5.9.1
+        // answers its `@context` instance, during the pagination clause 5.5.9.3
+        // makes the requests under a map, with BadRequestData, and every other
+        // changed input is the same kind of data: a value the operation takes
+        // that does not meet its requirements, not a parameter it does not take
+        // (clause 6.3.20).
+        EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
         EntityMapError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         EntityMapError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         EntityMapError::Persistence(_) | EntityMapError::Invariant(_) => ClassifiedReport::internal(error, InternalFailureSummary::ENTITY_STORE_FAULT),

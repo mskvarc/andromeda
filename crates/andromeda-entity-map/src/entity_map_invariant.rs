@@ -2,6 +2,7 @@
 
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityMapIdParseError;
 use andromeda_ngsi_ld_query::query_identity::QueryIdentityError;
+use andromeda_ngsi_ld_request::follow_up_inputs::FollowUpInputsError;
 use thiserror::Error;
 
 /// An Entity Map policy invariant that did not hold.
@@ -20,4 +21,8 @@ pub enum EntityMapInvariant {
     /// as bytes.
     #[error("the query identity cannot be written: {0}")]
     QueryIdentityUnwritable(#[source] QueryIdentityError),
+    /// The inputs of a request the broker already admitted cannot be written
+    /// as bytes.
+    #[error("the request inputs cannot be written: {0}")]
+    FollowUpInputsUnwritable(#[source] FollowUpInputsError),
 }

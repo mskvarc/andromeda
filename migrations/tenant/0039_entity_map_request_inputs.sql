@@ -1,0 +1,15 @@
+-- ============================================================================
+-- 0039: Entity map request inputs
+-- ============================================================================
+-- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.5.9.1 and 5.5.14
+--
+-- A request under an Entity Map is held to every input of the request that
+-- created the map, its `@context` among them, so each map records the digest
+-- of those inputs beside the digest of the query it selects. A map v1.0.0
+-- stored records only a digest of its filters as written, which compares with
+-- no follow-up, so every stored map is removed, its entries and links with
+-- it. A request naming a removed map is answered as one naming a map that
+-- expired: clause 5.5.14 draws no inference from it, and a read creates a new
+-- map.
+-- ============================================================================
+delete from entity_maps;

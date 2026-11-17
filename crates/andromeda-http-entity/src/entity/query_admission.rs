@@ -8,7 +8,14 @@
 //! consumes the [`AdmittedQuery`] this produces.
 
 use crate::{
-    entity::{ContextSpec, EntityResultExt, NgsiLdProtocolHeaders, ProblemResponse, query_binding::QueryBinding, request_entity_map::resolve_query_map_use},
+    entity::{
+        ContextSpec,
+        EntityResultExt,
+        NgsiLdProtocolHeaders,
+        ProblemResponse,
+        query_binding::QueryBinding,
+        request_entity_map::{WrittenRequest, resolve_query_map_use},
+    },
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -129,8 +136,11 @@ pub(crate) async fn admit_request(
         &state.entity_maps,
         target,
         &mut query,
-        &written.selection,
-        registration_filters.csf(),
+        WrittenRequest {
+            selection: &written.selection,
+            csf: registration_filters.csf(),
+            context,
+        },
         referenced,
         instance,
     )

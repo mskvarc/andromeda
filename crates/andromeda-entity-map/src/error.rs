@@ -14,8 +14,8 @@ pub enum EntityMapError {
         /// The requested Entity Map identifier.
         identifier: Identifier,
     },
-    /// A follow-up request under a live map changed a filter parameter of
-    /// the request that created it, which clause 5.5.14 forbids.
+    /// A follow-up request under a live map changed a parameter of the
+    /// request that created it, which clause 5.5.14 forbids.
     #[error("the request under entity map {identifier} does not use the parameters of the request that created it")]
     RequestChanged {
         /// The Entity Map the request referenced.

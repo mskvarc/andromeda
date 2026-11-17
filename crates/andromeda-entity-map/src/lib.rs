@@ -29,13 +29,13 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-request",
         "andromeda-persistence-failure",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
-        "andromeda-ngsi-ld-request",
     ],
     allow_production_dependencies: [],
 }

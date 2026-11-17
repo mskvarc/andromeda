@@ -199,7 +199,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_map::EntityMap,
-        entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
+        entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestFingerprint},
     };
     use chrono::{DateTime, TimeZone, Utc};
     use std::{
@@ -314,7 +314,7 @@ mod tests {
     fn map_of(id: &str, entity_ids: impl IntoIterator<Item = Identifier>) -> EntityMap {
         let expires_at = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).single().expect("a valid instant");
         let mut map = EntityMap::local(identifier(id), expires_at, entity_ids);
-        map.request_fingerprint = Some(RequestFingerprint::new(MapRequestKind::QueryEntities, [0; 32]));
+        map.request_fingerprint = Some(RequestFingerprint::new(QueryFingerprint::new(MapRequestKind::QueryEntities, [0; 32]), [0; 32]));
         map
     }
 

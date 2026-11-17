@@ -34,6 +34,8 @@ mod n_map_qen_9017;
 mod n_map_qen_9018;
 mod n_map_qen_9019;
 mod n_map_qen_9020;
+mod n_map_qen_9021;
+mod n_map_qen_9022;
 mod o_map_qen_0002;
 mod o_map_qen_0003;
 mod o_map_qen_0004;

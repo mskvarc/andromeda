@@ -43,7 +43,10 @@ use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning:
 use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::projection::{attrs_selection::AttrsAdmission, compiled::Projection};
-use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
+use andromeda_ngsi_ld_request::{
+    follow_up_inputs::{ContextReference, FollowUpInputs},
+    query::temporal::admitted::AdmittedTemporalRequest,
+};
 use andromeda_temporal::{
     error::TemporalError,
     service::{TemporalRange, TemporalReadResult, TemporalService},
@@ -110,7 +113,12 @@ pub(crate) async fn resolve_retrieve_map(
         .expand_attribute_names(params.attrs.as_deref().unwrap_or_default(), context, AttrsAdmission::ReifiedScopeAdmitted)
         .await
         .with_instance(instance)?;
-    let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveTemporal { attrs: &attrs }).with_instance(instance)?;
+    let context_key = context.context_key();
+    let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveTemporal {
+        attrs: &attrs,
+        inputs: &FollowUpInputs::of_temporal(params, ContextReference::new(&context_key)),
+    })
+    .with_instance(instance)?;
     entity_maps
         .resolve_use(referenced, flag, &fingerprint, params.entity_map_lifetime.as_ref())
         .await
