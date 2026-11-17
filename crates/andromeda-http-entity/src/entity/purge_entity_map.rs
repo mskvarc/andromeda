@@ -27,11 +27,7 @@
 
 use crate::{error::EntityResultExt, state::EntityRouteServices};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity_map::{
-    fingerprint::{FingerprintedRequest, fingerprint_of},
-    query_scoping::hold_selection_to_map,
-    service::ReferencedEntityMap,
-};
+use andromeda_entity_map::{fingerprint::purge_fingerprint_of, query_scoping::hold_selection_to_map, service::ReferencedEntityMap};
 use andromeda_federation::request::EntityMapInUse;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{headers::with_entity_map, problem_response::ProblemResponse};
@@ -77,8 +73,10 @@ impl PurgeEntityMap {
 /// to it.
 ///
 /// The fingerprint is taken over the query compiled as written before it is
-/// narrowed, with the context source filter `csf`, so a purge under a map is compared against
-/// the request as written. Clause 5.6.21.4 has the
+/// narrowed, with the context source filter `csf`, so a purge under a map is
+/// compared against the request as written, and over nothing else: clause
+/// 5.5.14 does not name Purge Entities among the requests under a map, so the
+/// other inputs of the request that created the map are not the purge's. Clause 5.6.21.4 has the
 /// purge "run a Query Entities operation (clause 5.6.2) to retrieve a list of
 /// ids of Entities for deletion" (the cross-reference is the spec's own, and
 /// misnumbered: Query Entities is clause 5.7.2). The request the map fixes is
@@ -115,11 +113,7 @@ pub(crate) async fn resolve_purge_map(
         .compile_query_cached(query, context, state.entity_query.language_targeting())
         .await
         .with_entity_instance(instance)?;
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities {
-        selection: &written.selection,
-        csf,
-    })
-    .with_entity_instance(instance)?;
+    let fingerprint = purge_fingerprint_of(&written.selection, csf).with_entity_instance(instance)?;
     let resolved = state
         .entity_maps
         .resolve_reuse(referenced.as_inner(), &fingerprint)

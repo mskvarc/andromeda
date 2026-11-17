@@ -122,7 +122,7 @@ mod tests {
                 },
                 NgsiLdErrorType::ResourceNotFound,
             ),
-            (EntityMapError::RequestChanged { identifier: map_identifier }, NgsiLdErrorType::InvalidRequest),
+            (EntityMapError::RequestChanged { identifier: map_identifier }, NgsiLdErrorType::BadRequestData),
             (
                 EntityMapError::Persistence(PersistenceFailure::StatementRejected),
                 NgsiLdErrorType::InternalError,

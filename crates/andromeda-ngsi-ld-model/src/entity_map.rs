@@ -197,7 +197,7 @@ impl EntityMap {
 mod tests {
     use crate::{
         entity_map::{EntityMap, EntityMapSource},
-        entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
+        entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestFingerprint},
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use chrono::{TimeZone, Utc};
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn the_request_fingerprint_never_reaches_the_wire() {
         let mut map = local_map();
-        map.request_fingerprint = Some(RequestFingerprint::new(MapRequestKind::QueryEntities, [7; 32]));
+        map.request_fingerprint = Some(RequestFingerprint::new(QueryFingerprint::new(MapRequestKind::QueryEntities, [7; 32]), [7; 32]));
         let rendered = serde_json::to_value(&map).expect("serialises");
         assert!(rendered.get("requestFingerprint").is_none());
         assert!(rendered.get("request_fingerprint").is_none());

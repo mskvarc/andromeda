@@ -60,6 +60,11 @@ impl<'a> WrittenQuery<'a> {
         })
     }
 
+    /// The `@context` the query's terms expand under.
+    pub(super) const fn context(&self) -> &'a ContextSpec {
+        self.context
+    }
+
     /// The compiled query, compiled on the first call.
     ///
     /// # Errors

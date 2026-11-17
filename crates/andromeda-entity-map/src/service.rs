@@ -10,7 +10,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier, ngsi_ld_urn::EntityMapId};
 use andromeda_ngsi_ld_model::{
     entity_map::EntityMap,
-    entity_map_fingerprint::{RequestComparison, RequestFingerprint},
+    entity_map_fingerprint::{QueryFingerprint, RequestComparison, RequestFingerprint},
     lifetime_expiry::expiry,
 };
 use chrono::{DateTime, Utc};
@@ -105,7 +105,7 @@ impl EntityMapService {
     /// # Errors
     ///
     /// [`EntityMapError::RequestChanged`] when the same operation runs under
-    /// the map with different filter parameters.
+    /// the map with different parameters.
     pub async fn resolve_use(
         &self,
         referenced: Option<&Identifier>,
@@ -119,7 +119,7 @@ impl EntityMapService {
         };
         let decided = EntityMapUse::decide(referenced, flag, || self.local_map(Vec::new(), lifetime, *fingerprint))?;
         if let Some(map) = decided.reused() {
-            EntityMapService::require_same_request(map, fingerprint)?;
+            EntityMapService::require_same_request(map, map.request_fingerprint.as_ref().map(|created| created.compare(fingerprint)))?;
         }
         Ok(decided)
     }
@@ -137,22 +137,24 @@ impl EntityMapService {
     ///
     /// # Errors
     ///
-    /// [`EntityMapError::RequestChanged`] when the request under the map
-    /// changed a filter parameter of the request that created it, and
+    /// [`EntityMapError::RequestChanged`] when the query run under the map
+    /// selects otherwise than the query of the request that created it, and
     /// [`EntityMapError::Persistence`] when the store cannot be read.
-    pub async fn resolve_reuse(&self, referenced: &Identifier, fingerprint: &RequestFingerprint) -> Result<ReferencedEntityMap, EntityMapError> {
+    pub async fn resolve_reuse(&self, referenced: &Identifier, query: &QueryFingerprint) -> Result<ReferencedEntityMap, EntityMapError> {
         let resolved = self.referenced(referenced).await?;
         if let ReferencedEntityMap::Live(map) = &resolved {
-            EntityMapService::require_same_request(map, fingerprint)?;
+            EntityMapService::require_same_request(map, map.request_fingerprint.as_ref().map(|created| created.query().compare(query)))?;
         }
         Ok(resolved)
     }
 
     /// Clause 5.5.14: a follow-up under a map uses the creating request's
-    /// parameters. A map created before fingerprints were recorded, or by a
-    /// different operation, cannot be compared and is accepted.
-    fn require_same_request(map: &EntityMap, follow_up: &RequestFingerprint) -> Result<(), EntityMapError> {
-        match map.request_fingerprint.as_ref().map(|created| created.compare(follow_up)) {
+    /// parameters. `comparison` is how the follow-up compares with the
+    /// creating request, none when the map recorded no fingerprint. A map
+    /// recording none, or created by a different operation, cannot be compared
+    /// and is accepted.
+    fn require_same_request(map: &EntityMap, comparison: Option<RequestComparison>) -> Result<(), EntityMapError> {
+        match comparison {
             Some(RequestComparison::Changed) => Err(EntityMapError::RequestChanged {
                 identifier: map.id.clone(), // clone: the error must own the identifier after this call returns.
             }),
@@ -248,7 +250,7 @@ fn build_entity_map_identifier() -> Result<Identifier, EntityMapError> {
 mod tests {
     use crate::{
         error::EntityMapError,
-        fingerprint::{FingerprintedRequest, fingerprint_of},
+        fingerprint::{FingerprintedRequest, fingerprint_of, purge_fingerprint_of},
         pruning::PageCheck,
         query_scoping::scope_query_ids,
         reuse::{EntityMapFlag, EntityMapUse},
@@ -258,12 +260,16 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_map::EntityMap,
-        entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
+        entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestFingerprint},
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::{EntitySelection, EntitySelector},
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         type_selection::grammar::TypeExpr,
+    };
+    use andromeda_ngsi_ld_request::{
+        follow_up_inputs::{ContextReference, FollowUpInputs},
+        query::entity::parameters::EntityQueryParameters,
     };
     use chrono::{DateTime, Utc};
     use std::sync::{Arc, Mutex};
@@ -361,25 +367,46 @@ mod tests {
         EntityMapService::new(Arc::new(VecStore::default()))
     }
 
-    /// The fingerprint of a query for `entity_type` entities, over `ids` and
+    /// The processed `@context` text every test request names.
+    const CONTEXT: &str = r#"["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"]"#;
+
+    /// The selection of a query for `entity_type` entities, over `ids` and
     /// holding the `q` filter when one is given.
-    fn query(entity_type: &str, ids: &[&str], q: Option<&str>) -> Result<RequestFingerprint, EntityMapError> {
+    fn selection(entity_type: &str, ids: &[&str], q: Option<&str>) -> EntitySelection {
         let selector = EntitySelector::builder()
             .ids(ids.iter().copied().map(identifier).collect())
             .type_expr(Some(TypeExpr::Type(format!("https://example.com/{entity_type}").parse().expect("a valid IRI"))))
             .build();
-        let selection = EntitySelection::builder()
+        EntitySelection::builder()
             .selectors(vec![selector])
             .q(q.map(|text| CompiledFilter::new(parse(text).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)))
-            .build();
+            .build()
+    }
+
+    /// The fingerprint of the query [`selection`] describes, whose other
+    /// inputs are those the query string `inputs` writes.
+    fn query_with(entity_type: &str, ids: &[&str], q: Option<&str>, inputs: &str) -> Result<RequestFingerprint, EntityMapError> {
+        let params = serde_urlencoded::from_str::<EntityQueryParameters>(inputs).expect("a valid test fixture");
+        let inputs = FollowUpInputs::of_entity_query(&params, ContextReference::new(CONTEXT));
         fingerprint_of(FingerprintedRequest::QueryEntities {
-            selection: &selection,
+            selection: &selection(entity_type, ids, q),
             csf: None,
+            inputs: &inputs,
         })
     }
 
+    /// The fingerprint of the query [`selection`] describes, with no other input.
+    fn query(entity_type: &str, ids: &[&str], q: Option<&str>) -> Result<RequestFingerprint, EntityMapError> {
+        query_with(entity_type, ids, q, "")
+    }
+
+    /// The fingerprint a purge running the query [`selection`] describes is held to.
+    fn purge(entity_type: &str, ids: &[&str], q: Option<&str>) -> Result<QueryFingerprint, EntityMapError> {
+        purge_fingerprint_of(&selection(entity_type, ids, q), None)
+    }
+
     fn any_fingerprint() -> RequestFingerprint {
-        RequestFingerprint::new(MapRequestKind::QueryEntities, [0; 32])
+        RequestFingerprint::new(QueryFingerprint::new(MapRequestKind::QueryEntities, [0; 32]), [0; 32])
     }
 
     async fn stored_map(service: &EntityMapService, entity_ids: Vec<Identifier>, fingerprint: RequestFingerprint) -> Result<EntityMap, EntityMapError> {
@@ -447,7 +474,7 @@ mod tests {
             .await;
         assert!(matches!(changed_filter, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
 
-        let retrieval = RequestFingerprint::new(MapRequestKind::RetrieveEntity, [0; 32]);
+        let retrieval = RequestFingerprint::new(QueryFingerprint::new(MapRequestKind::RetrieveEntity, [0; 32]), [0; 32]);
         let other_operation = service.resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &retrieval, None).await?;
         assert!(matches!(other_operation, EntityMapUse::Reuse(_)));
         Ok(())
@@ -461,16 +488,44 @@ mod tests {
         let service = service();
         let map = stored_map(&service, vec![identifier("urn:a")], query("Vehicle", &[], None)?).await?;
 
-        let live = service.resolve_reuse(&map.id, &query("Vehicle", &["urn:a"], None)?).await?;
+        let live = service.resolve_reuse(&map.id, &purge("Vehicle", &["urn:a"], None)?).await?;
         assert!(matches!(&live, ReferencedEntityMap::Live(stored) if stored.id == map.id));
 
         let missing = service
-            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing"), &query("Vehicle", &[], None)?)
+            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing"), &purge("Vehicle", &[], None)?)
             .await?;
         assert!(matches!(missing, ReferencedEntityMap::Unavailable));
 
-        let changed = service.resolve_reuse(&map.id, &query("Building", &[], None)?).await;
+        let changed = service.resolve_reuse(&map.id, &purge("Building", &[], None)?).await;
         assert!(matches!(changed, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
+        Ok(())
+    }
+
+    /// Clause 5.5.14 holds a follow-up to every input of the creating
+    /// request, while a purge, which the clause does not name, is held to its
+    /// query alone.
+    #[tokio::test]
+    async fn another_input_changes_a_follow_up_and_not_a_purge() -> Result<(), EntityMapError> {
+        let service = service();
+        let map = stored_map(&service, vec![identifier("urn:a")], query_with("Vehicle", &[], None, "lang=fr")?).await?;
+
+        let changed_input = service
+            .resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &query_with("Vehicle", &[], None, "lang=en")?, None)
+            .await;
+        assert!(matches!(changed_input, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
+
+        let same_inputs = service
+            .resolve_use(
+                Some(&map.id),
+                EntityMapFlag::NotRequested,
+                &query_with("Vehicle", &[], None, "lang=fr&limit=5")?,
+                None,
+            )
+            .await?;
+        assert!(matches!(same_inputs, EntityMapUse::Reuse(_)));
+
+        let purged = service.resolve_reuse(&map.id, &purge("Vehicle", &[], None)?).await?;
+        assert!(matches!(purged, ReferencedEntityMap::Live(_)));
         Ok(())
     }
 

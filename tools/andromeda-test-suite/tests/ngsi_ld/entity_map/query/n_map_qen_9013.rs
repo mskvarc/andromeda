@@ -14,7 +14,7 @@ use ngsi_ld::{
 
 /// Pins: Query Entities through POST with the `EntitySelector`s of types A and B under an `EntityMap` created through
 /// GET with type A|B answers both mapped Entities, and with the `EntitySelector` of type A alone answers 400
-/// `InvalidRequest`, and Query Entities through GET with type B|A under an `EntityMap` created through POST with the
+/// `BadRequestData`, and Query Entities through GET with type B|A under an `EntityMap` created through POST with the
 /// `EntitySelector`s of types A and B answers both mapped Entities
 /// Clause: 5.5.14, 5.7.2.3, 5.2.33, 4.17
 /// Tenant: private (the broker forwards a query of several selectors to registrations of other types too, so in the
@@ -73,7 +73,7 @@ async fn n_map_qen_9013_type_alternatives_serve_a_map_through_either_binding() -
         .entity_map(&get_map_request)
         .send()
         .await;
-    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest));
+    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     let created_through_post = json
         .with_heads()
         .entity_maps()

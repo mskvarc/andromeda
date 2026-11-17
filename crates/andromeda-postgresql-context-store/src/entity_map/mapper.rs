@@ -71,7 +71,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_map::EntityMapSource,
-        entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
+        entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestFingerprint},
     };
     use chrono::Utc;
 
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn entries_regroup_by_entity_in_row_order_and_links_parse() {
-        let fingerprint = RequestFingerprint::new(MapRequestKind::QueryEntities, [9; 32]);
+        let fingerprint = RequestFingerprint::new(QueryFingerprint::new(MapRequestKind::QueryEntities, [9; 32]), [9; 32]);
         let map = rows_to_entity_map(
             "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
             &control(Some(fingerprint.to_string())),

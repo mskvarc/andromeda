@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
+    follow_up_inputs::{ContextReference, FollowUpInputs},
     query::{entity::admitted::AdmittedEntityQuery, selection_mut::SelectionMut},
 };
 use axum::http::Uri as HttpUri;
@@ -151,14 +152,28 @@ impl LocalMapEntities for LocalEntitySource<'_> {
     }
 }
 
+/// The request as the client wrote it, which the fingerprint of the map it
+/// runs under is taken over (clause 5.5.14).
+#[derive(Clone, Copy)]
+pub(crate) struct WrittenRequest<'a> {
+    /// The compiled selection, before a map narrows its identifiers.
+    pub(crate) selection: &'a EntitySelection,
+    /// The reading of the expanded context source filter, when the query
+    /// carries one.
+    pub(crate) csf: Option<&'a FilterReading>,
+    /// The request's `@context`.
+    pub(crate) context: &'a ContextSpec,
+}
+
 /// Resolve the map an entity query runs under, and hold the query to it.
 ///
 /// Clause 5.5.14: a referenced live map fixes the entities the query considers
 /// and the sources it contacts, and holds the query to the creating request's
-/// filters; an expired or unknown one yields no inference, so a fresh map is
-/// created instead. The fingerprint is taken over `selection` and `csf`, the
-/// compiled query as written before it is narrowed, so that a follow-up under
-/// the map is compared against the request as written.
+/// parameters; an expired or unknown one yields no inference, so a fresh map is
+/// created instead. The fingerprint is taken over `written`, the compiled query
+/// as written before it is narrowed, and over the query's other inputs under
+/// its `@context`, so that a follow-up under the map is compared against the
+/// request as written.
 /// Both the query string's flat identifier list and a clause 5.2.23 body's
 /// clause 5.2.33 selectors are narrowed, since compilation reads the selectors
 /// alone whenever the body carried one.
@@ -171,8 +186,7 @@ pub(crate) async fn resolve_query_map_use(
     maps: &EntityMapService,
     target: &ContextTarget,
     query: &mut AdmittedEntityQuery,
-    selection: &EntitySelection,
-    csf: Option<&FilterReading>,
+    written: WrittenRequest<'_>,
     referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
@@ -180,7 +194,13 @@ pub(crate) async fn resolve_query_map_use(
     if !target.permits_federation() || !flag.involves_a_map(referenced) {
         return Ok(EntityMapUse::None);
     }
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities { selection, csf }).with_entity_instance(instance)?;
+    let context_key = written.context.context_key();
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities {
+        selection: written.selection,
+        csf: written.csf,
+        inputs: &FollowUpInputs::of_entity_query(query, ContextReference::new(&context_key)),
+    })
+    .with_entity_instance(instance)?;
     let map_use = maps
         .resolve_use(referenced, flag, &fingerprint, query.entity_map_lifetime.as_ref())
         .await
@@ -193,7 +213,7 @@ pub(crate) async fn resolve_query_map_use(
 }
 
 /// Resolve the map a single-entity retrieval runs under, fingerprinted by the
-/// type selector and `attrs` expanded under `context`.
+/// type selector and `attrs` expanded under `context` and by its other inputs.
 ///
 /// Clause 5.7.1.4: a referenced live map fixes the registrations the retrieval
 /// contacts; an expired or unknown one yields no inference, so a fresh map is
@@ -224,9 +244,11 @@ pub(crate) async fn resolve_retrieval_map_use(
         .expand_attribute_names(params.attrs.as_deref().unwrap_or_default(), context)
         .await
         .with_entity_instance(instance)?;
+    let context_key = context.context_key();
     let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveEntity {
         entity_type: entity_type.as_ref(),
         attrs: &attrs,
+        inputs: &FollowUpInputs::of_entity_retrieval(params, ContextReference::new(&context_key)),
     })
     .with_entity_instance(instance)?;
     maps.resolve_use(referenced, flag, &fingerprint, params.entity_map_lifetime.as_ref())

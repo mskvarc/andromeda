@@ -21,7 +21,7 @@ use std::{
 /// One term of a clause 4.21 raw (pre-expansion) projection list: one attribute and, when it constrains a linked entity's own projection, the `{...}` sub-terms selected on the other side of the relationship it names.
 ///
 /// Serialized as the tree `{"name": ..., "linked": [...]}` rather than as clause 4.21 text: a stored subscription keeps its terms expanded (clause 5.5.7), and an expanded IRI may hold the `,` and `|` the grammar separates terms with, which the clause 4.9 `AttrName` a client writes never does.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawProjectionTerm {
     /// The compact or expanded attribute name this term selects.

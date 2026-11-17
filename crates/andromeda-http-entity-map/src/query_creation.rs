@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow, projection::attrs_selection::AttrsAdmission};
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
+    follow_up_inputs::{ContextReference, FollowUpInputs},
     query::{
         entity::{admitted::AdmittedEntityQuery, parameters::EntityQueryParameters},
         temporal::admitted::AdmittedTemporalRequest,
@@ -104,9 +105,11 @@ async fn create_from_entity_query(
         .compile_query_cached(query, rendering.context, state.entity_query.language_targeting())
         .await
         .with_entity_map_instance(rendering.uri)?;
+    let context_key = rendering.context.context_key();
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities {
         selection: &written.selection,
         csf: registration_filters.csf(),
+        inputs: &FollowUpInputs::of_entity_query(query, ContextReference::new(&context_key)),
     })
     .with_entity_map_instance(rendering.uri)?;
     let filters = candidate_filters(state.forwarding.split_entities(query.split_entities), query.execution_scope());
@@ -148,9 +151,11 @@ async fn create_from_temporal_query(
         )
         .await
         .with_entity_map_instance(rendering.uri)?;
+    let context_key = rendering.context.context_key();
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal {
         query: &written,
         csf: registration_filters.csf(),
+        inputs: &FollowUpInputs::of_temporal(params, ContextReference::new(&context_key)),
     })
     .with_entity_map_instance(rendering.uri)?;
     // Table 6.18.3.2-1: the temporal window, `timeproperty` and `lastN` bound

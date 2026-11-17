@@ -16,6 +16,7 @@ workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-request.workspace = true
 andromeda-persistence-failure.workspace = true
 chrono = "0.4.45"
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
@@ -27,7 +28,6 @@ andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-query = { workspace = true, features = ["test-support"] }
 andromeda-ngsi-ld-representation.workspace = true
-andromeda-ngsi-ld-request.workspace = true
 pretty_assertions = "1.4.1"
 serde_json = "1.0.154"
 serde_urlencoded = "0.7.1"
