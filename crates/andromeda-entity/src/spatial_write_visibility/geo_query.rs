@@ -78,9 +78,14 @@ pub(super) fn vehicle_at(id: &str, longitude: f64) -> Value {
 
 /// `type=Vehicle&id=<id>&georel=near;maxDistance==1000&geometry=Point&coordinates=[0,0]`.
 pub(super) fn near_origin(id: &str) -> Arc<CompiledEntityQuery> {
+    near_origin_among(vec![uri(id)])
+}
+
+/// [`near_origin`] asked of `ids`, or of every vehicle when there are none.
+pub(super) fn near_origin_among(ids: Vec<Identifier>) -> Arc<CompiledEntityQuery> {
     let selection = EntitySelection {
         selectors: vec![EntitySelector {
-            ids: vec![uri(id)],
+            ids,
             id_pattern: None,
             type_expr: Some(TypeExpr::Type(IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI"))),
         }],
@@ -112,7 +117,7 @@ pub(super) async fn narrowed_ids(spatial: SpatialAcceleration, query: &Arc<Compi
     assert_eq!(narrowed.selection.geo, query.selection.geo, "the store still evaluates the geo-query");
     match &narrowed.selection.default_location {
         DefaultLocationNarrowing::Unnarrowed => None,
-        DefaultLocationNarrowing::Candidates(candidates) => Some(candidates.clone()), // clone: the answer outlives the narrowed query
+        DefaultLocationNarrowing::Candidates(candidates) => Some(candidates.to_vec()),
     }
 }
 

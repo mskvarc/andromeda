@@ -123,13 +123,13 @@ mod tests {
             placement.geoproperty().clone(),
         );
         let reference = GeometryForm::Point(Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"));
-        assert!(index.query(&key, &GeoRel::Intersects, &reference).is_none());
+        assert!(index.query(&key, &GeoRel::Intersects, &reference, usize::MAX).is_none());
 
         let outcome = rebuild_location_index(&index, &OneVehicle, &placement).await.expect("the store is readable");
 
         assert_eq!((outcome.partition_count, outcome.total_entries, outcome.horizon), (1, 1, ChangeHorizon::new(7)));
         assert_eq!(
-            index.query(&key, &GeoRel::Intersects, &reference),
+            index.query(&key, &GeoRel::Intersects, &reference, usize::MAX),
             Some(HashSet::from(["urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI")]))
         );
     }

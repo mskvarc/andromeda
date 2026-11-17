@@ -19,8 +19,9 @@
 //!
 //! Each arm tests the box its index keys, the instance's great-circle reach
 //! first, before the exact relation. The candidates' box test reads no index,
-//! so the planner never scans the spatial index beside them; past a few dozen
-//! candidates the scan reads less, and the arm drops them for it.
+//! so the planner never scans the spatial index beside them. An index names a
+//! few dozen candidates at most ([`LocationCandidates::MAX`]), since past them
+//! the scan reads less.
 //!
 //! An entity is in the answer when either arm finds one of its instances. The
 //! outer statement reads the union once per entity and in `entity_key` order:
@@ -70,13 +71,6 @@ const DEFAULT_ALIAS: &str = "geo_default";
 /// Alias the hoisted-instance arm reads `entities` under when it is restricted
 /// to an index's candidates.
 const CANDIDATE_ALIAS: &str = "geo_candidate";
-
-/// The most candidates the hoisted-instance arm looks up one by one. Each
-/// candidate costs an identifier probe and a search-row probe, while the
-/// spatial index returns the same rows from a few adjacent pages; past this
-/// count the arm scans `idx_entity_search_location` for the query's box
-/// instead.
-const MAX_PROBED_CANDIDATES: usize = 64;
 
 /// Alias the `datasetId`-instance arm reads `current_attributes` under.
 const INSTANCE_ALIAS: &str = "geo_location_instance";
@@ -163,7 +157,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
     let mut arm = Query::select();
     let indexing = match default_location {
         DefaultLocationNarrowing::Candidates(candidates) if candidates.is_empty() => return Ok(None),
-        DefaultLocationNarrowing::Candidates(candidates) if candidates.len() <= MAX_PROBED_CANDIDATES => {
+        DefaultLocationNarrowing::Candidates(candidates) => {
             let candidate = Alias::new(CANDIDATE_ALIAS);
             arm.column((candidate.clone(), Entities::EntityKey))
                 .from_as(rows.table(Entities::Table), candidate.clone())
@@ -178,7 +172,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
             // planner scan the spatial index as well and join the two reads.
             BoxIndexing::Unindexed
         }
-        DefaultLocationNarrowing::Unnarrowed | DefaultLocationNarrowing::Candidates(_) => {
+        DefaultLocationNarrowing::Unnarrowed => {
             arm.column((search.clone(), EntitySearch::EntityKey))
                 .from_as(rows.table(EntitySearch::Table), search);
             BoxIndexing::Indexed
@@ -274,10 +268,14 @@ fn restrict_to_meeting_dataset_instances(
 mod tests {
     use crate::{
         entity_row_refs::EntityRowRefs,
-        location_instances::{MAX_PROBED_CANDIDATES, any_location_instance, location_matches},
+        location_instances::{any_location_instance, location_matches},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_query::geo::{
+        default_location_narrowing::{DefaultLocationNarrowing, LocationCandidates},
+        query::GeoQuery,
+    };
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
@@ -308,6 +306,11 @@ mod tests {
 
     fn unaliased() -> EntityRowRefs {
         EntityRowRefs::unaliased(None)
+    }
+
+    /// The narrowing an index hands over when it found `candidates`.
+    fn narrowed_to(candidates: Vec<Identifier>) -> DefaultLocationNarrowing {
+        DefaultLocationNarrowing::Candidates(LocationCandidates::new(candidates).expect("within the bound"))
     }
 
     const LOCATION_KEY: i32 = 9;
@@ -341,7 +344,7 @@ mod tests {
     /// the `datasetId` instances are still evaluated in full.
     #[test]
     fn index_candidates_restrict_the_hoisted_arm_and_leave_the_dataset_instances_alone() {
-        let candidates = DefaultLocationNarrowing::Candidates(vec!["urn:ngsi-ld:V:1".parse().expect("uri"), "urn:ngsi-ld:V:2".parse().expect("uri")]);
+        let candidates = narrowed_to(vec!["urn:ngsi-ld:V:1".parse().expect("uri"), "urn:ngsi-ld:V:2".parse().expect("uri")]);
         let statement =
             render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &candidates, Some(AttributeNameKey::from(LOCATION_KEY))).expect("renders"));
         assert_statement_snapshot!(
@@ -354,25 +357,9 @@ mod tests {
     /// index the planner could scan beside them.
     #[test]
     fn index_candidates_test_the_hoisted_box_without_the_spatial_index() {
-        let candidates = DefaultLocationNarrowing::Candidates(vec!["urn:ngsi-ld:V:1".parse().expect("uri")]);
+        let candidates = narrowed_to(vec!["urn:ngsi-ld:V:1".parse().expect("uri")]);
         let statement = render(any_location_instance(&geo(near("1000")), &unaliased(), &candidates, None).expect("renders"));
         assert_statement_snapshot!("location-instances-index-candidates-test-the-hoisted-box-without-the-spatial-index", statement);
-    }
-
-    /// Past the probe cap the hoisted arm scans the spatial index for the box
-    /// and binds no candidates.
-    #[test]
-    fn candidates_past_the_probe_cap_leave_the_hoisted_arm_to_the_spatial_index() {
-        let many = (0..=MAX_PROBED_CANDIDATES)
-            .map(|n| format!("urn:ngsi-ld:V:{n}").parse().expect("uri"))
-            .collect();
-        let capped = render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Candidates(many), None).expect("renders"));
-        let unnarrowed = render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
-        assert_eq!(capped, unnarrowed);
-        assert_statement_snapshot!(
-            "location-instances-candidates-past-the-probe-cap-leave-the-hoisted-arm-to-the-spatial-index",
-            capped
-        );
     }
 
     /// An index that found no default instance leaves the `datasetId`
@@ -384,7 +371,7 @@ mod tests {
             any_location_instance(
                 &geo(GeoRel::Within),
                 &unaliased(),
-                &DefaultLocationNarrowing::Candidates(Vec::new()),
+                &narrowed_to(Vec::new()),
                 Some(AttributeNameKey::from(LOCATION_KEY)),
             )
             .expect("renders"),
@@ -412,8 +399,7 @@ mod tests {
     /// instance row exists.
     #[test]
     fn no_arm_at_all_matches_nothing() {
-        let statement =
-            render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &DefaultLocationNarrowing::Candidates(Vec::new()), None).expect("renders"));
+        let statement = render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &narrowed_to(Vec::new()), None).expect("renders"));
         assert_statement_snapshot!("location-instances-no-arm-at-all-matches-nothing", statement);
     }
 
@@ -511,7 +497,7 @@ mod tests {
     /// dictionary has never recorded, leaves no arm to read.
     #[test]
     fn no_arm_has_no_location_matches() {
-        let matches = location_matches(&geo(GeoRel::Within), &unaliased(), &DefaultLocationNarrowing::Candidates(Vec::new()), None).expect("renders");
+        let matches = location_matches(&geo(GeoRel::Within), &unaliased(), &narrowed_to(Vec::new()), None).expect("renders");
         assert_eq!(matches, None);
     }
 }

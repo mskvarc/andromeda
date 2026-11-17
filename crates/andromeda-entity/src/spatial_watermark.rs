@@ -239,7 +239,7 @@ mod tests {
             ])
             .expect("a test square is a closed ring"),
         ]));
-        watermark.index().query(&key, &GeoRel::Within, &square)
+        watermark.index().query(&key, &GeoRel::Within, &square, usize::MAX)
     }
 
     #[tokio::test]
