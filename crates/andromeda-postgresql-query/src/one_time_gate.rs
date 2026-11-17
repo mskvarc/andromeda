@@ -54,27 +54,27 @@ impl Candidates {
 #[iden = "short_walk"]
 pub struct ShortWalkMatches;
 
-/// The most rechecked or probed candidates a count reads before it walks the
-/// selection instead.
+/// The most candidates a count reads before it walks the selection instead.
 ///
 /// A count needs every match, so its walk reads the whole selection, while
 /// its index read costs the candidates, each rechecked or probed and looked
-/// up in the selection. Among 1 000 000 Entities the bound's candidates count
-/// in 40 to 85 ms against 100 to 650 ms walked, and stage 1 of a temporal
-/// count counts them in about 0.8 s against 1.7 to 4.5 s walked. Below the
-/// bound the index wins wherever measured, except for an Attribute a fifth
-/// of 10 000 Entities carry, 2.4 ms against 1.7 ms walked. The walk overtakes
-/// the index past about 5 % of the selection for an Attribute's carriers, 2 %
-/// for an identifier pattern among 1 000 000 Entities, between a fifth and
-/// two thirds for a pattern on a value, and about seven in ten for stage 1.
+/// up in the selection. Among 500 000 Entities the bound's candidates count
+/// in 5 to 50 ms against 12 to 690 ms walked, and stage 1 of a temporal count
+/// among 1 000 000 Evolutions counts them in about 0.8 s against 1.7 to 4.5 s
+/// walked. The index stays the cheaper way up to a tenth of the selection,
+/// and to about seven in ten for stage 1, except for a pattern whose trigrams
+/// most values share, whose index gathers every posting: 350 ms for an
+/// identifier pattern against about 250 ms walked.
 ///
 /// A count past the bound pays the read of its candidates before the walk,
-/// 15 to 45 ms among 1 000 000 Entities, and a larger bound reads more before
-/// it walks. At 20 000, identifier patterns that 50 000 and 200 000 of those
-/// Entities match count a tenth slower. Reading every candidate in stage 1 counts a Scope seven in ten
-/// Evolutions hold a twentieth slower, though it counts the Scopes, patterns
-/// and geo-queries between the bound and a fifth of the selection 1.3 to 5.5
-/// times faster.
+/// and every count of a term most Entities hold takes that path. Among
+/// 500 000 Entities 10 000 candidates cost too little to tell from the walk
+/// when a value index yields them, about 20 ms as carriers of an attribute
+/// name and up to 175 ms for a pattern whose trigrams most values share, and
+/// a larger bound reads more before it walks. Reading every candidate in
+/// stage 1 counts a Scope seven in ten Evolutions hold a twentieth slower,
+/// though it counts the Scopes, patterns and geo-queries between the bound
+/// and a fifth of the selection 1.3 to 5.5 times faster.
 pub const COUNT_CANDIDATE_BOUND: u64 = 10_000;
 
 /// `(SELECT COUNT(*) FROM <cte>)`.

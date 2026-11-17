@@ -248,22 +248,22 @@ mod tests {
     /// matches while they are few, or walked at once when the short walk
     /// filled the page.
     #[test]
-    fn a_counted_id_pattern_page_counts_the_members_among_the_matches_under_the_rechecked_bound() {
+    fn a_counted_id_pattern_page_counts_the_members_among_the_matches_under_the_count_bound() {
         let built = built(&by_pattern(".*_1196287$"), CountPolicy::Emit);
         let EntityTotal::OnPageRows { uncounted } = built.total else {
             panic!("a first gated page carries its total when the matches answer");
         };
         assert_statement_snapshot!(
-            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-rechecked-bound-1",
+            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-count-bound-1",
             built.select
         );
         let walked_at_once = uncounted.walked.expect("a page the short walk filled is counted by walking").select;
         assert_statement_snapshot!(
-            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-rechecked-bound-2",
+            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-count-bound-2",
             walked_at_once
         );
         assert_statement_snapshot!(
-            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-rechecked-bound-3",
+            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-count-bound-3",
             uncounted.count
         );
         assert_eq!(built.total_planning, StatementPlanning::BoundValues);

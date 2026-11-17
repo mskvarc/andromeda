@@ -32,61 +32,65 @@ FROM
           ORDER BY
             "sort_0" ASC
           LIMIT
-            200 OFFSET 0
+            1000 OFFSET 0
         ) AS "walked"
-      WHERE
-        EXISTS (
+        INNER JOIN LATERAL (
           SELECT
             1
-          FROM
-            "current_attributes" AS "ca"
           WHERE
-            "ca"."attribute_name_key" = $1
-            AND (
-              "ca"."expires_at" IS NULL
-              OR "ca"."expires_at" > NOW()
-            )
-            AND "ca"."entity_key" = "walked"."entity_key"
-        )
-        AND EXISTS (
-          SELECT
-            1
-          FROM
-            "current_attributes" AS "ca"
-          WHERE
-            "ca"."attribute_name_key" = $2
-            AND (
-              "ca"."expires_at" IS NULL
-              OR "ca"."expires_at" > NOW()
-            )
-            AND (
-              (
-                ((("ca"."value_string") COLLATE "default") ~ $3)
-                AND nullif("ca"."value_kind" = (2), FALSE)
-              )
-              OR (
-                (
-                  (("ca"."value_long_text") COLLATE "default") ~ $4
+            EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $1
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
                 )
-                AND nullif("ca"."value_kind" = (2), FALSE)
-              )
-              OR EXISTS (
-                SELECT
-                  1
-                FROM
-                  jsonb_array_elements(
-                    (
-                      CASE
-                        WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                      END
-                    )
-                  ) AS "ls"
-                WHERE
-                  ("ls"."value" ->> ('@value')) ~ $5
-              )
+                AND "ca"."entity_key" = "walked"."entity_key"
             )
-            AND "ca"."entity_key" = "walked"."entity_key"
-        )
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $2
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND (
+                  (
+                    ((("ca"."value_string") COLLATE "default") ~ $3)
+                    AND nullif("ca"."value_kind" = (2), FALSE)
+                  )
+                  OR (
+                    (
+                      (("ca"."value_long_text") COLLATE "default") ~ $4
+                    )
+                    AND nullif("ca"."value_kind" = (2), FALSE)
+                  )
+                  OR EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      jsonb_array_elements(
+                        (
+                          CASE
+                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                          END
+                        )
+                      ) AS "ls"
+                    WHERE
+                      ("ls"."value" ->> ('@value')) ~ $5
+                  )
+                )
+                AND "ca"."entity_key" = "walked"."entity_key"
+            ) OFFSET 0
+        ) AS "kept" ON TRUE
       ORDER BY
         "walked"."sort_0" ASC
       LIMIT
@@ -163,7 +167,7 @@ FROM
           )
         ) AS "matches"
       LIMIT
-        1001
+        10001
     )
     SELECT
       *
@@ -268,60 +272,65 @@ FROM
               ORDER BY
                 "sort_0" ASC OFFSET 0
             ) AS "walked"
-          WHERE
-            EXISTS (
+            INNER JOIN LATERAL (
               SELECT
                 1
-              FROM
-                "current_attributes" AS "ca"
               WHERE
-                "ca"."attribute_name_key" = $16
-                AND (
-                  "ca"."expires_at" IS NULL
-                  OR "ca"."expires_at" > NOW()
-                )
-                AND "ca"."entity_key" = "walked"."entity_key"
-            )
-            AND EXISTS (
-              SELECT
-                1
-              FROM
-                "current_attributes" AS "ca"
-              WHERE
-                "ca"."attribute_name_key" = $17
-                AND (
-                  "ca"."expires_at" IS NULL
-                  OR "ca"."expires_at" > NOW()
-                )
-                AND (
-                  (
-                    ((("ca"."value_string") COLLATE "default") ~ $18)
-                    AND nullif("ca"."value_kind" = (2), FALSE)
-                  )
-                  OR (
-                    (
-                      (("ca"."value_long_text") COLLATE "default") ~ $19
+                EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $16
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
                     )
-                    AND nullif("ca"."value_kind" = (2), FALSE)
-                  )
-                  OR EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      jsonb_array_elements(
-                        (
-                          CASE
-                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                          END
-                        )
-                      ) AS "ls"
-                    WHERE
-                      ("ls"."value" ->> ('@value')) ~ $20
-                  )
+                    AND "ca"."entity_key" = "walked"."entity_key"
                 )
-                AND "ca"."entity_key" = "walked"."entity_key"
-            )
-            AND (
+                AND EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $17
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
+                    )
+                    AND (
+                      (
+                        ((("ca"."value_string") COLLATE "default") ~ $18)
+                        AND nullif("ca"."value_kind" = (2), FALSE)
+                      )
+                      OR (
+                        (
+                          (("ca"."value_long_text") COLLATE "default") ~ $19
+                        )
+                        AND nullif("ca"."value_kind" = (2), FALSE)
+                      )
+                      OR EXISTS (
+                        SELECT
+                          1
+                        FROM
+                          jsonb_array_elements(
+                            (
+                              CASE
+                                WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                              END
+                            )
+                          ) AS "ls"
+                        WHERE
+                          ("ls"."value" ->> ('@value')) ~ $20
+                      )
+                    )
+                    AND "ca"."entity_key" = "walked"."entity_key"
+                ) OFFSET 0
+            ) AS "kept" ON TRUE
+          WHERE
+            (
               SELECT
                 COUNT(*)
               FROM
@@ -374,11 +383,11 @@ ORDER BY
 12: BigUnsigned 100
 13: Int 13
 14: BigUnsigned 100
-15: BigUnsigned 1000
+15: BigUnsigned 10000
 16: Int 13
 17: Int 12
 18: String 'text-71.*'
 19: String 'text-71.*'
 20: String 'text-71.*'
 21: BigUnsigned 100
-22: BigUnsigned 1000
+22: BigUnsigned 10000

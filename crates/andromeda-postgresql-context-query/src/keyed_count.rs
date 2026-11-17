@@ -3,22 +3,23 @@
 //!
 //! The total is exact, so the count needs every match, and the two ways to
 //! find them cost differently. Read from a term's index, the count costs the
-//! candidates, each rechecked and looked up in the selection; walked, it
-//! costs the selection, each Entity probed for the whole `q`. The index wins
-//! by orders of magnitude while the candidates are few against the selection,
-//! and loses past a share of it that depends on the read. That share is about
-//! 5 % for an Attribute's carriers, 2 % for an identifier pattern among
-//! 1 000 000 Entities and a fifth among fewer, between a fifth and two thirds
-//! for a pattern on a value, and 2 % for a range of a typed value index. The
-//! planner cannot tell the two apart. The statement therefore reads the
-//! conjuncts in the order the page does, each at most
-//! [`COUNT_CANDIDATE_BOUND`] + 1 rechecked or probed candidates, or
-//! [`RANGED_COUNT_CANDIDATE_BOUND`] + 1 from a range of a typed value index,
-//! behind a [`one_time_gate`](andromeda_postgresql_query::one_time_gate): the
-//! first read that holds at most its bound holds every candidate of its term,
-//! and the selection narrowed to them is counted; when every read finds more,
-//! the selection is walked. A Linked Entity hop's candidates are read whole,
-//! as its page reads them, so the count never walks past one.
+//! candidates, each rechecked or probed and looked up in the selection.
+//! Walked, it costs the plan the planner makes of the whole `q`, which reads
+//! the term's index itself for a term it believes rare and probes every
+//! Entity of the selection for one it does not, and its belief is off by
+//! orders of magnitude for these terms. Among 500 000 Entities the index
+//! counts 10 000 matches in 5 to 50 ms where the walk takes 12 to 690 ms, and
+//! it stays the cheaper way up to 50 000 matches, a tenth of the selection. A
+//! pattern whose trigrams most values share is the exception: its index
+//! gathers every posting, 350 to 500 ms, which an `idPattern` walks in about
+//! 250 ms.
+//! The statement therefore reads the conjuncts in the order the page does,
+//! each at most [`COUNT_CANDIDATE_BOUND`] + 1 candidates, behind a
+//! [`one_time_gate`](andromeda_postgresql_query::one_time_gate): the first
+//! read that holds at most its bound holds every candidate of its term, and
+//! the selection narrowed to them is counted; when every read finds more, the
+//! selection is walked. A Linked Entity hop's candidates are read whole, as
+//! its page reads them, so the count never walks past one.
 
 use crate::{entity_relations::EntityRelations, entity_total::count_over};
 use andromeda_postgresql_query::{
@@ -29,22 +30,11 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_schema::current::Entities;
 use sea_query::{Condition, DynIden, Expr, Query, SelectStatement, WithClause};
 
-/// The most candidates a count reads from a range of a typed value index
-/// before it walks the selection instead.
-///
-/// A ranged candidate needs no recheck, but the walk is planned with the
-/// range's values and reads the same index while the range is narrow, so the
-/// two reads cost about the same up to 2 % of the selection and the walk wins
-/// past it. Among 1 000 000 Entities 50 000 matches count in 75 ms walked
-/// against 148 ms read. A count past the bound pays about 12 ms for its read
-/// before the walk, so those 50 000 matches count in 87 ms.
-pub const RANGED_COUNT_CANDIDATE_BOUND: u64 = 20_000;
-
-/// The most candidates a count reads, by what one costs to read.
+/// The most candidates a count reads: [`COUNT_CANDIDATE_BOUND`] for every
+/// read but a hop's, whose candidates are read whole.
 pub(crate) const fn count_bound(read: CandidateRead) -> CandidateBound {
     match read {
-        CandidateRead::Rechecked | CandidateRead::Probed => CandidateBound::AtMost(COUNT_CANDIDATE_BOUND),
-        CandidateRead::Ranged => CandidateBound::AtMost(RANGED_COUNT_CANDIDATE_BOUND),
+        CandidateRead::Rechecked | CandidateRead::Ranged | CandidateRead::Probed => CandidateBound::AtMost(COUNT_CANDIDATE_BOUND),
         CandidateRead::Linked => CandidateBound::Whole,
     }
 }
@@ -194,12 +184,10 @@ mod tests {
         );
     }
 
-    /// A range of the date-time index is a match as it is read, so the count
-    /// reads more of them before it walks.
     #[test]
-    fn a_date_time_ordering_counts_through_the_ranged_bound() {
+    fn a_date_time_ordering_counts_from_a_range_of_its_index() {
         assert_statement_snapshot!(
-            "keyed-count-a-date-time-ordering-counts-through-the-ranged-bound",
+            "keyed-count-a-date-time-ordering-counts-from-a-range-of-its-index",
             count_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z")
         );
     }
@@ -216,9 +204,9 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_existence_counts_its_probed_carriers_under_the_rechecked_bound() {
+    fn a_bare_existence_counts_its_probed_carriers_under_the_count_bound() {
         assert_statement_snapshot!(
-            "keyed-count-a-bare-existence-counts-its-probed-carriers-under-the-rechecked-bound",
+            "keyed-count-a-bare-existence-counts-its-probed-carriers-under-the-count-bound",
             count_of("\"https://example.com/temperature\"")
         );
     }

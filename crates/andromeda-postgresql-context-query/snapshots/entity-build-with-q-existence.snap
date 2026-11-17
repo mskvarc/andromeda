@@ -32,22 +32,26 @@ FROM
           ORDER BY
             "sort_0" ASC
           LIMIT
-            200 OFFSET 0
+            1000 OFFSET 0
         ) AS "walked"
-      WHERE
-        EXISTS (
+        INNER JOIN LATERAL (
           SELECT
             1
-          FROM
-            "current_attributes" AS "ca"
           WHERE
-            "ca"."attribute_name_key" = $1
-            AND (
-              "ca"."expires_at" IS NULL
-              OR "ca"."expires_at" > NOW()
-            )
-            AND "ca"."entity_key" = "walked"."entity_key"
-        )
+            EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $1
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND "ca"."entity_key" = "walked"."entity_key"
+            ) OFFSET 0
+        ) AS "kept" ON TRUE
       ORDER BY
         "walked"."sort_0" ASC
       LIMIT
@@ -166,21 +170,26 @@ FROM
               ORDER BY
                 "sort_0" ASC OFFSET 0
             ) AS "walked"
-          WHERE
-            EXISTS (
+            INNER JOIN LATERAL (
               SELECT
                 1
-              FROM
-                "current_attributes" AS "ca"
               WHERE
-                "ca"."attribute_name_key" = $6
-                AND (
-                  "ca"."expires_at" IS NULL
-                  OR "ca"."expires_at" > NOW()
-                )
-                AND "ca"."entity_key" = "walked"."entity_key"
-            )
-            AND (
+                EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $6
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
+                    )
+                    AND "ca"."entity_key" = "walked"."entity_key"
+                ) OFFSET 0
+            ) AS "kept" ON TRUE
+          WHERE
+            (
               SELECT
                 COUNT(*)
               FROM

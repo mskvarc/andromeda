@@ -32,23 +32,27 @@ FROM
           ORDER BY
             "sort_0" ASC
           LIMIT
-            200 OFFSET 0
+            1000 OFFSET 0
         ) AS "walked"
-      WHERE
-        EXISTS (
+        INNER JOIN LATERAL (
           SELECT
             1
-          FROM
-            "current_attributes" AS "ca"
           WHERE
-            "ca"."attribute_name_key" = $1
-            AND (
-              "ca"."expires_at" IS NULL
-              OR "ca"."expires_at" > NOW()
-            )
-            AND "ca"."value_date_time" > $2
-            AND "ca"."entity_key" = "walked"."entity_key"
-        )
+            EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $1
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND "ca"."value_date_time" > $2
+                AND "ca"."entity_key" = "walked"."entity_key"
+            ) OFFSET 0
+        ) AS "kept" ON TRUE
       ORDER BY
         "walked"."sort_0" ASC
       LIMIT
@@ -72,7 +76,7 @@ FROM
             AND "ca"."value_date_time" > $4
         ) AS "matches"
       LIMIT
-        50001
+        10001
     )
     SELECT
       *
@@ -162,22 +166,27 @@ FROM
               ORDER BY
                 "sort_0" ASC OFFSET 0
             ) AS "walked"
-          WHERE
-            EXISTS (
+            INNER JOIN LATERAL (
               SELECT
                 1
-              FROM
-                "current_attributes" AS "ca"
               WHERE
-                "ca"."attribute_name_key" = $8
-                AND (
-                  "ca"."expires_at" IS NULL
-                  OR "ca"."expires_at" > NOW()
-                )
-                AND "ca"."value_date_time" > $9
-                AND "ca"."entity_key" = "walked"."entity_key"
-            )
-            AND (
+                EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $8
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
+                    )
+                    AND "ca"."value_date_time" > $9
+                    AND "ca"."entity_key" = "walked"."entity_key"
+                ) OFFSET 0
+            ) AS "kept" ON TRUE
+          WHERE
+            (
               SELECT
                 COUNT(*)
               FROM
@@ -222,8 +231,8 @@ ORDER BY
 4: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'
 5: BigUnsigned 100
 6: BigUnsigned 100
-7: BigUnsigned 50000
+7: BigUnsigned 10000
 8: Int 12
 9: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'
 10: BigUnsigned 100
-11: BigUnsigned 50000
+11: BigUnsigned 10000

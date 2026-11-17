@@ -34,48 +34,52 @@ FROM
           ORDER BY
             "sort_0" ASC
           LIMIT
-            200
+            1000
         ) AS "walked"
-      WHERE
-        EXISTS (
+        INNER JOIN LATERAL (
           SELECT
             1
-          FROM
-            "current_attributes" AS "ca"
           WHERE
-            "ca"."attribute_name_key" = $2
-            AND (
-              "ca"."expires_at" IS NULL
-              OR "ca"."expires_at" > NOW()
-            )
-            AND (
-              (
-                ((("ca"."value_string") COLLATE "default") ~ $3)
-                AND nullif("ca"."value_kind" = (2), FALSE)
-              )
-              OR (
-                (
-                  (("ca"."value_long_text") COLLATE "default") ~ $4
+            EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $2
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
                 )
-                AND nullif("ca"."value_kind" = (2), FALSE)
-              )
-              OR EXISTS (
-                SELECT
-                  1
-                FROM
-                  jsonb_array_elements(
+                AND (
+                  (
+                    ((("ca"."value_string") COLLATE "default") ~ $3)
+                    AND nullif("ca"."value_kind" = (2), FALSE)
+                  )
+                  OR (
                     (
-                      CASE
-                        WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                      END
+                      (("ca"."value_long_text") COLLATE "default") ~ $4
                     )
-                  ) AS "ls"
-                WHERE
-                  ("ls"."value" ->> ('@value')) ~ $5
-              )
-            )
-            AND "ca"."entity_key" = "walked"."entity_key"
-        )
+                    AND nullif("ca"."value_kind" = (2), FALSE)
+                  )
+                  OR EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      jsonb_array_elements(
+                        (
+                          CASE
+                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                          END
+                        )
+                      ) AS "ls"
+                    WHERE
+                      ("ls"."value" ->> ('@value')) ~ $5
+                  )
+                )
+                AND "ca"."entity_key" = "walked"."entity_key"
+            ) OFFSET 0
+        ) AS "kept" ON TRUE
       ORDER BY
         "walked"."sort_0" ASC
       LIMIT
@@ -152,7 +156,7 @@ FROM
           )
         ) AS "matches"
       LIMIT
-        1001
+        10001
     )
     SELECT
       *
@@ -247,47 +251,52 @@ FROM
               ORDER BY
                 "sort_0" ASC OFFSET 0
             ) AS "walked"
-          WHERE
-            EXISTS (
+            INNER JOIN LATERAL (
               SELECT
                 1
-              FROM
-                "current_attributes" AS "ca"
               WHERE
-                "ca"."attribute_name_key" = $20
-                AND (
-                  "ca"."expires_at" IS NULL
-                  OR "ca"."expires_at" > NOW()
-                )
-                AND (
-                  (
-                    ((("ca"."value_string") COLLATE "default") ~ $21)
-                    AND nullif("ca"."value_kind" = (2), FALSE)
-                  )
-                  OR (
-                    (
-                      (("ca"."value_long_text") COLLATE "default") ~ $22
+                EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $20
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
                     )
-                    AND nullif("ca"."value_kind" = (2), FALSE)
-                  )
-                  OR EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      jsonb_array_elements(
+                    AND (
+                      (
+                        ((("ca"."value_string") COLLATE "default") ~ $21)
+                        AND nullif("ca"."value_kind" = (2), FALSE)
+                      )
+                      OR (
                         (
-                          CASE
-                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                          END
+                          (("ca"."value_long_text") COLLATE "default") ~ $22
                         )
-                      ) AS "ls"
-                    WHERE
-                      ("ls"."value" ->> ('@value')) ~ $23
-                  )
-                )
-                AND "ca"."entity_key" = "walked"."entity_key"
-            )
-            AND (
+                        AND nullif("ca"."value_kind" = (2), FALSE)
+                      )
+                      OR EXISTS (
+                        SELECT
+                          1
+                        FROM
+                          jsonb_array_elements(
+                            (
+                              CASE
+                                WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                              END
+                            )
+                          ) AS "ls"
+                        WHERE
+                          ("ls"."value" ->> ('@value')) ~ $23
+                      )
+                    )
+                    AND "ca"."entity_key" = "walked"."entity_key"
+                ) OFFSET 0
+            ) AS "kept" ON TRUE
+          WHERE
+            (
               SELECT
                 COUNT(*)
               FROM
@@ -341,7 +350,7 @@ ORDER BY
 13: BigUnsigned 100
 14: SmallInt 2
 15: BigUnsigned 100
-16: BigUnsigned 1000
+16: BigUnsigned 10000
 17: String 'urn:ngsi-ld:Building:001'
 18: SmallInt 3
 19: String 'urn:ngsi-ld:Building:001'
@@ -350,4 +359,4 @@ ORDER BY
 22: String 'text-71.*'
 23: String 'text-71.*'
 24: BigUnsigned 100
-25: BigUnsigned 1000
+25: BigUnsigned 10000
