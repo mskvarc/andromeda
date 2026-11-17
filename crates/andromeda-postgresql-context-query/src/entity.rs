@@ -94,8 +94,8 @@ pub fn build_query(
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone(), query.selection.standing);
-    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
-    let shape = PageShape::of(query, names, window, &relations, &rows, schema.as_ref());
+    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole, GeoFilter::Matched)?;
+    let shape = PageShape::of(query, names, window, count, &relations, &rows, schema.as_ref())?;
     let counted_on_page = shape.counted_on_page(count, window);
     let source = PageSource {
         relations: &relations,
@@ -141,7 +141,7 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, wind
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone(), query.selection.standing);
-    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
+    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole, GeoFilter::Matched)?;
 
     let mut select = Query::select();
     select.expr_as(rows.identity_column(Entities::Id), Entities::Id);
@@ -204,6 +204,17 @@ pub(crate) enum QFilter<'q> {
     Omitted,
 }
 
+/// Whether a statement filters by the query's geo-query.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum GeoFilter {
+    /// The selection is narrowed to the Entities the geo-query matches.
+    Matched,
+    /// The geo-query is left out, since each Entity the statement yields is
+    /// probed for it further out, or the statement reads its matches as
+    /// candidates.
+    Omitted,
+}
+
 /// Builds sea-query `Condition` from compiled entity query filters.
 ///
 /// The branch a statement runs against is chosen by the schema its relations
@@ -217,6 +228,7 @@ pub(crate) fn build_entity_conditions(
     rows: &EntityRowRefs,
     source: &RowSource,
     q: QFilter<'_>,
+    geo: GeoFilter,
 ) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
@@ -257,8 +269,13 @@ pub(crate) fn build_entity_conditions(
         }
     }
 
-    if let Some(geo) = &query.selection.geo {
-        condition = condition.add(geo_sql::condition(geo, rows, &query.selection.default_location, &names.attributes)?);
+    if let Some(geo_query) = &query.selection.geo {
+        match geo {
+            GeoFilter::Matched => {
+                condition = condition.add(geo_sql::condition(geo_query, rows, &query.selection.default_location, &names.attributes)?);
+            }
+            GeoFilter::Omitted => {}
+        }
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
@@ -612,8 +629,12 @@ mod tests {
             geometry: point(&serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
-        let built = build(&q, &known_types());
+        let built = build_counted(&q, &known_types());
         assert_statement_snapshot!("entity-a-near-query-with-a-candidate-id-set-binds-one-array-beside-the-geometry", built.select);
+        assert_statement_snapshot!(
+            "entity-a-near-query-with-a-candidate-id-set-binds-one-array-beside-the-geometry-geo-page",
+            build(&q, &known_types()).select
+        );
     }
 
     #[test]
@@ -1180,8 +1201,12 @@ mod tests {
             geometry: point(&serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
-        let built = build(&q, &known_types());
+        let built = build_counted(&q, &known_types());
         assert_statement_snapshot!("entity-geo-default-location-includes-expiration-guard", built.select);
+        assert_statement_snapshot!(
+            "entity-geo-default-location-includes-expiration-guard-geo-page",
+            build(&q, &known_types()).select
+        );
     }
 
     #[test]
@@ -1208,8 +1233,12 @@ mod tests {
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
             });
-            let built = build(&q, &known_types());
+            let built = build_counted(&q, &known_types());
             assert_statement_snapshot!(format!("entity-georel-variants-bind-reference-geometry-as-ewkb-{}", index + 1), built.select);
+            assert_statement_snapshot!(
+                format!("entity-georel-variants-bind-reference-geometry-as-ewkb-geo-page-{}", index + 1),
+                build(&q, &known_types()).select
+            );
         }
     }
 
@@ -1228,8 +1257,12 @@ mod tests {
             "https://example.com/customGeo".parse().expect("valid attribute name"),
             AttributeNameKey::from(42_i32),
         )]));
-        let built = build(&q, &names);
+        let built = build_counted(&q, &names);
         assert_statement_snapshot!("entity-a-named-geoproperty-filters-through-its-attribute-instance-rows", built.select);
+        assert_statement_snapshot!(
+            "entity-a-named-geoproperty-filters-through-its-attribute-instance-rows-geo-page",
+            build(&q, &names).select
+        );
     }
 
     /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
@@ -1278,13 +1311,20 @@ mod tests {
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
             });
-            let built = build(&q, &names);
+            let built = build_counted(&q, &names);
             assert_statement_snapshot!(
                 format!(
                     "entity-a-geoproperty-iri-containing-an-apostrophe-never-reaches-the-statement-text-{}",
                     index + 1
                 ),
                 built.select
+            );
+            assert_statement_snapshot!(
+                format!(
+                    "entity-a-geoproperty-iri-containing-an-apostrophe-never-reaches-the-statement-text-geo-page-{}",
+                    index + 1
+                ),
+                build(&q, &names).select
             );
         }
     }

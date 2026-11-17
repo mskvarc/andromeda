@@ -54,7 +54,7 @@
 //! what the page found.
 
 use crate::{
-    entity::{QFilter, build_entity_conditions, window_and_sort_keys},
+    entity::{GeoFilter, QFilter, build_entity_conditions, window_and_sort_keys},
     entity_page::{GATED_STEP_COLUMN, GatedStep, ProjectedPage, StepColumn, TOTAL_COUNT_COLUMN, projected_page},
     entity_relations::EntityRelations,
 };
@@ -120,9 +120,9 @@ impl PageSource<'_> {
         Ok((projected_page(page, self.rows, keys, CountPolicy::Omit), read_order))
     }
 
-    /// The selection filtered as `q` says.
-    pub(crate) fn condition(&self, q: QFilter<'_>) -> Result<Condition, RenderError> {
-        build_entity_conditions(self.query, self.names, self.rows, &self.relations.source, q)
+    /// The selection filtered as `q` and `geo` say.
+    pub(crate) fn condition(&self, q: QFilter<'_>, geo: GeoFilter) -> Result<Condition, RenderError> {
+        build_entity_conditions(self.query, self.names, self.rows, &self.relations.source, q, geo)
     }
 
     /// How many matches the page needs from where the walk starts: every

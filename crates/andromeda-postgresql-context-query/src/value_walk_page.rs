@@ -32,7 +32,7 @@
 //! past [`VALUE_WALK_BOUND`] keeps the plain page.
 
 use crate::{
-    entity::QFilter,
+    entity::{GeoFilter, QFilter},
     entity_page::{ProjectedPage, projected_page},
     gated_page::PageSource,
     occupied_columns::{OccupiedColumns, held_alone, occupied_columns},
@@ -140,7 +140,7 @@ pub(crate) fn value_walk_order(query: &CompiledEntityQuery, names: &QueryNames, 
 /// spelling, or a query-language rule a renderer decides first.
 pub(crate) fn value_walk_page(source: &PageSource<'_>, order: &ValueWalkOrder) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let need = source.need();
-    let whole = source.condition(QFilter::Whole)?;
+    let whole = source.condition(QFilter::Whole, GeoFilter::Matched)?;
     let mut ctes = WithClause::new();
     ctes.cte(materialized(occupied_columns(source.rows, order.attribute), OccupiedColumns));
     let mut walked = Condition::any();

@@ -9,11 +9,13 @@ SELECT
   "stored"."entity_write_count",
   "stored"."entity_expires_at",
   "stored"."entity_type_name_keys",
-  "stored"."verbatim_scope_paths"
+  "stored"."verbatim_scope_paths",
+  "page"."total_count" AS "total_count"
 FROM
   (
     SELECT
       "entities"."entity_key",
+      COUNT(*) OVER () AS "total_count",
       "entities"."id" AS "sort_0"
     FROM
       "entities"

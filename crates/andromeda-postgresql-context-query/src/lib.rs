@@ -18,6 +18,9 @@ pub mod entity_total;
 #[cfg(test)]
 mod fixed_instant_tests;
 mod gated_page;
+mod geo_page;
+#[cfg(test)]
+mod geo_page_fixtures;
 pub mod id_pattern_page;
 pub mod keyed_count;
 pub mod keyed_page;
