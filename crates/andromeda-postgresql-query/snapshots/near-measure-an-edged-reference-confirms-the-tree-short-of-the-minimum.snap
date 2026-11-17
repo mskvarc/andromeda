@@ -1,0 +1,28 @@
+---
+source: crates/andromeda-postgresql-query/src/near_measure.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        ST_Distance(
+          COALESCE("g"."value_geometry_valid", "g"."value_geometry")::geography,
+          "r"."reference"
+        ) >= $1
+      ) THEN TRUE
+      WHEN (
+        ST_Dimension(
+          COALESCE("g"."value_geometry_valid", "g"."value_geometry")
+        ) = (0)
+      ) THEN FALSE
+      ELSE _ST_DistanceUnCached(
+        COALESCE("g"."value_geometry_valid", "g"."value_geometry")::geography,
+        "r"."reference",
+        $2,
+        TRUE
+      ) >= $3
+    END
+  )
+1: Double 1000
+2: Double 1000
+3: Double 1000

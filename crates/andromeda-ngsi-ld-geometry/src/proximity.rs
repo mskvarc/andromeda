@@ -15,8 +15,10 @@
 //! position in, and this module measures the same way so that an in-memory
 //! verdict and a store verdict agree:
 //!
-//! 1. Two geometries that intersect are zero apart. Containment is decided on
-//!    the planar projection, as the six topological relations are.
+//! 1. Two geometries that share a point are zero apart. Whether they do is
+//!    decided on the sphere, every edge a great-circle arc and every polygon
+//!    the region its rings enclose within one hemisphere
+//!    ([`crate::sphere_contact`]), which is how `PostGIS` reads `geography`.
 //! 2. Otherwise the closest pair is found on the sphere, with every edge read
 //!    as a great-circle arc: for two disjoint geometries made of minor arcs the
 //!    minimum separation is attained at a vertex of one of them, so every
@@ -45,12 +47,13 @@
 //! spherical Haversine distance, and the store renders it as such.
 
 use crate::{
-    great_circle::{arc_bounds, arcs},
+    arc_index::{IndexedArc, aabb, arc_tree},
     near_envelope::NearEnvelope,
     positive_distance::PositiveDistance,
+    sphere_contact::share_a_point,
 };
-use geo::{Closest, CoordsIter, Distance, Geodesic, Haversine, HaversineClosestPoint, Intersects, Line, Point, Rect};
-use rstar::{AABB, RTree, RTreeObject};
+use geo::{Closest, CoordsIter, Distance, Geodesic, Haversine, HaversineClosestPoint, Line, Point, Rect};
+use rstar::RTree;
 use std::cell::OnceCell;
 
 /// The least ratio of a WGS 84 geodesic to the spherical (`geo`'s Haversine,
@@ -86,8 +89,8 @@ pub enum Boundary {
 /// distances.
 ///
 /// Built once per pair, so a `near` carrying both a `maxDistance` and a
-/// `minDistance` intersects the two geometries once and indexes each one's
-/// arcs at most once.
+/// `minDistance` decides whether the two geometries share a point once and
+/// indexes each one's arcs at most once.
 #[derive(Debug)]
 pub struct Proximity<'a> {
     /// The geometry read off the entity or registration.
@@ -121,7 +124,8 @@ impl<'a> Proximity<'a> {
         if subject.coords_count() == 0 || reference.coords_count() == 0 {
             return None;
         }
-        let separation = if subject.intersects(reference) {
+        let reference_arcs = OnceCell::new();
+        let separation = if share_a_point(subject, reference, reference_arcs.get_or_init(|| arc_tree(reference))) {
             Separation::Touching
         } else {
             Separation::Apart
@@ -131,7 +135,7 @@ impl<'a> Proximity<'a> {
             reference,
             separation,
             subject_arcs: OnceCell::new(),
-            reference_arcs: OnceCell::new(),
+            reference_arcs,
         })
     }
 
@@ -235,36 +239,6 @@ impl ClosestPairSearch {
     }
 }
 
-/// One great-circle arc of a geometry, under the box that covers it.
-#[derive(Debug)]
-struct IndexedArc {
-    /// The arc.
-    arc: Line<f64>,
-    /// Its great-circle bounds.
-    envelope: AABB<[f64; 2]>,
-}
-
-impl RTreeObject for IndexedArc {
-    type Envelope = AABB<[f64; 2]>;
-
-    fn envelope(&self) -> AABB<[f64; 2]> {
-        self.envelope
-    }
-}
-
-/// Every arc of a geometry, indexed by its great-circle bounds.
-fn arc_tree(geometry: &geo::Geometry<f64>) -> RTree<IndexedArc> {
-    RTree::bulk_load(
-        arcs(geometry)
-            .into_iter()
-            .map(|arc| IndexedArc {
-                arc,
-                envelope: aabb(&arc_bounds(arc)),
-            })
-            .collect(),
-    )
-}
-
 /// The point of `arc` closest to `vertex` on the sphere, and its spherical
 /// distance in metres.
 ///
@@ -310,11 +284,6 @@ fn within(spherical: f64, geodesic: impl FnOnce() -> f64, distance: f64, boundar
         Boundary::Inclusive => longest <= distance || (shortest <= distance && geodesic() <= distance),
         Boundary::Exclusive => longest < distance || (shortest < distance && geodesic() < distance),
     }
-}
-
-/// The R-tree box of a longitude/latitude rectangle.
-fn aabb(rect: &Rect<f64>) -> AABB<[f64; 2]> {
-    AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y])
 }
 
 #[cfg(test)]
@@ -447,6 +416,38 @@ mod tests {
         // 212.97 m across the antimeridian; its planar centroid is 692.16 m away.
         let cut = Geometry::MultiPolygon(MultiPolygon::new(vec![box_polygon(-179.999, -17.0005, -179.990, -16.9995)]));
         assert_separation_between(&cut, &point(179.999, -17.0), "212.96", "212.98");
+    }
+
+    /// The ring whose edges along 10 S and 10 N span 340 degrees of longitude
+    /// as written, and so go the short way round across the antimeridian.
+    fn antimeridian_square() -> Geometry<f64> {
+        Geometry::Polygon(Polygon::new(
+            LineString::from(vec![(170.0, -10.0), (-170.0, -10.0), (-170.0, 10.0), (170.0, 10.0), (170.0, -10.0)]),
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn a_polygon_with_edges_across_the_antimeridian_holds_the_antimeridian() {
+        assert!(within_inclusive(&antimeridian_square(), &point(180.0, 0.0), "0.001"));
+        // 111.32 km west of the polygon's west edge along the equator.
+        assert_separation_between(&antimeridian_square(), &point(169.0, 0.0), "111300", "111340");
+    }
+
+    #[test]
+    fn a_square_with_a_corner_antipodal_to_a_corner_of_the_polygon_is_measured_corner_to_corner() {
+        // (10, 10) is the antipode of (-170, -10); the nearest corners, (10,
+        // 10) and (170, 10), are 16 890.18 km apart, as `PostGIS` measures
+        // them without its tree.
+        let square = Geometry::Polygon(box_polygon(0.0, 0.0, 10.0, 10.0));
+        assert_separation_between(&antimeridian_square(), &square, "16890170", "16890180");
+    }
+
+    #[test]
+    fn a_point_where_a_long_edge_bows_past_the_polygon_s_vertices_touches_it() {
+        // The north edge along 60 N bows north to 63.43 degrees.
+        let area = Geometry::Polygon(box_polygon(-30.0, 50.0, 30.0, 60.0));
+        assert!(within_inclusive(&area, &point(0.0, 63.0), "0.001"));
     }
 
     #[test]

@@ -162,6 +162,12 @@ mod tests {
         pretty_assertions::assert_eq!((reach.west(), reach.east()), (-180.0, 180.0));
     }
 
+    #[test]
+    fn a_ring_around_a_pole_reaches_the_pole() {
+        let reach = reach(&polygon(&[(0.0, 80.0), (90.0, 80.0), (180.0, 80.0), (-90.0, 80.0), (0.0, 80.0)])).expect("the planar box misses the pole");
+        pretty_assertions::assert_eq!((reach.west(), reach.east(), reach.north()), (-180.0, 180.0, 90.0));
+    }
+
     /// `ST_MakeValid` repairs a polygon by noding its edges: it adds vertices
     /// on them, never off them. A sub-arc between two points of an edge
     /// stays inside the edge's reach, so the reach of the written polygon
