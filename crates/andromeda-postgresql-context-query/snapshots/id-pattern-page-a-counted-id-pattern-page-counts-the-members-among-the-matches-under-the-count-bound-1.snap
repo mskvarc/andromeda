@@ -48,8 +48,12 @@ FROM
           LIMIT
             5000 OFFSET 0
         ) AS "walked"
-      WHERE
-        "walked"."sort_0" ~ $1
+        INNER JOIN LATERAL (
+          SELECT
+            1
+          WHERE
+            "walked"."sort_0" ~ $1 OFFSET 0
+        ) AS "kept" ON TRUE
       ORDER BY
         "walked"."sort_0" ASC
       LIMIT
@@ -189,9 +193,14 @@ FROM
               ORDER BY
                 "sort_0" ASC OFFSET 0
             ) AS "walked"
+            INNER JOIN LATERAL (
+              SELECT
+                1
+              WHERE
+                "walked"."sort_0" ~ $11 OFFSET 0
+            ) AS "kept" ON TRUE
           WHERE
-            ("walked"."sort_0" ~ $11)
-            AND (
+            (
               SELECT
                 COUNT(*)
               FROM

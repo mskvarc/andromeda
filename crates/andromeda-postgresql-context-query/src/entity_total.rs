@@ -54,10 +54,10 @@ pub struct TotalCount {
 /// steps of the page after which it is the count run.
 ///
 /// A short walk that fills the page found the matches dense where the
-/// selection starts. A keyed page's short walk of 200 fills for a term about
-/// a tenth of the selection holds, which among 1 000 000 Entities passes the
-/// count's candidate bound, so reading the candidates first would only find
-/// too many of them. In a smaller selection, or behind the 5 000 identifiers
+/// selection starts. A keyed page's short walk of 1 000 fills a page of a
+/// hundred for a term about a tenth of the selection holds, which among
+/// 500 000 Entities passes the count's candidate bound, so reading the
+/// candidates first would only find too many of them. In a smaller selection, or behind the 5 000 identifiers
 /// of an `idPattern` page, the term can stay within the bound, and the walk
 /// then costs what the candidates would save. A pattern 5 000 of 1 000 000
 /// identifiers match counts in 86 ms walked against 21 ms from its
@@ -206,7 +206,7 @@ mod tests {
     use crate::{
         entity::build_query,
         entity_page::GatedStep,
-        entity_total::{EntityTotal, TotalCount, WalkedCount},
+        entity_total::{EntityTotal, TotalCount, WalkedCount, walked_after},
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_query::{
@@ -216,7 +216,12 @@ mod tests {
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
     };
-    use andromeda_postgresql_query::query_names::QueryNames;
+    use andromeda_postgresql_query::{
+        id_pattern_trigrams::ID_PATTERN_CANDIDATE_BOUND,
+        one_time_gate::CandidateBound,
+        q_predicate::keyed_term::CandidateRead,
+        query_names::QueryNames,
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -282,19 +287,21 @@ mod tests {
         uncounted.walked.expect("a keyed page has a walked count").after
     }
 
-    /// A rechecked term's page reads 1,000 candidates and its count 10,000,
-    /// so a page past its bound may still be counted from candidates; a
-    /// ranged term's count reads no more than its page, so its count walks.
-    /// A conjunction walks its count only when every read does.
+    /// Every keyed read counts as many candidates as its page reads, so a page
+    /// past every bound is counted by walking. An identifier pattern's page
+    /// reads 1,000 matches and its count 10,000, so a page past its bound may
+    /// still be counted from them.
     #[test]
     fn a_full_walk_is_counted_by_walking_only_when_every_count_reads_no_more_candidates_than_its_page() {
-        assert_eq!(after_of("\"https://example.com/temperature\"~=\"text-71.*\""), &[GatedStep::ShortWalk]);
+        for q in [
+            "\"https://example.com/temperature\"~=\"text-71.*\"",
+            "\"https://example.com/temperature\">2024-01-15T12:00:00Z",
+            "\"https://example.com/temperature\"~=\"text-71.*\";\"https://example.com/observedOn\">2024-01-15T12:00:00Z",
+        ] {
+            assert_eq!(after_of(q), &[GatedStep::ShortWalk, GatedStep::FullWalk], "{q}");
+        }
         assert_eq!(
-            after_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z"),
-            &[GatedStep::ShortWalk, GatedStep::FullWalk]
-        );
-        assert_eq!(
-            after_of("\"https://example.com/temperature\"~=\"text-71.*\";\"https://example.com/observedOn\">2024-01-15T12:00:00Z"),
+            walked_after([CandidateRead::Rechecked], |_| CandidateBound::AtMost(ID_PATTERN_CANDIDATE_BOUND)),
             &[GatedStep::ShortWalk]
         );
     }

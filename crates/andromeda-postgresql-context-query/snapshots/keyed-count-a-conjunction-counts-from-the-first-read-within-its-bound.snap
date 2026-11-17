@@ -23,7 +23,7 @@ WITH
         )
     ) AS "matches"
   LIMIT
-    20001
+    10001
 ),
 "candidates_2" AS MATERIALIZED (
   SELECT
@@ -144,7 +144,7 @@ WITH
 8: String 'x'
 9: String 'x'
 10: String 'x'
-11: BigUnsigned 20000
+11: BigUnsigned 10000
 12: Int 12
 13: String 'x'
 14: String 'x'

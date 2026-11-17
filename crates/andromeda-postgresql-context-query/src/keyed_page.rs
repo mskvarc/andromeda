@@ -13,12 +13,11 @@
 //!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)):
 //!    at most [`CANDIDATE_BOUND`] + 1 rows through the value and containment
 //!    indexes, `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked,
-//!    at most [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value
-//!    index, or at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an
-//!    attribute name, each probed for a standing instance, or every Entity
-//!    naming a linked entity the hop's inner term keeps. The page is cut from
-//!    the selection narrowed to the first candidates within their bound,
-//!    under the rest of `q`;
+//!    from a range of a typed value index, or as carriers of an attribute
+//!    name, each probed for a standing instance, or every Entity naming a
+//!    linked entity the hop's inner term keeps. The page is cut from the
+//!    selection narrowed to the first candidates within their bound, under
+//!    the rest of `q`;
 //! 3. the full walk probes each Entity of the selection in page order for the
 //!    whole `q`, when every read found more candidates than its bound. A hop's
 //!    candidates are read whole, so no read follows it and the page has no
@@ -41,31 +40,33 @@ use andromeda_postgresql_query::{
 };
 
 /// How many Entities the short walk probes before the index is read.
-pub const SHORT_WALK: u32 = 200;
+///
+/// A term one Entity in ten holds fills a page of a hundred within it and
+/// skips the index read a common term otherwise pays before its walk: the
+/// candidates of an equality 100 000 of 500 000 Entities hold come from a
+/// bitmap of every one of them, 15 to 20 ms for the bound's 10 000. A walk
+/// that falls short costs about 1.7 ms, one probe of an equality being about
+/// 1.7 µs.
+pub const SHORT_WALK: u32 = 1000;
 
-/// The most rechecked candidates the index path hands to the page.
-pub const CANDIDATE_BOUND: u64 = 1000;
-
-/// The most candidates a range of a typed value index hands to the page.
-pub const RANGED_CANDIDATE_BOUND: u64 = 50_000;
-
-/// The most carriers of an attribute name the index path hands to the page.
-pub const PROBED_CANDIDATE_BOUND: u64 = 10_000;
+/// The most candidates an index read hands to the page, however the index
+/// yields them.
+///
+/// The bound trades two placements of the matches, which no count tells apart
+/// before the read. Matches holding the last identifiers of the selection
+/// make the walk probe nearly every Entity: among 500 000 Entities that costs
+/// 0.3 to 0.9 s, where the index answers 10 000 such matches in 8 to 22 ms.
+/// Matches spread through the selection fill the page soon into the walk, so
+/// a term most Entities hold walks on every page, after reading the bound's
+/// candidates: 10 000 of them cost about 6 ms from a value index, whether an
+/// equality or a range reads it, and 28 ms as carriers of an attribute name,
+/// where 50 000 cost 30 to 42 ms. A pattern whose trigrams most values share
+/// gathers every posting first, 70 to 150 ms. A bound derived from the
+/// selection's size serves one placement only at the other's cost.
+pub const CANDIDATE_BOUND: u64 = 10_000;
 
 /// The most candidates the index path hands to the page, by how they are
-/// read.
-///
-/// A bound trades two placements of the matches, which no count tells apart
-/// before the read. A term whose matches hold the last identifiers of the
-/// selection makes the walk visit nearly every Entity, so the page reads up
-/// to the bound's candidates through the index first. A term spread through
-/// the selection fills the page after a short walk, so every candidate read
-/// up to the bound is wasted. A candidate costs about the same on every read,
-/// since narrowing the selection to the candidates and ordering them outweighs
-/// reading them, and a term past its bound pays for the read before it walks,
-/// every posting of the term when an inverted index yields them. A bound
-/// derived from the selection's size serves one placement only at the other's
-/// cost.
+/// read: [`CANDIDATE_BOUND`] for every read but a hop's.
 ///
 /// A Linked Entity hop's candidates are read whole. Each costs an entry of
 /// the object's index and a heap visit, read from the linked entities its
@@ -76,9 +77,7 @@ pub const PROBED_CANDIDATE_BOUND: u64 = 10_000;
 /// once per linked entity, which with thousands of them never finishes.
 pub(crate) const fn page_bound(read: CandidateRead) -> CandidateBound {
     match read {
-        CandidateRead::Rechecked => CandidateBound::AtMost(CANDIDATE_BOUND),
-        CandidateRead::Ranged => CandidateBound::AtMost(RANGED_CANDIDATE_BOUND),
-        CandidateRead::Probed => CandidateBound::AtMost(PROBED_CANDIDATE_BOUND),
+        CandidateRead::Rechecked | CandidateRead::Ranged | CandidateRead::Probed => CandidateBound::AtMost(CANDIDATE_BOUND),
         CandidateRead::Linked => CandidateBound::Whole,
     }
 }
@@ -151,9 +150,9 @@ mod tests {
     }
 
     /// The census counts 40 instances of `temperature` and 100 000 of
-    /// `source`: the pattern's candidates fit its bound of 1 000, so it is
+    /// `source`: the pattern's candidates fit the bound of 10 000, so it is
     /// keyed ahead of the canonical first conjunct, the existence of `source`,
-    /// whose carriers pass its bound of 10 000.
+    /// whose carriers pass it.
     #[test]
     fn a_census_count_within_its_bound_keys_a_later_conjunct() {
         let mut names = names();
@@ -171,9 +170,9 @@ mod tests {
     }
 
     /// Of a conjunction, each keyed conjunct is read in turn: the second
-    /// read's branch opens only when the first read passed its bound of 1 000
-    /// and the second stayed within its bound of 50 000, and the full walk
-    /// only when both passed theirs.
+    /// read's branch opens only when the first read passed the bound of
+    /// 10 000 and the second stayed within it, and the full walk only when
+    /// both passed it.
     #[test]
     fn a_conjunction_tries_each_keyed_conjunct_in_turn() {
         let built = build_query(
@@ -286,10 +285,8 @@ mod tests {
         assert_statement_snapshot!("keyed-page-the-page-reads-one-candidate-past-its-bound", built.select);
     }
 
-    /// A range of a typed value index is a match as it is read, so the page
-    /// reads more of them before it walks.
     #[test]
-    fn a_date_time_ordering_reads_its_candidates_under_the_ranged_bound() {
+    fn a_date_time_ordering_reads_its_candidates_from_a_range_of_its_index() {
         let built = build_query(
             &ContextTarget::Live,
             &query("\"https://example.com/temperature\">2024-01-15T12:00:00Z"),
@@ -299,7 +296,7 @@ mod tests {
         )
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
-        assert_statement_snapshot!("keyed-page-a-date-time-ordering-reads-its-candidates-under-the-ranged-bound", built.select);
+        assert_statement_snapshot!("keyed-page-a-date-time-ordering-reads-its-candidates-from-a-range-of-its-index", built.select);
     }
 
     /// Clause 4.9 `q=attr`: the carriers of the name are each probed for a

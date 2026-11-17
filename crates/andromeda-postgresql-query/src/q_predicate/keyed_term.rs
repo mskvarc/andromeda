@@ -24,8 +24,8 @@
 //! statement whose matches are many is answered sooner by walking the
 //! selection than by fetching every match through the index, so each
 //! statement that reads the candidates bounds them by the most it can use and
-//! walks past that bound. How far that is depends on what one candidate costs
-//! to read ([`CandidateRead`]). Of a conjunction, the statement reads each
+//! walks past that bound, which it sets by how one candidate is read
+//! ([`CandidateRead`]). Of a conjunction, the statement reads each
 //! conjunct an index answers in turn and is cut from the first whose
 //! candidates stay within their bound, so a common conjunct read first costs
 //! only its bounded read before a rare one answers.
@@ -55,8 +55,8 @@ use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::SelectStatement;
 use std::slice::from_ref;
 
-/// How the index path reads one candidate, which sets how many it reads
-/// before the page walks instead.
+/// How the index path reads one candidate, by which a statement sets how many
+/// it reads before it walks the selection instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandidateRead {
     /// The index offers rows that may match and the term's condition rechecks

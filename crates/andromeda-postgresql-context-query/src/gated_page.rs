@@ -22,11 +22,15 @@
 //! statement would.
 //!
 //! Both walks read the selection as a subquery in page order and probe each
-//! Entity it yields outside it, so the planner cannot read the term's index
-//! and sort its matches instead: a term it prices as rare would be read whole
-//! that way however many Entities it keeps. An index branch narrows the
-//! selection to its candidates as an array
-//! ([`narrowed_to`](andromeda_postgresql_query::one_time_gate::narrowed_to)), looked up one by one.
+//! Entity it yields in a lateral subquery behind `OFFSET 0`, which the
+//! planner can neither merge into the walk nor turn into a join. Probed as a
+//! filter of the walk, a term the planner prices as rare becomes a hash of
+//! every match against the whole selection, which reads every Entity however
+//! soon the page fills: among 500 000 Entities a term 50 000 of them hold,
+//! spread through the selection, cuts its page in 84 ms that way and in 3 ms
+//! walked. An index branch narrows the selection to its candidates as an
+//! array ([`narrowed_to`](andromeda_postgresql_query::one_time_gate::narrowed_to)),
+//! looked up one by one.
 //!
 //! A counted page's index branch carries the total (clause 6.3.13) as
 //! `COUNT(*) OVER ()`: it reads every candidate before it cuts the window,
@@ -54,13 +58,19 @@ use andromeda_postgresql_query::{
     query_names::QueryNames,
 };
 use andromeda_postgresql_schema::current::Entities;
-use andromeda_postgresql_seaquery::aggregate::count_over_all;
-use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType, Value, WithClause};
+use andromeda_postgresql_seaquery::{aggregate::count_over_all, literal::int_literal};
+use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr, UnionType, Value, WithClause};
 
 /// The name the short walk reads the Entities it probes under.
 #[derive(Iden, Clone, Copy)]
 #[iden = "walked"]
 pub(crate) struct Walked;
+
+/// The name of the probe a walk joins to each Entity it visits, one row when
+/// the Entity passes and none otherwise.
+#[derive(Iden, Clone, Copy)]
+#[iden = "kept"]
+struct Kept;
 
 /// The statement a page is cut from: its relations, in the branch they are
 /// read in, and the query and window it answers.
@@ -271,7 +281,7 @@ fn cut(select: &mut SelectStatement, window: &PageWindow) {
 /// none.
 fn short_walk(walk: &PageWalk<'_>, window: &PageWindow, need: u64) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let length = if need > u64::from(walk.short) { 0 } else { walk.short };
-    let (mut matches, read_order) = walked_in_order(&walk.source, walk.walked.clone(), walk.probe.clone(), window, Some(length))?;
+    let (mut matches, read_order) = walked_in_order(&walk.source, walk.walked.clone(), walk.probe.clone(), Vec::new(), window, Some(length))?;
     matches.select.limit(need);
     Ok((matches, read_order))
 }
@@ -280,25 +290,27 @@ fn short_walk(walk: &PageWalk<'_>, window: &PageWindow, need: u64) -> Result<(Pr
 /// keeps, cut to `window`, behind the gates `fell_short` of every earlier
 /// step.
 fn full_walk(walk: PageWalk<'_>, window: &PageWindow, fell_short: Vec<SimpleExpr>) -> Result<SelectStatement, RenderError> {
-    let kept = fell_short.into_iter().fold(walk.probe, Condition::add);
-    let (matches, _) = walked_in_order(&walk.source, walk.walked, kept, window, None)?;
+    let (matches, _) = walked_in_order(&walk.source, walk.walked, walk.probe, fell_short, window, None)?;
     let mut matches = matches.select;
     cut(&mut matches, window);
     Ok(matches)
 }
 
 /// The selection `walked` keeps, read in page order from where `window`
-/// starts, `length` Entities of it or every one, and each it yields kept when
-/// `kept` holds over [`walked_rows`], ordered as the page is.
+/// starts, `length` Entities of it or every one, each it yields kept when
+/// `probe` holds over [`walked_rows`], ordered as the page is, behind
+/// `gates`.
 ///
 /// The selection is a subquery behind its `LIMIT`, or behind `OFFSET 0`
-/// without one, which keeps the planner from merging `kept` into it: it
-/// visits the Entities in page order and stops once the statement has its
-/// rows.
+/// without one, and the probe a lateral subquery behind `OFFSET 0`, which
+/// keeps the planner from merging either into the other: it visits the
+/// Entities in page order, probes each in turn, and stops once the statement
+/// has its rows.
 fn walked_in_order(
     source: &PageSource<'_>,
     walked: Condition,
-    kept: Condition,
+    probe: Condition,
+    gates: Vec<SimpleExpr>,
     window: &PageWindow,
     length: Option<u32>,
 ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
@@ -320,8 +332,16 @@ fn walked_in_order(
             selection.reset_limit().offset(0);
         }
     }
+    let mut kept = Query::select();
+    kept.expr(int_literal(1)).cond_where(probe).offset(0);
     let mut matches = Query::select();
-    matches.column((Walked, Asterisk)).from_subquery(selection, Walked).cond_where(kept);
+    matches
+        .column((Walked, Asterisk))
+        .from_subquery(selection, Walked)
+        .join_lateral(JoinType::InnerJoin, kept.take(), Kept, Condition::all());
+    for gate in gates {
+        matches.and_where(gate);
+    }
     for (column, key_order) in &order {
         key_order.order_by(&mut matches, Expr::col((Walked, column.clone())));
     }

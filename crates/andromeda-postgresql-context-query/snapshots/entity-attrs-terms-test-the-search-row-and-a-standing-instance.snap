@@ -34,32 +34,36 @@ FROM
           LIMIT
             5000 OFFSET 0
         ) AS "walked"
-      WHERE
-        EXISTS (
+        INNER JOIN LATERAL (
           SELECT
-            $1
-          FROM
-            "entity_search" AS "probed"
+            1
           WHERE
-            (
-              ("probed"."attribute_name_keys" @> (ARRAY[11]))
-              OR (FALSE)
-            )
-            AND EXISTS (
+            EXISTS (
               SELECT
-                1
+                $1
               FROM
-                "current_attributes" AS "ca"
+                "entity_search" AS "probed"
               WHERE
-                "ca"."attribute_name_key" = $2
-                AND (
-                  "ca"."expires_at" IS NULL
-                  OR "ca"."expires_at" > NOW()
+                (
+                  ("probed"."attribute_name_keys" @> (ARRAY[11]))
+                  OR (FALSE)
                 )
-                AND "ca"."entity_key" = "walked"."entity_key"
-            )
-            AND "probed"."entity_key" = "walked"."entity_key"
-        )
+                AND EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $2
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
+                    )
+                    AND "ca"."entity_key" = "walked"."entity_key"
+                )
+                AND "probed"."entity_key" = "walked"."entity_key"
+            ) OFFSET 0
+        ) AS "kept" ON TRUE
       ORDER BY
         "walked"."sort_0" ASC
       LIMIT
@@ -187,33 +191,38 @@ FROM
               ORDER BY
                 "sort_0" ASC OFFSET 0
             ) AS "walked"
-          WHERE
-            EXISTS (
+            INNER JOIN LATERAL (
               SELECT
-                $7
-              FROM
-                "entity_search" AS "probed"
+                1
               WHERE
-                (
-                  ("probed"."attribute_name_keys" @> (ARRAY[11]))
-                  OR (FALSE)
-                )
-                AND EXISTS (
+                EXISTS (
                   SELECT
-                    1
+                    $7
                   FROM
-                    "current_attributes" AS "ca"
+                    "entity_search" AS "probed"
                   WHERE
-                    "ca"."attribute_name_key" = $8
-                    AND (
-                      "ca"."expires_at" IS NULL
-                      OR "ca"."expires_at" > NOW()
+                    (
+                      ("probed"."attribute_name_keys" @> (ARRAY[11]))
+                      OR (FALSE)
                     )
-                    AND "ca"."entity_key" = "walked"."entity_key"
-                )
-                AND "probed"."entity_key" = "walked"."entity_key"
-            )
-            AND (
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "current_attributes" AS "ca"
+                      WHERE
+                        "ca"."attribute_name_key" = $8
+                        AND (
+                          "ca"."expires_at" IS NULL
+                          OR "ca"."expires_at" > NOW()
+                        )
+                        AND "ca"."entity_key" = "walked"."entity_key"
+                    )
+                    AND "probed"."entity_key" = "walked"."entity_key"
+                ) OFFSET 0
+            ) AS "kept" ON TRUE
+          WHERE
+            (
               SELECT
                 COUNT(*)
               FROM
