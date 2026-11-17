@@ -4,7 +4,11 @@
 //! predicates of clause 4.10 are built as custom expressions here rather than
 //! inline at each call site.
 
-use crate::{cast::cast, literal::int_literal, pg_type::PostgresType};
+use crate::{
+    cast::cast,
+    literal::{int_literal, true_literal},
+    pg_type::PostgresType,
+};
 use sea_query::{BinOper, Expr, ExprTrait, Func, Iden, SimpleExpr};
 
 /// The `PostGIS` functions clause 4.10's spatial predicates are built from.
@@ -38,6 +42,15 @@ enum PostgisFunction {
     /// `ST_Distance(a, b)`.
     #[iden = "ST_Distance"]
     Distance,
+    /// `_ST_DWithinUnCached(a, b, distance, use_spheroid)`.
+    #[iden = "_ST_DWithinUnCached"]
+    DwithinUncached,
+    /// `_ST_DistanceUnCached(a, b, tolerance, use_spheroid)`.
+    #[iden = "_ST_DistanceUnCached"]
+    DistanceUncached,
+    /// `ST_Dimension(geom)`.
+    #[iden = "ST_Dimension"]
+    Dimension,
     /// `ST_GeomFromEWKB(bytes)`.
     #[iden = "ST_GeomFromEWKB"]
     GeomFromEwkb,
@@ -131,6 +144,45 @@ pub fn exact_contains(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn st_distance(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
     binary_spatial(PostgisFunction::Distance, geo_col, ref_geom)
+}
+
+/// `PostGIS`: `_ST_DWithinUnCached(geo_col, ref_geom, distance, TRUE)` -
+/// whether two `geography` values lie within a distance of each other on the
+/// spheroid, measured edge against edge rather than through the tree
+/// [`exact_dwithin`] measures with.
+///
+/// It is the entry point `PostGIS` keeps beside the tree-based one for testing
+/// it. The tree reports two edges as touching whenever an end of one lies on
+/// the great circle of the other beyond it, which happens where that end is the
+/// antipode of a point of the other; this measure tests edges for crossing only
+/// when the two geometries' boxes overlap, which two geometries holding an
+/// antipodal pair do only when they span thousands of kilometres. It compares
+/// every edge of one with every edge of the other, and stops at the first pair
+/// within the distance.
+#[must_use]
+pub fn uncached_dwithin(geo_col: SimpleExpr, ref_geom: SimpleExpr, distance: f64) -> SimpleExpr {
+    Func::cust(PostgisFunction::DwithinUncached)
+        .args([geo_col, ref_geom, Expr::val(distance), true_literal()])
+        .into()
+}
+
+/// `PostGIS`: `_ST_DistanceUnCached(geo_col, ref_geom, tolerance, TRUE)` - the
+/// distance between two `geography` values on the spheroid, measured as
+/// [`uncached_dwithin`] measures it. It stops at the first pair of edges
+/// within `tolerance`, whose distance it answers, so it is exact for every
+/// comparison against `tolerance`.
+#[must_use]
+pub fn uncached_distance(geo_col: SimpleExpr, ref_geom: SimpleExpr, tolerance: f64) -> SimpleExpr {
+    Func::cust(PostgisFunction::DistanceUncached)
+        .args([geo_col, ref_geom, Expr::val(tolerance), true_literal()])
+        .into()
+}
+
+/// `PostGIS`: `ST_Dimension(geom)` - 0 for a point or a set of points, 1 for a
+/// line, 2 for a polygon.
+#[must_use]
+pub fn st_dimension(geom: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::Dimension).arg(geom).into()
 }
 
 /// `PostGIS`: `_ST_Intersects(geo_col, ref_geom)` - whether two geometries

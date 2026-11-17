@@ -35,6 +35,8 @@
 //! [`proximity`] holds that measure, [`great_circle`] the extent of a geometry
 //! read that way and [`near_envelope`] the region a distance can reach.
 
+mod arc_index;
+mod arc_meeting;
 pub mod bounding_box;
 pub mod compact_geojson;
 pub mod coordinate_notation;
@@ -70,6 +72,9 @@ pub mod proximity;
 pub mod query_coordinates;
 pub mod relation;
 pub mod relation_reading;
+mod sphere_contact;
+mod sphere_vector;
+mod spherical_polygon;
 pub mod written_geometry;
 
 #[cfg(test)]

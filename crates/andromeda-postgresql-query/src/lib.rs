@@ -36,6 +36,7 @@ pub mod id_pattern_trigrams;
 pub mod jsonb;
 pub mod location_instances;
 pub mod ltree;
+mod near_measure;
 pub mod one_time_gate;
 pub mod operator;
 pub mod ordering;

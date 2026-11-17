@@ -51,6 +51,7 @@ mod n_csr_qry_9095;
 mod n_csr_qry_9096;
 mod n_csr_qry_9097;
 mod n_csr_qry_9098;
+mod n_csr_qry_9099;
 mod o_csr_qry_0006;
 mod o_csr_qry_0017;
 mod o_csr_qry_0018;

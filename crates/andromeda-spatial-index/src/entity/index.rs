@@ -230,9 +230,9 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
         // set equality the store applies. Refining with it would drop entities
         // the store counts as equal.
         GeoRel::Equals |
-        // The in-memory `near` measures what `geography` measures, but decides
-        // containment on the plane and runs its own geodesic arithmetic, so a
-        // pair at the threshold can fall either side of it. The store
+        // The in-memory `near` measures what `geography` measures, but runs its
+        // own containment test and geodesic arithmetic, so a pair at the
+        // threshold can fall either side of it. The store
         // re-applies the relation to every candidate anyway, and refining
         // would make an answer depend on two implementations agreeing exactly;
         // a centroid reading of `near` would drop every building whose middle

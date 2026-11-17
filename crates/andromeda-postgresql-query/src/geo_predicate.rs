@@ -28,6 +28,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     location_instances::any_location_instance,
+    near_measure::near_expression,
     stored_geometry::{BoxIndexing, StoredGeometry, box_test},
 };
 use andromeda_ngsi_ld_geometry::{
@@ -37,27 +38,14 @@ use andromeda_ngsi_ld_geometry::{
     relation_reading::{AreaCondition, Operand, RelationReading, SpatialTest, TopologicalTest},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{
-    error::QueryError,
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
-};
+use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     literal::false_literal,
     pg_type::PostgresType,
-    postgis::{
-        exact_contains,
-        exact_dwithin,
-        exact_equals,
-        exact_intersects,
-        exact_overlaps,
-        exact_within,
-        st_disjoint,
-        st_distance,
-        validated_geom_from_ewkb,
-    },
+    postgis::{exact_contains, exact_equals, exact_intersects, exact_overlaps, exact_within, st_disjoint, validated_geom_from_ewkb},
 };
 use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -80,7 +68,7 @@ use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the query's
 /// reference geometry has no EWKB spelling the store can bind, and
-/// [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`] when
+/// [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::error::QueryError::NearWithoutDistance) when
 /// `georel=near` names neither `maxDistance` nor `minDistance`, which clause
 /// 4.10 requires at least one of.
 pub fn condition(
@@ -154,7 +142,7 @@ pub fn restriction(georel: &GeoRel, reference: &Geometry, subject: &StoredGeomet
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
 /// geometry has no EWKB spelling the store can bind, and [`RenderError::Query`]
-/// carrying [`QueryError::NearWithoutDistance`] when `georel=near` names neither
+/// carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::error::QueryError::NearWithoutDistance) when `georel=near` names neither
 /// `maxDistance` nor `minDistance`.
 pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
     let reference = encode(geometry.form())?;
@@ -163,12 +151,13 @@ pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: 
     let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
     let spatial = match RelationReading::of(georel).test {
         SpatialTest::Topological(test) => topological_expression(test, subject.planar(), reference_geom()),
-        SpatialTest::Distance { max_distance, min_distance } => {
-            let reference_geography = cast(reference_geom(), PostgresType::Geography);
-            let max_metres = max_distance.map(PositiveDistance::metres);
-            let min_metres = min_distance.map(PositiveDistance::metres);
-            near_expression(subject.geographic(), reference_geography, max_metres, min_metres)?
-        }
+        SpatialTest::Distance { max_distance, min_distance } => near_expression(
+            subject,
+            || cast(reference_geom(), PostgresType::Geography),
+            geometry.form(),
+            max_distance.map(PositiveDistance::metres),
+            min_distance.map(PositiveDistance::metres),
+        )?,
     };
     Ok(spatial)
 }
@@ -190,31 +179,6 @@ fn topological_expression(test: TopologicalTest, subject: SimpleExpr, reference:
 ///
 /// Distinct enough not to collide with an alias the enclosing statement chose.
 const INSTANCE_ALIAS: &str = "geo_instance";
-
-/// Combine the `maxDistance` and `minDistance` halves of a `near` relation.
-///
-/// Clause 4.10 requires at least one of the two.
-fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Option<f64>, min_distance: Option<f64>) -> Result<SimpleExpr, RenderError> {
-    let mut parts = Vec::new();
-    if let Some(max) = max_distance {
-        parts.push(exact_dwithin(geo_col.clone(), ref_geom.clone(), max)); // clone: both halves read the same two operands
-    }
-    if let Some(min) = min_distance {
-        // The minimum distance is request-supplied, so it binds as a parameter.
-        parts.push(SeaExpr::expr(st_distance(geo_col, ref_geom)).gte(min));
-    }
-    // `usize` is unbounded, so a catch-all is the only way to close this match;
-    // clause 4.10 admits at most the two halves, so it is reached with two.
-    match parts.len() {
-        0 => Err(RenderError::Query(QueryError::NearWithoutDistance)),
-        1 => Ok(parts.remove(0)),
-        _ => {
-            let first = parts.remove(0);
-            let second = parts.remove(0);
-            Ok(first.and(second))
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

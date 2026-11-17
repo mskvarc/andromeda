@@ -7,25 +7,34 @@
 //! longitude along the 60th parallel reaches 63.43 degrees north. And an edge
 //! whose ends lie more than 180 degrees of longitude apart takes the short way
 //! round, across the antimeridian, where the planar rectangle of its ends does
-//! not reach at all. A box a `near` prefilter starts from is therefore built
-//! from [`great_circle_bounds`], never from the planar bounding rectangle,
+//! not reach at all. A polygon read with such edges can also hold a pole that
+//! its boundary never reaches. A box a `near` prefilter starts from is therefore
+//! built from [`great_circle_bounds`], never from the planar bounding rectangle,
 //! which bounds the vertices alone.
 //!
 //! The six topological relations of clause 4.10 stay planar, as the `geometry`
 //! columns they are rendered against are; this reading is `near`'s alone.
 
-use crate::planar::PlanarGeometry;
+use crate::{
+    planar::PlanarGeometry,
+    sphere_vector::SphereVector,
+    spherical_polygon::{SphericalPolygon, polygons_of},
+};
 use geo::{BoundingRect, Coord, Line, LineString, Polygon, Rect};
 
 /// The longitude/latitude rectangle covering every point of `geometry` when its
-/// edges are read as great-circle arcs, or `None` for a geometry with no
+/// edges are read as great-circle arcs and its polygons as
+/// [`crate::spherical_polygon`] reads them, or `None` for a geometry with no
 /// coordinates.
 ///
 /// It contains the planar bounding rectangle, and widens it only where an edge
-/// bows past its ends or crosses the antimeridian.
+/// bows past its ends or crosses the antimeridian, or where a polygon holds a
+/// pole. Away from the poles a polygon reaches no latitude and no longitude its
+/// boundary does not, since neither has an extreme inside a region that holds
+/// no pole; one that holds a pole reaches it, at every longitude.
 #[must_use]
 pub fn great_circle_bounds(geometry: &PlanarGeometry) -> Option<Rect<f64>> {
-    arcs(geometry.as_geo()).into_iter().map(arc_bounds).reduce(|bounds, arc| {
+    let bounds = arcs(geometry.as_geo()).into_iter().map(arc_bounds).reduce(|bounds, arc| {
         Rect::new(
             Coord {
                 x: bounds.min().x.min(arc.min().x),
@@ -36,7 +45,28 @@ pub fn great_circle_bounds(geometry: &PlanarGeometry) -> Option<Rect<f64>> {
                 y: bounds.max().y.max(arc.max().y),
             },
         )
-    })
+    })?;
+    Some(polar_reach(geometry.as_geo(), bounds))
+}
+
+/// `bounds` grown to the pole and around every longitude for each pole a
+/// polygon of `geometry` holds.
+fn polar_reach(geometry: &geo::Geometry<f64>, bounds: Rect<f64>) -> Rect<f64> {
+    let polygons: Vec<SphericalPolygon<'_>> = polygons_of(geometry).into_iter().map(SphericalPolygon::of).collect();
+    let holds = |latitude: f64| polygons.iter().any(|polygon| polygon.covers(Coord { x: 0.0, y: latitude }));
+    match (holds(-90.0), holds(90.0)) {
+        (false, false) => bounds,
+        (south_pole, north_pole) => Rect::new(
+            Coord {
+                x: -180.0,
+                y: if south_pole { -90.0 } else { bounds.min().y },
+            },
+            Coord {
+                x: 180.0,
+                y: if north_pole { 90.0 } else { bounds.max().y },
+            },
+        ),
+    }
 }
 
 /// Every edge of a geometry as a great-circle arc, and every isolated position
@@ -114,52 +144,26 @@ pub(crate) fn arc_bounds(arc: Line<f64>) -> Rect<f64> {
 /// rotation, `(a x p) . n >= 0` and `(p x b) . n >= 0`. The southernmost point
 /// is its antipode.
 fn latitude_extremes(arc: Line<f64>) -> Option<(f64, f64)> {
-    let start = unit_vector(arc.start);
-    let end = unit_vector(arc.end);
-    let normal = cross(start, end);
-    let normal_length_squared = dot(normal, normal);
+    let start = SphereVector::of(arc.start);
+    let end = SphereVector::of(arc.end);
+    let normal = start.cross(end);
+    let normal_length_squared = normal.dot(normal);
     // Coincident or antipodal ends name no single great circle; the arc is its
     // ends.
     if normal_length_squared < f64::EPSILON {
         return None;
     }
-    let along_normal = normal[2] / normal_length_squared;
-    let northward = [-along_normal * normal[0], -along_normal * normal[1], 1.0 - along_normal * normal[2]];
-    let northward_length = dot(northward, northward).sqrt();
+    let along_normal = normal.z() / normal_length_squared;
     // The equator has no northernmost point: every point of it is one.
-    if northward_length < f64::EPSILON {
-        return None;
-    }
-    let northmost = northward.map(|component| component / northward_length);
-    let southmost = northmost.map(|component| -component);
-    let on_arc = |point: [f64; 3]| dot(cross(start, point), normal) >= 0.0 && dot(cross(point, end), normal) >= 0.0;
-    let north = on_arc(northmost).then(|| latitude_of(northmost));
-    let south = on_arc(southmost).then(|| latitude_of(southmost));
+    let northmost = SphereVector::NORTH_POLE.minus(normal.scaled(along_normal)).normalized()?;
+    let southmost = northmost.antipode();
+    let on_arc = |point: SphereVector| start.cross(point).dot(normal) >= 0.0 && point.cross(end).dot(normal) >= 0.0;
+    let north = on_arc(northmost).then(|| northmost.latitude());
+    let south = on_arc(southmost).then(|| southmost.latitude());
     match (south, north) {
         (None, None) => None,
         (south, north) => Some((south.unwrap_or(f64::INFINITY), north.unwrap_or(f64::NEG_INFINITY))),
     }
-}
-
-/// The unit vector of a longitude/latitude position on the sphere.
-fn unit_vector(position: Coord<f64>) -> [f64; 3] {
-    let (longitude, latitude) = (position.x.to_radians(), position.y.to_radians());
-    [latitude.cos() * longitude.cos(), latitude.cos() * longitude.sin(), latitude.sin()]
-}
-
-/// The latitude, in degrees, of a unit vector.
-fn latitude_of(vector: [f64; 3]) -> f64 {
-    vector[2].clamp(-1.0, 1.0).asin().to_degrees()
-}
-
-/// The cross product of two vectors.
-const fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
-}
-
-/// The dot product of two vectors.
-const fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
 #[cfg(test)]
@@ -265,6 +269,25 @@ mod tests {
     fn a_geometry_with_no_coordinates_has_no_bounds() {
         assert!(great_circle_bounds(&Geometry::new(GeometryForm::Polygon(PolygonRings::new(Vec::new()))).planar()).is_none());
         assert!(great_circle_bounds(&Geometry::new(GeometryForm::MultiPoint(Vec::new())).planar()).is_none());
+    }
+
+    fn polygon(ring: &[(f64, f64)]) -> Geometry {
+        let ring = LinearRing::try_new(ring.iter().map(|&(longitude, latitude)| position(longitude, latitude)).collect()).expect("a closed test ring");
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![ring])))
+    }
+
+    #[test]
+    fn a_ring_along_a_parallel_reaches_the_pole_it_holds_at_every_longitude() {
+        let rect = bounds(&polygon(&[(0.0, 80.0), (90.0, 80.0), (180.0, 80.0), (-90.0, 80.0), (0.0, 80.0)]));
+        pretty_assertions::assert_eq!((rect.min().x, rect.max().x, rect.max().y), (-180.0, 180.0, 90.0));
+        assert!((rect.min().y - 80.0).abs() < 1e-12, "south edge {}", rect.min().y);
+    }
+
+    #[test]
+    fn a_polygon_across_the_antimeridian_holds_no_pole() {
+        let rect = bounds(&polygon(&[(170.0, -10.0), (-170.0, -10.0), (-170.0, 10.0), (170.0, 10.0), (170.0, -10.0)]));
+        pretty_assertions::assert_eq!((rect.min().x, rect.max().x), (-180.0, 180.0));
+        assert!(rect.max().y < 10.2 && rect.min().y > -10.2, "{rect:?}");
     }
 
     #[test]

@@ -1,0 +1,15 @@
+---
+source: crates/andromeda-postgresql-query/src/near_measure.rs
+---
+SELECT
+  _ST_DWithin(
+    COALESCE("g"."value_geometry_valid", "g"."value_geometry")::geography,
+    "r"."reference",
+    $1
+  )
+  AND ST_Distance(
+    COALESCE("g"."value_geometry_valid", "g"."value_geometry")::geography,
+    "r"."reference"
+  ) >= $2
+1: Double 25000
+2: Double 10

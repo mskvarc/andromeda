@@ -7,6 +7,7 @@
 
 use crate::{
     broker::BrokerClient,
+    filter_parity::{Filter, ParityCase, expect_alike, notified_ids, queried_ids, subscribe},
     namespace::Namespace,
     notification_sink::{NotificationSink, SinkError},
     outcome::Done,
@@ -14,16 +15,9 @@ use crate::{
 use andromeda_q_corpus::corpus::Traversal;
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{AttributeName, Entity, EntityId, EntityTypeName, Input, Lossless, NgsiLdMediaType},
-    query::{Join, q::Query, type_selection},
-    subscription::{Endpoint, NotificationParams, Subscription},
+    model::{Entity, EntityId, EntityTypeName, Input},
+    query::q::Query,
 };
-use std::{collections::HashSet, num::NonZeroU32, time::Duration};
-use tokio::time::sleep;
-
-/// How long every endpoint is watched for a notification beyond the ones owed.
-const QUIET_WINDOW: Duration = Duration::from_secs(3);
 
 /// The request members a term is asked with beside `q`.
 #[derive(Debug, Clone, Copy)]
@@ -74,46 +68,19 @@ pub async fn expect_query_and_subscription_alike(
     entities: &[Entity<Input>],
     cases: &[QCase<'_>],
 ) -> Result<()> {
-    let sink = NotificationSink::start().await?;
-    let mut subscription_ids = Vec::with_capacity(cases.len());
-    for (endpoint, case) in cases.iter().enumerate() {
-        let subscription_id = namespace.subscription_id(format!("q-{endpoint}"))?;
-        let subscription = Subscription::builder()
-            .id(subscription_id.clone())
-            .entities([entity_type.as_str()])
-            .q(case.q.parse::<Query>()?)
-            .expand_values(case.request.expand_values.iter().copied())
-            .json_keys(case.request.json_keys.iter().copied())
-            .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(endpoint)?).accept(NgsiLdMediaType::Json).build()?).build()?)
-            .build()?;
-        broker.subscriptions().create(&subscription).send().await?;
-        subscription_ids.push(subscription_id);
-    }
-    for entity in entities {
-        broker.entities().create(entity).send().await?.done()?;
-    }
+    let mut parity_cases = Vec::with_capacity(cases.len());
     for case in cases {
-        let queried = queried_ids(broker, entity_type, case).await?;
-        expect_that!(queried, eq(&selected(case)), "Query Entities with q={}", case.q);
+        parity_cases.push(ParityCase {
+            label: format!("q={}", case.q),
+            filter: Filter {
+                q: Some(case.q.parse::<Query>()?),
+                geo_q: None,
+                request: case.request,
+            },
+            selects: case.selects,
+        });
     }
-    for (endpoint, case) in cases.iter().enumerate() {
-        match sink.wait_for_at_least(endpoint, case.selects.len()).await {
-            Ok(_) | Err(SinkError::TimedOut(_)) => {}
-            Err(failure @ SinkError::Server(_)) => return Err(failure.into()),
-        }
-    }
-    sleep(QUIET_WINDOW).await;
-    for (endpoint, case) in cases.iter().enumerate() {
-        let mut notified = HashSet::new();
-        for notification in sink.received(endpoint).await? {
-            notified.extend(notification.entities(Lossless::Normalized)?.data().iter().map(|entity| entity.id.clone()));
-        }
-        expect_that!(notified, eq(&selected(case)), "a Subscription with q={}", case.q);
-    }
-    for subscription_id in &subscription_ids {
-        broker.subscriptions().delete(subscription_id).send().await?;
-    }
-    Ok(())
+    expect_alike(broker, namespace, entity_type, entities, &parity_cases).await
 }
 
 /// Subscribes to the Entities of `entity_type` once for each of `filters`, creates `entities`, and expects the
@@ -137,72 +104,27 @@ pub async fn expect_query_and_subscription_to_agree(
     filters: &[String],
 ) -> Result<()> {
     let sink = NotificationSink::start().await?;
+    let mut drawn = Vec::with_capacity(filters.len());
     for (endpoint, filter) in filters.iter().enumerate() {
-        let subscription = Subscription::builder()
-            .id(namespace.subscription_id(format!("drawn-{endpoint}"))?)
-            .entities([entity_type.as_str()])
-            .q(filter.parse::<Query>()?)
-            .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(endpoint)?).accept(NgsiLdMediaType::Json).build()?).build()?)
-            .build()?;
-        broker.subscriptions().create(&subscription).send().await?;
+        let drawn_filter = Filter {
+            q: Some(filter.parse::<Query>()?),
+            geo_q: None,
+            request: QRequest::PLAIN,
+        };
+        subscribe(broker, namespace, entity_type, &sink, endpoint, "drawn", &drawn_filter).await?;
+        drawn.push(drawn_filter);
     }
     for entity in entities {
         broker.entities().create(entity).send().await?.done()?;
     }
-    for (endpoint, filter) in filters.iter().enumerate() {
-        let case = QCase {
-            q: filter,
-            selects: &[],
-            request: QRequest::PLAIN,
-        };
-        let queried = queried_ids(broker, entity_type, &case).await?;
+    for (endpoint, (filter, drawn_filter)) in filters.iter().zip(&drawn).enumerate() {
+        let queried = queried_ids(broker, entity_type, drawn_filter).await?;
         match sink.wait_for_at_least(endpoint, queried.len()).await {
             Ok(_) | Err(SinkError::TimedOut(_)) => {}
             Err(failure @ SinkError::Server(_)) => return Err(failure.into()),
         }
-        let mut notified = HashSet::new();
-        for notification in sink.received(endpoint).await? {
-            notified.extend(notification.entities(Lossless::Normalized)?.data().iter().map(|entity| entity.id.clone()));
-        }
+        let notified = notified_ids(&sink, endpoint).await?;
         expect_that!(notified, eq(&queried), "a Subscription and Query Entities with q={filter}");
     }
     Ok(())
-}
-
-/// The Entities of `entity_type` that Query Entities answers for `case`.
-///
-/// A term reading through a Relationship is asked with `join=inline`, which nests every Linked Entity inside the
-/// Relationship that names it, so the answer lists the selected Entities alone (clause 4.5.23.2).
-async fn queried_ids(broker: &BrokerClient, entity_type: &EntityTypeName, case: &QCase<'_>) -> Result<HashSet<EntityId>> {
-    let (join, join_level) = match case.request.traversal {
-        Traversal::Local => (None, None),
-        Traversal::OneHop => (Some(Join::Inline), Some(NonZeroU32::MIN)),
-    };
-    let page = broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .entities()
-        .query()
-        .entity_type(type_selection::entity_type(entity_type).build()?)
-        .q(case.q.parse::<Query>()?)
-        .expand_values(names(case.request.expand_values)?)
-        .json_keys(names(case.request.json_keys)?)
-        .maybe_join(join)
-        .maybe_join_level(join_level)
-        .send()
-        .await?;
-    Ok(page.items().iter().map(|entity| entity.id.clone()).collect())
-}
-
-/// The attribute names `terms`.
-fn names(terms: &[&str]) -> Result<Vec<AttributeName>> {
-    let mut names = Vec::with_capacity(terms.len());
-    for term in terms {
-        names.push(term.parse()?);
-    }
-    Ok(names)
-}
-
-/// The Entities `case` selects.
-fn selected(case: &QCase<'_>) -> HashSet<EntityId> {
-    case.selects.iter().map(|id| (*id).clone()).collect()
 }
