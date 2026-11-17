@@ -461,7 +461,7 @@ mod tests {
     fn an_ordering_the_value_index_cannot_serve_keeps_the_plain_page() {
         let mut filtered = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
         filtered.selection.q = Some(CompiledFilter::new(
-            parse("\"https://example.com/speed\">1").expect("valid q"),
+            parse("\"https://example.com/speed\"!=1").expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let two_terms = vehicles_by(vec![term(SPEED, OrderDirection::Asc), term(SPEED, OrderDirection::Desc)]);

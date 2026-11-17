@@ -222,7 +222,7 @@ mod tests {
     fn an_id_pattern_filtered_further_or_ordered_keeps_the_plain_page() {
         let mut filtered = by_pattern(".*_1196287$");
         filtered.selection.q = Some(CompiledFilter::new(
-            parse("\"https://example.com/headSign\">1").expect("valid q"),
+            parse("\"https://example.com/headSign\"!=1").expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let mut by_attrs = by_pattern(".*_1196287$");

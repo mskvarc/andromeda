@@ -1,15 +1,17 @@
 //! The page of an entity query whose `q` holds a conjunct an index answers:
-//! an equality on a sub-attribute, a `~=` on an attribute's own value, an
-//! ordering or a range on an attribute's own `DateTime` or `Date` value, the
-//! bare existence of an attribute, or a Linked Entity hop.
+//! an equality with one operand on an attribute's own value or on a
+//! sub-attribute, a `~=` on an attribute's own value, an ordering or a range
+//! on an attribute's own number, boolean, `DateTime`, `Date` or `Time` value,
+//! the bare existence of an attribute, or a Linked Entity hop.
 //!
 //! The planner cannot price either term (it underestimates a broad one by
 //! orders of magnitude), so the page is a [`gated_page`]:
 //!
 //! 1. the short walk probes the first [`SHORT_WALK`] Entities of the
 //!    selection in page order for the whole `q`;
-//! 2. the index reads at most [`CANDIDATE_BOUND`] + 1 rows through
-//!    `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked, at most
+//! 2. the index reads at most [`CANDIDATE_BOUND`] + 1 rows through the value
+//!    and containment indexes, `idx_ca_sub_eq_keys` or the trigram indexes,
+//!    each rechecked, at most
 //!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index, or
 //!    at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an attribute name,
 //!    each probed for a standing instance, or every Entity naming a linked
@@ -298,7 +300,7 @@ mod tests {
     fn the_index_branch_leaves_out_the_term_its_candidates_answer() {
         let built = build_query(
             &ContextTarget::Live,
-            &query("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\";\"https://example.com/temperature\">1"),
+            &query("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\";\"https://example.com/temperature\"!=1"),
             &PageWindow::offset(100, 0),
             CountPolicy::Omit,
             &names(),
@@ -383,7 +385,7 @@ mod tests {
     fn a_page_without_a_keyed_term_takes_any_cached_plan() {
         for q in [
             "\"https://example.com/temperature\".\"https://example.com/source\"~=\"^sensor-4[0-9]$\"",
-            "\"https://example.com/temperature\">1",
+            "\"https://example.com/temperature\"!=1",
         ] {
             let built = build_query(&ContextTarget::Live, &query(q), &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
             assert_eq!(built.planning, StatementPlanning::Cached, "{q}");

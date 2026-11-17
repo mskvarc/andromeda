@@ -134,12 +134,11 @@ mod tests {
     }
 
     #[test]
-    fn only_a_sub_attribute_equality_with_one_operand_is_keyed() {
+    fn a_sub_attribute_ordering_complement_value_list_or_disjunct_is_not_keyed() {
         for q in [
             "\"https://example.com/temperature\".\"https://example.com/accuracy\">0.5",
             "\"https://example.com/temperature\".\"https://example.com/accuracy\"!=0.5",
             "\"https://example.com/temperature\".\"https://example.com/accuracy\"==0.5,0.6",
-            "\"https://example.com/temperature\"==0.5",
             "\"https://example.com/temperature\".\"https://example.com/accuracy\"==0.5|\"https://example.com/temperature\"==1",
         ] {
             assert_eq!(candidates(q), None, "{q}");

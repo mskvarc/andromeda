@@ -128,6 +128,7 @@ pub mod keyed_hop;
 pub mod keyed_ordering;
 pub mod keyed_pattern;
 pub mod keyed_term;
+pub mod keyed_value_equality;
 pub mod language_map;
 pub mod language_term;
 #[cfg(test)]

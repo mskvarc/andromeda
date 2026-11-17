@@ -1,18 +1,19 @@
 //! The index path of an ordering (`>`, `>=`, `<`, `<=`) or a range (`==a..b`)
-//! on an attribute's own value whose operand is a `DateTime`, a `Date` or a
-//! `Time`.
+//! on an attribute's own value whose operand is a number, a `DateTime`, a
+//! `Date` or a `Time`.
 //!
 //! Such a term compiles to its typed column and, where an operand may match a
 //! `languageMap` string, a language arm ([`OwnValueArms`]) that has no index,
 //! so the candidates read each arm on its own: the typed arm as a range scan
-//! of `idx_ca_value_date_time` or, for a `Date` and a `Time`, which are held
-//! as fixed-width text under their value kinds, of `idx_ca_value_string`; any
-//! language arm through the attribute's `LanguageProperty` rows.
+//! of `idx_ca_value_number`, of `idx_ca_value_date_time` or, for a `Date` and
+//! a `Time`, which are held as fixed-width text under their value kinds, of
+//! `idx_ca_value_string`; any language arm through the attribute's
+//! `LanguageProperty` rows.
 //!
-//! No other operand is offered. A number or a boolean compares against its
-//! typed column alone, which the planner already drives from its index. A
-//! String orders under the ICU root collation (clause 4.9 recommends the UCA),
-//! which the byte-ordered `idx_ca_value_string` cannot range over.
+//! No other operand is offered. A String orders under the ICU root collation
+//! (clause 4.9 recommends the UCA), which the byte-ordered
+//! `idx_ca_value_string` cannot range over, and the clause 4.9 grammar
+//! compares no boolean or URI by order.
 
 use crate::{
     entity_row_refs::EntityRowRefs,
@@ -33,16 +34,15 @@ use sea_query::{Condition, SelectStatement};
 enum OperandOrder {
     /// The typed column's index orders the operand's kind as the term does.
     Indexed,
-    /// No index orders the operand's kind as the term does, or the planner
-    /// already drives the term from one.
+    /// No index orders the operand's kind as the term does.
     Unindexed,
 }
 
 /// The order a value index gives `operand`.
 const fn operand_order(operand: &Operand) -> OperandOrder {
     match operand {
-        Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => OperandOrder::Indexed,
-        Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) | Operand::Uri(_) => OperandOrder::Unindexed,
+        Operand::Number(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => OperandOrder::Indexed,
+        Operand::Boolean(_) | Operand::Text(_) | Operand::Uri(_) => OperandOrder::Unindexed,
     }
 }
 
@@ -135,14 +135,24 @@ mod tests {
         assert_statement_snapshot!("keyed-ordering-every-branch-skips-an-expired-instance", statement);
     }
 
-    /// A number orders through its typed column alone, which the planner
-    /// already drives from `idx_ca_value_number`; a String orders under the
-    /// ICU root collation, which no index orders.
+    /// `NaN` is unordered, so the range leaves it out of `>` as the term does.
     #[test]
-    fn an_ordering_no_index_orders_better_than_the_planner_is_not_keyed() {
+    fn a_number_ordering_reads_the_number_index() {
+        let statement = candidates("\"https://example.com/reading\">990").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-a-number-ordering-reads-the-number-index", statement);
+    }
+
+    #[test]
+    fn a_number_range_reads_both_bounds_from_the_number_index() {
+        let statement = candidates("\"https://example.com/reading\"==1..5").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-a-number-range-reads-both-bounds-from-the-number-index", statement);
+    }
+
+    /// A String orders under the ICU root collation, which no index orders,
+    /// and a range with bounds of two kinds holds nothing.
+    #[test]
+    fn a_string_ordering_or_a_mixed_range_is_not_keyed() {
         for q in [
-            "\"https://example.com/reading\">990",
-            "\"https://example.com/reading\"==1..5",
             "\"https://example.com/reading\">\"23:58:00\"",
             "\"https://example.com/reading\"==2024-01-01..\"z\"",
         ] {
@@ -155,7 +165,6 @@ mod tests {
         for q in [
             "\"https://example.com/observedOn\"!=2024-01-01..2024-02-01",
             "\"https://example.com/observedOn\"==2024-01-01,2024-02-01",
-            "\"https://example.com/observedOn\"==2024-01-01",
         ] {
             assert_eq!(candidates(q), None, "{q}");
         }

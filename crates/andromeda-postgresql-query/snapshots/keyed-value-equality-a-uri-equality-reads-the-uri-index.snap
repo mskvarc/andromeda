@@ -1,0 +1,119 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_value_equality.rs
+---
+SELECT
+  "entity_key"
+FROM
+  (
+    SELECT
+      "ca"."entity_key"
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."value_string" = $2
+        AND nullif("ca"."value_kind" = (2), FALSE)
+      )
+    UNION ALL
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $3
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND "ca"."value_uri" = $4
+    )
+    UNION ALL
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $5
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND "ca"."attribute_kind" <> (6)
+        AND (
+          (
+            (
+              "ca"."value_object" @> jsonb_build_array($6::text)
+            )
+            OR (
+              "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $7::text))
+            )
+          )
+          AND EXISTS (
+            SELECT
+              1
+            FROM
+              jsonb_array_elements(
+                (
+                  CASE
+                    WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object"
+                  END
+                )
+              ) AS "dm"
+              LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                CASE
+                  WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+                END
+              )
+            WHERE
+              (
+                CASE
+                  WHEN (
+                    jsonb_typeof(
+                      COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                    ) = ('string')
+                    AND (
+                      NOT COALESCE(
+                        COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                          'https://uri.etsi.org/ngsi-ld/DateTime',
+                          'https://uri.etsi.org/ngsi-ld/Date',
+                          'https://uri.etsi.org/ngsi-ld/Time'
+                        )
+                        OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                          'http://www.w3.org/2001/XMLSchema#decimal',
+                          'http://www.w3.org/2001/XMLSchema#integer',
+                          'http://www.w3.org/2001/XMLSchema#long',
+                          'http://www.w3.org/2001/XMLSchema#int',
+                          'http://www.w3.org/2001/XMLSchema#short',
+                          'http://www.w3.org/2001/XMLSchema#byte',
+                          'http://www.w3.org/2001/XMLSchema#nonNegativeInteger',
+                          'http://www.w3.org/2001/XMLSchema#positiveInteger',
+                          'http://www.w3.org/2001/XMLSchema#nonPositiveInteger',
+                          'http://www.w3.org/2001/XMLSchema#negativeInteger',
+                          'http://www.w3.org/2001/XMLSchema#unsignedLong',
+                          'http://www.w3.org/2001/XMLSchema#unsignedInt',
+                          'http://www.w3.org/2001/XMLSchema#unsignedShort',
+                          'http://www.w3.org/2001/XMLSchema#unsignedByte',
+                          'http://www.w3.org/2001/XMLSchema#float',
+                          'http://www.w3.org/2001/XMLSchema#double'
+                        )
+                        OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'),
+                        FALSE
+                      )
+                    )
+                  ) THEN (
+                    COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $8)))) AS "matches"
+1: Int 13
+2: String 'urn:ngsi-ld:Device:hub'
+3: Int 13
+4: String 'urn:ngsi-ld:Device:hub'
+5: Int 13
+6: String 'urn:ngsi-ld:Device:hub'
+7: String 'urn:ngsi-ld:Device:hub'
+8: String 'urn:ngsi-ld:Device:hub'

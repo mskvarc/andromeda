@@ -77,11 +77,20 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// equality, which the verdict condition states once.
 #[must_use]
 pub fn typed_column_condition(operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
+    typed_field_conditions(operand, comparator, row)
+        .into_iter()
+        .reduce(ExprTrait::or)
+        .unwrap_or_else(false_literal)
+}
+
+/// The arms of [`typed_column_condition`], one comparison per typed field it
+/// reads, each answered by that field's own index.
+#[must_use]
+pub fn typed_field_conditions(operand: &Operand, comparator: Comparator, row: InstanceRow) -> Vec<SimpleExpr> {
     field_arms(operand, comparator)
         .iter()
         .map(|arm| arm.condition(operand, comparator, row))
-        .reduce(ExprTrait::or)
-        .unwrap_or_else(false_literal)
+        .collect()
 }
 
 /// `compared`, a test of a String one of `row`'s String columns holds, read
@@ -215,6 +224,10 @@ impl FieldArm {
 /// length may order on either side of the operand; a row whose value is in the
 /// other column yields NULL for that arm, which the disjunction absorbs. It
 /// compares under the collation [`ordered_string`] picks.
+///
+/// PostgreSQL rewrites an equality with the boolean `false` into the negated
+/// column, which does not imply the column is non-NULL, so that comparison
+/// states it ([`held_false`]).
 fn field_comparison(operand: &Operand, comparator: Comparator, field: ValueField, kind: TargetKind, row: InstanceRow) -> SimpleExpr {
     match (operand.text_against(kind), comparator) {
         (Some(text), Comparator::Equal) => compare(row.value(ValueColumn::holding(field, text)), comparator, bound_operand(operand, kind)),
@@ -223,8 +236,33 @@ fn field_comparison(operand: &Operand, comparator: Comparator, field: ValueField
             .map(|column| compare(ordered_string(row.value(column), operand, comparator), comparator, bound_operand(operand, kind)))
             .reduce(ExprTrait::or)
             .unwrap_or_else(false_literal),
-        (None, Comparator::Equal | Comparator::Ordered(_)) => compare(row.value(ValueColumn::Field(field)), comparator, bound_operand(operand, kind)),
+        (None, Comparator::Equal) => {
+            let compared = compare(row.value(ValueColumn::Field(field)), comparator, bound_operand(operand, kind));
+            match operand {
+                Operand::Boolean(false) => held_false(compared, row.value(ValueColumn::Field(field))),
+                Operand::Boolean(true)
+                | Operand::Number(_)
+                | Operand::Text(_)
+                | Operand::Uri(_)
+                | Operand::DateTime(_)
+                | Operand::Date(_)
+                | Operand::Time(_) => compared,
+            }
+        }
+        (None, Comparator::Ordered(_)) => compare(row.value(ValueColumn::Field(field)), comparator, bound_operand(operand, kind)),
     }
+}
+
+/// `compared`, an equality of the boolean `column` with `false`, stated
+/// beside `column IS NOT NULL`.
+///
+/// The planner reads `column = false` as `NOT column`, from which it cannot
+/// prove the predicate of the partial index over the column, so without the
+/// stated predicate a read of a rare `false` scans every row of the attribute
+/// instead of the index. `column = true` reads as the bare column, which
+/// proves it.
+fn held_false(compared: SimpleExpr, column: SimpleExpr) -> SimpleExpr {
+    compared.and(column.is_not_null())
 }
 
 /// The value `operand` is bound as against the field holding a target of
@@ -353,6 +391,16 @@ mod tests {
                 render(current(&Operand::Number(3.into()), comparator))
             );
         }
+    }
+
+    /// The planner reads `= false` as the negated column, from which it cannot
+    /// prove the partial index's predicate, so the comparison states it.
+    #[test]
+    fn an_equality_with_false_states_its_field_is_held() {
+        assert_statement_snapshot!(
+            "typed-column-an-equality-with-false-states-its-field-is-held",
+            render(current(&Operand::Boolean(false), Comparator::Equal))
+        );
     }
 
     /// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
