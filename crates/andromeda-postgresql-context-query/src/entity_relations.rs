@@ -6,19 +6,23 @@
 //! selection (clause 4.17), which carries the same `entity_key` and `id` and
 //! yields a type's Entities in identifier order without visiting any other.
 //! `entities` is then joined only for the `createdAt` or `modifiedAt` a sort
-//! reads. A geo-query keeps `entities` driving: its matches come from the
-//! spatial index as a set of keys, and the walk of several types is a merge
-//! the planner cannot see into, so it would merge every member of the types
-//! before the few matches narrow them. Driven by `entities`, the statement
-//! starts from the matches and tests the type on the search row the geo-query
-//! joins anyway. `entity_search` is joined only when some axis of the query reads an
-//! indexed column of it. A `q` expression and a sort on an attribute value read
-//! `current_attributes` rows through probes and laterals correlated on the
-//! entity key, so they join nothing. What the response holds is not a reason
-//! to join either: the head of each Entity is looked up by key for the rows of
-//! the cut page alone, and its attributes are read afterwards by the keys of
-//! the page. A query that asks for identifiers with no filter joins nothing
-//! and reads one relation.
+//! reads. A geo-query keeps `entities` driving a statement narrowed to its
+//! matches, as the plain page and the index branch of a geo page are. Its
+//! matches come from the spatial index as a set of keys, and the walk of
+//! several types is a merge the planner cannot see into, so it would merge
+//! every member of the types before the few matches narrow them. Driven by
+//! `entities`, the statement starts from the matches and tests the type on the
+//! search row the geo-query joins anyway. The walks of a geo page probe each
+//! Entity they visit for the geo-query instead, so they take the membership
+//! walk when the selectors are types alone, and join the search row only for
+//! the other filters that read it. `entity_search` is joined only when some
+//! axis of the query reads an indexed column of it. A `q` expression and a
+//! sort on an attribute value read `current_attributes` rows through probes
+//! and laterals correlated on the entity key, so they join nothing. What the
+//! response holds is not a reason to join either: the head of each Entity is
+//! looked up by key for the rows of the cut page alone, and its attributes are
+//! read afterwards by the keys of the page. A query that asks for identifiers
+//! with no filter joins nothing and reads one relation.
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
@@ -95,16 +99,20 @@ impl EntityRelations {
     /// not answer, an `attrs` term, a projection that can leave an entity no
     /// member, a geo query, a scope query, an ordering on `type` or `scope`, or
     /// a distance ordering measured to the default `location`.
+    #[must_use]
     pub fn for_query(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>) -> EntityRelations {
-        let selection = &query.selection;
-        let terms = &query.ordering.terms;
-        let lifecycle = demand(terms.iter().any(reads_lifecycle));
-        let source = source(selection, types, schema, lifecycle);
-        let search = search_demand(selection, &source) || terms.iter().any(reads_search_row);
-        EntityRelations {
-            source,
-            search: demand(search),
-        }
+        EntityRelations::reading(query, types, schema, GeoRole::Narrows)
+    }
+
+    /// The relations the walks of a geo page read, in the branch `schema`:
+    /// those [`EntityRelations::for_query`] chooses with the geo-query left to
+    /// a probe of each Entity the walk yields.
+    ///
+    /// The walk is the membership walk when the selectors are types alone, and
+    /// the search row is joined only for the other filters that read it.
+    #[must_use]
+    pub fn for_geo_walk(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>) -> EntityRelations {
+        EntityRelations::reading(query, types, schema, GeoRole::Probed)
     }
 
     /// The relations the fallback count of a paginated query reads: the same
@@ -112,10 +120,24 @@ impl EntityRelations {
     #[must_use]
     pub fn for_count(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>) -> EntityRelations {
         let selection = &query.selection;
-        let source = source(selection, types, schema, Demand::NotJoined);
+        let source = source(selection, types, schema, Demand::NotJoined, GeoRole::Narrows);
         EntityRelations {
-            search: demand(search_demand(selection, &source)),
+            search: demand(search_demand(selection, &source, GeoRole::Narrows)),
             source,
+        }
+    }
+
+    /// The relations a statement over `query` reads in the branch `schema`,
+    /// its geo-query playing `geo`.
+    fn reading(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>, geo: GeoRole) -> EntityRelations {
+        let selection = &query.selection;
+        let terms = &query.ordering.terms;
+        let lifecycle = demand(terms.iter().any(reads_lifecycle));
+        let source = source(selection, types, schema, lifecycle, geo);
+        let search = search_demand(selection, &source, geo) || terms.iter().any(reads_search_row);
+        EntityRelations {
+            source,
+            search: demand(search),
         }
     }
 
@@ -176,17 +198,37 @@ impl EntityRelations {
     }
 }
 
+/// What a selection's geo-query is to the statement its relations serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeoRole {
+    /// Its matches narrow the selection, read from the spatial index as a set
+    /// of keys.
+    Narrows,
+    /// Each Entity the statement yields is probed for it.
+    Probed,
+}
+
+/// Whether `selection` is narrowed to the matches of a geo-query playing
+/// `geo`.
+const fn narrowed_by_geo(selection: &EntitySelection, geo: GeoRole) -> bool {
+    match geo {
+        GeoRole::Narrows => selection.geo.is_some(),
+        GeoRole::Probed => false,
+    }
+}
+
 /// The relation a selection is driven by: the membership walk when every
 /// selector selects by a type expression that has a range to walk and names no
-/// identifier, and no geo-query narrows the selection, `entities` otherwise.
+/// identifier, and no geo-query playing `geo` narrows the selection,
+/// `entities` otherwise.
 ///
 /// A selector naming identifiers is already answered by the identifier index,
-/// a geo-query by the spatial index, and a request that considers no Entity
-/// (clause 5.5.14) walks nothing.
-fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>, lifecycle: Demand) -> RowSource {
+/// a geo-query's matches by the spatial index, and a request that considers no
+/// Entity (clause 5.5.14) walks nothing.
+fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>, lifecycle: Demand, geo: GeoRole) -> RowSource {
     let walkable = match selection.considered {
         ConsideredEntities::Selected => {
-            selection.geo.is_none()
+            !narrowed_by_geo(selection, geo)
                 && !selection.selectors.is_empty()
                 && selection
                     .selectors
@@ -217,13 +259,14 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
 }
 
 /// Whether a selection's filters read the search row: a type selector the
-/// membership walk does not answer, or any other search axis.
-fn search_demand(selection: &EntitySelection, source: &RowSource) -> bool {
+/// membership walk does not answer, a geo-query playing `geo` that narrows the
+/// selection, or any other search axis.
+fn search_demand(selection: &EntitySelection, source: &RowSource, geo: GeoRole) -> bool {
     let typed = match source {
         RowSource::Entities => selection.selectors.iter().any(|selector| selector.type_expr.is_some()),
         RowSource::TypeMembers { .. } => false,
     };
-    typed || !selection.attrs.is_empty() || selection.projected_members.constrains() || selection.geo.is_some() || selection.scope_q.is_some()
+    typed || !selection.attrs.is_empty() || selection.projected_members.constrains() || narrowed_by_geo(selection, geo) || selection.scope_q.is_some()
 }
 
 /// Join `table`, in the branch `schema`, on its `entity_key` column `key` to
@@ -335,6 +378,15 @@ mod tests {
         query
     }
 
+    /// The Entities whose `location` lies within a point.
+    fn within_point() -> GeoQuery {
+        GeoQuery {
+            georel: GeoRel::Within,
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
+        }
+    }
+
     /// The FROM clause and joins `relations` renders, selecting the identifier
     /// the rows it keys read.
     fn from_clause(relations: EntityRelations) -> SelectStatement {
@@ -370,11 +422,7 @@ mod tests {
         let mut attrs = empty_query();
         attrs.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
         let mut geo = empty_query();
-        geo.selection.geo = Some(GeoQuery {
-            georel: GeoRel::Within,
-            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
-            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
-        });
+        geo.selection.geo = Some(within_point());
         let mut scope = empty_query();
         scope.selection.scope_q = Some(ScopeQuery::parse("/a").expect("valid scope query"));
         let mut by_type = empty_query();
@@ -433,20 +481,15 @@ mod tests {
     /// several.
     #[test]
     fn a_typed_geo_query_is_driven_by_entities_and_tests_the_type_on_the_search_row() {
-        let geo = GeoQuery {
-            georel: GeoRel::Within,
-            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
-            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
-        };
         let mut one = typed_query();
-        one.selection.geo = Some(geo.clone());
+        one.selection.geo = Some(within_point());
         let mut several = typed_query();
         several.selection.selectors.push(
             EntitySelector::builder()
                 .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/U".to_string()).expect("valid IRI"))))
                 .build(),
         );
-        several.selection.geo = Some(geo);
+        several.selection.geo = Some(within_point());
         for query in [one, several] {
             assert_eq!(relations(&query), joined(Demand::Joined), "{query:?}");
             assert_eq!(EntityRelations::for_count(&query, &types(), None), joined(Demand::Joined), "{query:?}");
@@ -564,6 +607,26 @@ mod tests {
             }
         ));
         assert_statement_snapshot!("entity-relations-a-membership-walk-joins-the-search-row-of-each-member", from_clause(walked));
+    }
+
+    /// The walks of a geo page probe each Entity for the geo-query, so a
+    /// selection by type alone takes the membership walk and joins no search
+    /// row, while a statement narrowed to the matches keeps `entities` driving
+    /// and tests the type on the search row.
+    #[test]
+    fn a_geo_walk_reads_the_type_members_and_a_geo_page_keeps_entities_driving() {
+        let mut query = typed_query();
+        query.selection.geo = Some(within_point());
+        let walk = EntityRelations::for_geo_walk(&query, &types(), None);
+        assert_eq!(walk.search, Demand::NotJoined);
+        assert!(matches!(
+            walk.source,
+            RowSource::TypeMembers {
+                entities: Demand::NotJoined,
+                ..
+            }
+        ));
+        assert_eq!(relations(&query), joined(Demand::Joined));
     }
 
     #[test]

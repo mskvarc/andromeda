@@ -23,7 +23,7 @@
 
 use crate::{
     carried_names::attrs_carriers,
-    entity::{QFilter, build_entity_conditions},
+    entity::{GeoFilter, QFilter, build_entity_conditions},
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
     gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
@@ -106,7 +106,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
     let probed = EntityRowRefs::aliased(source.schema.cloned(), Walked, Probed).standing_at(source.rows.standing());
     let mut probe = Query::select();
     probe.expr(Expr::val(1)).from_as(probed.table(EntitySearch::Table), Probed).cond_where(
-        build_entity_conditions(source.query, source.names, &probed, &RowSource::Entities, QFilter::Whole)?
+        build_entity_conditions(source.query, source.names, &probed, &RowSource::Entities, QFilter::Whole, GeoFilter::Matched)?
             .add(Expr::col((Probed, EntitySearch::EntityKey)).eq(probed.entity_key_column())),
     );
     let walk = PageWalk {
@@ -121,7 +121,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
     let read = IndexRead {
         candidates: carriers,
         bound: CandidateBound::AtMost(CARRIER_BOUND),
-        narrowed: source.condition(QFilter::Whole)?,
+        narrowed: source.condition(QFilter::Whole, GeoFilter::Matched)?,
     };
     // The total is the plain count over the carriers whichever step answers,
     // so the rows name none.

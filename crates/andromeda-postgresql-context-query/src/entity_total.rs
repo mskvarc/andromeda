@@ -2,7 +2,7 @@
 //! reads it, and the statement that counts it when the page cannot carry it.
 
 use crate::{
-    entity::{QFilter, build_entity_conditions},
+    entity::{GeoFilter, QFilter, build_entity_conditions},
     entity_page::GatedStep,
     entity_relations::EntityRelations,
     keyed_count::{CountedRead, count_bound, keyed_count},
@@ -144,7 +144,14 @@ pub(crate) fn entity_total(
                         .into_iter()
                         .map(|KeyedCandidates { term, select, read }| {
                             Ok(CountedRead {
-                                remainder: build_entity_conditions(source.query, source.names, source.rows, &relations.source, QFilter::Except(term))?,
+                                remainder: build_entity_conditions(
+                                    source.query,
+                                    source.names,
+                                    source.rows,
+                                    &relations.source,
+                                    QFilter::Except(term),
+                                    GeoFilter::Matched,
+                                )?,
                                 candidates: select,
                                 read,
                             })

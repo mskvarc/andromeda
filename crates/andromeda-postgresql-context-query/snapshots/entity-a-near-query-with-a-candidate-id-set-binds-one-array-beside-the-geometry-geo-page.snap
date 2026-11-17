@@ -1,0 +1,281 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    WITH
+    "short_walk" AS MATERIALIZED (
+      SELECT
+        "walked".*
+      FROM
+        (
+          SELECT
+            "entities"."entity_key",
+            "entities"."id" AS "sort_0"
+          FROM
+            "entities"
+          WHERE
+            "entities"."created_at" IS NOT NULL
+            AND (
+              "entities"."expires_at" IS NULL
+              OR "entities"."expires_at" > NOW()
+            )
+            AND "entities"."id" = ANY($1)
+          ORDER BY
+            "sort_0" ASC
+          LIMIT
+            200 OFFSET 0
+        ) AS "walked"
+        INNER JOIN LATERAL (
+          SELECT
+            1
+          WHERE
+            EXISTS (
+              SELECT
+                1
+              FROM
+                "entity_search" AS "geo_default"
+              WHERE
+                "geo_default"."entity_key" = "walked"."entity_key"
+                AND (
+                  "geo_default"."location_expires_at" IS NULL
+                  OR "geo_default"."location_expires_at" > NOW()
+                )
+                AND (
+                  COALESCE(
+                    "geo_default"."location_reach",
+                    "geo_default"."location"
+                  )::box2d && ST_MakeEnvelope($2, $3, $4, $5, $6)::box2d
+                )
+                AND _ST_DWithin(
+                  "geo_default"."location"::geography,
+                  ST_MakeValid(ST_GeomFromEWKB($7))::geography,
+                  $8
+                )
+            ) OFFSET 0
+        ) AS "kept" ON TRUE
+      ORDER BY
+        "walked"."sort_0" ASC
+      LIMIT
+        20
+    ),
+    "candidates" AS MATERIALIZED (
+      SELECT
+        "geo_default"."entity_key"
+      FROM
+        "entity_search" AS "geo_default"
+      WHERE
+        (
+          "geo_default"."location_expires_at" IS NULL
+          OR "geo_default"."location_expires_at" > NOW()
+        )
+        AND (
+          COALESCE(
+            "geo_default"."location_reach",
+            "geo_default"."location"
+          ) && ST_MakeEnvelope($9, $10, $11, $12, $13)
+        )
+        AND _ST_DWithin(
+          "geo_default"."location"::geography,
+          ST_MakeValid(ST_GeomFromEWKB($14))::geography,
+          $15
+        )
+      LIMIT
+        10001
+    )
+    SELECT
+      *
+    FROM
+      (
+        SELECT
+          *
+        FROM
+          "short_walk"
+        WHERE
+          (
+            SELECT
+              COUNT(*)
+            FROM
+              "short_walk"
+          ) >= $16
+        ORDER BY
+          "sort_0" ASC
+        LIMIT
+          20 OFFSET 0
+      ) AS "answered"
+    UNION ALL
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "entities"."entity_key",
+            "entities"."id" AS "sort_0"
+          FROM
+            "entities"
+            JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+          WHERE
+            "entities"."created_at" IS NOT NULL
+            AND (
+              "entities"."expires_at" IS NULL
+              OR "entities"."expires_at" > NOW()
+            )
+            AND "entities"."id" = ANY($17)
+            AND "entities"."entity_key" = ANY(
+              ARRAY (
+                SELECT
+                  "entity_key"
+                FROM
+                  "candidates"
+              )
+            )
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "short_walk"
+            ) < $18
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) <= $19
+          ORDER BY
+            "sort_0" ASC
+          LIMIT
+            20 OFFSET 0
+        ) AS "indexed"
+    )
+    UNION ALL
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "walked".*
+          FROM
+            (
+              SELECT
+                "entities"."entity_key",
+                "entities"."id" AS "sort_0"
+              FROM
+                "entities"
+              WHERE
+                "entities"."created_at" IS NOT NULL
+                AND (
+                  "entities"."expires_at" IS NULL
+                  OR "entities"."expires_at" > NOW()
+                )
+                AND "entities"."id" = ANY($20)
+              ORDER BY
+                "sort_0" ASC OFFSET 0
+            ) AS "walked"
+            INNER JOIN LATERAL (
+              SELECT
+                1
+              WHERE
+                EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "entity_search" AS "geo_default"
+                  WHERE
+                    "geo_default"."entity_key" = "walked"."entity_key"
+                    AND (
+                      "geo_default"."location_expires_at" IS NULL
+                      OR "geo_default"."location_expires_at" > NOW()
+                    )
+                    AND (
+                      COALESCE(
+                        "geo_default"."location_reach",
+                        "geo_default"."location"
+                      )::box2d && ST_MakeEnvelope($21, $22, $23, $24, $25)::box2d
+                    )
+                    AND _ST_DWithin(
+                      "geo_default"."location"::geography,
+                      ST_MakeValid(ST_GeomFromEWKB($26))::geography,
+                      $27
+                    )
+                ) OFFSET 0
+            ) AS "kept" ON TRUE
+          WHERE
+            (
+              SELECT
+                COUNT(*)
+              FROM
+                "short_walk"
+            ) < $28
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) > $29
+          ORDER BY
+            "walked"."sort_0" ASC
+          LIMIT
+            20 OFFSET 0
+        ) AS "walk"
+    )
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: Array ARRAY ['urn:a','urn:b','urn:c']
+2: Double 13.385140049735467
+3: Double 52.49095530522908
+4: Double 13.414859950264534
+5: Double 52.50904469477092
+6: Int 4326
+7: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'
+8: Double 1000
+9: Double 13.385140049735467
+10: Double 52.49095530522908
+11: Double 13.414859950264534
+12: Double 52.50904469477092
+13: Int 4326
+14: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'
+15: Double 1000
+16: BigUnsigned 20
+17: Array ARRAY ['urn:a','urn:b','urn:c']
+18: BigUnsigned 20
+19: BigUnsigned 10000
+20: Array ARRAY ['urn:a','urn:b','urn:c']
+21: Double 13.385140049735467
+22: Double 52.49095530522908
+23: Double 13.414859950264534
+24: Double 52.50904469477092
+25: Int 4326
+26: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'
+27: Double 1000
+28: BigUnsigned 20
+29: BigUnsigned 10000

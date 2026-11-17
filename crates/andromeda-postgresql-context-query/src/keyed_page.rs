@@ -24,7 +24,7 @@
 //!    full walk.
 
 use crate::{
-    entity::QFilter,
+    entity::{GeoFilter, QFilter},
     entity_page::ProjectedPage,
     gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, gated_page, walked_rows},
 };
@@ -99,7 +99,7 @@ pub(crate) fn keyed_page(
     let walked = walked_rows(source.rows);
     let walk = PageWalk {
         source: *source,
-        walked: source.condition(QFilter::Omitted)?,
+        walked: source.condition(QFilter::Omitted, GeoFilter::Matched)?,
         probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
         short: SHORT_WALK,
     };
@@ -109,7 +109,7 @@ pub(crate) fn keyed_page(
             Ok(IndexRead {
                 candidates: keyed.select,
                 bound: page_bound(keyed.read),
-                narrowed: source.condition(QFilter::Except(keyed.term))?,
+                narrowed: source.condition(QFilter::Except(keyed.term), GeoFilter::Matched)?,
             })
         })
         .collect::<Result<Vec<IndexRead>, RenderError>>()?;

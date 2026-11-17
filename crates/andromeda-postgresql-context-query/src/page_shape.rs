@@ -9,6 +9,7 @@ use crate::{
     entity_relations::EntityRelations,
     entity_total::TotalCandidates,
     gated_page::{GatedColumns, PageSource},
+    geo_page::{GeoMatches, geo_matches, geo_page},
     id_pattern_page::{PatternMatches, id_pattern_page, pattern_matches},
     keyed_page::{keyed_page, page_bound},
     value_walk_page::{ValueWalkOrder, value_walk_order, value_walk_page},
@@ -37,6 +38,9 @@ pub(crate) enum PageShape<'q> {
     /// The gated page of a `q` whose conjuncts an index answers, read in the
     /// order listed.
     Keyed(&'q CompiledFilter, Vec<KeyedCandidates<'q>>),
+    /// The gated page of a selection filtered by a geo-query, the statement
+    /// reading the geo-query's matches.
+    Geo(GeoMatches<'q>),
     /// The gated page of a selection by `attrs` alone, the statement reading
     /// the Entities that carry one of the Attributes.
     Carriers(SelectStatement),
@@ -66,55 +70,52 @@ pub(crate) struct CutPage<'q> {
 }
 
 impl<'q> PageShape<'q> {
-    /// How the page of `query` over `window` is cut: gated when a term of
-    /// `q`, the request's `attrs`, an ordering a value walk serves or an unanchored
-    /// `idPattern` gives the page an index to read, plain otherwise.
+    /// How the page of `query` over `window` is cut when `count` asks for its
+    /// total: gated when a term of `q`, a geo-query, the request's `attrs`, an
+    /// ordering a value walk serves or an unanchored `idPattern` gives the
+    /// page an index to read, plain otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Fails as rendering the matches of a geo-query fails: a reference
+    /// geometry with no EWKB spelling, or `georel=near` naming no distance.
     pub(crate) fn of(
         query: &'q CompiledEntityQuery,
         names: &QueryNames,
         window: &PageWindow,
+        count: CountPolicy,
         relations: &EntityRelations,
         rows: &EntityRowRefs,
         schema: Option<&DynIden>,
-    ) -> PageShape<'q> {
+    ) -> Result<PageShape<'q>, RenderError> {
         let keyed = query
             .selection
             .q
             .as_ref()
             .map(|q| (q, keyed_candidates(q.reading(), rows, names, page_bound)))
             .filter(|(_, keyed)| !keyed.is_empty());
-        match keyed {
-            Some((q, keyed)) => PageShape::Keyed(q, keyed),
-            None => carriers(query, names, schema)
-                .map(PageShape::Carriers)
-                .or_else(|| value_walk_order(query, names, window).map(PageShape::ValueWalk))
-                .or_else(|| pattern_matches(query, relations, schema).map(PageShape::IdPattern))
-                .unwrap_or(PageShape::Plain),
+        if let Some((q, keyed)) = keyed {
+            return Ok(PageShape::Keyed(q, keyed));
         }
+        if let Some(matches) = geo_matches(query, names, window, count, rows)? {
+            return Ok(PageShape::Geo(matches));
+        }
+        Ok(carriers(query, names, schema)
+            .map(PageShape::Carriers)
+            .or_else(|| value_walk_order(query, names, window).map(PageShape::ValueWalk))
+            .or_else(|| pattern_matches(query, relations, schema).map(PageShape::IdPattern))
+            .unwrap_or(PageShape::Plain))
     }
 
     /// Whether the page's rows carry the total `count` asks for.
     ///
-    /// An offset page, and the first page of a cursor walk, piggyback a
-    /// requested total on their rows: every row of a plain page, the rows of
-    /// a gated page whose index branch answered, which read every candidate.
-    /// A continued cursor page cannot, since its rows are only those past the
-    /// cursor, and neither can a value walk page, whose branches each read part
-    /// of the selection.
+    /// A plain page and a gated page carry it as [`carried_on_rows`] says. A
+    /// value walk page cannot, since its branches each read part of the
+    /// selection.
     pub(crate) const fn counted_on_page(&self, count: CountPolicy, window: &PageWindow) -> CountPolicy {
-        match (count, &window.start, self) {
-            (
-                CountPolicy::Emit,
-                PageStart::Offset(_) | PageStart::Cursor(None),
-                PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::IdPattern(_),
-            ) => CountPolicy::Emit,
-            (CountPolicy::Emit, PageStart::Cursor(Some(_)), PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::IdPattern(_))
-            | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), PageShape::ValueWalk(_))
-            | (
-                CountPolicy::Omit,
-                PageStart::Offset(_) | PageStart::Cursor(_),
-                PageShape::Plain | PageShape::Keyed(..) | PageShape::Carriers(_) | PageShape::ValueWalk(_) | PageShape::IdPattern(_),
-            ) => CountPolicy::Omit,
+        match self {
+            PageShape::Plain | PageShape::Keyed(..) | PageShape::Geo(_) | PageShape::Carriers(_) | PageShape::IdPattern(_) => carried_on_rows(count, window),
+            PageShape::ValueWalk(_) => CountPolicy::Omit,
         }
     }
 
@@ -156,6 +157,16 @@ impl<'q> PageShape<'q> {
                 let (page, read_order) = keyed_page(source, q, keyed, gated_columns(count, counted_on_page))?;
                 (page, read_order, StatementPlanning::BoundValues, keyed_total)
             }
+            PageShape::Geo(matches) => {
+                // The total is the plain count of the whole filter whichever
+                // step answers, so the rows name none.
+                let columns = GatedColumns {
+                    total: counted_on_page,
+                    step: StepColumn::Unnamed,
+                };
+                let (page, read_order) = geo_page(source, matches, columns)?;
+                (page, read_order, StatementPlanning::Cached, None)
+            }
             PageShape::Carriers(carriers) => {
                 let (page, read_order) = carrier_page(source, carriers, counted_on_page)?;
                 (page, read_order, StatementPlanning::Cached, None)
@@ -187,6 +198,20 @@ impl<'q> PageShape<'q> {
     }
 }
 
+/// The total `count` asks for, when a page that reads every match before it
+/// cuts its window can carry it on its rows.
+///
+/// An offset page and the first page of a cursor walk carry it, on every row
+/// of a plain page and on the rows of a gated page whose index branch
+/// answered, since that branch read every candidate. A continued cursor page
+/// cannot, since its rows are only those past the cursor.
+pub(crate) const fn carried_on_rows(count: CountPolicy, window: &PageWindow) -> CountPolicy {
+    match (count, &window.start) {
+        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None)) => CountPolicy::Emit,
+        (CountPolicy::Emit, PageStart::Cursor(Some(_))) | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_)) => CountPolicy::Omit,
+    }
+}
+
 /// What the rows of a gated page whose total reads candidates carry: the
 /// total when `counted_on_page` says the page can, and the step that answered
 /// it whenever `count` asks for a total, so a count run on its own skips the
@@ -198,5 +223,104 @@ const fn gated_columns(count: CountPolicy, counted_on_page: CountPolicy) -> Gate
             CountPolicy::Emit => StepColumn::Named,
             CountPolicy::Omit => StepColumn::Unnamed,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        entity_relations::EntityRelations,
+        entity_total::EntityTotal,
+        geo_page_fixtures::{built, filtered, first_page, names, past_first_sensor, sensors_within_square},
+        page_shape::PageShape,
+    };
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        entity::compiled::CompiledEntityQuery,
+        entity_selection::ConsideredEntities,
+        filter::path::AttrPath,
+        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        page_window::{PageStart, PageWindow},
+    };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use pretty_assertions::assert_eq;
+
+    /// How the page of `query` over `window` is cut when `count` asks for its
+    /// total, on the live branch.
+    fn shape_of<'q>(query: &'q CompiledEntityQuery, window: &PageWindow, count: CountPolicy) -> PageShape<'q> {
+        let names = names();
+        let relations = EntityRelations::for_query(query, &names.types, None);
+        let rows = relations.rows(None, query.selection.standing);
+        PageShape::of(query, &names, window, count, &relations, &rows, None).expect("valid entity query")
+    }
+
+    #[test]
+    fn a_geo_query_alone_is_cut_by_the_geo_page() {
+        assert!(matches!(
+            shape_of(&sensors_within_square(), &first_page(), CountPolicy::Omit),
+            PageShape::Geo(_)
+        ));
+    }
+
+    #[test]
+    fn a_geo_query_beside_a_keyed_term_keeps_the_keyed_page() {
+        let query = filtered(sensors_within_square(), "\"https://example.com/status\"==\"fail\"");
+        assert!(matches!(shape_of(&query, &first_page(), CountPolicy::Omit), PageShape::Keyed(..)));
+    }
+
+    #[test]
+    fn a_geo_query_under_an_ordering_keeps_the_plain_page() {
+        let mut query = sensors_within_square();
+        query.ordering.terms = vec![CompiledOrderTerm {
+            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+            direction: OrderDirection::Asc,
+            collation: None,
+        }];
+        assert!(matches!(shape_of(&query, &first_page(), CountPolicy::Omit), PageShape::Plain));
+    }
+
+    /// Counting the whole selection costs what the plain page costs, so an
+    /// offset page or the first page of a cursor walk, whose rows can carry
+    /// the total, stays plain.
+    #[test]
+    fn a_counted_geo_page_that_carries_its_total_keeps_the_plain_page() {
+        let first_cursor_page = PageWindow {
+            limit: 100,
+            start: PageStart::Cursor(None),
+        };
+        for window in [first_page(), first_cursor_page] {
+            assert!(matches!(shape_of(&sensors_within_square(), &window, CountPolicy::Emit), PageShape::Plain));
+        }
+    }
+
+    /// Clause 6.3.13: past a cursor the total is a count of its own whatever
+    /// cuts the page, the count of the whole filter the plain page carries.
+    #[test]
+    fn a_counted_continued_cursor_page_of_a_geo_query_is_gated() {
+        let query = sensors_within_square();
+        assert!(matches!(shape_of(&query, &past_first_sensor(), CountPolicy::Emit), PageShape::Geo(_)));
+        let EntityTotal::Counted(continued) = built(&query, &past_first_sensor(), CountPolicy::Emit).total else {
+            panic!("past a cursor the total is a count of its own");
+        };
+        let EntityTotal::OnPageRows { uncounted: plain } = built(&query, &first_page(), CountPolicy::Emit).total else {
+            panic!("a counted first page carries its total");
+        };
+        assert!(continued.walked.is_none());
+        assert_eq!(continued.count, plain.count);
+        assert_statement_snapshot!("page-shape-a-counted-continued-cursor-page-of-a-geo-query-is-gated", continued.count);
+    }
+
+    #[test]
+    fn a_geo_query_on_an_unrecorded_geoproperty_keeps_the_plain_page() {
+        let mut query = sensors_within_square();
+        query.selection.geo.as_mut().expect("a geo-query").geoproperty = "https://example.com/neverRecorded".parse().expect("valid attribute name");
+        assert!(matches!(shape_of(&query, &first_page(), CountPolicy::Omit), PageShape::Plain));
+    }
+
+    #[test]
+    fn a_selection_of_no_entity_keeps_the_plain_page() {
+        let mut query = sensors_within_square();
+        query.selection.considered = ConsideredEntities::NoEntity;
+        assert!(matches!(shape_of(&query, &first_page(), CountPolicy::Omit), PageShape::Plain));
     }
 }

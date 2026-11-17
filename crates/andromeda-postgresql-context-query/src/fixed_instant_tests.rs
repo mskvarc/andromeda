@@ -127,9 +127,15 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
         ),
         (
             "geo query",
-            query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near)).build()),
+            query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near.clone())).build()),
             first_page(),
             CountPolicy::Emit,
+        ),
+        (
+            "geo page",
+            query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near)).build()),
+            first_page(),
+            CountPolicy::Omit,
         ),
         ("keyed", filtered(&format!("\"{TEMPERATURE}\"~=\"text-71.*\"")), first_page(), CountPolicy::Emit),
         (
