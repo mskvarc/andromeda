@@ -1,0 +1,39 @@
+---
+source: crates/andromeda-postgresql-query/src/geo_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "geo_instance"
+    WHERE
+      "geo_instance"."entity_key" = "walked"."entity_key"
+      AND "geo_instance"."attribute_name_key" = $1
+      AND "geo_instance"."value_geometry" IS NOT NULL
+      AND (
+        "geo_instance"."expires_at" IS NULL
+        OR "geo_instance"."expires_at" > NOW()
+      )
+      AND (
+        COALESCE(
+          "geo_instance"."value_geometry_reach",
+          "geo_instance"."value_geometry_valid",
+          "geo_instance"."value_geometry"
+        )::box2d && ST_MakeValid(ST_GeomFromEWKB($2))::box2d
+      )
+      AND _ST_Within(
+        COALESCE(
+          "geo_instance"."value_geometry_valid",
+          "geo_instance"."value_geometry"
+        ),
+        ST_MakeValid(ST_GeomFromEWKB($3))
+      )
+  )
+1: Int 42
+2: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+3: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'

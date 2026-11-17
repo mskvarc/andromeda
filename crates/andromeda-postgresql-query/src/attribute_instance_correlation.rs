@@ -1,4 +1,5 @@
-//! Correlating a subquery to one entity's geometry-valued attribute instances.
+//! The geometry-valued attribute instances of one attribute, of one entity or
+//! of every entity.
 //!
 //! Clause 4.10 lets a geo-query name any `GeoProperty` of an entity, and clause
 //! 4.23 lets a distance ordering measure to one. Every `GeoProperty` other than
@@ -7,9 +8,12 @@
 //! filter and the ordering reach it through the same correlated subquery. That
 //! fragment is written once here: a predicate and an ordering that disagreed
 //! about which rows a `GeoProperty` lives in would silently order by a geometry
-//! they did not filter on.
+//! they did not filter on. A page that reads the entities a geo-query matches
+//! before it reads the entities themselves scans the same instances without
+//! the correlation, under the same restrictions.
 
 use crate::{entity_row_refs::EntityRowRefs, standing_instant::instant_of, stored_geometry::StoredGeometry};
+use andromeda_ngsi_ld_query::standing_instant::StandingInstant;
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{literal::int_literal, postgis::judged_geometry};
 use andromeda_postgresql_stored_form::expiry::unexpired;
@@ -36,13 +40,36 @@ use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, Simpl
 pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attribute_name_key: AttributeNameKey) -> SelectStatement {
     let alias = Alias::new(subquery_alias);
     let mut scan = Query::select();
-    scan.from(outer.table(CurrentAttributes::Table).alias(alias.clone()))
-        .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::EntityKey)).eq(outer.entity_key_column()))
-        .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::AttributeNameKey)).eq(attribute_name_key.get()))
+    scan.from(outer.table(CurrentAttributes::Table).alias(alias.clone())) // clone: the alias names the occurrence and qualifies its columns
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::EntityKey)).eq(outer.entity_key_column()));
+    restrict_to_geometry_instances(&mut scan, alias, attribute_name_key, outer.standing());
+    scan
+}
+
+/// A `current_attributes` scan selecting every entity's geometry-valued
+/// instances of one attribute in the branch and at the instant `rows` names,
+/// left open as [`geometry_instances_of`] is.
+///
+/// The restriction is the one [`geometry_instances_of`] applies, without the
+/// correlation. `value_geometry IS NOT NULL` is the predicate the partial
+/// `GiST` index `idx_ca_value_geometry` is restricted by, so a box test on the
+/// box it keys reads the instances through it.
+#[must_use]
+pub fn geometry_instances(rows: &EntityRowRefs, subquery_alias: &str, attribute_name_key: AttributeNameKey) -> SelectStatement {
+    let alias = Alias::new(subquery_alias);
+    let mut scan = Query::select();
+    scan.from(rows.table(CurrentAttributes::Table).alias(alias.clone())); // clone: the alias names the occurrence and qualifies its columns
+    restrict_to_geometry_instances(&mut scan, alias, attribute_name_key, rows.standing());
+    scan
+}
+
+/// Restrict `scan`, reading `current_attributes` as `alias`, to the instances
+/// of one attribute that hold a geometry and stand at `standing`.
+fn restrict_to_geometry_instances(scan: &mut SelectStatement, alias: Alias, attribute_name_key: AttributeNameKey, standing: StandingInstant) {
+    scan.and_where(SeaExpr::col((alias.clone(), CurrentAttributes::AttributeNameKey)).eq(attribute_name_key.get())) // clone: the alias qualifies every column
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometry)).is_not_null())
         // Clause 4.22: a past-due instance neither matches nor is measured to.
-        .and_where(unexpired(SeaExpr::col((alias, CurrentAttributes::ExpiresAt)), instant_of(outer.standing())));
-    scan
+        .and_where(unexpired(SeaExpr::col((alias, CurrentAttributes::ExpiresAt)), instant_of(standing)));
 }
 
 /// The geometry a spatial predicate or a distance judges of the instance rows
@@ -71,9 +98,10 @@ pub fn instance_stored_geometry(subquery_alias: &str) -> StoredGeometry {
     )
 }
 
-/// A `SELECT 1` marker for a correlated `EXISTS` built over
-/// [`geometry_instances_of`], kept beside the scan so both crates that wrap the
-/// scan in an existential spell the marker the same way.
+/// A `SELECT 1` marker for a correlated `EXISTS` over one entity's geometry
+/// instances, kept beside [`geometry_instances_of`] so every existential over
+/// them, in this crate and in the crates that wrap the scan, spells the marker
+/// the same way.
 #[must_use]
 pub fn existence_marker() -> SimpleExpr {
     int_literal(1)

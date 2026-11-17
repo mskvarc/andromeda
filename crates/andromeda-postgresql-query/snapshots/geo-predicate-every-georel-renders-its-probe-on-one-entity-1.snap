@@ -1,0 +1,64 @@
+---
+source: crates/andromeda-postgresql-query/src/geo_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "entity_search" AS "geo_default"
+    WHERE
+      "geo_default"."entity_key" = "walked"."entity_key"
+      AND (
+        "geo_default"."location_expires_at" IS NULL
+        OR "geo_default"."location_expires_at" > NOW()
+      )
+      AND (
+        COALESCE(
+          "geo_default"."location_reach",
+          "geo_default"."location"
+        )::box2d && ST_MakeValid(ST_GeomFromEWKB($1))::box2d
+      )
+      AND _ST_Within(
+        "geo_default"."location",
+        ST_MakeValid(ST_GeomFromEWKB($2))
+      )
+  )
+  OR EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "geo_location_instance"
+    WHERE
+      "geo_location_instance"."entity_key" = "walked"."entity_key"
+      AND "geo_location_instance"."attribute_name_key" = $3
+      AND "geo_location_instance"."dataset_key" <> ('')
+      AND (
+        "geo_location_instance"."expires_at" IS NULL
+        OR "geo_location_instance"."expires_at" > NOW()
+      )
+      AND "geo_location_instance"."value_geometry" IS NOT NULL
+      AND (
+        COALESCE(
+          "geo_location_instance"."value_geometry_reach",
+          "geo_location_instance"."value_geometry_valid",
+          "geo_location_instance"."value_geometry"
+        )::box2d && ST_MakeValid(ST_GeomFromEWKB($4))::box2d
+      )
+      AND _ST_Within(
+        COALESCE(
+          "geo_location_instance"."value_geometry_valid",
+          "geo_location_instance"."value_geometry"
+        ),
+        ST_MakeValid(ST_GeomFromEWKB($5))
+      )
+  )
+1: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+2: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+3: Int 9
+4: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+5: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
