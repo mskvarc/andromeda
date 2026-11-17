@@ -22,11 +22,27 @@
 //!    whole `q`, when every read found more candidates than its bound. A hop's
 //!    candidates are read whole, so no read follows it and the page has no
 //!    full walk.
+//!
+//! A geo-query beside the keyed terms is read the way the geo page reads it:
+//! its matches first, at most
+//! [`GEO_CANDIDATE_BOUND`](crate::geo_page::GEO_CANDIDATE_BOUND) + 1, and the
+//! walks probe it on each Entity they yield. Each keyed read's branch tests it
+//! on each candidate by its key. Tested as the set of every match, it is
+//! hashed whole for the walks and read whole by an index branch however few
+//! its candidates, and the short walk visits every Entity before it fills its
+//! page when the matches are few: among 500 000 Entities `status=="fail"` (100 000 holders) beside a
+//! geo-query 111 meet took 1 050 ms that way and takes 3.3 ms, and
+//! `temperature>39.99` (47) beside one all of them meet 974 ms against
+//! 5.8 ms. The geo read comes first because it costs the least when it
+//! passes its bound, 4.5 to 20 ms, where a keyed read costs 6 to 28 ms and a
+//! broad pattern 70 to 150 ms: the slowest of these pages takes 40 ms read
+//! that way and 54 ms read the other way.
 
 use crate::{
     entity::{GeoFilter, QFilter},
     entity_page::ProjectedPage,
     gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, gated_page, walked_rows},
+    geo_page::{GeoMatches, GeoWalk, geo_probe, geo_read},
 };
 use andromeda_ngsi_ld_query::{filter::compiled_filter::CompiledFilter, read_order::ReadOrder};
 use andromeda_postgresql_query::{
@@ -82,43 +98,79 @@ pub(crate) const fn page_bound(read: CandidateRead) -> CandidateBound {
     }
 }
 
+/// What a keyed page reads: its `q`, the terms an index answers, and the
+/// matches of a geo-query beside them.
+pub(crate) struct KeyedReads<'q> {
+    /// The query's `q`.
+    pub(crate) q: &'q CompiledFilter,
+    /// The terms of `q` an index answers, in the order the page reads them.
+    pub(crate) terms: Vec<KeyedCandidates<'q>>,
+    /// The matches of the query's geo-query, read before the terms; `None`
+    /// when the query has no geo-query with matches to read.
+    pub(crate) geo: Option<GeoMatches<'q>>,
+}
+
 /// The projected page of `source` for a `q` with keyed terms, read in the
-/// order `keyed` lists them, and the order its rows come back in, its rows
-/// carrying what `columns` asks for.
+/// order `reads` lists them after the geo matches it names, and the order its
+/// rows come back in, its rows carrying what `columns` asks for.
 ///
 /// # Errors
 ///
 /// Fails as rendering the plain page fails: a reference geometry with no EWKB
 /// spelling, or a query-language rule a renderer decides first.
-pub(crate) fn keyed_page(
-    source: &PageSource<'_>,
-    q: &CompiledFilter,
-    keyed: Vec<KeyedCandidates<'_>>,
-    columns: GatedColumns,
-) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-    let walked = walked_rows(source.rows);
-    let walk = PageWalk {
-        source: *source,
-        walked: source.conditions(QFilter::Omitted, GeoFilter::Matched)?,
-        probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
-        short: SHORT_WALK,
-    };
-    let reads = keyed
+pub(crate) fn keyed_page(source: &PageSource<'_>, reads: KeyedReads<'_>, columns: GatedColumns) -> Result<(ProjectedPage, ReadOrder), RenderError> {
+    let KeyedReads { q, terms, geo } = reads;
+    match geo {
+        None => {
+            let walked = walked_rows(source.rows);
+            let walk = PageWalk {
+                source: *source,
+                walked: source.conditions(QFilter::Omitted, GeoFilter::Matched)?,
+                probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
+                short: SHORT_WALK,
+            };
+            gated_page(source, walk, term_reads(source, terms, GeoFilter::Matched)?, columns)
+        }
+        Some(matches) => {
+            let geo_walk = GeoWalk::of(source);
+            let walked_source = geo_walk.source(source);
+            let walk = PageWalk {
+                source: walked_source,
+                walked: walked_source.conditions(QFilter::Omitted, GeoFilter::Omitted)?,
+                probe: geo_probe(source, matches.geo, Some(q))?,
+                short: SHORT_WALK,
+            };
+            let reads = [geo_read(source, matches)?]
+                .into_iter()
+                .chain(term_reads(source, terms, GeoFilter::Probed)?)
+                .collect();
+            gated_page(source, walk, reads, columns)
+        }
+    }
+}
+
+/// The read of each of `terms`, its branch filtered by every filter but the
+/// term, the geo-query as `geo` says.
+fn term_reads(source: &PageSource<'_>, terms: Vec<KeyedCandidates<'_>>, geo: GeoFilter) -> Result<Vec<IndexRead>, RenderError> {
+    terms
         .into_iter()
         .map(|keyed| {
             Ok(IndexRead {
                 candidates: keyed.select,
                 bound: page_bound(keyed.read),
-                narrowed: source.condition(QFilter::Except(keyed.term), GeoFilter::Matched)?,
+                narrowed: source.condition(QFilter::Except(keyed.term), geo)?,
             })
         })
-        .collect::<Result<Vec<IndexRead>, RenderError>>()?;
-    gated_page(source, walk, reads, columns)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::build_query, entity_total::EntityTotal};
+    use crate::{
+        entity::build_query,
+        entity_total::EntityTotal,
+        geo_page_fixtures::{built, filtered, first_page, past_first_sensor, sensors_within_square},
+    };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
@@ -488,7 +540,8 @@ mod tests {
 
     /// Both walks test `attrs` on each Entity they visit behind a fence of
     /// their own, which the planner cannot turn into a semi-join over every
-    /// `attrs` row; a walk with nothing beside its selectors has no fence.
+    /// `attrs` row; a walk with nothing beside its selectors has no fence, and
+    /// a walk beside a geo-query probes it instead.
     #[test]
     fn a_walk_tests_its_filters_on_each_entity_it_visits() {
         let fences = |query: &CompiledEntityQuery| {
@@ -503,6 +556,89 @@ mod tests {
         let mut typed = failing_beside_attrs(&["Sensor"]);
         typed.selection.attrs = Vec::new();
         assert_eq!(fences(&typed), 0);
+        let geo_fences = |query: &CompiledEntityQuery| {
+            built(query, &first_page(), CountPolicy::Omit)
+                .select
+                .to_string(PostgresQueryBuilder)
+                .matches(r#"AS "filtered" ON TRUE"#)
+                .count()
+        };
+        assert_eq!(geo_fences(&failing_within_square()), 0);
+        let mut beside_attrs = failing_within_square();
+        beside_attrs.selection.attrs = vec![iri("temperature")];
+        assert_eq!(geo_fences(&beside_attrs), 2);
+    }
+
+    /// `q=status=="fail"` beside the shared geo-query.
+    fn failing_within_square() -> CompiledEntityQuery {
+        filtered(sensors_within_square(), "\"https://example.com/status\"==\"fail\"")
+    }
+
+    /// The walks probe the geo-query on each Member they visit, the geo
+    /// matches are read first and their branch filtered by `q`, and the keyed
+    /// branch tests the geo-query on each candidate, so no branch reads the
+    /// set of every match.
+    #[test]
+    fn a_keyed_page_beside_a_geo_query_reads_the_geo_matches_first() {
+        let select = built(&failing_within_square(), &first_page(), CountPolicy::Omit).select;
+        assert!(!select.to_string(PostgresQueryBuilder).contains("SELECT DISTINCT"));
+        assert_statement_snapshot!("keyed-page-a-keyed-page-beside-a-geo-query-reads-the-geo-matches-first", select);
+    }
+
+    #[test]
+    fn a_keyed_page_beside_a_geo_query_without_a_type_walks_every_entity() {
+        let mut query = failing_within_square();
+        query.selection.selectors = Vec::new();
+        assert_statement_snapshot!(
+            "keyed-page-a-keyed-page-beside-a-geo-query-without-a-type-walks-every-entity",
+            built(&query, &first_page(), CountPolicy::Omit).select
+        );
+    }
+
+    #[test]
+    fn attrs_beside_a_keyed_term_and_a_geo_query_are_tested_on_each_walked_member() {
+        let mut query = failing_within_square();
+        query.selection.attrs = vec![iri("temperature")];
+        assert_statement_snapshot!(
+            "keyed-page-attrs-beside-a-keyed-term-and-a-geo-query-are-tested-on-each-walked-member",
+            built(&query, &first_page(), CountPolicy::Omit).select
+        );
+    }
+
+    /// A hop's candidates are read whole, so the geo matches are read before
+    /// it and the page has no full walk.
+    #[test]
+    fn a_hop_beside_a_geo_query_reads_the_geo_matches_before_the_hop() {
+        let query = filtered(
+            sensors_within_square(),
+            "\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\"",
+        );
+        assert_statement_snapshot!(
+            "keyed-page-a-hop-beside-a-geo-query-reads-the-geo-matches-before-the-hop",
+            built(&query, &first_page(), CountPolicy::Omit).select
+        );
+    }
+
+    /// Clause 6.3.13: the geo branch reads every match within its bound before
+    /// it cuts the window, as the keyed branch reads its candidates, so both
+    /// carry the total.
+    #[test]
+    fn a_counted_keyed_page_beside_a_geo_query_carries_its_total_on_both_index_branches() {
+        let page = built(&failing_within_square(), &first_page(), CountPolicy::Emit);
+        assert!(matches!(page.total, EntityTotal::OnPageRows { .. }), "a first page carries the total it can");
+        assert_eq!(page.select.to_string(PostgresQueryBuilder).matches("COUNT(*) OVER ()").count(), 2);
+        assert_statement_snapshot!(
+            "keyed-page-a-counted-keyed-page-beside-a-geo-query-carries-its-total-on-both-index-branches",
+            page.select
+        );
+    }
+
+    #[test]
+    fn a_keyed_page_beside_a_geo_query_past_a_cursor_starts_every_branch_past_it() {
+        assert_statement_snapshot!(
+            "keyed-page-a-keyed-page-beside-a-geo-query-past-a-cursor-starts-every-branch-past-it",
+            built(&failing_within_square(), &past_first_sensor(), CountPolicy::Omit).select
+        );
     }
 
     #[test]

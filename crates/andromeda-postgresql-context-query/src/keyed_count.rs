@@ -20,6 +20,13 @@
 //! the selection narrowed to them is counted; when every read finds more, the
 //! selection is walked. A Linked Entity hop's candidates are read whole, as
 //! its page reads them, so the count never walks past one.
+//!
+//! A geo-query beside the terms is tested on each candidate by its key. As
+//! the set of every match it is read whole however few the candidates: among
+//! 500 000 Entities the 47 of `temperature>39.99` beside a geo-query all of
+//! them meet count in 199.8 ms that way and in 0.2 ms probed. The count
+//! leaves the geo matches unread, since reading them first costs the rare
+//! terms more than it saves the common ones.
 
 use crate::{entity_relations::EntityRelations, entity_total::count_over};
 use andromeda_postgresql_query::{
@@ -96,7 +103,11 @@ pub(crate) fn keyed_count(
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::build_query, entity_total::EntityTotal};
+    use crate::{
+        entity::build_query,
+        entity_total::EntityTotal,
+        geo_page_fixtures::{built, filtered, first_page, sensors_within_square},
+    };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
@@ -109,7 +120,7 @@ mod tests {
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
-    use sea_query::SelectStatement;
+    use sea_query::{PostgresQueryBuilder, SelectStatement};
 
     fn names() -> QueryNames {
         QueryNames {
@@ -260,6 +271,18 @@ mod tests {
         };
         assert_statement_snapshot!("keyed-count-a-count-without-a-keyed-term-is-one-count-over-the-whole-filter", uncounted.count);
         assert_eq!(built.total_planning, StatementPlanning::Cached);
+    }
+
+    /// The keyed arm looks each candidate up by its key, so it tests the
+    /// geo-query on each; the whole-filter arm keeps the set of every match.
+    #[test]
+    fn a_keyed_count_beside_a_geo_query_probes_each_candidate_for_it() {
+        let query = filtered(sensors_within_square(), "\"https://example.com/status\"==\"fail\"");
+        let EntityTotal::OnPageRows { uncounted } = built(&query, &first_page(), CountPolicy::Emit).total else {
+            panic!("a counted first page carries the total it can");
+        };
+        assert_eq!(uncounted.count.to_string(PostgresQueryBuilder).matches("SELECT DISTINCT").count(), 1);
+        assert_statement_snapshot!("keyed-count-a-keyed-count-beside-a-geo-query-probes-each-candidate-for-it", uncounted.count);
     }
 
     #[test]

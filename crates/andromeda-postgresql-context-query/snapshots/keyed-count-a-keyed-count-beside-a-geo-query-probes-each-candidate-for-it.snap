@@ -1,0 +1,138 @@
+---
+source: crates/andromeda-postgresql-context-query/src/keyed_count.rs
+---
+WITH
+"candidates" AS MATERIALIZED (
+  SELECT
+    "entity_key"
+  FROM
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $1
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND (
+          "ca"."value_string" = $2
+          AND nullif("ca"."value_kind" = (2), FALSE)
+        )
+      UNION ALL
+      (
+        SELECT
+          "ca"."entity_key"
+        FROM
+          "current_attributes" AS "ca"
+        WHERE
+          "ca"."attribute_name_key" = $3
+          AND (
+            "ca"."expires_at" IS NULL
+            OR "ca"."expires_at" > NOW()
+          )
+          AND "ca"."value_uri" = $4
+      )
+      UNION ALL
+      (
+        SELECT
+          "ca"."entity_key"
+        FROM
+          "current_attributes" AS "ca"
+        WHERE
+          "ca"."attribute_name_key" = $5
+          AND (
+            "ca"."expires_at" IS NULL
+            OR "ca"."expires_at" > NOW()
+          )
+          AND "ca"."attribute_kind" <> (6)
+          AND (
+            (
+              (
+                "ca"."value_object" @> jsonb_build_array($6::text)
+              )
+              OR (
+                "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $7::text))
+              )
+            )
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                jsonb_array_elements(
+                  (
+                    CASE
+                      WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object"
+                    END
+                  )
+                ) AS "dm"
+                LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                  CASE
+                    WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+                  END
+                )
+              WHERE
+                (
+                  CASE
+                    WHEN (
+                      jsonb_typeof(
+                        COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                      ) = ('string')
+                      AND (
+                        NOT COALESCE(
+                          COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                            'https://uri.etsi.org/ngsi-ld/DateTime',
+                            'https://uri.etsi.org/ngsi-ld/Date',
+                            'https://uri.etsi.org/ngsi-ld/Time'
+                          )
+                          OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                            'http://www.w3.org/2001/XMLSchema#decimal',
+                            'http://www.w3.org/2001/XMLSchema#integer',
+                            'http://www.w3.org/2001/XMLSchema#long',
+                            'http://www.w3.org/2001/XMLSchema#int',
+                            'http://www.w3.org/2001/XMLSchema#short',
+                            'http://www.w3.org/2001/XMLSchema#byte',
+                            'http://www.w3.org/2001/XMLSchema#nonNegativeInteger',
+                            'http://www.w3.org/2001/XMLSchema#positiveInteger',
+                            'http://www.w3.org/2001/XMLSchema#nonPositiveInteger',
+                            'http://www.w3.org/2001/XMLSchema#negativeInteger',
+                            'http://www.w3.org/2001/XMLSchema#unsignedLong',
+                            'http://www.w3.org/2001/XMLSchema#unsignedInt',
+                            'http://www.w3.org/2001/XMLSchema#unsignedShort',
+                            'http://www.w3.org/2001/XMLSchema#unsignedByte',
+                            'http://www.w3.org/2001/XMLSchema#float',
+                            'http://www.w3.org/2001/XMLSchema#double'
+                          )
+                          OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'),
+                          FALSE
+                        )
+                      )
+                    ) THEN (
+                      COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $8)))) AS "matches" LIMIT 10001) SELECT (CASE WHEN ((SELECT COUNT(*) FROM "candidates") <= $9) THEN (SELECT COUNT(*) FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) AND ("entity_search"."entity_type_name_keys" @> (ARRAY[3])) AND TRUE AND (EXISTS(SELECT 1 FROM "entity_search" AS "geo_default" WHERE "geo_default"."entity_key" = "entities"."entity_key" AND ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location")::box2d && ST_MakeValid(ST_GeomFromEWKB($10))::box2d) AND _ST_Within("geo_default"."location", ST_MakeValid(ST_GeomFromEWKB($11)))) OR EXISTS(SELECT 1 FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."entity_key" = "entities"."entity_key" AND "geo_location_instance"."attribute_name_key" = $12 AND "geo_location_instance"."dataset_key" <> ('') AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry")::box2d && ST_MakeValid(ST_GeomFromEWKB($13))::box2d) AND _ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"), ST_MakeValid(ST_GeomFromEWKB($14))))) AND "entities"."entity_key" = ANY(ARRAY (SELECT "entity_key" FROM "candidates"))) ELSE (SELECT COUNT(*) FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) AND ("entity_search"."entity_type_name_keys" @> (ARRAY[3])) AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" WHERE "ca"."attribute_name_key" = $15 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) AND (("ca"."value_string" = $16 AND nullif("ca"."value_kind" = (2), FALSE)) OR "ca"."value_uri" = $17 OR ("ca"."attribute_kind" <> (6) AND ((("ca"."value_object" @> jsonb_build_array($18::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $19::text)))) AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object" END)) AS "dm" LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (CASE WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key" END) WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND (NOT COALESCE(COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $20)))) AND "ca"."entity_key" = "entities"."entity_key") AND "entities"."entity_key" IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($21))) AND _ST_Within("geo_default"."location", ST_MakeValid(ST_GeomFromEWKB($22))) UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $23 AND "geo_location_instance"."dataset_key" <> ('') AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($24))) AND _ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"), ST_MakeValid(ST_GeomFromEWKB($25))))) AS "geo_matched" ORDER BY "geo_matched"."entity_key" ASC)) END)
+1: Int 15
+2: String 'fail'
+3: Int 15
+4: String 'fail'
+5: Int 15
+6: String 'fail'
+7: String 'fail'
+8: String 'fail'
+9: BigUnsigned 10000
+10: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+11: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+12: Int 9
+13: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+14: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+15: Int 15
+16: String 'fail'
+17: String 'fail'
+18: String 'fail'
+19: String 'fail'
+20: String 'fail'
+21: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+22: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+23: Int 9
+24: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'
+25: Bytes '\x0103000020E610000001000000050000000000000000000000000000000000444000000000000024400000000000004440000000000000244000000000000049400000000000000000000000000000494000000000000000000000000000004440'

@@ -150,7 +150,7 @@ pub(crate) fn entity_total(
                                     source.rows,
                                     &relations.source,
                                     QFilter::Except(term),
-                                    GeoFilter::Matched,
+                                    GeoFilter::Probed,
                                 )?,
                                 candidates: select,
                                 read,

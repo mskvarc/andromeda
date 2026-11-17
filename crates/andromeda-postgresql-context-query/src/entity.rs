@@ -209,6 +209,10 @@ pub(crate) enum QFilter<'q> {
 pub(crate) enum GeoFilter {
     /// The selection is narrowed to the Entities the geo-query matches.
     Matched,
+    /// Each Entity the statement reads is tested for the geo-query by its
+    /// key, for a statement that looks its Entities up one by one, where the
+    /// set of every match would be read whole however few they are.
+    Probed,
     /// The geo-query is left out, since each Entity the statement yields is
     /// probed for it further out, or the statement reads its matches as
     /// candidates.
@@ -311,6 +315,7 @@ pub(crate) fn entity_conditions(
                     .tested
                     .push(geo_sql::condition(geo_query, rows, &query.selection.default_location, &names.attributes)?);
             }
+            GeoFilter::Probed => conditions.tested.push(geo_sql::probe(geo_query, rows, &names.attributes)?),
             GeoFilter::Omitted => {}
         }
     }

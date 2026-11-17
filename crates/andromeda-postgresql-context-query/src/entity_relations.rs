@@ -104,9 +104,9 @@ impl EntityRelations {
         EntityRelations::reading(query, types, schema, GeoRole::Narrows)
     }
 
-    /// The relations the walks of a geo page read, in the branch `schema`:
-    /// those [`EntityRelations::for_query`] chooses with the geo-query left to
-    /// a probe of each Entity the walk yields.
+    /// The relations a walk that probes the geo-query reads, in the branch
+    /// `schema`: those [`EntityRelations::for_query`] chooses with the
+    /// geo-query left to a probe of each Entity the walk yields.
     ///
     /// The walk is the membership walk when the selectors are types alone, and
     /// the search row is joined only for the other filters that read it.

@@ -95,10 +95,10 @@ fn point() -> Geometry {
     serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [13.4, 52.5] })).expect("point parses")
 }
 
-/// One query of each page shape, named, with the window and count it is read
-/// under.
-fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
-    let first_page = || PageWindow::offset(100, 0);
+/// The page shapes of a geo-query, named, with the window and count each is
+/// read under: the plain page of a counted one, the geo page of an uncounted
+/// one, and the keyed page of a keyed `q` beside one.
+fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
     let near = GeoQuery {
         georel: GeoRel::Near {
             max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
@@ -107,6 +107,27 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
         geometry: point(),
         geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
     };
+    let vehicles_near = || EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near.clone()));
+    let keyed = CompiledFilter::new(
+        parse(&format!("\"{TEMPERATURE}\"~=\"text-71.*\"")).expect("valid q"),
+        LanguageMatching::TagEquality,
+    );
+    vec![
+        ("geo query", query(vehicles_near().build()), PageWindow::offset(100, 0), CountPolicy::Emit),
+        ("geo page", query(vehicles_near().build()), PageWindow::offset(100, 0), CountPolicy::Omit),
+        (
+            "keyed beside geo",
+            query(vehicles_near().q(Some(keyed)).build()),
+            PageWindow::offset(100, 0),
+            CountPolicy::Emit,
+        ),
+    ]
+}
+
+/// One query of each page shape, named, with the window and count it is read
+/// under.
+fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
+    let first_page = || PageWindow::offset(100, 0);
     let mut by_distance = ordered_by(
         OrderDirection::DistAsc,
         AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name")),
@@ -114,7 +135,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
     by_distance.ordering.geometry = Some(OrderingGeometry::new(point()));
     let mut by_sub_attribute = attribute("speed");
     by_sub_attribute.sub_attrs = vec!["https://example.com/accuracy".parse().expect("valid attribute name")];
-    vec![
+    let mut shapes = vec![
         ("plain", query(EntitySelection::builder().build()), first_page(), CountPolicy::Emit),
         (
             "type walk",
@@ -124,18 +145,6 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
                 start: PageStart::Cursor(None),
             },
             CountPolicy::Emit,
-        ),
-        (
-            "geo query",
-            query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near.clone())).build()),
-            first_page(),
-            CountPolicy::Emit,
-        ),
-        (
-            "geo page",
-            query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near)).build()),
-            first_page(),
-            CountPolicy::Omit,
         ),
         ("keyed", filtered(&format!("\"{TEMPERATURE}\"~=\"text-71.*\"")), first_page(), CountPolicy::Emit),
         (
@@ -190,7 +199,9 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
             first_page(),
             CountPolicy::Emit,
         ),
-    ]
+    ];
+    shapes.extend(geo_page_shapes());
+    shapes
 }
 
 /// Every statement a query runs: its page, every count it may run, and its

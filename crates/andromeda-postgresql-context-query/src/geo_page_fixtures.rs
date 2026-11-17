@@ -1,6 +1,6 @@
-//! The geo-queries the page shape tests and the geo page tests share: the
-//! Entities of type `Sensor` within the square from `[0, 40]` to `[10, 50]`,
-//! read against a dictionary that has recorded `location`.
+//! The geo-queries the page shape, geo page, keyed page and keyed count tests
+//! share: the Entities of type `Sensor` within the square from `[0, 40]` to
+//! `[10, 50]`, read against a dictionary that has recorded `location`.
 
 use crate::entity::{EntityQuery, build_query};
 use andromeda_context_space::context_target::ContextTarget;
@@ -22,12 +22,12 @@ use iri_rs::IriBuf;
 /// The expanded `observationSpace`, a `GeoProperty` the core context names.
 pub(crate) const OBSERVATION_SPACE: &str = "https://uri.etsi.org/ngsi-ld/observationSpace";
 
-/// `temperature` at key 12, `status` at 15, `location` at 9 and
-/// `observationSpace` at 42; the type `Sensor` at key 3.
+/// `temperature` at key 12, `hasTrip` at 14, `status` at 15, `location` at 9
+/// and `observationSpace` at 42; the type `Sensor` at key 3.
 pub(crate) fn names() -> QueryNames {
     QueryNames {
         attributes: ResolvedNames::from_pairs(
-            [("temperature", 12), ("status", 15)]
+            [("temperature", 12), ("hasTrip", 14), ("status", 15)]
                 .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key)))
                 .into_iter()
                 .chain([

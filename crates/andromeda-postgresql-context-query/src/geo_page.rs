@@ -37,8 +37,9 @@
 //! selection costs about what the plain page costs, 0.8 to 1.0 s for a
 //! geo-query nearly every Entity meets, so a counted page that can carry its
 //! total stays plain rather than add a gated page to a count it cannot avoid.
-//! A `q` with a keyed term keeps the keyed page, whose walk filters by the
-//! geo-query's matches.
+//! A `q` with a keyed term is cut by the keyed page, which reads the
+//! geo-query the same way ahead of its keyed terms: its walks are a
+//! [`GeoWalk`] probed by [`geo_probe`], and its first read is [`geo_read`].
 
 use crate::{
     entity::{GeoFilter, QFilter},
@@ -51,6 +52,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
+    filter::compiled_filter::CompiledFilter,
     geo::query::GeoQuery,
     page_window::PageWindow,
     read_order::ReadOrder,
@@ -116,23 +118,95 @@ pub(crate) fn geo_matches<'q>(
     count: CountPolicy,
     rows: &EntityRowRefs,
 ) -> Result<Option<GeoMatches<'q>>, RenderError> {
-    let selection = &query.selection;
-    let Some(geo) = &selection.geo else {
-        return Ok(None);
-    };
-    let considered = match selection.considered {
-        ConsideredEntities::Selected => true,
-        ConsideredEntities::NoEntity => false,
-    };
     let uncounted = match carried_on_rows(count, window) {
         CountPolicy::Emit => false,
         CountPolicy::Omit => true,
     };
-    if !(considered && uncounted && query.ordering.terms.is_empty()) {
+    if !(uncounted && query.ordering.terms.is_empty()) {
         return Ok(None);
+    }
+    matches_of(query, names, rows)
+}
+
+/// The matches of the query's geo-query, read in the branch and at the
+/// instant of `rows`, when the selection holds a geo-query, considers some
+/// Entity, and the geo-query has matches to read: a `GeoProperty` the
+/// dictionary never recorded, or a `location` with no arm that can hold a
+/// match, has none.
+///
+/// # Errors
+///
+/// Fails as rendering the geo-query fails: a reference geometry with no EWKB
+/// spelling, or `georel=near` naming no distance.
+pub(crate) fn matches_of<'q>(query: &'q CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Option<GeoMatches<'q>>, RenderError> {
+    let selection = &query.selection;
+    let Some(geo) = &selection.geo else {
+        return Ok(None);
+    };
+    match selection.considered {
+        ConsideredEntities::Selected => {}
+        ConsideredEntities::NoEntity => return Ok(None),
     }
     let candidates = geo_sql::matches(geo, rows, &selection.default_location, &names.attributes)?;
     Ok(candidates.map(|candidates| GeoMatches { geo, candidates }))
+}
+
+/// The relations a walk reads when it probes the geo-query on each Entity it
+/// yields ([`EntityRelations::for_geo_walk`]), and how its fragments reach
+/// their rows.
+pub(crate) struct GeoWalk {
+    /// The relations the walk reads.
+    relations: EntityRelations,
+    /// How the walk's fragments reach the rows of `relations`.
+    rows: EntityRowRefs,
+}
+
+impl GeoWalk {
+    /// The geo walk of the query `source` pages, in its branch and standing at
+    /// its instant.
+    pub(crate) fn of(source: &PageSource<'_>) -> GeoWalk {
+        let relations = EntityRelations::for_geo_walk(source.query, &source.names.types, source.schema);
+        let rows = relations.rows(source.schema.cloned(), source.rows.standing());
+        GeoWalk { relations, rows }
+    }
+
+    /// `source` read through the walk's relations.
+    pub(crate) const fn source<'a>(&'a self, source: &PageSource<'a>) -> PageSource<'a> {
+        PageSource {
+            relations: &self.relations,
+            rows: &self.rows,
+            ..*source
+        }
+    }
+}
+
+/// The probe of a walk of `source` that leaves `geo` to each Entity it
+/// yields: `q`, when given, and `geo`, each over [`walked_rows`].
+///
+/// # Errors
+///
+/// Fails as rendering the geo-query fails: a reference geometry with no EWKB
+/// spelling, or `georel=near` naming no distance.
+pub(crate) fn geo_probe(source: &PageSource<'_>, geo: &GeoQuery, q: Option<&CompiledFilter>) -> Result<Condition, RenderError> {
+    let walked = walked_rows(source.rows);
+    let q = q.map(|q| compile(q.reading(), &InstanceScan::Current(&walked), source.names));
+    Ok(Condition::all().add_option(q).add(geo_sql::probe(geo, &walked, &source.names.attributes)?))
+}
+
+/// The read of a geo-query's `matches` for a page of `source`: at most
+/// [`GEO_CANDIDATE_BOUND`] of them, the page cut from them under every filter
+/// but the geo-query they answer.
+///
+/// # Errors
+///
+/// Fails as rendering the plain page's filter fails: a reference geometry
+/// with no EWKB spelling, or a query-language rule a renderer decides first.
+pub(crate) fn geo_read(source: &PageSource<'_>, matches: GeoMatches<'_>) -> Result<IndexRead, RenderError> {
+    Ok(IndexRead {
+        candidates: matches.candidates,
+        bound: CandidateBound::AtMost(GEO_CANDIDATE_BOUND),
+        narrowed: source.condition(QFilter::Whole, GeoFilter::Omitted)?,
+    })
 }
 
 /// The projected page of `source`, filtered by a geo-query, cut from its
@@ -144,33 +218,15 @@ pub(crate) fn geo_matches<'q>(
 /// Fails as rendering the plain page fails: a reference geometry with no EWKB
 /// spelling, or a query-language rule a renderer decides first.
 pub(crate) fn geo_page(source: &PageSource<'_>, matches: GeoMatches<'_>, columns: GatedColumns) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-    let relations = EntityRelations::for_geo_walk(source.query, &source.names.types, source.schema);
-    let rows = relations.rows(source.schema.cloned(), source.rows.standing());
-    let walked_source = PageSource {
-        relations: &relations,
-        rows: &rows,
-        ..*source
-    };
-    let walked = walked_rows(source.rows);
-    let q = source
-        .query
-        .selection
-        .q
-        .as_ref()
-        .map(|q| compile(q.reading(), &InstanceScan::Current(&walked), source.names));
+    let geo_walk = GeoWalk::of(source);
+    let walked_source = geo_walk.source(source);
     let walk = PageWalk {
         source: walked_source,
         walked: walked_source.conditions(QFilter::Omitted, GeoFilter::Omitted)?,
-        probe: Condition::all()
-            .add_option(q)
-            .add(geo_sql::probe(matches.geo, &walked, &source.names.attributes)?),
+        probe: geo_probe(source, matches.geo, source.query.selection.q.as_ref())?,
         short: GEO_SHORT_WALK,
     };
-    let read = IndexRead {
-        candidates: matches.candidates,
-        bound: CandidateBound::AtMost(GEO_CANDIDATE_BOUND),
-        narrowed: source.condition(QFilter::Whole, GeoFilter::Omitted)?,
-    };
+    let read = geo_read(source, matches)?;
     gated_page(source, walk, vec![read], columns)
 }
 
