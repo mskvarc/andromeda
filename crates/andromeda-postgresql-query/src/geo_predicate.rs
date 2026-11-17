@@ -22,12 +22,22 @@
 //! `location` additionally has its default instance hoisted into dedicated
 //! `PostGIS` columns on `entity_search`; [`crate::location_instances`] reads
 //! both.
+//!
+//! A geo-query is read three ways over the same instances. [`condition`] keeps
+//! the entities the enclosing statement filters. [`matches`] reads the entities
+//! that hold a matching instance with no outer row, through the spatial
+//! indexes, for a page that reads them as candidates before it reads the
+//! entities themselves. [`probe`] tests the instances of one entity, looked up
+//! by its key, for a page that visits the entities in order and keeps those
+//! that match. The probe's box test reads no spatial index: an indexable box
+//! test lets the planner AND a geometry `GiST` into each per-entity
+//! primary-key lookup.
 
 use crate::{
-    attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_stored_geometry},
+    attribute_instance_correlation::{existence_marker, geometry_instances, geometry_instances_of, instance_stored_geometry},
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    location_instances::any_location_instance,
+    location_instances::{any_location_instance, location_matches, location_probe},
     near_measure::near_expression,
     stored_geometry::{BoxIndexing, StoredGeometry, box_test},
 };
@@ -41,14 +51,15 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_encoding::ewkb::encode;
+use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     literal::false_literal,
     pg_type::PostgresType,
     postgis::{exact_contains, exact_equals, exact_intersects, exact_overlaps, exact_within, st_disjoint, validated_geom_from_ewkb},
 };
-use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, SimpleExpr};
 
 /// Render a geo query over the entity `rows` the enclosing statement filters.
 ///
@@ -77,16 +88,72 @@ pub fn condition(
     default_location: &DefaultLocationNarrowing,
     attribute_names: &ResolvedNames<AttributeName>,
 ) -> Result<Condition, RenderError> {
-    if geo.geoproperty.as_str() == LOCATION.as_str() {
-        return any_location_instance(geo, rows, default_location, attribute_names.get(&geo.geoproperty));
+    match GeoTarget::of(geo, attribute_names) {
+        GeoTarget::Location(location_key) => any_location_instance(geo, rows, default_location, location_key),
+        GeoTarget::Instances(attribute_name_key) => any_instance_meets(geo, rows, attribute_name_key, BoxIndexing::Indexed),
+        // The predicate is constant: no Entity conveys the GeoProperty.
+        GeoTarget::Unrecorded => Ok(Condition::all().add(false_literal())),
     }
-    let Some(attribute_name_key) = attribute_names.get(&geo.geoproperty) else {
-        // Clause 4.10: an Entity that does not convey the target GeoProperty is
-        // non-matching. An IRI with no `attribute_names` row is conveyed by no
-        // Entity at all, so the predicate is constant.
-        return Ok(Condition::all().add(false_literal()));
-    };
-    let spatial = restriction(&geo.georel, &geo.geometry, &instance_stored_geometry(INSTANCE_ALIAS), BoxIndexing::Indexed)?;
+}
+
+/// The `entity_key` of every entity one of whose instances of `geo`'s
+/// `GeoProperty` meets the restriction, once per matching instance and in no
+/// order, read through the spatial indexes, or `None` when no instance can
+/// match: the `GeoProperty` is one the dictionary never recorded, or no arm of
+/// the default `location` can hold a match.
+///
+/// `rows` names the branch and the instant the instances are read at; nothing
+/// correlates to it. `default_location` narrows the default `location` as it
+/// does for [`condition`].
+///
+/// # Errors
+///
+/// The failures of [`condition`].
+pub fn matches(
+    geo: &GeoQuery,
+    rows: &EntityRowRefs,
+    default_location: &DefaultLocationNarrowing,
+    attribute_names: &ResolvedNames<AttributeName>,
+) -> Result<Option<SelectStatement>, RenderError> {
+    match GeoTarget::of(geo, attribute_names) {
+        GeoTarget::Location(location_key) => location_matches(geo, rows, default_location, location_key),
+        GeoTarget::Instances(attribute_name_key) => {
+            let mut scan = geometry_instances(rows, INSTANCE_ALIAS, attribute_name_key);
+            scan.column((Alias::new(INSTANCE_ALIAS), CurrentAttributes::EntityKey)).cond_where(restriction(
+                &geo.georel,
+                &geo.geometry,
+                &instance_stored_geometry(INSTANCE_ALIAS),
+                BoxIndexing::Indexed,
+            )?);
+            Ok(Some(scan))
+        }
+        GeoTarget::Unrecorded => Ok(None),
+    }
+}
+
+/// Whether the entity `rows` names holds an instance of `geo`'s
+/// `GeoProperty` that meets the restriction, each instance looked up by the
+/// entity's key and its box tested with [`BoxIndexing::Unindexed`].
+///
+/// The answer for an entity is the one [`condition`] gives it, and the
+/// predicate is constant `FALSE` for a `GeoProperty` the dictionary never
+/// recorded.
+///
+/// # Errors
+///
+/// The failures of [`condition`].
+pub fn probe(geo: &GeoQuery, rows: &EntityRowRefs, attribute_names: &ResolvedNames<AttributeName>) -> Result<Condition, RenderError> {
+    match GeoTarget::of(geo, attribute_names) {
+        GeoTarget::Location(location_key) => location_probe(geo, rows, location_key),
+        GeoTarget::Instances(attribute_name_key) => any_instance_meets(geo, rows, attribute_name_key, BoxIndexing::Unindexed),
+        GeoTarget::Unrecorded => Ok(Condition::all().add(false_literal())),
+    }
+}
+
+/// Whether one of the instances of the entity `rows` names, stored under
+/// `attribute_name_key`, meets `geo`, its box tested with `indexing`.
+fn any_instance_meets(geo: &GeoQuery, rows: &EntityRowRefs, attribute_name_key: AttributeNameKey, indexing: BoxIndexing) -> Result<Condition, RenderError> {
+    let spatial = restriction(&geo.georel, &geo.geometry, &instance_stored_geometry(INSTANCE_ALIAS), indexing)?;
     // Clause 5.7.2.4: it is enough that one instance of the GeoProperty meets
     // the restriction, which is exactly an existential over the instance rows.
     let mut probe = geometry_instances_of(rows, INSTANCE_ALIAS, attribute_name_key);
@@ -174,15 +241,48 @@ fn topological_expression(test: TopologicalTest, subject: SimpleExpr, reference:
     }
 }
 
-/// Alias the correlated instance subquery reads `current_attributes`
-/// under.
+/// Where the instances of a geo-query's `GeoProperty` are stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeoTarget {
+    /// The default `location`, hoisted onto the search row, with the
+    /// dictionary key of its instance rows, or `None` when the dictionary has
+    /// never recorded it and no instance row exists.
+    Location(Option<AttributeNameKey>),
+    /// Any other `GeoProperty` the dictionary has recorded, whose instances are
+    /// the `current_attributes` rows under this key.
+    Instances(AttributeNameKey),
+    /// A `GeoProperty` the dictionary has never recorded. Clause 4.10: an
+    /// Entity that does not convey the target `GeoProperty` is non-matching,
+    /// and an IRI with no `attribute_names` row is conveyed by no Entity at
+    /// all.
+    Unrecorded,
+}
+
+impl GeoTarget {
+    /// Where the instances of `geo`'s `GeoProperty` are stored, by the keys
+    /// `attribute_names` resolved.
+    fn of(geo: &GeoQuery, attribute_names: &ResolvedNames<AttributeName>) -> GeoTarget {
+        let key = attribute_names.get(&geo.geoproperty);
+        if geo.geoproperty.as_str() == LOCATION.as_str() {
+            return GeoTarget::Location(key);
+        }
+        key.map_or(GeoTarget::Unrecorded, GeoTarget::Instances)
+    }
+}
+
+/// Alias the instance subquery and the instance matches read
+/// `current_attributes` under.
 ///
 /// Distinct enough not to collide with an alias the enclosing statement chose.
 const INSTANCE_ALIAS: &str = "geo_instance";
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_row_refs::EntityRowRefs, error::RenderError, geo_predicate::condition};
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        error::RenderError,
+        geo_predicate::{condition, matches, probe},
+    };
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
@@ -249,6 +349,35 @@ mod tests {
     /// A dictionary that knows nothing.
     fn resolved_none() -> ResolvedNames<AttributeName> {
         ResolvedNames::default()
+    }
+
+    /// The rows a page's walk probes: each visited Entity's key is read from
+    /// the walk.
+    static WALKED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::unaliased(None).keyed_by(Alias::new("walked")));
+
+    /// The dictionary key `location`'s instance rows are taken to be stored
+    /// under.
+    const LOCATION_KEY: i32 = 9;
+
+    /// A dictionary that has recorded `location`.
+    fn resolved_location() -> ResolvedNames<AttributeName> {
+        ResolvedNames::from_pairs([(name(LOCATION), AttributeNameKey::from(LOCATION_KEY))])
+    }
+
+    /// The seven relations of clause 4.10, `near` bounded on both sides.
+    fn every_georel() -> [GeoRel; 7] {
+        [
+            GeoRel::Within,
+            GeoRel::Contains,
+            GeoRel::Intersects,
+            GeoRel::Disjoint,
+            GeoRel::Equals,
+            GeoRel::Overlaps,
+            GeoRel::Near {
+                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
+                min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
+            },
+        ]
     }
 
     /// Render with the reference geometry left as a placeholder, so two
@@ -490,19 +619,7 @@ mod tests {
 
     #[test]
     fn every_georel_renders_its_postgis_function_on_an_entity() {
-        let cases = [
-            GeoRel::Within,
-            GeoRel::Contains,
-            GeoRel::Intersects,
-            GeoRel::Disjoint,
-            GeoRel::Equals,
-            GeoRel::Overlaps,
-            GeoRel::Near {
-                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
-                min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
-            },
-        ];
-        for (index, georel) in cases.into_iter().enumerate() {
+        for (index, georel) in every_georel().into_iter().enumerate() {
             let geo = point_query(georel, LOCATION);
             assert_statement_snapshot!(
                 format!("geo-predicate-every-georel-renders-its-postgis-function-on-an-entity-{}", index + 1),
@@ -542,19 +659,7 @@ mod tests {
     /// may differ.
     #[test]
     fn a_three_dimensional_reference_renders_the_same_sql_as_a_two_dimensional_one() {
-        let relations = [
-            GeoRel::Within,
-            GeoRel::Contains,
-            GeoRel::Intersects,
-            GeoRel::Disjoint,
-            GeoRel::Equals,
-            GeoRel::Overlaps,
-            GeoRel::Near {
-                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
-                min_distance: Some(PositiveDistance::from_str("10").expect("positive distance")),
-            },
-        ];
-        for georel in relations {
+        for georel in every_georel() {
             let flat = point_query(georel.clone(), LOCATION);
             let elevated = point_query_3d(georel, LOCATION);
             let (flat_sql, flat_values) = render_parameterised(condition(&flat, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("flat renders"));
@@ -583,5 +688,157 @@ mod tests {
 
         let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
         assert_statement_snapshot!("geo-predicate-a-three-dimensional-reference-binds-as-three-dimensional-ewkb", statement);
+    }
+
+    /// Clause 5.7.2.4: any instance meeting the restriction is enough, so the
+    /// matches of a custom `GeoProperty` are its instance rows that meet it,
+    /// read with no outer row through the box `idx_ca_value_geometry` keys.
+    #[test]
+    fn the_matches_of_a_custom_geoproperty_are_its_instances_meeting_the_relation() {
+        let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
+        let statement = matches(&geo, &UNALIASED, &UNNARROWED, &resolved_custom())
+            .expect("renders")
+            .expect("a recorded GeoProperty can match");
+        assert_statement_snapshot!(
+            "geo-predicate-the-matches-of-a-custom-geoproperty-are-its-instances-meeting-the-relation",
+            statement
+        );
+    }
+
+    /// Clause 4.10: an IRI the dictionary has never seen is conveyed by no
+    /// Entity, so there is nothing to read.
+    #[test]
+    fn an_unrecorded_geoproperty_has_no_matches() {
+        let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
+        assert_eq!(matches(&geo, &UNALIASED, &UNNARROWED, &resolved_none()).expect("renders"), None);
+    }
+
+    /// Clause 5.7.2.4: the walked Entity matches when its hoisted default
+    /// instance or one of its `datasetId` instances meets the restriction.
+    /// Each is looked up by the walked key, the box compared as `box2d`.
+    #[test]
+    fn the_location_probe_tests_one_entitys_hoisted_instance_and_its_dataset_instances() {
+        let geo = point_query(GeoRel::Within, LOCATION);
+        let statement = render(probe(&geo, &WALKED, &resolved_location()).expect("renders"));
+        assert_statement_snapshot!(
+            "geo-predicate-the-location-probe-tests-one-entitys-hoisted-instance-and-its-dataset-instances",
+            statement
+        );
+    }
+
+    /// A `location` the dictionary has never recorded has no instance rows,
+    /// so the hoisted default instance decides alone.
+    #[test]
+    fn an_unrecorded_location_probe_tests_the_hoisted_instance_alone() {
+        let geo = point_query(GeoRel::Within, LOCATION);
+        let statement = render(probe(&geo, &WALKED, &resolved_none()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-an-unrecorded-location-probe-tests-the-hoisted-instance-alone", statement);
+    }
+
+    #[test]
+    fn a_custom_geoproperty_probe_tests_the_instances_of_one_entity() {
+        let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
+        let statement = render(probe(&geo, &WALKED, &resolved_custom()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-a-custom-geoproperty-probe-tests-the-instances-of-one-entity", statement);
+    }
+
+    /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
+    /// non-matching, and no Entity conveys one the dictionary never recorded.
+    #[test]
+    fn the_probe_of_an_unknown_geoproperty_matches_nothing() {
+        let geo = point_query(GeoRel::Within, "https://example.com/neverRecorded");
+        let statement = render(probe(&geo, &WALKED, &resolved_none()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-the-probe-of-an-unknown-geoproperty-matches-nothing", statement);
+    }
+
+    /// The seven relations of clause 4.10, then `near` with a `minDistance`
+    /// alone. `disjoint` and that `near` match geometries arbitrarily far from
+    /// the reference, so their probes carry no box test.
+    #[test]
+    fn every_georel_renders_its_probe_on_one_entity() {
+        let unbounded_near = GeoRel::Near {
+            max_distance: None,
+            min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
+        };
+        for (index, georel) in every_georel().into_iter().chain([unbounded_near]).enumerate() {
+            let geo = point_query(georel, LOCATION);
+            assert_statement_snapshot!(
+                format!("geo-predicate-every-georel-renders-its-probe-on-one-entity-{}", index + 1),
+                render(probe(&geo, &WALKED, &resolved_location()).expect("renders"))
+            );
+        }
+    }
+
+    /// Clause 4.10 requires `near` to name at least one distance, whichever
+    /// way the relation is read.
+    #[test]
+    fn the_probe_and_the_matches_refuse_near_without_a_distance() {
+        let names = ResolvedNames::from_pairs([
+            (name(LOCATION), AttributeNameKey::from(LOCATION_KEY)),
+            (name(CUSTOM_GEOPROPERTY), AttributeNameKey::from(CUSTOM_GEOPROPERTY_ID)),
+        ]);
+        let unbounded = GeoRel::Near {
+            max_distance: None,
+            min_distance: None,
+        };
+        for geoproperty in [LOCATION, CUSTOM_GEOPROPERTY] {
+            let geo = point_query(unbounded.clone(), geoproperty);
+            let probed = probe(&geo, &WALKED, &names).expect_err("the probe must refuse");
+            assert!(
+                matches!(probed, RenderError::Query(QueryError::NearWithoutDistance)),
+                "{geoproperty}: got {probed:?}"
+            );
+            let matched = matches(&geo, &UNALIASED, &UNNARROWED, &names).expect_err("the matches must refuse");
+            assert!(
+                matches!(matched, RenderError::Query(QueryError::NearWithoutDistance)),
+                "{geoproperty}: got {matched:?}"
+            );
+        }
+    }
+
+    /// Clause 4.10 judges every relation on the horizontal plane, so the probe
+    /// and the matches of a reference with an altitude are the statements of
+    /// the same reference without one, binding the altitude they were given.
+    #[test]
+    fn a_three_dimensional_reference_renders_the_same_probe_and_matches_as_a_two_dimensional_one() {
+        for georel in every_georel() {
+            let flat = point_query(georel.clone(), LOCATION);
+            let elevated = point_query_3d(georel, LOCATION);
+
+            let (flat_probe, flat_probe_values) = render_parameterised(probe(&flat, &WALKED, &resolved_location()).expect("flat probe renders"));
+            let (elevated_probe, elevated_probe_values) =
+                render_parameterised(probe(&elevated, &WALKED, &resolved_location()).expect("elevated probe renders"));
+            assert_eq!(
+                elevated_probe, flat_probe,
+                "{:?} probe must not vary with the reference dimensionality",
+                flat.georel
+            );
+            assert_ne!(
+                bound_bytes(&elevated_probe_values),
+                bound_bytes(&flat_probe_values),
+                "{:?} probe must still bind the altitude it was given",
+                flat.georel
+            );
+
+            let matched = |geo: &GeoQuery| {
+                matches(geo, &UNALIASED, &UNNARROWED, &resolved_location())
+                    .expect("matches render")
+                    .expect("location can match")
+                    .build(PostgresQueryBuilder)
+            };
+            let (flat_matches, flat_matches_values) = matched(&flat);
+            let (elevated_matches, elevated_matches_values) = matched(&elevated);
+            assert_eq!(
+                elevated_matches, flat_matches,
+                "{:?} matches must not vary with the reference dimensionality",
+                flat.georel
+            );
+            assert_ne!(
+                bound_bytes(&elevated_matches_values),
+                bound_bytes(&flat_matches_values),
+                "{:?} matches must still bind the altitude they were given",
+                flat.georel
+            );
+        }
     }
 }

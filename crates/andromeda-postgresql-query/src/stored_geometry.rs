@@ -100,9 +100,10 @@ pub enum BoxIndexing {
     /// The test reads the box as its `GiST` index keys it, so the planner may
     /// drive the read from the index.
     Indexed,
-    /// The test compares boxes no geometry index stores. For a probe that
-    /// reads one Evolution's rows through its stream index: an indexable test
-    /// there lets the planner AND a geometry `GiST` into every probe, while
+    /// The test compares boxes no geometry index stores. For a read another
+    /// index already drives: one Entity's instances looked up by its key, or
+    /// one Evolution's rows read through its stream index. An indexable test
+    /// there lets the planner AND a geometry `GiST` into every lookup, while
     /// this one only spares the exact relation of the rows it discards.
     Unindexed,
 }
