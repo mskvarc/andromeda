@@ -183,8 +183,8 @@ const E17_ATTRIBUTES: &[CorpusAttribute] = &[
 ];
 /// `n1` the one-element array 10 and `e0` the empty array.
 const E18_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("n1", Property(&[Integer(10)])), attribute!("e0", Property(&[]))];
-/// `t` a Time, `jw` the JSON `{"@type":"@json","@value":{"a":2}}` and
-/// `place` a Point at 8.8, 52.6.
+/// `t` a Time, `jw` the JSON `{"@type":"@json","@value":{"a":2}}`, `place`
+/// a Point at 8.8, 52.6, and `rows` the objects `{a: 5}` and `{a: 6}`.
 const E19_ATTRIBUTES: &[CorpusAttribute] = &[
     attribute!(
         "t",
@@ -203,7 +203,10 @@ const E19_ATTRIBUTES: &[CorpusAttribute] = &[
             foreign: &[],
         }
     ),
+    attribute!("rows", Property(&[Members(&[("a", &[Integer(5)])]), Members(&[("a", &[Integer(6)])])])),
 ];
+/// `rows` the one-element array of the object `{a: 5}`.
+const E20_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("rows", Property(&[Members(&[("a", &[Integer(5)])])]))];
 
 impl CorpusEntity {
     /// The Attributes of the Entity in the order the corpus lists them.
@@ -229,6 +232,7 @@ impl CorpusEntity {
             CorpusEntity::E17 => E17_ATTRIBUTES,
             CorpusEntity::E18 => E18_ATTRIBUTES,
             CorpusEntity::E19 => E19_ATTRIBUTES,
+            CorpusEntity::E20 => E20_ATTRIBUTES,
         }
     }
 }
@@ -267,7 +271,7 @@ mod tests {
             written_terms(),
             [
                 "n", "s", "b", "other", "r", "rl", "l", "d", "tm", "f", "g", "m", "k", "src", "addr", "h", "hp", "location", "vp", "lp", "jp", "jn", "link",
-                "link2", "llink", "hm", "n1", "e0", "t", "jw", "place"
+                "link2", "llink", "hm", "n1", "e0", "t", "jw", "place", "rows"
             ]
         );
     }

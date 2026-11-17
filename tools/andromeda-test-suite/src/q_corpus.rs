@@ -137,7 +137,9 @@ impl CorpusEntities {
             CorpusEntity::E19 => builder
                 .property("t", Property::builder("12:00:00Z").value_type("Time".parse::<VocabTerm>()?))
                 .json_property("jw", JsonProperty::builder(r#"{"@type":"@json","@value":{"a":2}}"#.parse::<RawJson>()?))
-                .geo_property("place", Shape::Point(Position::try_new(8.8, 52.6)?)),
+                .geo_property("place", Shape::Point(Position::try_new(8.8, 52.6)?))
+                .property("rows", Value::Array(vec![object([("a", number("5")?)]), object([("a", number("6")?)])])),
+            CorpusEntity::E20 => builder.property("rows", Value::Array(vec![object([("a", number("5")?)])])),
         };
         Ok(builder.build()?)
     }

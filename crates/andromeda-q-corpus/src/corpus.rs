@@ -1,6 +1,6 @@
 //! The filters of the corpus and the Entities each selects.
 
-use crate::corpus_entity::CorpusEntity::{self, E1, E2, E3, E4, E5, E7, E8, E9, E10, E11, E12, E13, E14, E15, E16, E17, E18, E19};
+use crate::corpus_entity::CorpusEntity::{self, E1, E2, E3, E4, E5, E7, E8, E9, E10, E11, E12, E13, E14, E15, E16, E17, E18, E19, E20};
 
 /// Whether a filter reads a Linked Entity, which Query Entities admits only
 /// with `join` and `joinLevel` 1 (clause 5.7.2.4) and a Subscription with no
@@ -16,7 +16,7 @@ pub enum Traversal {
 /// One filter of the corpus and the Entities it selects.
 #[derive(Clone, Copy, Debug)]
 pub struct CorpusCase {
-    /// The case's name, `C-` and two digits.
+    /// The case's name, `C-` and its number of at least two digits.
     pub id: &'static str,
     /// The filter as a client writes it.
     pub q: &'static str,
@@ -60,7 +60,8 @@ const fn hop(id: &'static str, q: &'static str, selects: &'static [CorpusEntity]
 /// inequality only. With no target language, any one value of a `languageMap`
 /// is the target value, and `!=` holds only when no value matches. A member
 /// that resolves to nothing makes the target element non-existent, so `!=`
-/// fails too. A member's values are read as a Property's are: a member holding
+/// fails too, and a Property holding several values is an array, in which a
+/// trailing path resolves no member. A member's values are read as a Property's are: a member holding
 /// the empty array exists and includes no operand, and a structured value, as
 /// a member or beside a literal in an array, is an Object unequal to every
 /// operand. A pattern searches anywhere in the string. Not-a-number is
@@ -202,6 +203,11 @@ pub const CORPUS: &[CorpusCase] = &[
     local("C-108", "location[meta]!=\"x\"", &[E14]),
     local("C-109", "location[missing]", &[]),
     local("C-110", "place[bbox]", &[]),
+    local("C-111", "rows[a]", &[E20]),
+    local("C-112", "rows[a]==5", &[E20]),
+    local("C-113", "rows[a]==6", &[]),
+    local("C-114", "rows[a]==5,6", &[E20]),
+    local("C-115", "rows[a]!=6", &[E20]),
 ];
 
 #[cfg(test)]

@@ -92,19 +92,6 @@ fn held_values_target<'a>(mut values: impl Iterator<Item = TargetValue<'a>>) -> 
     })
 }
 
-/// The first value of an attribute instance's family member, which is the node
-/// a compound value's members hang off.
-///
-/// A list family holds its items inside one list, which has neither a literal
-/// nor members of its own, so a path into it addresses nothing.
-#[must_use]
-pub fn first_family_value<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ValueItem<'a, I::Node>> {
-    match family_reading(instance.family()).layout {
-        ValueLayout::Nodes => instance.values().next(),
-        ValueLayout::OrderedList => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{

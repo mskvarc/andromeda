@@ -18,16 +18,19 @@
 //! of a JSON literal or of a geometry's positions or `bbox` declares none.
 //!
 //! A member expression accesses a property of an object, and an array has no
-//! named property, so every step before the last descends only through a
-//! member holding exactly one value. The member the last step reaches is the
-//! target element, and its value the target value, read as a Property's
-//! values are: an expanded member holding one value is a scalar target and
-//! one holding none or several an array, as is a JSON array of a literal, and
-//! a value that is no literal (a nested structured value) is an Object, which
-//! no operand equals. Clause 4.9 compares an array by membership under the
-//! equality operators ("Is included in the target value, if the latter is an
-//! array", and under `unequal` "Is not included"), so the empty array includes
-//! no operand, and the ordering, range and pattern operators match no array.
+//! named property, so the path enters only a value held alone: a Property
+//! holding several values stores them as one array, where the first step of
+//! the `strict` path reaches nothing. Every step before the last descends
+//! only through a member holding exactly one value. The member the last step
+//! reaches is the target element, and its value the target value, read as a
+//! Property's values are: an expanded member holding one value is a scalar
+//! target and one holding none or several an array, as is a JSON array of a
+//! literal, and a value that is no literal (a nested structured value) is an
+//! Object, which no operand equals. Clause 4.9 compares an array by membership
+//! under the equality operators ("Is included in the target value, if the
+//! latter is an array", and under `unequal` "Is not included"), so the empty
+//! array includes no operand, and the ordering, range and pattern operators
+//! match no array.
 
 use crate::q_predicate::{
     instance_row::InstanceRow,
