@@ -40,6 +40,27 @@ FROM
               WHERE
                 "entity_search"."entity_key" = "selected"."entity_key" OFFSET 0
             ) AS "entity_search" ON TRUE
+            INNER JOIN LATERAL (
+              SELECT
+                1
+              WHERE
+                (
+                  "entity_search"."attribute_name_keys" @> (ARRAY[12])
+                )
+                AND EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "current_attributes" AS "ca"
+                  WHERE
+                    "ca"."attribute_name_key" = $1
+                    AND (
+                      "ca"."expires_at" IS NULL
+                      OR "ca"."expires_at" > NOW()
+                    )
+                    AND "ca"."entity_key" = "selected"."entity_key"
+                ) OFFSET 0
+            ) AS "filtered" ON TRUE
           WHERE
             "selected"."entity_key" NOT IN (
               SELECT
@@ -48,24 +69,6 @@ FROM
                 "entities"
               WHERE
                 "expires_at" <= NOW()
-            )
-            AND (
-              (
-                "entity_search"."attribute_name_keys" @> (ARRAY[12])
-              )
-              AND EXISTS (
-                SELECT
-                  1
-                FROM
-                  "current_attributes" AS "ca"
-                WHERE
-                  "ca"."attribute_name_key" = $1
-                  AND (
-                    "ca"."expires_at" IS NULL
-                    OR "ca"."expires_at" > NOW()
-                  )
-                  AND "ca"."entity_key" = "selected"."entity_key"
-              )
             )
           ORDER BY
             "sort_0" ASC
@@ -302,6 +305,27 @@ FROM
                   WHERE
                     "entity_search"."entity_key" = "selected"."entity_key" OFFSET 0
                 ) AS "entity_search" ON TRUE
+                INNER JOIN LATERAL (
+                  SELECT
+                    1
+                  WHERE
+                    (
+                      "entity_search"."attribute_name_keys" @> (ARRAY[12])
+                    )
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "current_attributes" AS "ca"
+                      WHERE
+                        "ca"."attribute_name_key" = $16
+                        AND (
+                          "ca"."expires_at" IS NULL
+                          OR "ca"."expires_at" > NOW()
+                        )
+                        AND "ca"."entity_key" = "selected"."entity_key"
+                    ) OFFSET 0
+                ) AS "filtered" ON TRUE
               WHERE
                 "selected"."entity_key" NOT IN (
                   SELECT
@@ -310,24 +334,6 @@ FROM
                     "entities"
                   WHERE
                     "expires_at" <= NOW()
-                )
-                AND (
-                  (
-                    "entity_search"."attribute_name_keys" @> (ARRAY[12])
-                  )
-                  AND EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "current_attributes" AS "ca"
-                    WHERE
-                      "ca"."attribute_name_key" = $16
-                      AND (
-                        "ca"."expires_at" IS NULL
-                        OR "ca"."expires_at" > NOW()
-                      )
-                      AND "ca"."entity_key" = "selected"."entity_key"
-                  )
                 )
               ORDER BY
                 "sort_0" ASC OFFSET 0

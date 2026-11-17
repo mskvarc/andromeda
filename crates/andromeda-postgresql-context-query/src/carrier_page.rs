@@ -23,7 +23,7 @@
 
 use crate::{
     carried_names::attrs_carriers,
-    entity::{GeoFilter, QFilter, build_entity_conditions},
+    entity::{EntityConditions, GeoFilter, QFilter, build_entity_conditions},
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
     gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
@@ -114,7 +114,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
             relations: &identity,
             ..*source
         },
-        walked: Condition::all(),
+        walked: EntityConditions::default(),
         probe: Condition::all().add(Expr::exists(probe.take())),
         short: CARRIER_SHORT_WALK,
     };

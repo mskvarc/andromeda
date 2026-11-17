@@ -17,6 +17,7 @@
 //! 3. the full walk tests every member.
 
 use crate::{
+    entity::EntityConditions,
     entity_page::{ProjectedPage, sort_column},
     entity_relations::{EntityRelations, RowSource},
     gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
@@ -102,7 +103,7 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
     let walked_identifier = Expr::col((Walked, sort_column(0)));
     let walk = PageWalk {
         source: *source,
-        walked: Condition::all(),
+        walked: EntityConditions::default(),
         probe: Condition::all().add(pattern_predicate(walked_identifier, matches.pattern, PatternIndexes::None)),
         short: ID_PATTERN_SHORT_WALK,
     };
