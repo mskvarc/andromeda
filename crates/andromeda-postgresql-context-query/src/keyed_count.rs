@@ -232,7 +232,7 @@ mod tests {
     fn a_count_without_a_keyed_term_is_one_count_over_the_whole_filter() {
         let built = build_query(
             &ContextTarget::Live,
-            &query("\"https://example.com/temperature\">1"),
+            &query("\"https://example.com/temperature\"!=1"),
             &PageWindow::offset(100, 0),
             CountPolicy::Emit,
             &names(),

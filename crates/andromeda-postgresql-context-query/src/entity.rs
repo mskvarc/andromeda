@@ -431,7 +431,7 @@ mod tests {
     fn a_q_filter_probes_inside_the_page_and_the_heads_are_read_outside_it() {
         let mut q = empty_query();
         q.selection.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/temperature\">1").expect("valid q"),
+            parser::parse("\"https://example.com/temperature\"!=1").expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let built = build(&q, &temperature_is_known());
@@ -804,13 +804,14 @@ mod tests {
     fn count_sql_reuses_the_main_query_bind_vector() {
         // The repository binds one vector against both statements, so the
         // placeholder sequence has to be identical up to the pagination
-        // parameters the count query omits.
+        // parameters the count query omits. A String ordering keeps the page
+        // plain: no index orders it.
         let mut cq = empty_query();
         cq.selection.q = Some(CompiledFilter::new(
             Expr::Pred(Predicate::Ordering {
                 path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
                 op: OrderingOp::Greater,
-                rhs: Scalar::Number(50.into()),
+                rhs: Scalar::Str("m".to_owned()),
             }),
             LanguageMatching::TagEquality,
         ));

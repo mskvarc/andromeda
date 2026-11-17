@@ -105,8 +105,12 @@ mod tests {
         assert_eq!(candidates("\"https://example.com/never-written\""), None);
     }
 
+    /// An ordering is read as a range of the value index, never through the
+    /// carriers of the name.
     #[test]
     fn a_comparison_is_not_an_existence() {
-        assert_eq!(candidates("\"https://example.com/speed\">1"), None);
+        let reading = reading_of("\"https://example.com/speed\">1");
+        let keyed = keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole);
+        assert_eq!(keyed.map(|keyed| keyed.read), Some(CandidateRead::Ranged));
     }
 }

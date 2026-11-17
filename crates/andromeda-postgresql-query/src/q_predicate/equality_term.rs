@@ -8,7 +8,7 @@ use crate::q_predicate::{
     language_term::some_string_in_range,
     own_value_arms::OwnValueArms,
     structured_target::carries_operand,
-    typed_column::typed_column_condition,
+    typed_column::{typed_column_condition, typed_field_conditions},
     value_column::ValueColumn,
 };
 use andromeda_ngsi_ld_query::filter::reading::{
@@ -18,8 +18,9 @@ use andromeda_ngsi_ld_query::filter::reading::{
     order_relation::OrderRelation,
     target_kind::TargetKind,
 };
+use andromeda_postgresql_seaquery::literal::false_literal;
 use andromeda_postgresql_stored_values::value_placement::ValueField;
-use sea_query::{Condition, SimpleExpr};
+use sea_query::{Condition, ExprTrait, SimpleExpr};
 
 /// Whether the instance's own value equals one of `operands` (`==` with a
 /// value or a value list), against the fields of one instance that can hold
@@ -52,10 +53,41 @@ pub(crate) fn equals_any_value(operands: &[Operand], row: InstanceRow) -> Condit
 /// anything but NULL. Unequal is the total negation of this same disjunction,
 /// so the two operators cannot drift apart.
 fn carries_any_target_value(operand: &Operand, row: InstanceRow) -> Condition {
+    equality_arms(operand, row).either()
+}
+
+/// The readings an equality with one operand disjoins, each answered by an
+/// index of its own: every typed field holding a kind the operand compares
+/// with, and the structured value.
+///
+/// The index path of the term reads each arm on its own, so all are built
+/// here once and none can drift from the condition the page rechecks.
+#[derive(Debug, Clone)]
+pub struct EqualityArms {
+    /// The equality on each typed field, one field each.
+    pub fields: Vec<SimpleExpr>,
+    /// The operand carried as the target value of a structured value.
+    pub structured: Condition,
+}
+
+impl EqualityArms {
+    /// The term's condition: some reading holds.
+    #[must_use]
+    pub fn either(self) -> Condition {
+        Condition::any()
+            .add(self.fields.into_iter().reduce(ExprTrait::or).unwrap_or_else(false_literal))
+            .add(self.structured)
+    }
+}
+
+/// The arms of an equality of the instance's own value with `operand`.
+#[must_use]
+pub(crate) fn equality_arms(operand: &Operand, row: InstanceRow) -> EqualityArms {
     let column: SimpleExpr = row.value(ValueColumn::Field(ValueField::Object));
-    Condition::any()
-        .add(typed_column_condition(operand, Comparator::Equal, row))
-        .add(carries_operand(&column, &row.value_type_key(), &row.attribute_family(), operand))
+    EqualityArms {
+        fields: typed_field_conditions(operand, Comparator::Equal, row),
+        structured: carries_operand(&column, &row.value_type_key(), &row.attribute_family(), operand),
+    }
 }
 
 /// Whether the target value sits inside `interval`, both bounds included

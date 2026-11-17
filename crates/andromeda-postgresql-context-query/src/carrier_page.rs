@@ -277,7 +277,7 @@ mod tests {
     fn an_attrs_selection_filtered_further_keeps_the_plain_page() {
         let mut filtered = by_attrs(&["headSign"]);
         filtered.selection.q = Some(CompiledFilter::new(
-            parse("\"https://example.com/temperature\">1").expect("valid q"),
+            parse("\"https://example.com/temperature\"!=1").expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let mut ordered = by_attrs(&["headSign"]);

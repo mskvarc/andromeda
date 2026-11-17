@@ -23,10 +23,33 @@ WHERE
         OR "ca"."expires_at" > NOW()
       )
       AND (
-        "ca"."value_number" > $2
-        AND "ca"."value_number" <> ('NaN'::numeric)
+        (
+          (
+            (("ca"."value_string") COLLATE "und-x-icu") > $2
+            OR (("ca"."value_long_text") COLLATE "und-x-icu") > $3
+          )
+          AND nullif("ca"."value_kind" = (2), FALSE)
+        )
+        OR EXISTS (
+          SELECT
+            1
+          FROM
+            jsonb_array_elements(
+              (
+                CASE
+                  WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                END
+              )
+            ) AS "ls"
+          WHERE
+            (
+              ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+            ) > $4
+        )
       )
       AND "ca"."entity_key" = "entities"."entity_key"
   )
 1: Int 12
-2: BigDecimal 50
+2: String 'm'
+3: String 'm'
+4: String 'm'

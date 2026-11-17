@@ -1,0 +1,61 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_value_equality.rs
+---
+SELECT
+  "entity_key"
+FROM
+  (
+    SELECT
+      "ca"."entity_key"
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND "ca"."value_date_time" = $2
+    UNION ALL
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $3
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND "ca"."attribute_kind" <> (6)
+        AND (
+          ("ca"."value_object" @> ($4::jsonb))
+          OR (
+            (
+              CASE
+                WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+              END
+            ) = (
+              SELECT
+                "entity_type_name_key"
+              FROM
+                "entity_type_names"
+              WHERE
+                "name" = $5
+            )
+            AND (
+              ("ca"."value_object" @> ($6::jsonb))
+              OR ("ca"."value_object" @> ($7::jsonb))
+            )
+          )
+        )
+    )
+  ) AS "matches"
+1: Int 11
+2: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'
+3: Int 11
+4: String '[{"@value": "2024-01-15T12:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]'
+5: String 'https://uri.etsi.org/ngsi-ld/DateTime'
+6: String '["2024-01-15T12:00:00Z"]'
+7: String '[{"@value": "2024-01-15T12:00:00Z"}]'

@@ -1,13 +1,16 @@
 //! The one Query Term of a `q` expression an index answers on the page's
 //! behalf, and the candidates the index reads for it.
 //!
-//! Five terms qualify: an equality on a sub-attribute's own value, read
-//! through `idx_ca_sub_eq_keys`
+//! Six terms qualify: an equality with one operand on an attribute's own
+//! value, read through the typed value indexes and the containment keys of the
+//! structured value ([`keyed_value_equality`](crate::q_predicate::keyed_value_equality)),
+//! an equality on a sub-attribute's own value, read through
+//! `idx_ca_sub_eq_keys`
 //! ([`keyed_equality`](crate::q_predicate::sub_attribute::keyed_equality)),
 //! a `~=` on an attribute's own value, read through the trigram indexes
 //! ([`keyed_pattern`](crate::q_predicate::keyed_pattern)), an ordering or
-//! a range on an attribute's own value with `DateTime` or `Date` operands,
-//! read through the typed value indexes
+//! a range on an attribute's own value with number, `DateTime`, `Date` or
+//! `Time` operands, read through the typed value indexes
 //! ([`keyed_ordering`](crate::q_predicate::keyed_ordering)), and the bare
 //! existence of an attribute, read through the GIN over the search row's
 //! attribute names ([`keyed_existence`](crate::q_predicate::keyed_existence)),
@@ -32,6 +35,7 @@ use crate::{
         keyed_hop::hop_candidates,
         keyed_ordering::ordering_candidates,
         keyed_pattern::pattern_candidates,
+        keyed_value_equality::value_equality_candidates,
         resolved_filter::{ResolvedFilter, ResolvedTerm},
         sub_attribute::keyed_equality::equality_candidates,
     },
@@ -53,7 +57,8 @@ use std::slice::from_ref;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandidateRead {
     /// The index offers rows that may match and the term's condition rechecks
-    /// each against its value: a trigram or a sub-attribute key match.
+    /// each against its value: a trigram, a sub-attribute key or an
+    /// equality's containment key match.
     Rechecked,
     /// The candidates are a range of a B-tree over the compared value, each
     /// a match as the index yields it.
@@ -177,7 +182,11 @@ fn candidates_of(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> Option<(Selec
     };
     match (value.test(), value.polarity()) {
         (ScalarTest::EqualsAny(operands), Polarity::Asserted) => match operands.as_slice() {
-            [operand] => equality_candidates(term, operand, rows).map(rechecked),
+            [operand] => match own_value_attribute(term) {
+                Some(attribute) => value_equality_candidates(attribute, operand, rows),
+                None => equality_candidates(term, operand, rows),
+            }
+            .map(rechecked),
             [] | [_, _, ..] => None,
         },
         (ScalarTest::Ordered { .. } | ScalarTest::Within(_), Polarity::Asserted) => {
@@ -253,6 +262,10 @@ mod tests {
             ("\"https://example.com/observedOn\"==2024-01-01..2024-02-01", CandidateRead::Ranged),
             ("\"https://example.com/count\"", CandidateRead::Probed),
             ("\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"", CandidateRead::Linked),
+            ("\"https://example.com/count\"==1", CandidateRead::Rechecked),
+            ("\"https://example.com/name\"==\"x\"", CandidateRead::Rechecked),
+            ("\"https://example.com/count\">1", CandidateRead::Ranged),
+            ("\"https://example.com/count\"==1..5", CandidateRead::Ranged),
         ] {
             assert_eq!(read(q), Some(expected), "{q}");
         }
@@ -267,6 +280,8 @@ mod tests {
             "\"https://example.com/observedOn\"==2024-01-01..2024-02-01",
             "\"https://example.com/count\"",
             "\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"",
+            "\"https://example.com/count\"==1",
+            "\"https://example.com/count\">1",
         ]
         .into_iter()
         .enumerate()
@@ -292,7 +307,7 @@ mod tests {
     #[test]
     fn the_first_keyed_conjunct_is_the_one_the_index_answers() {
         let statement = candidates(
-            "\"https://example.com/count\">1;\"https://example.com/name\"~=\"text-71.*\";\"https://example.com/name\".\"https://example.com/source\"==\"s\"",
+            "\"https://example.com/count\"!=1;\"https://example.com/name\"~=\"text-71.*\";\"https://example.com/name\".\"https://example.com/source\"==\"s\"",
         )
         .expect("keyed");
         assert_statement_snapshot!("keyed-term-the-first-keyed-conjunct-is-the-one-the-index-answers", statement);
@@ -300,26 +315,28 @@ mod tests {
 
     #[test]
     fn an_existence_conjunct_is_keyed_after_an_unkeyed_one() {
-        let statement = candidates("\"https://example.com/count\">1;\"https://example.com/name\"").expect("keyed");
+        let statement = candidates("\"https://example.com/count\"!=1;\"https://example.com/name\"").expect("keyed");
         assert_statement_snapshot!("keyed-term-an-existence-conjunct-is-keyed-after-an-unkeyed-one", statement);
     }
 
     #[test]
     fn a_hop_conjunct_is_keyed_after_an_unkeyed_one() {
-        let statement = candidates("\"https://example.com/count\">1;\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"").expect("keyed");
+        let statement = candidates("\"https://example.com/count\"!=1;\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"").expect("keyed");
         assert_statement_snapshot!("keyed-term-a-hop-conjunct-is-keyed-after-an-unkeyed-one", statement);
     }
 
     #[test]
     fn a_date_ordering_conjunct_is_keyed_after_an_unkeyed_one() {
-        let statement = candidates("\"https://example.com/count\">1;\"https://example.com/observedOn\"<2024-01-15").expect("keyed");
+        let statement = candidates("\"https://example.com/count\"!=1;\"https://example.com/observedOn\"<2024-01-15").expect("keyed");
         assert_statement_snapshot!("keyed-term-a-date-ordering-conjunct-is-keyed-after-an-unkeyed-one", statement);
     }
 
     #[test]
     fn a_term_no_index_answers_is_not_keyed() {
         for q in [
-            "\"https://example.com/count\">1",
+            "\"https://example.com/count\"!=1",
+            "\"https://example.com/count\"==1,2",
+            "\"https://example.com/count\"!=1..5",
             "\"https://example.com/name\"!~=\"text-71.*\"",
             "\"https://example.com/name\">\"m\"",
             "\"https://example.com/hasTrip\"{\"https://example.com/name\"}!=\"x\"",
