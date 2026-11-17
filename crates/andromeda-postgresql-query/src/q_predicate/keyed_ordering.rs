@@ -96,7 +96,10 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole)
+            .into_iter()
+            .next()
+            .map(|keyed| keyed.select)
     }
 
     /// A `languageMap` holds no time value, so the one branch ranges over the

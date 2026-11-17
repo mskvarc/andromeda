@@ -95,7 +95,7 @@ impl Evolutions {
 /// every walk keeps the Evolutions whose identifier the candidates name.
 pub(super) fn evolution_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, among: Among) -> Evolutions {
     let walked = match (among, branch.pending()) {
-        (Among::Candidates, PendingEntries::Absent) => WalkedKeys::Among(Box::new(column_of(Candidates, Entities::EntityKey))),
+        (Among::Candidates, PendingEntries::Absent) => WalkedKeys::Among(Box::new(column_of(Candidates::FIRST.iden(), Entities::EntityKey))),
         (Among::Every, PendingEntries::Absent | PendingEntries::Unioned) | (Among::Candidates, PendingEntries::Unioned) => WalkedKeys::Every,
     };
     let (evolutions, source) = walk(branch, compiled, names, &walked);
@@ -142,7 +142,7 @@ fn narrowed(walk: TableRef, column: Entities) -> TableRef {
     narrowed
         .column(Asterisk)
         .from(walk)
-        .and_where(Expr::col((E, column)).in_subquery(column_of(Candidates, column)))
+        .and_where(Expr::col((E, column)).in_subquery(column_of(Candidates::FIRST.iden(), column)))
         .order_by(Entities::Id, Order::Asc)
         .offset(0);
     TableRef::SubQuery(Box::new(narrowed.take()), E.into_iden())

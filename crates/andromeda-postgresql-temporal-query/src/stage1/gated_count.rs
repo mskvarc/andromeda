@@ -61,15 +61,15 @@ pub(super) fn gated_count(
     let conditions = build_entity_conditions_for_temporal(branch, compiled, names, walked.type_test, PatternTest::Tested)?;
     let key = walked_key(branch);
     let mut keys = keys_of(narrowed.counted, key);
-    keys.and_where(within(Candidates, bound));
+    keys.and_where(within(Candidates::FIRST.iden(), bound));
     let mut walked_keys = keys_of(walked.counted, key);
-    walked_keys.and_where(beyond(Candidates, bound));
+    walked_keys.and_where(beyond(Candidates::FIRST.iden(), bound));
     keys.union(UnionType::All, walked_keys);
     let window_match = temporal_match_subquery(branch, compiled, names, BesideComparison::Key);
     let mut count = counted_ids(looked_up(branch, keys, key), conditions, window_match);
     count.with_cte(
         WithClause::new()
-            .cte(materialized(bounded(step.candidates(branch), bound), Candidates))
+            .cte(materialized(bounded(step.candidates(branch), bound), Candidates::FIRST.iden()))
             .to_owned(),
     );
     Ok(count)

@@ -1,5 +1,5 @@
-//! The one Query Term of a `q` expression an index answers on the page's
-//! behalf, and the candidates the index reads for it.
+//! The Query Terms of a `q` expression an index answers on the page's
+//! behalf, and the candidates the index reads for each.
 //!
 //! Six terms qualify: an equality with one operand on an attribute's own
 //! value, read through the typed value indexes and the containment keys of the
@@ -25,7 +25,10 @@
 //! selection than by fetching every match through the index, so each
 //! statement that reads the candidates bounds them by the most it can use and
 //! walks past that bound. How far that is depends on what one candidate costs
-//! to read ([`CandidateRead`]).
+//! to read ([`CandidateRead`]). Of a conjunction, the statement reads each
+//! conjunct an index answers in turn and is cut from the first whose
+//! candidates stay within their bound, so a common conjunct read first costs
+//! only its bounded read before a rare one answers.
 
 use crate::{
     entity_row_refs::EntityRowRefs,
@@ -74,7 +77,7 @@ pub enum CandidateRead {
 
 /// One term of a `q` filter's top-level conjunction and the candidates the
 /// index path reads for it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyedCandidates<'q> {
     /// The term the candidates answer, which the page leaves out of the
     /// filter it applies to them.
@@ -85,29 +88,30 @@ pub struct KeyedCandidates<'q> {
     pub read: CandidateRead,
 }
 
-/// The term of the top-level conjunction of `reading` the index path answers
-/// for the page, with its candidates read in the branch `rows` names, read as
-/// far as `bound` admits for how they are read.
+/// The terms of the top-level conjunction of `reading` the index path answers
+/// for the page, in the order it reads them, each with its candidates read in
+/// the branch `rows` names, read as far as `bound` admits for how they are
+/// read. None when no term is keyed.
 ///
 /// Only a conjunct can narrow the page to its candidates: an entity a
 /// disjunction keeps for another arm need not be one of them. A filter no
 /// Entity can match, its names resolved through `names`, offers none.
 ///
-/// Of several conjuncts an index answers, the one taken is one whose census
-/// count (`names.carriers`) fits its bound, the smallest such count first:
-/// its candidates are Entities holding an instance of the attribute it is read
-/// through, so the index answers it whole and the page never walks. When no
-/// count fits, or none was read, the first in canonical order is taken: the
-/// census bounds a value test's candidates and says nothing of how few it
-/// keeps.
+/// A conjunct whose census count (`names.carriers`) fits its bound is read
+/// alone, the smallest such count first: its candidates are Entities holding
+/// an instance of the attribute it is read through, so the index answers it
+/// whole and the page never reads another. Otherwise every conjunct is read in
+/// canonical order, since the census bounds a value test's candidates and says
+/// nothing of how few it keeps. A conjunct whose candidates are read whole
+/// always answers, so none is read after it.
 #[must_use]
 pub fn keyed_candidates<'q>(
     reading: &'q FilterReading,
     rows: &EntityRowRefs,
     names: &QueryNames,
     bound: impl Fn(CandidateRead) -> CandidateBound,
-) -> Option<KeyedCandidates<'q>> {
-    let mut keyable = keyable_conjuncts(reading, rows, names);
+) -> Vec<KeyedCandidates<'q>> {
+    let keyable = keyable_conjuncts(reading, rows, names);
     let fitting = keyable
         .iter()
         .enumerate()
@@ -115,9 +119,14 @@ pub fn keyed_candidates<'q>(
             let instances = names.carriers.instances(*carrier)?;
             bound(keyed.read).admits(instances).then_some((instances, position))
         })
-        .min()
-        .map_or(0, |(_, position)| position);
-    (fitting < keyable.len()).then(|| keyable.swap_remove(fitting).0)
+        .min();
+    let mut keyable: Vec<KeyedCandidates<'q>> = keyable.into_iter().map(|(keyed, _)| keyed).collect();
+    if let Some((_, position)) = fitting {
+        return vec![keyable.swap_remove(position)];
+    }
+    let whole = keyable.iter().position(|keyed| bound(keyed.read) == CandidateBound::Whole);
+    keyable.truncate(whole.map_or(keyable.len(), |position| position + 1));
+    keyable
 }
 
 /// The attributes the census is read for before `reading` is rendered: the
@@ -240,11 +249,17 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole)
+            .into_iter()
+            .next()
+            .map(|keyed| keyed.select)
     }
 
     fn read(q: &str) -> Option<CandidateRead> {
-        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole).map(|keyed| keyed.read)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole)
+            .into_iter()
+            .next()
+            .map(|keyed| keyed.read)
     }
 
     /// A trigram or key match is rechecked against the value; a range of the
@@ -348,50 +363,77 @@ mod tests {
     /// The names of the census tests: `count` (key 9) and `name` (key 2).
     const COUNT_AND_NAME: &str = "\"https://example.com/count\";\"https://example.com/name\"~=\"text-.*\"";
 
-    /// The attribute key of the conjunct taken for `q` in normal form, under
-    /// the census `counts` and a bound of 1 000 for every read.
-    fn keyed_attribute(q: &str, counts: &[(i32, u64)]) -> Option<String> {
+    /// The attributes of the conjuncts read for `q` in normal form, in the
+    /// order the page reads them, under the census `counts` and a bound of
+    /// 1 000 for every read.
+    fn keyed_attributes(q: &str, counts: &[(i32, u64)]) -> Vec<String> {
         let mut names = names();
         let read: Vec<AttributeNameKey> = counts.iter().map(|(key, _)| AttributeNameKey::from(*key)).collect();
         names.carriers = AttributeCarriers::new(&read, counts.iter().map(|(key, count)| (AttributeNameKey::from(*key), *count)));
         let reading = FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality);
         keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names, |_| CandidateBound::AtMost(1000))
+            .into_iter()
             .map(|keyed| keyed.term.attribute().as_str().to_owned())
+            .collect()
     }
 
     /// The census bounds a conjunct's candidates by the instances of the
     /// attribute it is read through, so a count within the bound is answered
-    /// by the index whole, ahead of the canonical first conjunct, whose count
-    /// is past it.
+    /// by the index whole, and read alone ahead of the canonical first
+    /// conjunct, whose count is past it.
     #[test]
-    fn a_count_within_its_bound_is_keyed_ahead_of_the_canonical_first_conjunct() {
-        assert_eq!(
-            keyed_attribute(COUNT_AND_NAME, &[(9, 100_000), (2, 50)]).as_deref(),
-            Some("https://example.com/name")
-        );
+    fn a_count_within_its_bound_is_read_alone_ahead_of_the_canonical_first_conjunct() {
+        assert_eq!(keyed_attributes(COUNT_AND_NAME, &[(9, 100_000), (2, 50)]), ["https://example.com/name"]);
     }
 
     #[test]
-    fn of_two_counts_within_their_bounds_the_smaller_is_keyed() {
-        assert_eq!(
-            keyed_attribute(COUNT_AND_NAME, &[(9, 10), (2, 500)]).as_deref(),
-            Some("https://example.com/count")
-        );
-        assert_eq!(
-            keyed_attribute(COUNT_AND_NAME, &[(9, 500), (2, 10)]).as_deref(),
-            Some("https://example.com/name")
-        );
+    fn of_two_counts_within_their_bounds_the_smaller_is_read_alone() {
+        assert_eq!(keyed_attributes(COUNT_AND_NAME, &[(9, 10), (2, 500)]), ["https://example.com/count"]);
+        assert_eq!(keyed_attributes(COUNT_AND_NAME, &[(9, 500), (2, 10)]), ["https://example.com/name"]);
     }
 
     /// A count past the bound says nothing of how few Entities a value test
-    /// keeps, so the canonical first conjunct stays keyed.
+    /// keeps, so every conjunct is read in canonical order.
     #[test]
-    fn with_no_count_within_its_bound_the_canonical_first_conjunct_is_keyed() {
+    fn with_no_count_within_its_bound_every_conjunct_is_read_in_canonical_order() {
+        let canonical = ["https://example.com/count", "https://example.com/name"];
+        assert_eq!(keyed_attributes(COUNT_AND_NAME, &[(9, 5000), (2, 5000)]), canonical);
+        assert_eq!(keyed_attributes(COUNT_AND_NAME, &[]), canonical);
+    }
+
+    /// An unkeyable conjunct (`!=`) is not read; the others come in
+    /// canonical order, unless a census count fits.
+    #[test]
+    fn the_keyable_conjuncts_come_in_the_order_the_page_tries_them() {
+        let q = "\"https://example.com/name\"~=\"text-.*\";\"https://example.com/count\">1;\"https://example.com/source\"!=\"x\";\"https://example.com/observedOn\"==true";
         assert_eq!(
-            keyed_attribute(COUNT_AND_NAME, &[(9, 5000), (2, 5000)]).as_deref(),
-            Some("https://example.com/count")
+            keyed_attributes(q, &[]),
+            ["https://example.com/count", "https://example.com/name", "https://example.com/observedOn"]
         );
-        assert_eq!(keyed_attribute(COUNT_AND_NAME, &[]).as_deref(), Some("https://example.com/count"));
+        assert_eq!(keyed_attributes(q, &[(9, 50)]), ["https://example.com/count"]);
+    }
+
+    /// A hop's candidates are read whole, so it always answers and no
+    /// conjunct after it is read: of `count`, the hop and `observedOn` in
+    /// canonical order, the page reads the first two.
+    #[test]
+    fn no_conjunct_is_read_after_one_read_whole() {
+        let reading = reading_of(
+            "\"https://example.com/count\">1;\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\";\"https://example.com/observedOn\">2024-01-15T12:00:00Z",
+        );
+        let page = |read| match read {
+            CandidateRead::Linked => CandidateBound::Whole,
+            CandidateRead::Rechecked | CandidateRead::Ranged | CandidateRead::Probed => CandidateBound::AtMost(1000),
+        };
+        let every = |_| CandidateBound::AtMost(1000);
+        let reads = |bound: &dyn Fn(CandidateRead) -> CandidateBound| -> Vec<CandidateRead> {
+            keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names(), bound)
+                .into_iter()
+                .map(|keyed| keyed.read)
+                .collect()
+        };
+        assert_eq!(reads(&every), [CandidateRead::Ranged, CandidateRead::Linked, CandidateRead::Ranged]);
+        assert_eq!(reads(&page), [CandidateRead::Ranged, CandidateRead::Linked]);
     }
 
     #[test]

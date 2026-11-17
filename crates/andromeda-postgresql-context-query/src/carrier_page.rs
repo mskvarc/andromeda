@@ -14,7 +14,8 @@
 //!    identifier order, each probed through its search row;
 //! 2. the index reads at most [`CARRIER_BOUND`] + 1 carriers, and the page is
 //!    cut from them, sorted;
-//! 3. the full walk filters every Entity in identifier order.
+//! 3. the full walk probes every Entity in identifier order through its
+//!    search row.
 //!
 //! Only a page in identifier order is cut this way. Under an `orderBy` the
 //! plain page sorts the selection whichever relation it reads first, so the
@@ -25,7 +26,7 @@ use crate::{
     entity::{QFilter, build_entity_conditions},
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
-    gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
+    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
 use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, error::RenderError, one_time_gate::CandidateBound, query_names::QueryNames};
@@ -108,21 +109,19 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
         build_entity_conditions(source.query, source.names, &probed, &RowSource::Entities, QFilter::Whole)?
             .add(Expr::col((Probed, EntitySearch::EntityKey)).eq(probed.entity_key_column())),
     );
-    let short = ShortWalk {
+    let walk = PageWalk {
         source: PageSource {
             relations: &identity,
             ..*source
         },
         walked: Condition::all(),
         probe: Condition::all().add(Expr::exists(probe.take())),
-        length: CARRIER_SHORT_WALK,
+        short: CARRIER_SHORT_WALK,
     };
-    let whole = source.condition(QFilter::Whole)?;
-    let rest = IndexOrWalk {
+    let read = IndexRead {
         candidates: carriers,
         bound: CandidateBound::AtMost(CARRIER_BOUND),
-        narrowed: whole.clone(),
-        whole,
+        narrowed: source.condition(QFilter::Whole)?,
     };
     // The total is the plain count over the carriers whichever step answers,
     // so the rows name none.
@@ -130,7 +129,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
         total: carried,
         step: StepColumn::Unnamed,
     };
-    gated_page(source, short, rest, columns)
+    gated_page(source, walk, vec![read], columns)
 }
 
 #[cfg(test)]

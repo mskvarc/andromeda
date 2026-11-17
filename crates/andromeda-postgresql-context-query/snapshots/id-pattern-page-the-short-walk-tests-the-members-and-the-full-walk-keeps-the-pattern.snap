@@ -119,11 +119,13 @@ FROM
               WHERE
                 "expires_at" <= NOW()
             )
-            AND "selected"."entity_key" IN (
-              SELECT
-                "entity_key"
-              FROM
-                "candidates"
+            AND "selected"."entity_key" = ANY(
+              ARRAY (
+                SELECT
+                  "entity_key"
+                FROM
+                  "candidates"
+              )
             )
             AND (
               SELECT
@@ -150,29 +152,37 @@ FROM
       FROM
         (
           SELECT
-            "selected"."entity_key",
-            "selected"."id" AS "sort_0"
+            "walked".*
           FROM
             (
               SELECT
-                "entity_key",
-                "id"
+                "selected"."entity_key",
+                "selected"."id" AS "sort_0"
               FROM
-                "entity_type_members"
+                (
+                  SELECT
+                    "entity_key",
+                    "id"
+                  FROM
+                    "entity_type_members"
+                  WHERE
+                    "entity_type_name_key" = (18)
+                    AND "is_current_member"
+                ) AS "selected"
               WHERE
-                "entity_type_name_key" = (18)
-                AND "is_current_member"
-            ) AS "selected"
+                "selected"."entity_key" NOT IN (
+                  SELECT
+                    "entity_key"
+                  FROM
+                    "entities"
+                  WHERE
+                    "expires_at" <= NOW()
+                )
+              ORDER BY
+                "sort_0" ASC OFFSET 0
+            ) AS "walked"
           WHERE
-            "selected"."entity_key" NOT IN (
-              SELECT
-                "entity_key"
-              FROM
-                "entities"
-              WHERE
-                "expires_at" <= NOW()
-            )
-            AND ((("selected"."id") COLLATE "default") ~ $6)
+            ("walked"."sort_0" ~ $6)
             AND (
               SELECT
                 COUNT(*)
@@ -186,7 +196,7 @@ FROM
                 "candidates"
             ) > $8
           ORDER BY
-            "sort_0" ASC
+            "walked"."sort_0" ASC
           LIMIT
             100 OFFSET 0
         ) AS "walk"

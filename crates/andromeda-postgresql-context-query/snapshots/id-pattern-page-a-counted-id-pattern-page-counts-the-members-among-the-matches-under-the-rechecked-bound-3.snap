@@ -52,11 +52,13 @@ SELECT
             WHERE
               "expires_at" <= NOW()
           )
-          AND "selected"."entity_key" IN (
-            SELECT
-              "entity_key"
-            FROM
-              "candidates"
+          AND "selected"."entity_key" = ANY(
+            ARRAY (
+              SELECT
+                "entity_key"
+              FROM
+                "candidates"
+            )
           )
       )
       ELSE (

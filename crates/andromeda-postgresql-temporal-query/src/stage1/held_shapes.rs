@@ -114,7 +114,7 @@ pub fn build_held_shapes_query(
         ShapeHolders::Selected => {
             statement.with_cte(
                 WithClause::new()
-                    .cte(materialized(candidates(branch, compiled, combinations), Candidates))
+                    .cte(materialized(candidates(branch, compiled, combinations), Candidates::FIRST.iden()))
                     .to_owned(),
             );
         }

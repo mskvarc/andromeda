@@ -1,31 +1,33 @@
-//! The page of an entity query whose `q` holds a conjunct an index answers:
+//! The page of an entity query whose `q` holds conjuncts an index answers:
 //! an equality with one operand on an attribute's own value or on a
 //! sub-attribute, a `~=` on an attribute's own value, an ordering or a range
-//! on an attribute's own number, boolean, `DateTime`, `Date` or `Time` value,
+//! on an attribute's own number, `DateTime`, `Date` or `Time` value,
 //! the bare existence of an attribute, or a Linked Entity hop.
 //!
-//! The planner cannot price either term (it underestimates a broad one by
-//! orders of magnitude), so the page is a [`gated_page`]:
+//! The planner cannot price any of these terms (it underestimates a broad one
+//! by orders of magnitude), so the page is a [`gated_page`]:
 //!
 //! 1. the short walk probes the first [`SHORT_WALK`] Entities of the
 //!    selection in page order for the whole `q`;
-//! 2. the index reads at most [`CANDIDATE_BOUND`] + 1 rows through the value
-//!    and containment indexes, `idx_ca_sub_eq_keys` or the trigram indexes,
-//!    each rechecked, at most
-//!    [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value index, or
-//!    at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an attribute name,
-//!    each probed for a standing instance, or every Entity naming a linked
-//!    entity the hop's inner term keeps
-//!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)),
-//!    and the page is cut from the selection narrowed to them under the rest
-//!    of `q`;
-//! 3. the full walk probes each Entity of the selection for the whole `q`,
-//!    when more candidates than the bound qualify. A hop has no full walk.
+//! 2. the index reads each keyed conjunct in turn
+//!    ([`keyed_candidates`](andromeda_postgresql_query::q_predicate::keyed_term::keyed_candidates)):
+//!    at most [`CANDIDATE_BOUND`] + 1 rows through the value and containment
+//!    indexes, `idx_ca_sub_eq_keys` or the trigram indexes, each rechecked,
+//!    at most [`RANGED_CANDIDATE_BOUND`] + 1 from a range of a typed value
+//!    index, or at most [`PROBED_CANDIDATE_BOUND`] + 1 carriers of an
+//!    attribute name, each probed for a standing instance, or every Entity
+//!    naming a linked entity the hop's inner term keeps. The page is cut from
+//!    the selection narrowed to the first candidates within their bound,
+//!    under the rest of `q`;
+//! 3. the full walk probes each Entity of the selection in page order for the
+//!    whole `q`, when every read found more candidates than its bound. A hop's
+//!    candidates are read whole, so no read follows it and the page has no
+//!    full walk.
 
 use crate::{
     entity::QFilter,
     entity_page::ProjectedPage,
-    gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, gated_page, walked_rows},
+    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, gated_page, walked_rows},
 };
 use andromeda_ngsi_ld_query::{filter::compiled_filter::CompiledFilter, read_order::ReadOrder};
 use andromeda_postgresql_query::{
@@ -81,8 +83,9 @@ pub(crate) const fn page_bound(read: CandidateRead) -> CandidateBound {
     }
 }
 
-/// The projected page of `source` for a `q` with a keyed term, and the order
-/// its rows come back in, its rows carrying what `columns` asks for.
+/// The projected page of `source` for a `q` with keyed terms, read in the
+/// order `keyed` lists them, and the order its rows come back in, its rows
+/// carrying what `columns` asks for.
 ///
 /// # Errors
 ///
@@ -91,23 +94,27 @@ pub(crate) const fn page_bound(read: CandidateRead) -> CandidateBound {
 pub(crate) fn keyed_page(
     source: &PageSource<'_>,
     q: &CompiledFilter,
-    keyed: KeyedCandidates<'_>,
+    keyed: Vec<KeyedCandidates<'_>>,
     columns: GatedColumns,
 ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let walked = walked_rows(source.rows);
-    let short = ShortWalk {
+    let walk = PageWalk {
         source: *source,
         walked: source.condition(QFilter::Omitted)?,
         probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
-        length: SHORT_WALK,
+        short: SHORT_WALK,
     };
-    let rest = IndexOrWalk {
-        candidates: keyed.select,
-        bound: page_bound(keyed.read),
-        narrowed: source.condition(QFilter::Except(keyed.term))?,
-        whole: source.condition(QFilter::Whole)?,
-    };
-    gated_page(source, short, rest, columns)
+    let reads = keyed
+        .into_iter()
+        .map(|keyed| {
+            Ok(IndexRead {
+                candidates: keyed.select,
+                bound: page_bound(keyed.read),
+                narrowed: source.condition(QFilter::Except(keyed.term))?,
+            })
+        })
+        .collect::<Result<Vec<IndexRead>, RenderError>>()?;
+    gated_page(source, walk, reads, columns)
 }
 
 #[cfg(test)]
@@ -161,6 +168,59 @@ mod tests {
         )
         .expect("valid entity query");
         assert_statement_snapshot!("keyed-page-a-census-count-within-its-bound-keys-a-later-conjunct", built.select);
+    }
+
+    /// Of a conjunction, each keyed conjunct is read in turn: the second
+    /// read's branch opens only when the first read passed its bound of 1 000
+    /// and the second stayed within its bound of 50 000, and the full walk
+    /// only when both passed theirs.
+    #[test]
+    fn a_conjunction_tries_each_keyed_conjunct_in_turn() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\"==\"x\";\"https://example.com/source\">1"),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_statement_snapshot!("keyed-page-a-conjunction-tries-each-keyed-conjunct-in-turn", built.select);
+    }
+
+    /// A hop's candidates are read whole, so its branch opens whenever the
+    /// reads before it passed their bounds, and the page has no full walk.
+    #[test]
+    fn a_hop_read_after_another_leaves_the_page_no_full_walk() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/source\">1;\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_statement_snapshot!("keyed-page-a-hop-read-after-another-leaves-the-page-no-full-walk", built.select);
+    }
+
+    /// The full walk reads the selection in page order as a subquery behind
+    /// `OFFSET 0` and probes each Entity outside it: from the cursor, or from
+    /// the start with the offset cut outside.
+    #[test]
+    fn the_full_walk_walks_the_selection_in_page_order() {
+        let q = query("\"https://example.com/temperature\"==\"x\"");
+        for (index, window) in [
+            PageWindow::offset(20, 40),
+            PageWindow::after(20, "urn:ngsi-ld:Building:001".parse().expect("valid URI")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let built = build_query(&ContextTarget::Live, &q, &window, CountPolicy::Omit, &names()).expect("valid entity query");
+            assert_statement_snapshot!(
+                format!("keyed-page-the-full-walk-walks-the-selection-in-page-order-{}", index + 1),
+                built.select
+            );
+        }
     }
 
     /// The page tries the short walk, then the bounded index, then the full

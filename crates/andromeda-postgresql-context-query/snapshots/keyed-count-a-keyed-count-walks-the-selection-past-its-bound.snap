@@ -97,11 +97,13 @@ SELECT
             OR "entities"."expires_at" > NOW()
           )
           AND TRUE
-          AND "entities"."entity_key" IN (
-            SELECT
-              "entity_key"
-            FROM
-              "candidates"
+          AND "entities"."entity_key" = ANY(
+            ARRAY (
+              SELECT
+                "entity_key"
+              FROM
+                "candidates"
+            )
           )
       )
       ELSE (

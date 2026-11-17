@@ -54,6 +54,8 @@ mod tests {
 
     fn candidates(q: &str) -> SelectStatement {
         keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole)
+            .into_iter()
+            .next()
             .map_or_else(|| panic!("keyed: {q}"), |keyed| keyed.select)
     }
 

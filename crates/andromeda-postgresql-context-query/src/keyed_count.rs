@@ -1,32 +1,33 @@
-//! The total of an entity query whose `q` holds a conjunct an index answers
+//! The total of an entity query whose `q` holds conjuncts an index answers
 //! (clause 6.3.13).
 //!
 //! The total is exact, so the count needs every match, and the two ways to
-//! find them cost differently. Read from the term's index, the count costs
-//! the candidates, each rechecked and looked up in the selection; walked, it
+//! find them cost differently. Read from a term's index, the count costs the
+//! candidates, each rechecked and looked up in the selection; walked, it
 //! costs the selection, each Entity probed for the whole `q`. The index wins
 //! by orders of magnitude while the candidates are few against the selection,
 //! and loses past a share of it that depends on the read. That share is about
 //! 5 % for an Attribute's carriers, 2 % for an identifier pattern among
 //! 1 000 000 Entities and a fifth among fewer, between a fifth and two thirds
 //! for a pattern on a value, and 2 % for a range of a typed value index. The
-//! planner cannot tell the two apart. The statement therefore reads at most
+//! planner cannot tell the two apart. The statement therefore reads the
+//! conjuncts in the order the page does, each at most
 //! [`COUNT_CANDIDATE_BOUND`] + 1 rechecked or probed candidates, or
-//! [`RANGED_COUNT_CANDIDATE_BOUND`] + 1
-//! from a range of a typed value index, behind a
-//! [`one_time_gate`](andromeda_postgresql_query::one_time_gate): when they number at most the
-//! bound they are every candidate, and the selection narrowed to them is
-//! counted; when more qualify, the selection is walked. A Linked Entity hop's
-//! candidates are read whole, as its page reads them.
+//! [`RANGED_COUNT_CANDIDATE_BOUND`] + 1 from a range of a typed value index,
+//! behind a [`one_time_gate`](andromeda_postgresql_query::one_time_gate): the
+//! first read that holds at most its bound holds every candidate of its term,
+//! and the selection narrowed to them is counted; when every read finds more,
+//! the selection is walked. A Linked Entity hop's candidates are read whole,
+//! as its page reads them, so the count never walks past one.
 
 use crate::{entity_relations::EntityRelations, entity_total::count_over};
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
-    one_time_gate::{COUNT_CANDIDATE_BOUND, CandidateBound, Candidates, column_of, materialized, within},
+    one_time_gate::{COUNT_CANDIDATE_BOUND, CandidateBound, Candidates, column_of, materialized, narrowed_to, within},
     q_predicate::keyed_term::CandidateRead,
 };
 use andromeda_postgresql_schema::current::Entities;
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, WithClause};
+use sea_query::{Condition, DynIden, Expr, Query, SelectStatement, WithClause};
 
 /// The most candidates a count reads from a range of a typed value index
 /// before it walks the selection instead.
@@ -48,41 +49,58 @@ pub(crate) const fn count_bound(read: CandidateRead) -> CandidateBound {
     }
 }
 
-/// What a keyed total filters the selection by, each way it counts.
-pub(crate) struct KeyedCountFilters {
-    /// Every filter but the keyed term, which the candidates answer.
+/// One read a keyed count tries.
+pub(crate) struct CountedRead {
+    /// Every filter but the term the candidates answer.
     pub(crate) remainder: Condition,
-    /// Every filter, the keyed term included, for the walk.
-    pub(crate) whole: Condition,
+    /// The candidates, unbounded: `SELECT "entity_key" …`.
+    pub(crate) candidates: SelectStatement,
+    /// How one candidate is read.
+    pub(crate) read: CandidateRead,
 }
 
 /// The count of the selection `relations` read in the branch `schema`
-/// (`None` for the live branch), from the keyed term's `candidates`, which
-/// cost `read` each, when they are few, by walking otherwise.
+/// (`None` for the live branch), from the candidates of the first of `reads`
+/// that are few, by walking it under `whole`, every filter, when none are.
 pub(crate) fn keyed_count(
     relations: &EntityRelations,
     schema: Option<&DynIden>,
     rows: &EntityRowRefs,
-    filters: KeyedCountFilters,
-    candidates: SelectStatement,
-    read: CandidateRead,
+    reads: Vec<CountedRead>,
+    whole: Condition,
 ) -> SelectStatement {
-    let bound = count_bound(read);
-    let narrowed = filters
-        .remainder
-        .add(rows.entity_key_column().in_subquery(column_of(Candidates, Entities::EntityKey)));
-    let indexed = count_over(relations.clone(), schema, rows.standing(), narrowed);
-    let mut count = Query::select();
-    match bound {
-        CandidateBound::AtMost(most) => {
-            let walked = count_over(relations.clone(), schema, rows.standing(), filters.whole);
-            count.expr(Expr::case(within(Candidates, most), indexed).finally(walked));
-        }
-        CandidateBound::Whole => {
-            count.expr(indexed);
+    let mut ctes = WithClause::new();
+    let mut arms = Vec::new();
+    let mut read_whole = None;
+    for (position, read) in reads.into_iter().enumerate() {
+        let cte = Candidates::at(position);
+        let bound = count_bound(read.read);
+        let narrowed = read
+            .remainder
+            .add(narrowed_to(rows.entity_key_column(), column_of(cte.iden(), Entities::EntityKey)));
+        let indexed = count_over(relations.clone(), schema, rows.standing(), narrowed);
+        ctes.cte(materialized(bound.read(read.candidates), cte.iden()));
+        match bound {
+            CandidateBound::AtMost(most) => arms.push((within(cte.iden(), most), indexed)),
+            CandidateBound::Whole => {
+                read_whole = Some(indexed);
+                break;
+            }
         }
     }
-    count.with_cte(WithClause::new().cte(materialized(bound.read(candidates), Candidates)).to_owned());
+    let last = read_whole.unwrap_or_else(|| count_over(relations.clone(), schema, rows.standing(), whole));
+    let mut arms = arms.into_iter();
+    let mut count = Query::select();
+    match arms.next() {
+        Some((gate, indexed)) => {
+            let case = arms.fold(Expr::case(gate, indexed), |case, (gate, indexed)| case.case(gate, indexed));
+            count.expr(case.finally(last));
+        }
+        None => {
+            count.expr(last);
+        }
+    }
+    count.with_cte(ctes);
     count.take()
 }
 
@@ -183,6 +201,17 @@ mod tests {
         assert_statement_snapshot!(
             "keyed-count-a-date-time-ordering-counts-through-the-ranged-bound",
             count_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z")
+        );
+    }
+
+    /// The count reads the conjuncts in the order the page does and counts
+    /// from the first whose candidates stay within the count's bound, walking
+    /// when none does.
+    #[test]
+    fn a_conjunction_counts_from_the_first_read_within_its_bound() {
+        assert_statement_snapshot!(
+            "keyed-count-a-conjunction-counts-from-the-first-read-within-its-bound",
+            count_of("\"https://example.com/temperature\"==\"x\";\"https://example.com/source\">1")
         );
     }
 

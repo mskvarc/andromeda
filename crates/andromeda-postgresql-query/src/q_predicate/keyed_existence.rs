@@ -62,7 +62,10 @@ mod tests {
     }
 
     fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
-        keyed_candidates(&reading_of(q), rows, &names(), |_| CandidateBound::Whole).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), rows, &names(), |_| CandidateBound::Whole)
+            .into_iter()
+            .next()
+            .map(|keyed| keyed.select)
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
@@ -97,7 +100,7 @@ mod tests {
         }
         let hop = reading_of("\"https://example.com/isParked\"{\"https://example.com/speed\"}");
         let keyed = keyed_candidates(&hop, &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole);
-        assert_eq!(keyed.map(|keyed| keyed.read), Some(CandidateRead::Linked));
+        assert_eq!(keyed.into_iter().next().map(|keyed| keyed.read), Some(CandidateRead::Linked));
     }
 
     #[test]
@@ -111,6 +114,6 @@ mod tests {
     fn a_comparison_is_not_an_existence() {
         let reading = reading_of("\"https://example.com/speed\">1");
         let keyed = keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole);
-        assert_eq!(keyed.map(|keyed| keyed.read), Some(CandidateRead::Ranged));
+        assert_eq!(keyed.into_iter().next().map(|keyed| keyed.read), Some(CandidateRead::Ranged));
     }
 }
