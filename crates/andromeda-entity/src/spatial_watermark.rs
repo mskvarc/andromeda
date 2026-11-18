@@ -136,7 +136,10 @@ mod tests {
         position::Position,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
+    use andromeda_spatial_index::{
+        entity::index::{Admitted, SpatialEntityIndex},
+        key::SpatialKey,
+    };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use futures::future::BoxFuture;
     use iri_rs::IriBuf;
@@ -239,7 +242,7 @@ mod tests {
             ])
             .expect("a test square is a closed ring"),
         ]));
-        watermark.index().query(&key, &GeoRel::Within, &square, usize::MAX)
+        watermark.index().query(&key, &GeoRel::Within, &square, Admitted::Every, usize::MAX)
     }
 
     #[tokio::test]

@@ -24,7 +24,7 @@
 //! both.
 //!
 //! A geo-query is read three ways over the same instances. [`condition`] keeps
-//! the entities the enclosing statement filters. [`matches`] reads the entities
+//! the entities the enclosing statement filters. [`matches`](fn@matches) reads the entities
 //! that hold a matching instance with no outer row, through the spatial
 //! indexes, for a page that reads them as candidates before it reads the
 //! entities themselves. [`probe`] tests the instances of one entity, looked up

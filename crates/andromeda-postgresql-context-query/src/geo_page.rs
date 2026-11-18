@@ -45,8 +45,9 @@ use crate::{
     entity::{GeoFilter, QFilter},
     entity_page::ProjectedPage,
     entity_relations::EntityRelations,
-    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, gated_page, walked_rows},
+    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
     page_shape::carried_on_rows,
+    page_walk::{PageWalk, walked_rows},
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,

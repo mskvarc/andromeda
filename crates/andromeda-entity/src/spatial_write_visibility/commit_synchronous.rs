@@ -22,7 +22,18 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::geo::default_location_narrowing::LocationCandidates;
 use pretty_assertions::assert_eq;
 use serde_json::json;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
+
+/// The vehicles `fleet-<from>` to `fleet-<to - 1>`, each 0.0001 degrees of
+/// longitude east of the one before, from the origin.
+fn fleet(from: usize, to: usize) -> Vec<Entity> {
+    (from..to)
+        .map(|n| {
+            let longitude = 0.0001 * f64::from(u32::try_from(n).expect("a small fleet"));
+            serde_json::from_value(vehicle_at(&format!("urn:ngsi-ld:Vehicle:fleet-{n}"), longitude)).expect("a valid entity")
+        })
+        .collect()
+}
 
 #[tokio::test]
 async fn under_commit_synchronous_a_created_entity_is_a_candidate_for_the_next_geo_query() {
@@ -116,14 +127,6 @@ async fn under_commit_synchronous_an_enqueued_batch_create_is_a_candidate_before
 async fn under_commit_synchronous_a_geo_query_more_entities_meet_than_a_narrowing_names_is_left_unnarrowed() {
     let index = warm_index();
     let service = indexed_service(&index);
-    let fleet = |from: usize, to: usize| -> Vec<Entity> {
-        (from..to)
-            .map(|n| {
-                let longitude = 0.0001 * f64::from(u32::try_from(n).expect("a small fleet"));
-                serde_json::from_value(vehicle_at(&format!("urn:ngsi-ld:Vehicle:fleet-{n}"), longitude)).expect("a valid entity")
-            })
-            .collect()
-    };
     let every_vehicle = near_origin_among(Vec::new());
     let admitted = admitted_batch(&service, BatchCreate, fleet(0, LocationCandidates::MAX), &ContextSpec::core_only()).await;
     service
@@ -149,6 +152,24 @@ async fn under_commit_synchronous_a_geo_query_more_entities_meet_than_a_narrowin
         .await
         .expect("the batch create lands");
     assert_eq!(narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &every_vehicle).await, None);
+}
+
+/// A request naming its entities is answered by no other, so the index names
+/// the named ones however many others meet the geo-query.
+#[tokio::test]
+async fn under_commit_synchronous_a_geo_query_naming_its_entities_counts_only_them_against_the_bound() {
+    let index = warm_index();
+    let service = indexed_service(&index);
+    let admitted = admitted_batch(&service, BatchCreate, fleet(0, LocationCandidates::MAX + 1), &ContextSpec::core_only()).await;
+    service
+        .batch_create(SideEffectPlacement::DeferredOnLive, admitted)
+        .await
+        .expect("the batch create lands");
+    let named = vec![uri("urn:ngsi-ld:Vehicle:fleet-0"), uri("urn:ngsi-ld:Vehicle:fleet-64")];
+    let narrowed = narrowed_ids(SpatialAcceleration::CommitSynchronous(index), &near_origin_among(named.clone()))
+        .await
+        .expect("the named vehicles narrow the query");
+    assert_eq!(narrowed.into_iter().collect::<HashSet<_>>(), named.into_iter().collect::<HashSet<_>>());
 }
 
 /// Clause 5.7.2.4: any `location` instance meeting the restriction is enough.

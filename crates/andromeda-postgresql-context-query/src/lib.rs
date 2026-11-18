@@ -26,6 +26,7 @@ pub mod keyed_count;
 pub mod keyed_page;
 mod occupied_columns;
 mod page_shape;
+mod page_walk;
 pub mod selector_predicate;
 pub mod value_walk_page;
 mod walked_column;

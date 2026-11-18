@@ -20,8 +20,9 @@
 //! Each arm tests the box its index keys, the instance's great-circle reach
 //! first, before the exact relation. The candidates' box test reads no index,
 //! so the planner never scans the spatial index beside them. An index names a
-//! few dozen candidates at most ([`LocationCandidates::MAX`]), since past them
-//! the scan reads less.
+//! few dozen candidates at most
+//! ([`LocationCandidates::MAX`](andromeda_ngsi_ld_query::geo::default_location_narrowing::LocationCandidates::MAX)),
+//! since past them the scan reads less.
 //!
 //! An entity is in the answer when either arm finds one of its instances. The
 //! outer statement reads the union once per entity and in `entity_key` order:

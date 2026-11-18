@@ -8,7 +8,7 @@
 //! plain page. Otherwise the trigram index over `entities.id` yields the
 //! Entities of every type whose identifier matches, each rechecked against
 //! the pattern, and the type keeps its members among them. The planner cannot
-//! price the pattern, so the page is a [`gated_page`]:
+//! price the pattern, so the page is a gated page:
 //!
 //! 1. the short walk tests the first [`ID_PATTERN_SHORT_WALK`] members in
 //!    identifier order;
@@ -20,7 +20,8 @@ use crate::{
     entity::EntityConditions,
     entity_page::{ProjectedPage, sort_column},
     entity_relations::{EntityRelations, RowSource},
-    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
+    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
+    page_walk::{PageWalk, Walked},
 };
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,

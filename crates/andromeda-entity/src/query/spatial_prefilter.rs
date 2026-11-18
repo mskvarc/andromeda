@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_spatial_index::{
-    entity::index::SpatialEntityIndex,
+    entity::index::{Admitted, SpatialEntityIndex},
     key::{SpatialKey, flatten_or_type_iris},
 };
 use iri_rs::IriBuf;
@@ -66,11 +66,13 @@ impl EntityQueryService {
     ///
     /// Returns the query unchanged when it is not geo-accelerable, when no index
     /// may narrow it, when the index declines the relation, a `near` with
-    /// only a `minDistance`, which no envelope bounds, when more entities may
-    /// meet it than a narrowing names ([`LocationCandidates::MAX`]), which the
-    /// index knows at the first one past them, or for a Snapshot branch, which
-    /// the live index does not describe; the store then evaluates every
-    /// instance in full.
+    /// only a `minDistance`, which no envelope bounds, when more entities the
+    /// request can name may meet it than a narrowing names
+    /// ([`LocationCandidates::MAX`]), which the index knows at the first one
+    /// past them, or for a Snapshot branch, which the live index does not
+    /// describe; the store then evaluates every instance in full. A request
+    /// that names its entities is answered by no other, so the index names
+    /// and counts only those.
     ///
     /// [`SpatialAcceleration`]: crate::spatial_acceleration::SpatialAcceleration
     pub(crate) async fn spatial_prefilter(&self, target: &ContextTarget, compiled: &Arc<CompiledEntityQuery>) -> Arc<CompiledEntityQuery> {
@@ -83,19 +85,12 @@ impl EntityQueryService {
         let Some(index) = self.spatial.index_for_query().await else {
             return Arc::clone(compiled);
         };
-        let Some(candidates) = self.candidates(index, &accelerable) else {
+        let requested: HashSet<&Identifier> = accelerable.selector.ids.iter().collect();
+        let admitted = if requested.is_empty() { Admitted::Every } else { Admitted::Among(&requested) };
+        let Some(candidates) = self.candidates(index, &accelerable, admitted) else {
             return Arc::clone(compiled);
         };
-
-        // The store applies the selector's own identifiers anyway; dropping the
-        // candidates they exclude only keeps the bound array small.
-        let candidates: Vec<Identifier> = if accelerable.selector.ids.is_empty() {
-            candidates.into_iter().collect()
-        } else {
-            let requested: HashSet<&Identifier> = accelerable.selector.ids.iter().collect();
-            candidates.into_iter().filter(|id| requested.contains(id)).collect()
-        };
-        let Some(candidates) = LocationCandidates::new(candidates) else {
+        let Some(candidates) = LocationCandidates::new(candidates.into_iter().collect()) else {
             return Arc::clone(compiled);
         };
         tracing::debug!(
@@ -108,15 +103,16 @@ impl EntityQueryService {
         Arc::new(narrowed)
     }
 
-    /// The union of every type partition's candidates, at most
-    /// [`LocationCandidates::MAX`] of them, or `None` when any one partition
-    /// declines to answer or finds more than the union has room for.
+    /// The union of every type partition's candidates that `admitted` admits,
+    /// at most [`LocationCandidates::MAX`] of them, or `None` when any one
+    /// partition declines to answer or finds more than the union has room
+    /// for.
     ///
     /// An entity of two of the types counts against each partition it is
     /// found in, so a union near the bound can decline where its distinct
     /// candidates would fit; the store then evaluates every instance, which
     /// answers the same.
-    fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>) -> Option<HashSet<Identifier>> {
+    fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>, admitted: Admitted<'_>) -> Option<HashSet<Identifier>> {
         let mut union: HashSet<Identifier> = HashSet::new();
         for type_iri in &accelerable.type_iris {
             let key = SpatialKey::new(self.tenant.clone(), type_iri.clone(), accelerable.geo.geoproperty.clone());
@@ -125,7 +121,7 @@ impl EntityQueryService {
             // contribute an empty candidate set, which is indistinguishable from
             // that type having no default instance in range. The store then
             // evaluates every instance in full.
-            union.extend(index.query(&key, &accelerable.geo.georel, accelerable.geo.geometry.form(), room)?);
+            union.extend(index.query(&key, &accelerable.geo.georel, accelerable.geo.geometry.form(), admitted, room)?);
         }
         Some(union)
     }

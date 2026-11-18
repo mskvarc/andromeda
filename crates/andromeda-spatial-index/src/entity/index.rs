@@ -62,6 +62,26 @@ impl Default for SpatialEntityIndex {
     }
 }
 
+/// The entities a query of the index may name, and count against its bound.
+#[derive(Debug, Clone, Copy)]
+pub enum Admitted<'a> {
+    /// Every entity of the partition.
+    Every,
+    /// Only the entities among these identifiers, for a request that names
+    /// its entities and so is answered by no other.
+    Among(&'a HashSet<&'a Identifier>),
+}
+
+impl Admitted<'_> {
+    /// Whether a query may name the entity `id`.
+    fn admits(self, id: &Identifier) -> bool {
+        match self {
+            Admitted::Every => true,
+            Admitted::Among(ids) => ids.contains(id),
+        }
+    }
+}
+
 impl SpatialEntityIndex {
     /// An empty index with no seeded scope.
     #[must_use]
@@ -79,20 +99,22 @@ impl SpatialEntityIndex {
         self.tree.current_generation()
     }
 
-    /// The entities of one partition that may satisfy a `georel` filter, at
-    /// most `at_most` of them, for the store to decide.
+    /// The entities of one partition that `admitted` admits and that may
+    /// satisfy a `georel` filter, at most `at_most` of them, for the store to
+    /// decide.
     ///
     /// `None` means the index declines to narrow, which is not the same answer
     /// as an empty set: the caller falls through to the store rather than
     /// reporting that nothing matched. It declines when the partition's scope
     /// has not been seeded, for a `near` with only a `minDistance`, which no
-    /// envelope can bound, and when more than `at_most` entities may satisfy
-    /// the filter, which it knows at the first entity past them: a filter most
-    /// of a partition meets costs `at_most + 1` tests, not one per entry. A
+    /// envelope can bound, and when more than `at_most` admitted entities may
+    /// satisfy the filter, which it knows at the first entity past them: a
+    /// filter most of a partition meets costs `at_most + 1` tests, not one per
+    /// entry. An entity `admitted` leaves out is neither named nor counted. A
     /// seeded scope with no partition for the key answers with the empty set,
     /// because its rebuild found no entity of that type conveying the
     /// `GeoProperty`.
-    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &GeometryForm, at_most: usize) -> Option<HashSet<Identifier>> {
+    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &GeometryForm, admitted: Admitted<'_>, at_most: usize) -> Option<HashSet<Identifier>> {
         let scope = SeedScope {
             tenant: key.tenant.clone(),
             geoproperty: key.geoproperty.clone(),
@@ -105,7 +127,7 @@ impl SpatialEntityIndex {
         let reference = PlanarGeometry::project(reference);
         let candidates = candidates_for(georel, &reference)?;
         self.tree
-            .read_partition(key, |tree| evaluate(tree, georel, &reference, &candidates, at_most))
+            .read_partition(key, |tree| evaluate(tree, georel, &reference, &candidates, admitted, at_most))
             .unwrap_or_else(|| Some(HashSet::new()))
     }
 
@@ -243,11 +265,19 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
     }
 }
 
-/// Run the clause 4.10 predicate over whichever candidates the relation admits,
-/// at most `at_most` entities of them, or `None` once one more meets it.
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &PlanarGeometry, candidates: &Candidates, at_most: usize) -> Option<HashSet<Identifier>> {
+/// Run the clause 4.10 predicate over whichever candidates the relation
+/// admits, at most `at_most` entities of them that `admitted` admits, or
+/// `None` once one more meets it.
+fn evaluate(
+    tree: &RTree<SpatialEntry>,
+    georel: &GeoRel,
+    reference: &PlanarGeometry,
+    candidates: &Candidates,
+    admitted: Admitted<'_>,
+    at_most: usize,
+) -> Option<HashSet<Identifier>> {
     match candidates {
-        Candidates::WholePartition => meeting(tree.iter(), georel, reference, at_most),
+        Candidates::WholePartition => meeting(tree.iter(), georel, reference, admitted, at_most),
         Candidates::Envelope(envelope) => meeting(
             envelope
                 .rects()
@@ -255,18 +285,27 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &PlanarGeome
                 .flat_map(|rect| tree.locate_in_envelope_intersecting(AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]))),
             georel,
             reference,
+            admitted,
             at_most,
         ),
     }
 }
 
-/// The entities of `entries` that meet `georel`, read lazily and at most
-/// `at_most` of them, or `None` at the first entity past them.
+/// The entities of `entries` that `admitted` admits and that meet `georel`,
+/// read lazily and at most `at_most` of them, or `None` at the first entity
+/// past them.
 ///
 /// An entry that straddles the antimeridian can meet both halves of a split
 /// envelope; the set reports it once and counts it once.
-fn meeting<'t>(entries: impl Iterator<Item = &'t SpatialEntry>, georel: &GeoRel, reference: &PlanarGeometry, at_most: usize) -> Option<HashSet<Identifier>> {
+fn meeting<'t>(
+    entries: impl Iterator<Item = &'t SpatialEntry>,
+    georel: &GeoRel,
+    reference: &PlanarGeometry,
+    admitted: Admitted<'_>,
+    at_most: usize,
+) -> Option<HashSet<Identifier>> {
     entries
+        .filter(|entry| admitted.admits(&entry.entity_id))
         .filter(|entry| match refinement_for(georel) {
             Refinement::Exact => matches(georel, &entry.planar, reference),
             Refinement::EnvelopeOnly => true,
@@ -286,7 +325,10 @@ fn meeting<'t>(entries: impl Iterator<Item = &'t SpatialEntry>, georel: &GeoRel,
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity::{entry::SpatialEntry, index::SpatialEntityIndex},
+        entity::{
+            entry::SpatialEntry,
+            index::{Admitted, SpatialEntityIndex},
+        },
         key::SpatialKey,
     };
     use andromeda_ngsi_ld_geometry::{
@@ -351,12 +393,19 @@ mod tests {
     fn an_unseeded_scope_declines_to_answer_even_with_live_entries() {
         let index = SpatialEntityIndex::new();
         index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), &point(0.0, 0.0))]);
-        assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 1.0), usize::MAX).is_none());
+        assert!(
+            index
+                .query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX)
+                .is_none()
+        );
     }
 
     #[test]
     fn a_seeded_scope_answers_empty_for_a_type_it_holds_nothing_of() {
-        assert_eq!(seeded().query(&key(), &GeoRel::Intersects, &point(0.0, 0.0), usize::MAX), Some(HashSet::new()));
+        assert_eq!(
+            seeded().query(&key(), &GeoRel::Intersects, &point(0.0, 0.0), Admitted::Every, usize::MAX),
+            Some(HashSet::new())
+        );
     }
 
     #[test]
@@ -367,7 +416,11 @@ mod tests {
             IriBuf::from(iri!("https://example.org/Vehicle")),
             "https://example.org/area".parse().expect("valid attribute name"),
         );
-        assert!(index.query(&other, &GeoRel::Intersects, &point(0.0, 0.0), usize::MAX).is_none());
+        assert!(
+            index
+                .query(&other, &GeoRel::Intersects, &point(0.0, 0.0), Admitted::Every, usize::MAX)
+                .is_none()
+        );
     }
 
     #[test]
@@ -376,7 +429,7 @@ mod tests {
         let id = uri("https://example.org/vehicles/1");
         index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         assert_eq!(
-            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), usize::MAX),
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -387,7 +440,7 @@ mod tests {
         let id = uri("urn:ngsi-ld:Vehicle:A");
         index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         assert_eq!(
-            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), usize::MAX),
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -396,7 +449,10 @@ mod tests {
     fn an_entity_overlapping_the_reference_does_not_match_disjoint() {
         let index = seeded();
         index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), &square(0.0, 0.0, 2.0))]);
-        assert_eq!(index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0), usize::MAX), Some(HashSet::new()));
+        assert_eq!(
+            index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
+            Some(HashSet::new())
+        );
     }
 
     #[test]
@@ -415,8 +471,11 @@ mod tests {
             min_distance: None,
         };
 
-        assert_eq!(index.query(&key(), &tight, &point(0.0, 0.0), usize::MAX), Some(HashSet::new()));
-        assert_eq!(index.query(&key(), &loose, &point(0.0, 0.0), usize::MAX), Some(identifiers([id])));
+        assert_eq!(index.query(&key(), &tight, &point(0.0, 0.0), Admitted::Every, usize::MAX), Some(HashSet::new()));
+        assert_eq!(
+            index.query(&key(), &loose, &point(0.0, 0.0), Admitted::Every, usize::MAX),
+            Some(identifiers([id]))
+        );
     }
 
     fn near(max_distance: Option<&str>, min_distance: Option<&str>) -> GeoRel {
@@ -462,7 +521,7 @@ mod tests {
         index.replace_entity(uri("urn:ngsi-ld:Vehicle:2000m"), [(key(), &point(0.018, 0.0))]);
 
         assert_eq!(
-            index.query(&key(), &near(Some("1000"), Some("300")), &point(0.0, 0.0), usize::MAX),
+            index.query(&key(), &near(Some("1000"), Some("300")), &point(0.0, 0.0), Admitted::Every, usize::MAX),
             Some(identifiers([close, inside]))
         );
     }
@@ -476,7 +535,10 @@ mod tests {
         let id = uri("urn:ngsi-ld:Building:east");
         let east_square = GeometryForm::Polygon(boxes(&[(8.808_693, 53.075_171, 8.810_783, 53.076_429)]).remove(0));
         index.replace_entity(id.clone(), [(key(), &east_square)]);
-        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen(), usize::MAX), Some(identifiers([id])));
+        assert_eq!(
+            index.query(&key(), &near(Some("150"), None), &bremen(), Admitted::Every, usize::MAX),
+            Some(identifiers([id]))
+        );
     }
 
     /// Whether an envelope candidate is within the distance is the store's
@@ -487,14 +549,17 @@ mod tests {
         // About 184 m from Bremen, in the corner of the 150 m box.
         let id = uri("urn:ngsi-ld:Building:corner");
         index.replace_entity(id.clone(), [(key(), &point(8.8091, 53.0770))]);
-        assert_eq!(index.query(&key(), &near(Some("150"), None), &bremen(), usize::MAX), Some(identifiers([id])));
+        assert_eq!(
+            index.query(&key(), &near(Some("150"), None), &bremen(), Admitted::Every, usize::MAX),
+            Some(identifiers([id]))
+        );
     }
 
     #[test]
     fn a_min_distance_only_near_declines_to_narrow() {
         let index = seeded();
         index.replace_entity(uri("urn:ngsi-ld:Building:any"), [(key(), &bremen())]);
-        assert_eq!(index.query(&key(), &near(None, Some("150")), &bremen(), usize::MAX), None);
+        assert_eq!(index.query(&key(), &near(None, Some("150")), &bremen(), Admitted::Every, usize::MAX), None);
     }
 
     #[test]
@@ -505,7 +570,7 @@ mod tests {
         index.replace_entity(east.clone(), [(key(), &point(179.9995, -17.0))]);
         index.replace_entity(west.clone(), [(key(), &point(-179.9995, -17.0))]);
         assert_eq!(
-            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), usize::MAX),
+            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), Admitted::Every, usize::MAX),
             Some(identifiers([east, west]))
         );
     }
@@ -517,7 +582,7 @@ mod tests {
         let cut = GeometryForm::MultiPolygon(boxes(&[(179.9990, -17.0005, 180.0, -16.9995), (-180.0, -17.0005, -179.9990, -16.9995)]));
         index.replace_entity(id.clone(), [(key(), &cut)]);
         assert_eq!(
-            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), usize::MAX),
+            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -529,8 +594,28 @@ mod tests {
         for (offset, id) in [0.1, 0.2, 0.3].into_iter().zip(&ids) {
             index.replace_entity(Arc::clone(id), [(key(), &point(offset, offset))]);
         }
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), 2), None);
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), 3), Some(identifiers(ids)));
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, 2), None);
+        assert_eq!(
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, 3),
+            Some(identifiers(ids))
+        );
+    }
+
+    /// A request naming its entities is answered by no other, so the bound
+    /// counts the named ones alone.
+    #[test]
+    fn a_query_among_named_entities_counts_only_them_against_its_bound() {
+        let index = seeded();
+        let ids = [uri("urn:ngsi-ld:Vehicle:A"), uri("urn:ngsi-ld:Vehicle:B"), uri("urn:ngsi-ld:Vehicle:C")];
+        for (offset, id) in [0.1, 0.2, 0.3].into_iter().zip(&ids) {
+            index.replace_entity(Arc::clone(id), [(key(), &point(offset, offset))]);
+        }
+        let named: HashSet<&Identifier> = [ids[2].as_ref()].into_iter().collect();
+        assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, 1), None);
+        assert_eq!(
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Among(&named), 1),
+            Some(identifiers([Arc::clone(&ids[2])]))
+        );
     }
 
     #[test]
@@ -540,7 +625,7 @@ mod tests {
         let cut = GeometryForm::MultiPolygon(boxes(&[(179.9990, -17.0005, 180.0, -16.9995), (-180.0, -17.0005, -179.9990, -16.9995)]));
         index.replace_entity(id.clone(), [(key(), &cut)]);
         assert_eq!(
-            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), 1),
+            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), Admitted::Every, 1),
             Some(identifiers([id]))
         );
     }
@@ -552,7 +637,7 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         index.remove(&id);
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0), Admitted::Every, usize::MAX),
             Some(HashSet::new())
         );
     }
@@ -577,8 +662,8 @@ mod tests {
 
         let reference = square(0.01, 0.0, 0.005);
         assert_eq!(
-            replaced.query(&key(), &GeoRel::Intersects, &reference, usize::MAX),
-            rebuilt.query(&key(), &GeoRel::Intersects, &reference, usize::MAX)
+            replaced.query(&key(), &GeoRel::Intersects, &reference, Admitted::Every, usize::MAX),
+            rebuilt.query(&key(), &GeoRel::Intersects, &reference, Admitted::Every, usize::MAX)
         );
     }
 
@@ -595,7 +680,7 @@ mod tests {
         index.rebuild(&TenantRef::UnnamedDefault, &location(), HashMap::new(), snapshot);
 
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -608,21 +693,21 @@ mod tests {
         index.anticipate_entity(id.clone(), [(key(), &point(10.0, 10.0))]);
 
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5), Admitted::Every, usize::MAX),
             Some(identifiers([id.clone()]))
         );
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5), Admitted::Every, usize::MAX),
             Some(identifiers([id.clone()]))
         );
 
         index.replace_entity(id.clone(), [(key(), &point(10.0, 10.0))]);
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5), Admitted::Every, usize::MAX),
             Some(HashSet::new())
         );
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -632,7 +717,10 @@ mod tests {
         let index = seeded();
         let id = uri("urn:ngsi-ld:Building:Hall");
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
-        assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5), usize::MAX), Some(identifiers([id])));
+        assert_eq!(
+            index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5), Admitted::Every, usize::MAX),
+            Some(identifiers([id]))
+        );
     }
 
     /// `equals` is answered by the envelope test alone.
@@ -650,14 +738,17 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
         assert_eq!(
-            index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0), usize::MAX),
+            index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
             Some(identifiers([id.clone()]))
         );
         assert_eq!(
-            index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0), usize::MAX),
+            index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
-        assert_eq!(index.query(&key(), &GeoRel::Equals, &square(50.0, 50.0, 1.0), usize::MAX), Some(HashSet::new()));
+        assert_eq!(
+            index.query(&key(), &GeoRel::Equals, &square(50.0, 50.0, 1.0), Admitted::Every, usize::MAX),
+            Some(HashSet::new())
+        );
     }
 
     /// Clause 4.10: an entity matches when any instance of the target
@@ -670,15 +761,15 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0)), (key(), &square(40.0, 40.0, 1.0))]);
 
         assert_eq!(
-            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0), usize::MAX),
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0), Admitted::Every, usize::MAX),
             Some(identifiers([id.clone()]))
         );
         assert_eq!(
-            index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0), usize::MAX),
+            index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0), Admitted::Every, usize::MAX),
             Some(identifiers([id.clone()]))
         );
         assert_eq!(
-            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 80.0), usize::MAX),
+            index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 80.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -690,9 +781,12 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0)), (key(), &square(40.0, 40.0, 1.0))]);
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
-        assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0), usize::MAX), Some(HashSet::new()));
         assert_eq!(
-            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0), usize::MAX),
+            index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0), Admitted::Every, usize::MAX),
+            Some(HashSet::new())
+        );
+        assert_eq!(
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }
@@ -703,7 +797,7 @@ mod tests {
         let id = uri("urn:ngsi-ld:Region:A");
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
         assert_eq!(
-            index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0), usize::MAX),
+            index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0), Admitted::Every, usize::MAX),
             Some(identifiers([id]))
         );
     }

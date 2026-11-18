@@ -227,7 +227,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-    use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
+    use andromeda_spatial_index::{
+        entity::index::{Admitted, SpatialEntityIndex},
+        key::SpatialKey,
+    };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::Utc;
     use futures::{FutureExt, future::pending};
@@ -334,7 +337,7 @@ mod tests {
             ])
             .expect("a test square is a closed ring"),
         ]));
-        index.query(&key, &GeoRel::Within, &square, usize::MAX)
+        index.query(&key, &GeoRel::Within, &square, Admitted::Every, usize::MAX)
     }
 
     fn deleted() -> WriteOutcome {
