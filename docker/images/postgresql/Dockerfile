@@ -40,10 +40,14 @@ RUN set -eux; \
 #
 # The server stays the base image's: its packages are held, so a package built
 # for a later PostgreSQL fails the build instead of upgrading the server under
-# a tag that names the base image's version. PGDG's revision 2 of pg_repack
-# 1.5.3 requires a server after 18.7, and revision 1 runs on any 18.
+# a tag that names the base image's version. PGDG rebuilds an extension for
+# each PostgreSQL minor release, and a rebuild for a later minor may not run on
+# this server, so PostGIS and pg_repack are pinned to the PGDG revision built
+# for it: PostGIS 3.7.0's revision pgdg13+2 needs symbols 18.6 lacks, and
+# pg_repack 1.5.3's revision 2 requires a server after 18.7.
 ARG TIMESCALEDB_VERSION=2.32.0
 ARG POSTGIS_VERSION=3.7.0
+ARG POSTGIS_REVISION=1.pgdg13+1
 ARG PG_REPACK_VERSION=1.5.3
 ARG PG_REPACK_REVISION=1.pgdg13+2
 ARG TIMESCALEDB_TUNE_VERSION=0.19.0
@@ -52,8 +56,8 @@ RUN set -eux; \
     apt-mark hold postgresql-18 postgresql-18-jit postgresql-client-18 libpq5; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        "postgresql-18-postgis-3=${POSTGIS_VERSION}+*" \
-        "postgresql-18-postgis-3-scripts=${POSTGIS_VERSION}+*" \
+        "postgresql-18-postgis-3=${POSTGIS_VERSION}+dfsg-${POSTGIS_REVISION}" \
+        "postgresql-18-postgis-3-scripts=${POSTGIS_VERSION}+dfsg-${POSTGIS_REVISION}" \
         "postgresql-18-repack=${PG_REPACK_VERSION}-${PG_REPACK_REVISION}" \
         "timescaledb-2-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         "timescaledb-2-loader-postgresql-18=${TIMESCALEDB_VERSION}~*" \

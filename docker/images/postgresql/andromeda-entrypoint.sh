@@ -48,7 +48,11 @@ andromeda_main() {
 			# psql needs it when POSTGRES_INITDB_ARGS asks for password
 			# authentication on local connections.
 			export PGPASSWORD="${PGPASSWORD:-$POSTGRES_PASSWORD}"
-			docker_temp_server_start "$@"
+			# No TimescaleDB background workers: the launcher starts a scheduler
+			# for every database, extension or not, and one connecting while
+			# the rename below holds the database's lock counts as a session
+			# on it, so the rename waits five seconds and fails.
+			docker_temp_server_start "$@" -c timescaledb.max_background_workers=0
 
 			andromeda_setup_db
 			docker_process_init_files /docker-entrypoint-initdb.d/*
@@ -86,9 +90,9 @@ andromeda_setup_env() {
 # usage: andromeda_setup_db
 # Renames initdb's postgres database to POSTGRES_DB, so a new cluster holds only
 # POSTGRES_DB and the templates. A POSTGRES_DB that already exists, postgres or
-# template1 for example, is left as it is. Beside this session the temporary
-# server runs only the TimescaleDB launcher, which holds no database connection,
-# and postgres has no extension and so no scheduler: nothing is connected to it.
+# template1 for example, is left as it is. The temporary server runs no
+# TimescaleDB background worker and listens on no TCP address, so beside this
+# session nothing is connected to postgres.
 andromeda_setup_db() {
 	local db="$POSTGRES_DB" exists
 	exists="$(
