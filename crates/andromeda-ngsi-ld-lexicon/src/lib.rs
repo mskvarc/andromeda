@@ -33,6 +33,7 @@ pub mod entity_type_name;
 pub mod http_token;
 pub mod identifier;
 pub mod identifier_length;
+pub mod identifier_spelling;
 pub mod instance_identity;
 pub mod name;
 pub mod ngsi_ld_urn;

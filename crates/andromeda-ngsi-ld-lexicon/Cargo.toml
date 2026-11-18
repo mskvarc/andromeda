@@ -17,6 +17,7 @@ workspace = true
 andromeda-configuration.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+arcstr = { version = "1.2.0", default-features = false }
 cefact-units = "1.0.0"
 chrono = "0.4.45"
 compact_str = { version = "0.10.0", features = ["serde"] }

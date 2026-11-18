@@ -13,14 +13,11 @@ use andromeda_ngsi_ld_geometry::{
     planar::PlanarGeometry,
     relation::matches,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_spelling::IdentifierSpelling};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
 use rstar::{AABB, RTree};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 /// The set of partitions one rebuild covers: every entity type of one tenant
 /// under one `GeoProperty`.
@@ -67,14 +64,14 @@ impl Default for SpatialEntityIndex {
 pub enum Admitted<'a> {
     /// Every entity of the partition.
     Every,
-    /// Only the entities among these identifiers, for a request that names
-    /// its entities and so is answered by no other.
-    Among(&'a HashSet<&'a Identifier>),
+    /// Only the entities among these, for a request that names its entities
+    /// and so is answered by no other.
+    Among(&'a HashSet<IdentifierSpelling>),
 }
 
 impl Admitted<'_> {
     /// Whether a query may name the entity `id`.
-    fn admits(self, id: &Identifier) -> bool {
+    fn admits(self, id: &IdentifierSpelling) -> bool {
         match self {
             Admitted::Every => true,
             Admitted::Among(ids) => ids.contains(id),
@@ -113,8 +110,16 @@ impl SpatialEntityIndex {
     /// entry. An entity `admitted` leaves out is neither named nor counted. A
     /// seeded scope with no partition for the key answers with the empty set,
     /// because its rebuild found no entity of that type conveying the
-    /// `GeoProperty`.
-    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &GeometryForm, admitted: Admitted<'_>, at_most: usize) -> Option<HashSet<Identifier>> {
+    /// `GeoProperty`. An entity is named by the spelling the store tells it
+    /// apart by.
+    pub fn query(
+        &self,
+        key: &SpatialKey,
+        georel: &GeoRel,
+        reference: &GeometryForm,
+        admitted: Admitted<'_>,
+        at_most: usize,
+    ) -> Option<HashSet<IdentifierSpelling>> {
         let scope = SeedScope {
             tenant: key.tenant.clone(),
             geoproperty: key.geoproperty.clone(),
@@ -139,7 +144,7 @@ impl SpatialEntityIndex {
     /// never finds it missing from a partition it belongs to throughout. A
     /// geometry with no bounding rectangle cannot be indexed and is dropped.
     /// Each geometry is borrowed: the tree keeps only its projection.
-    pub fn replace_entity<'g>(&self, entity_id: Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
+    pub fn replace_entity<'g>(&self, entity_id: IdentifierSpelling, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.replace(entity_id, entries);
     }
@@ -152,14 +157,15 @@ impl SpatialEntityIndex {
     /// pending sees it wherever the change may leave it. A later
     /// [`SpatialEntityIndex::replace_entity`] or [`SpatialEntityIndex::remove`]
     /// settles it.
-    pub fn anticipate_entity<'g>(&self, entity_id: Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
+    pub fn anticipate_entity<'g>(&self, entity_id: IdentifierSpelling, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) {
         let entries = entries_of(&entity_id, placements);
         self.tree.augment(entity_id, entries);
     }
 
-    /// Remove every entry belonging to an entity, across every partition.
+    /// Remove every entry belonging to an entity, across every partition,
+    /// found by the spelling the store tells it apart by.
     pub fn remove(&self, entity_id: &Identifier) {
-        self.tree.remove(entity_id);
+        self.tree.remove(entity_id.as_str());
     }
 
     /// Rebuild every partition of one `(tenant, geoproperty)` scope from a
@@ -180,10 +186,13 @@ impl SpatialEntityIndex {
 }
 
 /// The tree entries of one entity's placements, grouped by partition.
-fn entries_of<'g>(entity_id: &Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
+fn entries_of<'g>(
+    entity_id: &IdentifierSpelling,
+    placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>,
+) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
     placements
         .into_iter()
-        .filter_map(|(key, geometry)| SpatialEntry::new(Arc::clone(entity_id), geometry).map(|entry| (key, vec![entry])))
+        .filter_map(|(key, geometry)| SpatialEntry::new(entity_id.clone(), geometry).map(|entry| (key, vec![entry])))
         .collect()
 }
 
@@ -275,7 +284,7 @@ fn evaluate(
     candidates: &Candidates,
     admitted: Admitted<'_>,
     at_most: usize,
-) -> Option<HashSet<Identifier>> {
+) -> Option<HashSet<IdentifierSpelling>> {
     match candidates {
         Candidates::WholePartition => meeting(tree.iter(), georel, reference, admitted, at_most),
         Candidates::Envelope(envelope) => meeting(
@@ -303,7 +312,7 @@ fn meeting<'t>(
     reference: &PlanarGeometry,
     admitted: Admitted<'_>,
     at_most: usize,
-) -> Option<HashSet<Identifier>> {
+) -> Option<HashSet<IdentifierSpelling>> {
     entries
         .filter(|entry| admitted.admits(&entry.entity_id))
         .filter(|entry| match refinement_for(georel) {
@@ -311,12 +320,12 @@ fn meeting<'t>(
             Refinement::EnvelopeOnly => true,
         })
         .try_fold(HashSet::new(), |mut found, entry| {
-            if !found.contains(entry.entity_id.as_ref()) {
+            if !found.contains(&entry.entity_id) {
                 if found.len() == at_most {
                     return None;
                 }
                 // clone: the returned set owns its identifiers, which outlive the tree borrow
-                found.insert(Identifier::clone(&entry.entity_id));
+                found.insert(entry.entity_id.clone());
             }
             Some(found)
         })
@@ -338,14 +347,13 @@ mod tests {
         position::Position,
         positive_distance::PositiveDistance,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_spelling::IdentifierSpelling};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
     use pretty_assertions::assert_eq;
     use std::{
         collections::{HashMap, HashSet},
         str::FromStr,
-        sync::Arc,
     };
 
     fn location() -> AttributeName {
@@ -356,13 +364,17 @@ mod tests {
         SpatialKey::new(TenantRef::UnnamedDefault, IriBuf::from(iri!("https://example.org/Vehicle")), location())
     }
 
-    fn uri(raw: &str) -> Arc<Identifier> {
-        Arc::new(raw.parse().expect("a well-formed URI"))
+    fn identifier(raw: &str) -> Identifier {
+        raw.parse().expect("a well-formed URI")
+    }
+
+    fn uri(raw: &str) -> IdentifierSpelling {
+        IdentifierSpelling::from(&identifier(raw))
     }
 
     /// The set a query answers with when it finds exactly these entities.
-    fn identifiers<const N: usize>(ids: [Arc<Identifier>; N]) -> HashSet<Identifier> {
-        ids.into_iter().map(Arc::unwrap_or_clone).collect()
+    fn identifiers<const N: usize>(ids: [IdentifierSpelling; N]) -> HashSet<IdentifierSpelling> {
+        HashSet::from(ids)
     }
 
     fn point(x: f64, y: f64) -> GeometryForm {
@@ -592,7 +604,7 @@ mod tests {
         let index = seeded();
         let ids = [uri("urn:ngsi-ld:Vehicle:A"), uri("urn:ngsi-ld:Vehicle:B"), uri("urn:ngsi-ld:Vehicle:C")];
         for (offset, id) in [0.1, 0.2, 0.3].into_iter().zip(&ids) {
-            index.replace_entity(Arc::clone(id), [(key(), &point(offset, offset))]);
+            index.replace_entity(id.clone(), [(key(), &point(offset, offset))]);
         }
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, 2), None);
         assert_eq!(
@@ -608,13 +620,13 @@ mod tests {
         let index = seeded();
         let ids = [uri("urn:ngsi-ld:Vehicle:A"), uri("urn:ngsi-ld:Vehicle:B"), uri("urn:ngsi-ld:Vehicle:C")];
         for (offset, id) in [0.1, 0.2, 0.3].into_iter().zip(&ids) {
-            index.replace_entity(Arc::clone(id), [(key(), &point(offset, offset))]);
+            index.replace_entity(id.clone(), [(key(), &point(offset, offset))]);
         }
-        let named: HashSet<&Identifier> = [ids[2].as_ref()].into_iter().collect();
+        let named = HashSet::from([ids[2].clone()]);
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, 1), None);
         assert_eq!(
             index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Among(&named), 1),
-            Some(identifiers([Arc::clone(&ids[2])]))
+            Some(identifiers([ids[2].clone()]))
         );
     }
 
@@ -633,12 +645,34 @@ mod tests {
     #[test]
     fn a_removed_entity_stops_matching() {
         let index = seeded();
-        let id = uri("urn:ngsi-ld:Vehicle:A");
-        index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
+        let id = identifier("urn:ngsi-ld:Vehicle:A");
+        index.replace_entity(IdentifierSpelling::from(&id), [(key(), &point(0.0, 0.0))]);
         index.remove(&id);
         assert_eq!(
             index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0), Admitted::Every, usize::MAX),
             Some(HashSet::new())
+        );
+    }
+
+    /// IETF RFC 8141 section 3 makes two URNs that differ only in an
+    /// f-component equivalent, but the store holds them as two entities, so
+    /// the index keeps, names and removes them apart.
+    #[test]
+    fn urns_differing_only_in_an_f_component_are_two_entities() {
+        let index = seeded();
+        let plain = identifier("urn:ngsi-ld:Vehicle:A");
+        let fragment = identifier("urn:ngsi-ld:Vehicle:A#front");
+        index.replace_entity(IdentifierSpelling::from(&plain), [(key(), &point(0.0, 0.0))]);
+        index.replace_entity(IdentifierSpelling::from(&fragment), [(key(), &point(0.5, 0.5))]);
+        assert_eq!(
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
+            Some(identifiers([IdentifierSpelling::from(&plain), IdentifierSpelling::from(&fragment)]))
+        );
+
+        index.remove(&plain);
+        assert_eq!(
+            index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
+            Some(identifiers([IdentifierSpelling::from(&fragment)]))
         );
     }
 

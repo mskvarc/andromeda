@@ -3,7 +3,7 @@
 
 use crate::query::EntityQueryService;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_spelling::IdentifierSpelling};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_constraint::EntityConstraint,
@@ -49,6 +49,23 @@ fn accelerable(compiled: &CompiledEntityQuery) -> Option<Accelerable<'_>> {
     Some(Accelerable { geo, selector, type_iris })
 }
 
+/// The identifiers the index's candidates spell, or `None` when one spelling
+/// does not parse back into an identifier.
+///
+/// Every spelling the index holds was made from an identifier, so a failure
+/// breaks that invariant. The query is then left to the store in full, which
+/// can only cost time, rather than narrowed without the entity.
+fn identified(candidates: &HashSet<IdentifierSpelling>) -> Option<Vec<Identifier>> {
+    candidates
+        .iter()
+        .map(|spelling| {
+            Identifier::try_from(spelling)
+                .inspect_err(|error| tracing::error!(%spelling, %error, "the spatial index holds a spelling that names no identifier"))
+                .ok()
+        })
+        .collect()
+}
+
 impl EntityQueryService {
     /// Consult the spatial index for the entities whose default `location`
     /// instance can satisfy the geo-query, and hand them to the store as a
@@ -83,12 +100,12 @@ impl EntityQueryService {
         let Some(accelerable) = accelerable(compiled) else {
             return Arc::clone(compiled);
         };
-        let requested: HashSet<&Identifier> = accelerable.selector.ids.iter().collect();
+        let requested: HashSet<IdentifierSpelling> = accelerable.selector.ids.iter().map(IdentifierSpelling::from).collect();
         let admitted = if requested.is_empty() { Admitted::Every } else { Admitted::Among(&requested) };
         let Some(Some(candidates)) = self.spatial.narrow(|index| self.candidates(index, &accelerable, admitted)).await else {
             return Arc::clone(compiled);
         };
-        let Some(candidates) = LocationCandidates::new(candidates.into_iter().collect()) else {
+        let Some(candidates) = identified(&candidates).and_then(LocationCandidates::new) else {
             return Arc::clone(compiled);
         };
         tracing::debug!(
@@ -110,8 +127,8 @@ impl EntityQueryService {
     /// found in, so a union near the bound can decline where its distinct
     /// candidates would fit; the store then evaluates every instance, which
     /// answers the same.
-    fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>, admitted: Admitted<'_>) -> Option<HashSet<Identifier>> {
-        let mut union: HashSet<Identifier> = HashSet::new();
+    fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>, admitted: Admitted<'_>) -> Option<HashSet<IdentifierSpelling>> {
+        let mut union: HashSet<IdentifierSpelling> = HashSet::new();
         for type_iri in &accelerable.type_iris {
             let key = SpatialKey::new(self.tenant.clone(), type_iri.clone(), AttributeName::from(accelerable.geo.geoproperty.clone()));
             let room = LocationCandidates::MAX.saturating_sub(union.len());
