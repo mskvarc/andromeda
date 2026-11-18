@@ -15,6 +15,7 @@ pub mod entity_head;
 pub mod entity_page;
 pub mod entity_relations;
 pub mod entity_total;
+pub mod filter_reads;
 #[cfg(test)]
 mod fixed_instant_tests;
 mod gated_page;

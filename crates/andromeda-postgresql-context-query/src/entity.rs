@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_query::{
     filter::reading::term_reading::TermReading,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
+    scope::query::ScopeQuery,
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
@@ -345,10 +346,16 @@ pub(crate) fn tested_conditions(
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        tested.push(scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))));
+        tested.push(scope_paths_condition(scope_q));
     }
 
     Ok(tested)
+}
+
+/// `scope_q` (clause 4.19) tested on the scope paths of the search row named
+/// `entity_search`.
+pub(crate) fn scope_paths_condition(scope_q: &ScopeQuery) -> Condition {
+    scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths)))
 }
 
 #[cfg(test)]

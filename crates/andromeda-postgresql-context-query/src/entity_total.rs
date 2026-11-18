@@ -142,7 +142,7 @@ pub(crate) fn entity_total(
                     let after = walked_after(terms.iter().map(|keyed| keyed.read), keyed_page_bound);
                     let reads = terms
                         .into_iter()
-                        .map(|KeyedCandidates { term, select, read }| {
+                        .map(|KeyedCandidates { term, select, read, .. }| {
                             Ok(CountedRead {
                                 remainder: build_entity_conditions(
                                     source.query,

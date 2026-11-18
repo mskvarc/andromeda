@@ -86,6 +86,32 @@ pub struct KeyedCandidates<'q> {
     pub select: SelectStatement,
     /// How one candidate is read.
     pub read: CandidateRead,
+    /// What the census says of how many candidates the read finds.
+    pub census: CensusCount,
+}
+
+/// What the census says of how many candidates a keyed read finds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CensusCount {
+    /// The census counts the attribute the term is read through within the
+    /// read's bound, so the read holds every candidate and answers.
+    WithinBound,
+    /// The census counted nothing of the attribute, or more instances than
+    /// the bound.
+    Unbounded,
+}
+
+/// The conjuncts of a filter an index answers, as the census is read for
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyedConjuncts {
+    /// No conjunct is keyed.
+    Unkeyed,
+    /// One conjunct is keyed, taken without a count.
+    Single,
+    /// Two or more contend, each read through one of these attributes, which
+    /// the census is read for: sorted, each once.
+    Contended(Vec<AttributeNameKey>),
 }
 
 /// The terms of the top-level conjunction of `reading` the index path answers
@@ -122,26 +148,32 @@ pub fn keyed_candidates<'q>(
         .min();
     let mut keyable: Vec<KeyedCandidates<'q>> = keyable.into_iter().map(|(keyed, _)| keyed).collect();
     if let Some((_, position)) = fitting {
-        return vec![keyable.swap_remove(position)];
+        let mut alone = keyable.swap_remove(position);
+        alone.census = CensusCount::WithinBound;
+        return vec![alone];
     }
     let whole = keyable.iter().position(|keyed| bound(keyed.read) == CandidateBound::Whole);
     keyable.truncate(whole.map_or(keyable.len(), |position| position + 1));
     keyable
 }
 
-/// The attributes the census is read for before `reading` is rendered: the
-/// attribute each conjunct an index answers is read through, when two or more
-/// contend, and none otherwise, since one conjunct is taken without a count.
+/// The conjuncts of `reading` an index answers, as the census is read for
+/// them before `reading` is rendered: the attribute each is read through when
+/// two or more contend, and none otherwise, since one conjunct is taken
+/// without a count.
 #[must_use]
-pub fn contended_carriers(reading: &FilterReading, names: &QueryNames) -> Vec<AttributeNameKey> {
+pub fn keyed_conjuncts(reading: &FilterReading, names: &QueryNames) -> KeyedConjuncts {
     let keyable = keyable_conjuncts(reading, &EntityRowRefs::unaliased(None), names);
-    if keyable.len() < 2 {
-        return Vec::new();
+    match keyable.len() {
+        0 => KeyedConjuncts::Unkeyed,
+        1 => KeyedConjuncts::Single,
+        _ => {
+            let mut carriers: Vec<AttributeNameKey> = keyable.into_iter().map(|(_, carrier)| carrier).collect();
+            carriers.sort_unstable_by_key(|carrier| carrier.get());
+            carriers.dedup();
+            KeyedConjuncts::Contended(carriers)
+        }
     }
-    let mut carriers: Vec<AttributeNameKey> = keyable.into_iter().map(|(_, carrier)| carrier).collect();
-    carriers.sort_unstable_by_key(|carrier| carrier.get());
-    carriers.dedup();
-    carriers
 }
 
 /// Every term of the top-level conjunction of `reading` an index answers, in
@@ -163,6 +195,7 @@ fn keyable_conjuncts<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names
                         term: term.term(),
                         select,
                         read,
+                        census: CensusCount::Unbounded,
                     },
                     term.carrier(),
                 )
@@ -225,7 +258,7 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         one_time_gate::CandidateBound,
         q_predicate::{
-            keyed_term::{CandidateRead, contended_carriers, keyed_candidates},
+            keyed_term::{CandidateRead, CensusCount, KeyedConjuncts, keyed_candidates, keyed_conjuncts},
             lowered_filter::reading_of,
         },
         query_names::QueryNames,
@@ -440,17 +473,32 @@ mod tests {
     fn the_census_is_read_only_when_two_conjuncts_contend() {
         let reading = |q: &str| FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality);
         assert_eq!(
-            contended_carriers(&reading(COUNT_AND_NAME), &names()),
-            [AttributeNameKey::from(2), AttributeNameKey::from(9)]
+            keyed_conjuncts(&reading(COUNT_AND_NAME), &names()),
+            KeyedConjuncts::Contended(vec![AttributeNameKey::from(2), AttributeNameKey::from(9)])
         );
+        assert_eq!(keyed_conjuncts(&reading("\"https://example.com/count\""), &names()), KeyedConjuncts::Single);
         assert_eq!(
-            contended_carriers(&reading("\"https://example.com/count\""), &names()),
-            Vec::<AttributeNameKey>::new()
-        );
-        assert_eq!(
-            contended_carriers(&reading("\"https://example.com/count\"|\"https://example.com/name\"~=\"x\""), &names()),
-            Vec::<AttributeNameKey>::new(),
+            keyed_conjuncts(&reading("\"https://example.com/count\"|\"https://example.com/name\"~=\"x\""), &names()),
+            KeyedConjuncts::Unkeyed,
             "a disjunction offers no conjunct"
         );
+    }
+
+    /// A conjunct read alone because the census fits it to the bound is known
+    /// to answer; the conjuncts read in canonical order are not.
+    #[test]
+    fn a_conjunct_the_census_fits_is_marked_as_answering() {
+        let reading = FilterReading::of(&parse(COUNT_AND_NAME).expect("the filter parses"), LanguageMatching::TagEquality);
+        let census = |counts: &[(i32, u64)]| -> Vec<CensusCount> {
+            let mut names = names();
+            let read: Vec<AttributeNameKey> = counts.iter().map(|(key, _)| AttributeNameKey::from(*key)).collect();
+            names.carriers = AttributeCarriers::new(&read, counts.iter().map(|(key, count)| (AttributeNameKey::from(*key), *count)));
+            keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names, |_| CandidateBound::AtMost(1000))
+                .into_iter()
+                .map(|keyed| keyed.census)
+                .collect()
+        };
+        assert_eq!(census(&[(2, 40), (9, 100_000)]), [CensusCount::WithinBound]);
+        assert_eq!(census(&[(2, 4_000), (9, 100_000)]), [CensusCount::Unbounded, CensusCount::Unbounded]);
     }
 }

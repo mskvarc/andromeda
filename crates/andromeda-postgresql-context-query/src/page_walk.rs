@@ -31,7 +31,9 @@
 //! page beside `attrs` takes 757 to 817 ms that way and 45 ms tested per
 //! Entity, as without `attrs`. Tested inside the `LIMIT`, a filter few
 //! Entities pass makes the short walk read the whole selection before it
-//! falls short.
+//! falls short. When no read answers, such a filter still makes the full walk
+//! visit the whole selection, so a gated page also reads it from its own
+//! index ([`filter_reads`](crate::filter_reads)).
 
 use crate::{
     entity::{EntityConditions, all_of},

@@ -20,11 +20,12 @@ use andromeda_ngsi_ld_query::{
     },
     page_window::{PageStart, PageWindow},
     pattern::Pattern,
+    scope::query::ScopeQuery,
     standing_instant::StandingInstant,
     type_selection::grammar::TypeExpr,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-use andromeda_postgresql_query::query_names::QueryNames;
+use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -34,8 +35,13 @@ use std::str::FromStr;
 
 const TEMPERATURE: &str = "https://example.com/temperature";
 
+const HEAD_SIGN: &str = "https://example.com/headSign";
+
+/// The dictionary keys, and a census counting 50 instances of `headSign`.
 fn names() -> QueryNames {
+    let head_sign = AttributeNameKey::from(28);
     QueryNames {
+        carriers: AttributeCarriers::new(&[head_sign], [(head_sign, 50)]),
         attributes: ResolvedNames::from_pairs(
             [
                 ("temperature", 12),
@@ -95,10 +101,8 @@ fn point() -> Geometry {
     serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [13.4, 52.5] })).expect("point parses")
 }
 
-/// The page shapes of a geo-query, named, with the window and count each is
-/// read under: the plain page of a counted one, the geo page of an uncounted
-/// one, and the keyed page of a keyed `q` beside one.
-fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
+/// The Vehicles within 1 000 m of the point.
+fn vehicles_near() -> CompiledEntityQuery {
     let near = GeoQuery {
         georel: GeoRel::Near {
             max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
@@ -107,20 +111,36 @@ fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Coun
         geometry: point(),
         geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
     };
-    let vehicles_near = || EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near.clone()));
-    let keyed = CompiledFilter::new(
+    query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).geo(Some(near)).build())
+}
+
+/// The page shapes of a geo-query, named, with the window and count each is
+/// read under: the plain page of a counted one, the geo page of an uncounted
+/// one, and the keyed page of a keyed `q` beside one.
+fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
+    let mut keyed = vehicles_near();
+    keyed.selection.q = Some(CompiledFilter::new(
         parse(&format!("\"{TEMPERATURE}\"~=\"text-71.*\"")).expect("valid q"),
         LanguageMatching::TagEquality,
-    );
+    ));
     vec![
-        ("geo query", query(vehicles_near().build()), PageWindow::offset(100, 0), CountPolicy::Emit),
-        ("geo page", query(vehicles_near().build()), PageWindow::offset(100, 0), CountPolicy::Omit),
-        (
-            "keyed beside geo",
-            query(vehicles_near().q(Some(keyed)).build()),
-            PageWindow::offset(100, 0),
-            CountPolicy::Emit,
-        ),
+        ("geo query", vehicles_near(), PageWindow::offset(100, 0), CountPolicy::Emit),
+        ("geo page", vehicles_near(), PageWindow::offset(100, 0), CountPolicy::Omit),
+        ("keyed beside geo", keyed, PageWindow::offset(100, 0), CountPolicy::Emit),
+    ]
+}
+
+/// The gated pages that read the filters their walks test, named, with the
+/// window and count each is read under: a keyed page beside a `scopeQ`, and a
+/// geo page beside an `attrs` the census bounds.
+fn filter_read_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
+    let mut scoped = filtered(&format!("\"{TEMPERATURE}\"~=\"text-71.*\""));
+    scoped.selection.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+    let mut carried = vehicles_near();
+    carried.selection.attrs = vec![IriBuf::new(HEAD_SIGN.to_owned()).expect("valid IRI")];
+    vec![
+        ("keyed beside scope", scoped, PageWindow::offset(100, 0), CountPolicy::Emit),
+        ("geo page beside counted attrs", carried, PageWindow::offset(100, 0), CountPolicy::Omit),
     ]
 }
 
@@ -165,7 +185,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
             query(
                 EntitySelection::builder()
                     .selectors(vec![EntitySelector::builder().build()])
-                    .attrs(vec![IriBuf::new("https://example.com/headSign".to_owned()).expect("valid IRI")])
+                    .attrs(vec![IriBuf::new(HEAD_SIGN.to_owned()).expect("valid IRI")])
                     .build(),
             ),
             first_page(),
@@ -201,6 +221,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
         ),
     ];
     shapes.extend(geo_page_shapes());
+    shapes.extend(filter_read_shapes());
     shapes
 }
 

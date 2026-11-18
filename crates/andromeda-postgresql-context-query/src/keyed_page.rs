@@ -36,10 +36,17 @@
 //! passes its bound, 4.5 to 20 ms, where a keyed read costs 6 to 28 ms and a
 //! broad pattern 70 to 150 ms: the slowest of these pages takes 40 ms read
 //! that way and 54 ms read the other way.
+//!
+//! The filters the walks test on each Entity they yield are read next, before
+//! the keyed terms ([`filter_reads`](crate::filter_reads)): the carriers of an
+//! `attrs` the census bounds, which answer, else the matches of a `scopeQ`.
+//! A common term beside a scope no Entity holds then answers in 1.4 ms, where
+//! the walk visits every Entity in 633 ms.
 
 use crate::{
     entity::{GeoFilter, QFilter},
     entity_page::ProjectedPage,
+    filter_reads::filter_read_before,
     gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
     geo_page::{GeoMatches, GeoWalk, geo_probe, geo_read},
     page_walk::{PageWalk, walked_rows},
@@ -50,7 +57,7 @@ use andromeda_postgresql_query::{
     one_time_gate::CandidateBound,
     q_predicate::{
         instance_scan::InstanceScan,
-        keyed_term::{CandidateRead, KeyedCandidates},
+        keyed_term::{CandidateRead, CensusCount, KeyedCandidates},
         projection::compile,
     },
 };
@@ -120,6 +127,7 @@ pub(crate) struct KeyedReads<'q> {
 /// spelling, or a query-language rule a renderer decides first.
 pub(crate) fn keyed_page(source: &PageSource<'_>, reads: KeyedReads<'_>, columns: GatedColumns) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let KeyedReads { q, terms, geo } = reads;
+    let census = terms.first().map_or(CensusCount::Unbounded, |keyed| keyed.census);
     match geo {
         None => {
             let walked = walked_rows(source.rows);
@@ -129,7 +137,8 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, reads: KeyedReads<'_>, columns
                 probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
                 short: SHORT_WALK,
             };
-            gated_page(source, walk, term_reads(source, terms, GeoFilter::Matched)?, columns)
+            let reads = filter_read_before(source, GeoFilter::Matched, term_reads(source, terms, GeoFilter::Matched)?, census)?;
+            gated_page(source, walk, reads, columns)
         }
         Some(matches) => {
             let geo_walk = GeoWalk::of(source);
@@ -142,7 +151,12 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, reads: KeyedReads<'_>, columns
             };
             let reads = [geo_read(source, matches)?]
                 .into_iter()
-                .chain(term_reads(source, terms, GeoFilter::Probed)?)
+                .chain(filter_read_before(
+                    source,
+                    GeoFilter::Probed,
+                    term_reads(source, terms, GeoFilter::Probed)?,
+                    census,
+                )?)
                 .collect();
             gated_page(source, walk, reads, columns)
         }
