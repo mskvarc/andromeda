@@ -134,6 +134,32 @@ logs_mention() {
 	fi
 }
 
+# usage: scheduler_started NAME; prints yes once a TimescaleDB scheduler runs
+# on the server, or no after the launcher's 60s poll has passed without one.
+scheduler_started() {
+	for _ in $(seq 1 90); do
+		if [ "$(sql "$1" "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'TimescaleDB Background Worker Scheduler'")" -gt 0 ]; then
+			printf 'yes'
+			return
+		fi
+		sleep 1
+	done
+	printf 'no'
+}
+
+# usage: exit_code NAME; prints the exit code of a container that stops within
+# 60s, or running.
+exit_code() {
+	for _ in $(seq 1 120); do
+		if [ "$(docker inspect -f '{{.State.Running}}' "$prefix-$1")" != true ]; then
+			docker inspect -f '{{.State.ExitCode}}' "$prefix-$1"
+			return
+		fi
+		sleep 0.5
+	done
+	printf 'running'
+}
+
 budget_warning='warning: memory ceilings'
 
 # The values below are what this tuner version writes, and the entrypoint derives
@@ -152,8 +178,10 @@ expect '2g io_workers' "$(sql limits-2g 'SHOW io_workers')" 3
 expect '2g autovacuum_work_mem' "$(setting_mb limits-2g autovacuum_work_mem)" 32
 # A 32nd of 512MB shared_buffers is 16MB, raised to the 32MB floor.
 expect '2g wal_buffers' "$(setting_mb limits-2g wal_buffers)" 32
-expect '2g timescaledb.max_background_workers default' \
-	"$(sql limits-2g 'SHOW timescaledb.max_background_workers')" 64
+expect '2g timescaledb.max_background_workers turned off' \
+	"$(sql limits-2g 'SHOW timescaledb.max_background_workers')" 0
+# The tuner's sizing without TimescaleDB's background workers, 2 CPUs plus 3.
+expect '2g max_worker_processes' "$(sql limits-2g 'SHOW max_worker_processes')" 5
 # The tuner's 4MB for 200 connections would make the ceilings 2688MB
 # (512MB + 200 x 4MB x 2 + 10 x 32MB + 256MB). What the rest leaves, over 200
 # connections' hash tables: (2048MB - 512MB - 10 x 32MB - 256MB) / (200 x 2).
@@ -179,6 +207,10 @@ else
 	license=apache
 fi
 expect "timescaledb.license matches the installed edition" "$(sql limits-2g 'SHOW timescaledb.license')" "$license"
+expect 'no TimescaleDB scheduler runs in a database holding the extension' \
+	"$(sql limits-2g "SELECT count(*) FROM pg_stat_activity WHERE backend_type LIKE 'TimescaleDB%'")" 0
+expect 'the TimescaleDB launcher stops at start' \
+	"$(logs_mention limits-2g 'TimescaleDB background worker is set to 0')" yes
 # dpkg writes the Toolkit's version as 1:1.27.0~debian13: an epoch, then the
 # upstream version, then the distribution suffix.
 toolkit_version="$(docker exec "$prefix-limits-2g" dpkg-query -W -f '${Version}' timescaledb-toolkit-postgresql-18 2> /dev/null || :)"
@@ -196,7 +228,8 @@ for key in $policy_keys; do
 	file="$(sourcefile limits-2g "$key")"
 	expect "policy $key from 10-andromeda.conf" "${file##*/}" 10-andromeda.conf
 done
-for key in autovacuum_work_mem io_workers temp_file_limit wal_buffers max_wal_size min_wal_size work_mem; do
+for key in autovacuum_work_mem io_workers temp_file_limit wal_buffers max_wal_size min_wal_size work_mem \
+	max_worker_processes timescaledb.max_background_workers; do
 	file="$(sourcefile limits-2g "$key")"
 	expect "derived $key from andromeda-derived.conf" "${file##*/}" andromeda-derived.conf
 done
@@ -247,20 +280,42 @@ expect 'work_mem sized for 400 connections' "$(sql max-conns "SELECT pg_size_byt
 expect_true 'work_mem for 400 connections below the tuner'"'"'s' \
 	"$(( 1228 < $(tuned max-conns work_mem --memory=2048MB --cpus=2 --max-conns=400) * 1024 ))"
 
-start bg-workers --memory 2g --cpus 2 -e TS_TUNE_MAX_BG_WORKERS=100 --
-expect 'TS_TUNE_MAX_BG_WORKERS sets timescaledb.max_background_workers' \
-	"$(sql bg-workers 'SHOW timescaledb.max_background_workers')" 100
-expect_true 'max_worker_processes covers background and parallel workers' \
-	"$(sql bg-workers "SELECT (current_setting('max_worker_processes')::int >= 100 + current_setting('max_parallel_workers')::int)::int")"
+start bg-workers-tune --memory 2g --cpus 2 -e TS_TUNE_MAX_BG_WORKERS=tune --
+expect 'TS_TUNE_MAX_BG_WORKERS=tune gives the tuner'"'"'s 16 background workers' \
+	"$(sql bg-workers-tune 'SHOW timescaledb.max_background_workers')" 16
+expect 'TS_TUNE_MAX_BG_WORKERS=tune max_worker_processes, 16 plus 2 CPUs plus 3' \
+	"$(sql bg-workers-tune 'SHOW max_worker_processes')" 21
+sql bg-workers-tune 'CREATE EXTENSION IF NOT EXISTS timescaledb' > /dev/null
+expect 'a TimescaleDB scheduler runs once background workers are on' "$(scheduler_started bg-workers-tune)" yes
+
+# Below the 16 the tuner accepts, which the entrypoint passes it instead.
+start bg-workers-few --memory 2g --cpus 2 -e TS_TUNE_MAX_BG_WORKERS=4 --
+expect 'TS_TUNE_MAX_BG_WORKERS=4 sets timescaledb.max_background_workers' \
+	"$(sql bg-workers-few 'SHOW timescaledb.max_background_workers')" 4
+expect 'TS_TUNE_MAX_BG_WORKERS=4 max_worker_processes, 4 plus 2 CPUs plus 3' \
+	"$(sql bg-workers-few 'SHOW max_worker_processes')" 9
+
+start bg-workers-many --memory 2g --cpus 2 -e TS_TUNE_MAX_BG_WORKERS=100 --
+expect 'TS_TUNE_MAX_BG_WORKERS=100 sets timescaledb.max_background_workers' \
+	"$(sql bg-workers-many 'SHOW timescaledb.max_background_workers')" 100
+expect 'TS_TUNE_MAX_BG_WORKERS=100 max_worker_processes, 100 plus 2 CPUs plus 3' \
+	"$(sql bg-workers-many 'SHOW max_worker_processes')" 105
+
+containers+=( "$prefix-bg-workers-refused" )
+docker run -d --name "$prefix-bg-workers-refused" -e POSTGRES_PASSWORD=check -e TS_TUNE_MAX_BG_WORKERS=many \
+	"${run_args[@]}" "$image" postgres > /dev/null
+expect 'TS_TUNE_MAX_BG_WORKERS refuses a value that is no count' "$(exit_code bg-workers-refused)" 1
+expect 'the refusal names TS_TUNE_MAX_BG_WORKERS' \
+	"$(logs_mention bg-workers-refused 'TS_TUNE_MAX_BG_WORKERS must be off, tune or a number of workers, got many')" yes
 
 start ts-tune-memory --memory 4g -e TS_TUNE_MEMORY=1GB --
 expect 'TS_TUNE_MEMORY overrides the cgroup limit' "$(setting_mb ts-tune-memory shared_buffers)" 256
 
 start one-cpu --memory 1g --cpus 1 --
-# The tuner writes no worker settings at one CPU; at two and more it writes
-# the background workers plus the CPUs plus 3.
-expect '1 CPU max_worker_processes' "$(sql one-cpu 'SHOW max_worker_processes')" 68
-expect '1 CPU timescaledb.max_background_workers' "$(sql one-cpu 'SHOW timescaledb.max_background_workers')" 64
+# The tuner writes no worker settings at one CPU, and the entrypoint writes
+# the CPUs plus 3 worker processes at any count.
+expect '1 CPU max_worker_processes' "$(sql one-cpu 'SHOW max_worker_processes')" 4
+expect '1 CPU timescaledb.max_background_workers' "$(sql one-cpu 'SHOW timescaledb.max_background_workers')" 0
 expect '1 CPU max_parallel_workers' "$(sql one-cpu 'SHOW max_parallel_workers')" 1
 expect '1 CPU max_parallel_workers_per_gather' "$(sql one-cpu 'SHOW max_parallel_workers_per_gather')" 0
 for key in max_worker_processes timescaledb.max_background_workers max_parallel_workers max_parallel_workers_per_gather; do
