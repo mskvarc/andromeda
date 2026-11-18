@@ -50,9 +50,11 @@ The crate's one test target, `upgrade`, has four groups of tests.
 - A tenant v1.0.0 registered is served from the database name the registry stores for it, the name v1.0.0 derived from a 32-bit hash. The registry never derives that name again.
 - A tenant whose provisioning v1.0.0 left unfinished is provisioned under the database name v1.0.0 stored for it.
 - A tenant registered after the upgrade whose name shares its label with a v1.0.0 tenant, `Acme` beside `acme`, gets the database name this build derives, distinct from the stored one.
-- A registry started on a fresh platform database, and one started on a v1.0.0 platform database, each build the template their build names, marked a template that refuses connections, and provision a new tenant at the current schema from it. The database of a tenant v1.0.0 established keeps its identity and its v1.0.0 ledger until the tenant is opened.
-- A template of the prefix under another fingerprint is dropped, and a database under the expected name that isn't a finished template is dropped and built again.
-- A template at the schema v1.0.0 sealed, under the expected name, is kept, and its copy keeps the template's ledger rows and is brought through the rest of the migrations.
+- A registry started on a fresh platform database, and one started on a v1.0.0 platform database, each build `template_<prefix>`, locked with no session left on it once closed sessions have gone, and provision a new tenant at the current schema from it. The database of a tenant v1.0.0 established keeps its identity and its v1.0.0 ledger until the tenant is opened.
+- A registry started again keeps its template in place, the same database and locked.
+- A template at the schema v1.0.0 sealed is brought forward in place, the same database and locked again, and a copy of it keeps the template's ledger rows and stands at the current schema.
+- A template a start left unlocked and unmigrated is brought forward and locked in place.
+- A template whose stamp is ahead of this build is dropped and built again.
 - Two tenants provisioned one after the other are both copies, sharing the template's ledger instants, and each carries a schema stamp instant of its own. Four tenants provisioned side by side are all copies of the one template.
 - A provisional tenant whose database an earlier provisioning left at the v1.0.0 schema is migrated in that database, which keeps its identity and its v1.0.0 ledger rows.
 - A copy records a history row, so its hypertable takes a chunk of its own.
