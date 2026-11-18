@@ -93,7 +93,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{
         error::EntityError,
-        port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntitySpatialSnapshotSource, LocationRead},
+        port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntitySpatialSnapshotSource, LocationRead, LocationSink},
         spatial_acceleration::SpatialAcceleration,
     };
     use andromeda_ngsi_ld_lexicon::time::system_instant::SystemInstant;
@@ -106,7 +106,7 @@ mod tests {
     struct Unread;
 
     impl EntitySpatialSnapshotSource for Unread {
-        fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+        fn locations<'life0, 'async_trait>(&'life0 self, _sink: Arc<dyn LocationSink>) -> BoxFuture<'async_trait, Result<ChangeHorizon, EntityError>>
         where
             'life0: 'async_trait,
             Self: 'async_trait,

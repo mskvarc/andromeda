@@ -233,7 +233,7 @@ impl SpatialWatermark {
     /// install.
     pub async fn rebuild(&self) -> Result<RebuildOutcome, EntityError> {
         let round = self.arrivals.load(Ordering::SeqCst);
-        let snapshot = read_location_snapshot(&self.index, self.source.as_ref()).await?;
+        let snapshot = read_location_snapshot(&self.index, self.source.as_ref(), &self.placement).await?;
         let access = self.access.write_arc().await;
         let outcome = install_location_snapshot(&self.index, &self.placement, snapshot, self.executor.as_ref(), access).await?;
         // clone: the outcome reports the horizon the state records
