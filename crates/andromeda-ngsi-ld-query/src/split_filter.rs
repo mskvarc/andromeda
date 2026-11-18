@@ -8,7 +8,7 @@
 //! 4.9), the geo-query when one instance of the `GeoProperty` meets the
 //! relation (clause 4.10), and a scope requirement when one of the entity's
 //! scopes satisfies it (clause 4.19). The connectives joining the leaves are
-//! AND and OR only: a `q` expression has no negation, a scope query is a
+//! AND and OR only: a `q` filter has no negation, a scope query is a
 //! disjunction of conjunctions, and the three filters are conjoined. A
 //! monotone formula over existential leaves evaluated over the union of the
 //! parts is therefore the formula over, for each leaf, whether the leaf held

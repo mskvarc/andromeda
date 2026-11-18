@@ -39,7 +39,7 @@ pub struct SubscriptionRow {
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
     /// Periodic notification interval seconds.
     pub time_interval: Option<f64>,
-    /// NGSI-LD q expression.
+    /// NGSI-LD `q` filter.
     pub q: Option<Filter>,
     /// Geo query (nullable).
     pub geo_q: Option<WrittenGeoQuery>,

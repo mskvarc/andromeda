@@ -45,9 +45,9 @@ pub mod written_members;
 use crate::filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath};
 use serde::{Deserialize, Serialize};
 
-/// A parsed `q` filter expression tree: `And` and `Or` nodes combine sub-expressions, `Term` leaves hold individual Query Terms.
+/// A parsed `q` filter: `And` and `Or` nodes combine sub-filters, `Term` leaves hold individual Query Terms.
 ///
-/// The wire form is the clause 4.9 expression itself, in both directions: a
+/// The wire form is the clause 4.9 query text itself, in both directions: a
 /// resource that carries a filter, such as a Subscription (clause 5.2.12), a
 /// `ContextSourceRegistration` (5.2.9) or a Snapshot query (5.2.23), stores the
 /// text a client wrote and must give back an equivalent one. Parsing at
@@ -56,16 +56,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum Filter {
-    /// Conjunction: all sub-expressions must be true (`;` in NGSI-LD syntax).
+    /// Conjunction: all sub-filters must be true (`;` in NGSI-LD syntax).
     And(Vec<Filter>),
-    /// Disjunction: at least one sub-expression must be true (`|` in NGSI-LD syntax).
+    /// Disjunction: at least one sub-filter must be true (`|` in NGSI-LD syntax).
     Or(Vec<Filter>),
-    /// A leaf predicate.
+    /// A leaf query term.
     Term(QueryTerm),
 }
 
 impl Filter {
-    /// Whether any predicate in this filter traverses a linked entity (the
+    /// Whether any query term in this filter traverses a linked entity (the
     /// clause 4.9 `{}` axis).
     ///
     /// A consumer evaluating a filter in memory needs to know: a traversal
@@ -78,7 +78,7 @@ impl Filter {
         }
     }
 
-    /// The greatest number of Relationship hops any predicate in this filter
+    /// The greatest number of Relationship hops any query term in this filter
     /// crosses (the clause 4.9 `{}` axis, counted).
     ///
     /// Clause 5.7.2.4 bounds a filter's traversal by the request's `joinLevel`,
@@ -101,7 +101,7 @@ impl Filter {
         }
     }
 
-    /// The local path every Query Term terminates at, in pre-order.
+    /// The value path every Query Term terminates at, in pre-order.
     #[must_use]
     pub fn terminal_paths(&self) -> Vec<&ValuePath> {
         match self {
@@ -110,7 +110,7 @@ impl Filter {
         }
     }
 
-    /// The local path every Query Term terminates at, mutably, in pre-order.
+    /// The value path every Query Term terminates at, mutably, in pre-order.
     pub fn terminal_paths_mut(&mut self) -> Vec<&mut ValuePath> {
         match self {
             Filter::And(filters) | Filter::Or(filters) => filters.iter_mut().flat_map(Filter::terminal_paths_mut).collect(),
@@ -139,7 +139,7 @@ impl TryFrom<String> for Filter {
     }
 }
 
-// The wire form is produced by the `Display` above; this exists only because
+// The wire form is produced by `Display`; this exists only because
 // `#[serde(into = "String")]` demands an `Into<String>` and cannot use it.
 impl From<Filter> for String {
     fn from(filter: Filter) -> String {
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_filter_round_trips_through_its_clause_4_9_text() {
-        // Clause 4.9: the wire form of a stored filter is the expression, so a
+        // Clause 4.9: the wire form of a stored filter is its query text, so a
         // resource that is read back must yield a filter that parses to the
         // same tree.
         let raw = "speed>50;brandName==\"Mercedes\"";

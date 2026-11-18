@@ -3,11 +3,11 @@
 use crate::filter::json_key_attributes::JsonKeyAttributes;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-/// Whether the `[…]` members of a filter's attribute paths, and its
+/// Whether the `[…]` members of a filter's value paths, and its
 /// sub-attribute names, are terms of the `@context` or literal JSON object
 /// keys.
 ///
-/// Clause 4.9 evaluates a trailing path "as a `MemberExpression` of ECMA 262"
+/// Clause 4.9 evaluates a trailing group "as a `MemberExpression` of ECMA 262"
 /// against the seed target value, so a member names whatever key that value
 /// carries. An Entity's structured Property value is stored JSON-LD expanded,
 /// which keys its members by IRI, so its members are terms; a raw JSON value

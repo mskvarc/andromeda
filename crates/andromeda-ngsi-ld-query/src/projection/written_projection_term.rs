@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, ke
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Write};
 
-/// One term of a clause 4.21 raw (pre-expansion) projection list: one attribute and, when it constrains a linked entity's own projection, the `{...}` sub-terms selected on the other side of the relationship it names.
+/// One term of a clause 4.21 written projection list, before expansion: one attribute and, when it constrains a linked entity's own projection, the `{...}` sub-terms selected on the other side of the relationship it names.
 ///
 /// Serialized as the tree `{"name": ..., "linked": [...]}` rather than as clause 4.21 text: a stored subscription keeps its terms expanded (clause 5.5.7), and an expanded IRI may hold the `,` and `|` the grammar separates terms with, which the clause 4.9 `AttrName` a client writes never does.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ impl fmt::Display for WrittenProjectionTerm {
     }
 }
 
-/// The raw term an expanded projection term is written back as: a keyword
+/// The written term an expanded projection term is written back as: a keyword
 /// keeps its clause 4.21 spelling and an attribute is named by its IRI.
 impl TryFrom<&ExpandedProjectionTerm> for WrittenProjectionTerm {
     type Error = ProjectionError;
@@ -97,7 +97,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].linked_depth(), 2);
     }
 
-    /// An expanded term is written back as the raw tree it came from, the
+    /// An expanded term is written back as the written tree it came from, the
     /// keywords spelt as clause 4.21 spells them.
     #[test]
     fn an_expanded_term_converts_back_to_its_written_tree() {

@@ -7,11 +7,11 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// A parsed `orderBy` term. `path` is the raw request text, before it is classified and expanded into a [`CompiledOrderingTerm`].
+/// A parsed `orderBy` term. `path` is the path as the client wrote it, before it is classified and expanded into a [`CompiledOrderingTerm`](crate::ordering::compiled_ordering_term::CompiledOrderingTerm).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct WrittenOrderingTerm {
-    /// The attribute path or clause 4.23 keyword to sort by, as written. Clause 4.23.3 delegates `AttrName` to clause 4.9, and its examples (`address[city]`, `name.observedAt`) are both the clause 4.9 `ValuePath` production, which is why this is a whole path rather than one name.
+    /// The value path or clause 4.23 keyword to sort by, as written. Clause 4.23.3 delegates `AttrName` to clause 4.9, and its examples (`address[city]`, `name.observedAt`) are both the clause 4.9 `ValuePath` production, which is why this is a whole path rather than one name.
     pub path: ValuePath,
     /// The sort direction.
     pub direction: OrderingDirection,

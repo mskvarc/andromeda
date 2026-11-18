@@ -1,4 +1,4 @@
-//! The attributes a `q` filter names (clause 4.9), read off its predicates.
+//! The attributes a `q` filter names (clause 4.9), read off its query terms.
 //!
 //! Clause 5.10.2.4 matches the attributes a discovery query's `q` mentions
 //! against registrations exactly as it matches an explicit `attrs` list, so a
@@ -7,12 +7,12 @@
 use crate::filter::{Filter, attribute_path::AttributePath, value_path::ValuePath};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-/// The top-level attribute every predicate of `filter` addresses, in first-seen
+/// The top-level attribute every query term of `filter` addresses, in first-seen
 /// order and without repetition.
 ///
-/// A wholly local path names its own attribute. A linked-entity hop names the
+/// A wholly local value path names its own attribute. A linked-entity hop names the
 /// Relationship it descends through: that is the member of the entity under
-/// evaluation the predicate reads, and the attribute a context source would
+/// evaluation the query term reads, and the attribute a context source would
 /// have to hold for the hop to begin.
 #[must_use]
 pub fn referenced_attributes(filter: &Filter) -> Vec<&AttributeName> {
@@ -21,7 +21,7 @@ pub fn referenced_attributes(filter: &Filter) -> Vec<&AttributeName> {
     names
 }
 
-/// Walk `filter`, pushing each predicate's top-level attribute the first time it
+/// Walk `filter`, pushing each query term's top-level attribute the first time it
 /// is seen.
 fn collect<'filter>(filter: &'filter Filter, names: &mut Vec<&'filter AttributeName>) {
     match filter {
@@ -35,7 +35,7 @@ fn collect<'filter>(filter: &'filter Filter, names: &mut Vec<&'filter AttributeN
     }
 }
 
-/// The attribute of the entity under evaluation that an axis starts from.
+/// The attribute of the entity under evaluation that an attribute path starts from.
 const fn top_level_attribute(path: &AttributePath) -> &AttributeName {
     match path {
         AttributePath::Local(ValuePath { attribute, .. }) => attribute,

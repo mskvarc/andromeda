@@ -1,11 +1,11 @@
-//! Leaf predicates of a `q` filter and the operators they carry (clause 4.9).
+//! The Query Terms of a `q` filter and the operators they carry (clause 4.9).
 
 use crate::{
     filter::{attribute_path::AttributePath, equality_value::EqualityValue, operator_spelling, reading::order_relation::OrderRelation, scalar::Scalar},
     pattern::Pattern,
 };
 
-/// A single filter predicate within a `q` expression.
+/// A single query term within a `q` filter.
 ///
 /// Clause 4.9 Table 4.9-1 admits a range or a value list only after `==`/`!=`;
 /// the four ordering operators take a single scalar. The two comparison
@@ -22,7 +22,7 @@ pub enum QueryTerm {
         path: AttributePath,
         /// Whether the value must lie inside (`==`) or outside (`!=`) the operand.
         membership: SetMembership,
-        /// The right-hand side value(s).
+        /// The equality value: a scalar, a range or a value list.
         value: EqualityValue,
     },
     /// Ordering comparison (`>`/`>=`/`<`/`<=`) of an attribute value against a
@@ -53,9 +53,9 @@ pub enum QueryTerm {
 }
 
 impl QueryTerm {
-    /// The attribute axis this predicate compares along.
+    /// The attribute path this query term compares along.
     ///
-    /// Every variant carries one, so a consumer that only has to walk the axis
+    /// Every variant carries one, so a consumer that only has to walk the path
     /// (a SQL compiler descending the linked-entity hops, for instance) reads it
     /// here rather than re-matching all five variants.
     #[must_use]
@@ -69,7 +69,7 @@ impl QueryTerm {
         }
     }
 
-    /// The attribute axis this predicate compares along, mutably.
+    /// The attribute path this query term compares along, mutably.
     pub const fn path_mut(&mut self) -> &mut AttributePath {
         match self {
             QueryTerm::Exists(path)
@@ -87,11 +87,11 @@ pub enum OrderingOperator {
     /// Greater than (`>`).
     Greater,
     /// Greater than or equal (`>=`).
-    GreaterEq,
+    GreaterOrEqual,
     /// Less than (`<`).
     Less,
     /// Less than or equal (`<=`).
-    LessEq,
+    LessOrEqual,
 }
 
 impl OrderingOperator {
@@ -103,9 +103,9 @@ impl OrderingOperator {
     pub const fn spelling(self) -> &'static str {
         match self {
             OrderingOperator::Greater => operator_spelling::GREATER,
-            OrderingOperator::GreaterEq => operator_spelling::GREATER_EQ,
+            OrderingOperator::GreaterOrEqual => operator_spelling::GREATER_OR_EQUAL,
             OrderingOperator::Less => operator_spelling::LESS,
-            OrderingOperator::LessEq => operator_spelling::LESS_EQ,
+            OrderingOperator::LessOrEqual => operator_spelling::LESS_OR_EQUAL,
         }
     }
 
@@ -114,9 +114,9 @@ impl OrderingOperator {
     pub const fn relation(self) -> OrderRelation {
         match self {
             OrderingOperator::Greater => OrderRelation::Greater,
-            OrderingOperator::GreaterEq => OrderRelation::GreaterOrEqual,
+            OrderingOperator::GreaterOrEqual => OrderRelation::GreaterOrEqual,
             OrderingOperator::Less => OrderRelation::Less,
-            OrderingOperator::LessEq => OrderRelation::LessOrEqual,
+            OrderingOperator::LessOrEqual => OrderRelation::LessOrEqual,
         }
     }
 }
@@ -159,9 +159,9 @@ mod tests {
     fn ordering_operators_write_their_token_and_test_their_relation() {
         for (operator, relation, token) in [
             (OrderingOperator::Greater, OrderRelation::Greater, ">"),
-            (OrderingOperator::GreaterEq, OrderRelation::GreaterOrEqual, ">="),
+            (OrderingOperator::GreaterOrEqual, OrderRelation::GreaterOrEqual, ">="),
             (OrderingOperator::Less, OrderRelation::Less, "<"),
-            (OrderingOperator::LessEq, OrderRelation::LessOrEqual, "<="),
+            (OrderingOperator::LessOrEqual, OrderRelation::LessOrEqual, "<="),
         ] {
             assert_eq!(operator.relation(), relation, "{operator:?}");
             assert_eq!(operator.spelling(), token, "{operator:?}");

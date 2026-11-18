@@ -16,13 +16,13 @@ use crate::type_selection::{type_selection_error::TypeSelectionError, written_ty
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use std::iter;
 
-/// Parses a type selection expression string into a raw AST.
+/// Parses the text of a type selection into a [`WrittenTypeSelection`].
 ///
 /// # Errors
 ///
 /// Returns [`TypeSelectionError::Empty`] for blank input,
 /// [`TypeSelectionError::UnexpectedEnd`] and [`TypeSelectionError::UnbalancedParenthesis`]
-/// for an expression that ends early or leaves a parenthesis open,
+/// for a selection that ends early or leaves a parenthesis open,
 /// [`TypeSelectionError::UnexpectedCharacter`] for a character the clause 4.17 grammar
 /// does not admit at its position, and [`TypeSelectionError::InvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
@@ -49,16 +49,16 @@ pub(super) fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionEr
     Ok(type_selection)
 }
 
-/// Cursor over a type selection expression.
+/// Cursor over the text of a type selection.
 struct Parser<'a> {
-    /// The expression being consumed.
+    /// The text being consumed.
     input: &'a str,
     /// Byte offset of the next character to consume.
     pos: usize,
 }
 
 impl<'a> Parser<'a> {
-    /// Start at the beginning of an expression.
+    /// Start at the beginning of the text.
     const fn new(input: &'a str) -> Parser<'a> {
         Parser { input, pos: 0 }
     }
@@ -151,7 +151,7 @@ impl<'a> Parser<'a> {
 }
 
 /// Returns `true` for characters that may appear in a type name.
-/// Excludes the expression operators: `|`, `,`, `;`, `(`, `)`.
+/// Excludes the type selection operators: `|`, `,`, `;`, `(`, `)`.
 const fn is_type_char(character: char) -> bool {
     !matches!(character, '|' | ',' | ';' | '(' | ')') && !character.is_whitespace()
 }

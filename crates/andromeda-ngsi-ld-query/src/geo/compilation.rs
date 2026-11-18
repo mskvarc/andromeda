@@ -23,9 +23,12 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 /// Returns [`GeoQueryError::NearDistanceBand`] for a distance band `admission`
 /// refuses, the refusal of [`ReferenceGeometry::admit`](crate::geo::reference_geometry::ReferenceGeometry::admit)
 /// for a reference geometry past the limits or encoded coordinates that are no
-/// geometry, and [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`]
-/// or [`GeoQueryError::InvalidGeoproperty`] when the `geoproperty` term does
-/// not expand to a usable attribute name.
+/// geometry, [`QueryError::TermExpansion`] (carrying
+/// [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
+/// when the term expands to something that is not an absolute IRI) when the
+/// `geoproperty` term does not expand, and
+/// [`GeoQueryError::InvalidGeoproperty`] when it expands to no usable attribute
+/// name.
 pub async fn compile_geo_query(
     geo_query: Option<&WrittenGeoQuery>,
     expander: &impl TermExpander,

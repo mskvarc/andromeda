@@ -25,7 +25,7 @@ use crate::filter::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-/// Parse the attribute axis of a Query Term whose leading name `leading` has
+/// Parse the attribute path of a Query Term whose leading name `leading` has
 /// already been read: a `ValuePath`, or a hop `leading{LinkedEntityPath}`.
 ///
 /// `depth` counts the path segments consumed so far (sub-attributes and

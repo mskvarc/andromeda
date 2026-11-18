@@ -137,7 +137,7 @@ fn push_attribute_list(buffer: &mut String, value: Option<&[AttributeName]>) {
     }
 }
 
-/// Append an ordered `pick` / `omit` raw projection-term list in its
+/// Append an ordered `pick` / `omit` written projection-term list in its
 /// canonical clause 4.21 text rendering, including any linked-entity
 /// sub-projection each term carries.
 fn push_projection_term_list(buffer: &mut String, value: Option<&[WrittenProjectionTerm]>) {

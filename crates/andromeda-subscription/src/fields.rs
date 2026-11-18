@@ -40,7 +40,7 @@ pub(crate) struct SubscriptionWriteValues {
     pub geo_q: Option<WrittenGeoQuery>,
     /// Parsed scope query expression.
     pub scope_q: Option<ScopeQuery>,
-    /// Parsed context-source filter expression.
+    /// Parsed context-source filter.
     pub csf: Option<Filter>,
     /// Validated `datasetId` selectors, `@none` naming the default instance.
     pub dataset_id: Option<Vec<DatasetSelector>>,

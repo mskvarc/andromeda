@@ -66,7 +66,7 @@ pub struct PurgeEntitiesParameters {
     /// Attributes a selected entity has, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
-    /// The `q` filter expression (clause 4.9), parsed at the request boundary.
+    /// The `q` filter (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.

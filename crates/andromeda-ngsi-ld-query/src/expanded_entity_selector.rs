@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use typed_builder::TypedBuilder;
 
 /// One entity selector: an identifier list, an identifier pattern and a type
-/// expression a candidate must satisfy together (clause 5.2.33).
+/// selection a candidate must satisfy together (clause 5.2.33).
 ///
 /// A selector is the unit a POST query body's `entities[]` array is a union of.
 /// `{id:A,type:T1}` and `{id:B,type:T2}` are two selectors, and an entity
@@ -20,7 +20,7 @@ pub struct ExpandedEntitySelector {
     pub ids: Vec<Identifier>,
     /// Regular expression the entity id must match (clause 5.7.2 `idPattern`).
     pub id_pattern: Option<Pattern>,
-    /// Boolean expression over entity type IRIs (clause 4.17 `type`).
+    /// Type selection over entity type IRIs (clause 4.17 `type`).
     ///
     /// `None` when this selector places no type constraint.
     pub type_selection: Option<ExpandedTypeSelection>,

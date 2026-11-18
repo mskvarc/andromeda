@@ -97,7 +97,7 @@ mod tests {
         )
     }
 
-    fn raw(name: &str, linked: Vec<WrittenProjectionTerm>) -> WrittenProjectionTerm {
+    fn written_term(name: &str, linked: Vec<WrittenProjectionTerm>) -> WrittenProjectionTerm {
         WrittenProjectionTerm {
             name: name.parse().expect("valid attribute name"),
             linked,
@@ -122,7 +122,10 @@ mod tests {
     /// sub-projection expands with its parent.
     #[tokio::test]
     async fn pick_terms_expand_through_the_context_and_keep_their_nested_terms() {
-        let pick = [raw("id", Vec::new()), raw("hasA", vec![raw("temperature", Vec::new())])];
+        let pick = [
+            written_term("id", Vec::new()),
+            written_term("hasA", vec![written_term("temperature", Vec::new())]),
+        ];
 
         let compiled = service()
             .compile_projection(Some(&pick), None, &context())
@@ -150,7 +153,7 @@ mod tests {
     /// which clause 4.21 reads as "every member except those omitted".
     #[tokio::test]
     async fn an_omit_only_request_compiles_to_an_empty_pick() {
-        let omit = [raw("temperature", Vec::new())];
+        let omit = [written_term("temperature", Vec::new())];
 
         let compiled = service()
             .compile_projection(None, Some(&omit), &context())
@@ -173,8 +176,8 @@ mod tests {
     /// would select nothing.
     #[tokio::test]
     async fn a_member_picked_by_its_short_name_and_omitted_by_its_iri_is_refused() {
-        let pick = [raw("temperature", Vec::new())];
-        let omit = [raw("https://example.com/temperature", Vec::new())];
+        let pick = [written_term("temperature", Vec::new())];
+        let omit = [written_term("https://example.com/temperature", Vec::new())];
 
         let error = service()
             .compile_projection(Some(&pick), Some(&omit), &context())
@@ -193,8 +196,8 @@ mod tests {
     /// Two short names the context maps to different IRIs are two members.
     #[tokio::test]
     async fn two_short_names_of_different_members_are_admitted() {
-        let pick = [raw("temperature", Vec::new())];
-        let omit = [raw("hasA", Vec::new())];
+        let pick = [written_term("temperature", Vec::new())];
+        let omit = [written_term("hasA", Vec::new())];
 
         let compiled = service().compile_projection(Some(&pick), Some(&omit), &context()).await.expect("compiles");
 
@@ -205,7 +208,7 @@ mod tests {
     /// structural keyword carrying `{...}` is a malformed projection.
     #[tokio::test]
     async fn a_structural_keyword_carrying_a_nested_term_is_rejected() {
-        let pick = [raw("id", vec![raw("temperature", Vec::new())])];
+        let pick = [written_term("id", vec![written_term("temperature", Vec::new())])];
 
         assert!(service().compile_projection(Some(&pick), None, &context()).await.is_err());
     }

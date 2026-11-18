@@ -165,7 +165,7 @@ pub(crate) fn too_many_results(exceeded: ResultBudgetExceeded, instance: &Uri) -
 /// Each source's answer is read to its last page (clauses 4.3.6.7 and
 /// 5.5.9.1), because the client's page is cut from the whole merge; one budget
 /// bounds what all of them gather together (clause 4.12). The context source
-/// filter selects registrations in its expanded form; the raw expression
+/// filter selects registrations in its expanded form; the written filter
 /// travels on as the client wrote it, since clause 5.7.4.4 propagates it into
 /// discovery. A source that cannot be reached contributes a clause 6.3.17
 /// warning rather than failing the operation. A clause 5.5.13 local query

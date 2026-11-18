@@ -1,7 +1,7 @@
 //! The NGSI-LD query languages: their grammars, their ASTs and their compiled forms.
 //!
 //! ETSI GS CIM 009 v1.9.1 defines a family of query facilities, namely `q` (clause
-//! 4.9), `georel` (4.10), `scopeQ` (4.18), type selection (4.17), `orderBy`
+//! 4.9), `georel` (4.10), `scopeQ` (4.19), type selection (4.17), `orderBy`
 //! (4.23), projection (4.21) and the temporal window (4.5.19), that a broker
 //! must read identically wherever they appear. This crate owns all of them: each
 //! concept's grammar, its AST and its compiled model live in one directory, so
@@ -31,6 +31,7 @@ pub mod defined_token;
 pub mod entity;
 pub mod entity_filters;
 pub mod entity_selection;
+pub mod entity_selector_expansion;
 pub mod expanded_entity_selector;
 pub mod filter;
 pub mod geo;
@@ -48,7 +49,6 @@ pub mod query_error;
 pub mod query_identity;
 pub mod read_order;
 pub mod scope;
-pub mod selector_compilation;
 pub mod split_filter;
 pub mod standing_instant;
 pub mod temporal;

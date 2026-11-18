@@ -31,9 +31,9 @@ use regex_syntax::{ast::parse::Parser, hir::translate::TranslatorBuilder};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-/// A regular expression from a query parameter or a `q` predicate, compiled at parse time.
+/// A regular expression from a query parameter or a `q` query term, compiled at parse time.
 ///
-/// Equality and order are over the source text, not the compiled automaton: two patterns are the same predicate exactly when the client wrote the same thing. The wire form is the pattern as written, so a resource that stores one (an `EntitySelector.idPattern`, clause 5.2.33, or a Snapshot entity selector, clause 5.2.23) gives back exactly what the client sent.
+/// Equality and order are over the source text, not the compiled automaton: two patterns are the same exactly when the client wrote the same thing. The wire form is the pattern as written, so a resource that stores one (an `EntitySelector.idPattern`, clause 5.2.33, or a Snapshot entity selector, clause 5.2.23) gives back exactly what the client sent.
 #[derive(Debug, Clone, Display, Serialize, Deserialize)]
 #[derive_where(PartialEq, Eq, PartialOrd, Ord)]
 #[serde(try_from = "String", into = "String")]

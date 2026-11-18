@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector as CompiledEntitySelector,
+    expanded_entity_selector::ExpandedEntitySelector,
     page_window::PageWindow,
     type_selection::expansion::expand_type_selection,
 };
@@ -35,7 +35,7 @@ use std::sync::Arc;
 pub(crate) struct EntityStoreRegistrationProbe {
     /// Runs compiled identifier queries.
     query: Arc<dyn EntityQueryStore>,
-    /// Compiles a registration's type expression, whose leaves are already
+    /// Compiles a registration's type selection, whose leaves are already
     /// expanded IRIs, into the query form.
     engine: JsonLdEngine,
     /// Tenant live branch registration admission inspects.
@@ -54,10 +54,10 @@ impl EntityStoreRegistrationProbe {
     /// 5.5.7), so the selector's type leaves are absolute IRIs; expanding them
     /// against the core context leaves them unchanged and yields the typed
     /// expression the store evaluates.
-    async fn compile_selector(&self, selector: &EntityInfo) -> Result<CompiledEntitySelector, RegistrationError> {
+    async fn compile_selector(&self, selector: &EntityInfo) -> Result<ExpandedEntitySelector, RegistrationError> {
         let prepared = self.engine.prepare_term_context(&ContextSpec::core_only());
         let type_expr = expand_type_selection(&selector.type_.as_type_selection(), &ContextualExpander::new(&self.engine, &prepared)).await?;
-        Ok(CompiledEntitySelector::builder()
+        Ok(ExpandedEntitySelector::builder()
             .ids(selector.id.iter().cloned().collect())
             .id_pattern(selector.id_pattern.clone())
             .type_selection(Some(type_expr))
@@ -67,7 +67,7 @@ impl EntityStoreRegistrationProbe {
     /// Whether the store holds an entity one of `selectors` admits (every
     /// entity when there is none) that has at least one of `attributes`
     /// (every entity when there is none).
-    async fn presence(&self, selectors: Vec<CompiledEntitySelector>, attributes: &[AttributeName]) -> Result<EntityPresence, RegistrationError> {
+    async fn presence(&self, selectors: Vec<ExpandedEntitySelector>, attributes: &[AttributeName]) -> Result<EntityPresence, RegistrationError> {
         let attrs = attributes
             .iter()
             .map(|name| IriBuf::new(name.to_string()))
@@ -133,7 +133,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
             if attributes.is_empty() {
                 return Ok(EntityPresence::Absent);
             }
-            let selector = CompiledEntitySelector::builder()
+            let selector = ExpandedEntitySelector::builder()
                 .ids(vec![entity_id.clone()])
                 .id_pattern(None)
                 .type_selection(None)

@@ -1,4 +1,4 @@
-//! `q` predicates compiled to `EXISTS` probes against the stored attribute
+//! `q` query terms compiled to `EXISTS` probes against the stored attribute
 //! instances an [`InstanceScan`] names: the `current_attributes` rows for a
 //! Query Entities `q`, the in-window `attribute_history` rows for a temporal
 //! one.

@@ -29,17 +29,20 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
-/// Recursively expand attribute terms in a `q` expression.
+/// Recursively expand attribute terms in a `q` filter.
 ///
-/// Every attribute path (main attribute plus sub-attributes) in the expression
-/// is expanded to its full IRI form, and so are the compound-value member names
-/// of every attribute `json_keys` did not declare to hold raw JSON. The
-/// operands of a term whose path ends on `valueType` or `objectType` expand
-/// too (see [`OperandCoercion::Vocabulary`]).
+/// Every attribute path in the filter (each value path's attribute and
+/// sub-attributes, each hop's Relationship and guard types) is expanded to its
+/// full IRI form, and so are the compound-value member names of every
+/// attribute `json_keys` did not declare to hold raw JSON. The operands of a
+/// query term whose path ends on `valueType` or `objectType` expand too (see
+/// [`OperandCoercion::Vocabulary`]).
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// Returns [`QueryError::TermExpansion`] when a term does not expand, carrying
+/// [`TermExpansionError::NotAnIri`] when it expands to something that is not an
+/// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_filter(filter: Filter, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Filter, QueryError> {
@@ -47,7 +50,7 @@ pub async fn expand_filter(filter: Filter, json_keys: &JsonKeyAttributes, expand
     walk_terms(filter, &|term| expand_query_term(term, members, expander)).await
 }
 
-/// Expand the attribute path of one `q` predicate, then the operands of one
+/// Expand the attribute path of one `q` query term, then the operands of one
 /// whose path ends on a member holding a vocabulary term.
 async fn expand_query_term(term: QueryTerm, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
     let term = expand_query_term_paths(term, members, expander).await?;
@@ -57,7 +60,7 @@ async fn expand_query_term(term: QueryTerm, members: NestedNames<'_>, expander: 
     }
 }
 
-/// Recursively expand the property terms of a `csf` expression.
+/// Recursively expand the property terms of a `csf` filter.
 ///
 /// Every attribute path's property expands to a full IRI, as a registration's
 /// Context Source Properties are held under their expanded names (clause
@@ -67,20 +70,23 @@ async fn expand_query_term(term: QueryTerm, members: NestedNames<'_>, expander: 
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// Returns [`QueryError::TermExpansion`] when a term does not expand, carrying
+/// [`TermExpansionError::NotAnIri`] when it expands to something that is not an
+/// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_context_source_filter(filter: Filter, expander: &impl TermExpander) -> Result<Filter, QueryError> {
     walk_terms(filter, &|term| expand_query_term_paths(term, NestedNames::Verbatim, expander)).await
 }
 
-/// Apply `expandValues`: for attributes in `expand_attributes`, expand string scalar
-/// right-hand-side values through the `@context` (clause 6.4.3.2).
+/// Apply `expandValues`: for attributes in `expand_attributes`, expand string
+/// operands through the `@context` (clause 6.4.3.2).
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
-/// string operand of an opted-in attribute does not expand.
+/// Returns [`QueryError::TermExpansion`] when a string operand of an opted-in
+/// attribute does not expand, carrying [`TermExpansionError::NotAnIri`] when it
+/// expands to something that is not an absolute IRI.
 pub async fn apply_expand_values<S: BuildHasher + Sync>(
     filter: Filter,
     expand_attributes: &HashSet<AttributeName, S>,
@@ -89,7 +95,7 @@ pub async fn apply_expand_values<S: BuildHasher + Sync>(
     walk_terms(filter, &|term| expand_equality_values(term, expand_attributes, expander)).await
 }
 
-/// Rewrite every leaf predicate of an expression, leaving its boolean structure
+/// Rewrite every query term of a filter, leaving its boolean structure
 /// intact.
 async fn walk_terms<F, Fut>(filter: Filter, handler: &F) -> Result<Filter, QueryError>
 where
@@ -125,7 +131,7 @@ where
     Box::pin(walk_terms(filter, handler))
 }
 
-/// Expand the attribute path of a single predicate.
+/// Expand the attribute path of a single query term.
 async fn expand_query_term_paths(term: QueryTerm, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
     match term {
         QueryTerm::Exists(path) => Ok(QueryTerm::Exists(expand_attribute_path(path, members, expander).await?)),
@@ -150,8 +156,9 @@ async fn expand_query_term_paths(term: QueryTerm, members: NestedNames<'_>, expa
     }
 }
 
-/// Expand an attribute axis: every local segment as a term, and for each
-/// linked-entity hop the Relationship as a term and its guard as entity types.
+/// Expand an attribute path: every segment of its value path as a term, and for
+/// each linked-entity hop the Relationship as a term and its guard as entity
+/// types.
 ///
 /// The guard names entity types, not attributes, so it expands through
 /// [`TermExpander::expand_type`] (clause 4.9's `EntityType` production, which
@@ -159,9 +166,12 @@ async fn expand_query_term_paths(term: QueryTerm, members: NestedNames<'_>, expa
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`FilterError::InvalidAttributeName`] when a segment, a hop's Relationship or
-/// one of its guard types does not expand to a usable attribute name.
+/// Returns [`QueryError::TermExpansion`] when a segment, a hop's Relationship or
+/// one of its guard types does not expand, carrying
+/// [`TermExpansionError::NotAnIri`] when it expands to something that is not an
+/// absolute IRI, and [`QueryError::Filter`] carrying
+/// [`FilterError::InvalidAttributeName`] when it does not expand to a usable
+/// attribute name.
 pub async fn expand_attribute_path(path: AttributePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<AttributePath, QueryError> {
     match path {
         AttributePath::Local(local) => Ok(AttributePath::Local(expand_value_path(local, members, expander).await?)),
@@ -185,8 +195,8 @@ pub async fn expand_attribute_path(path: AttributePath, members: NestedNames<'_>
     }
 }
 
-/// Box-pinned wrapper: the axis walker recurses through hops, and an `async fn`
-/// cannot name its own future type.
+/// Box-pinned wrapper: the attribute path walker recurses through hops, and an
+/// `async fn` cannot name its own future type.
 fn expand_attribute_path_boxed<'a, E: TermExpander>(
     path: AttributePath,
     members: NestedNames<'a>,
@@ -198,17 +208,19 @@ where
     Box::pin(expand_attribute_path(path, members, expander))
 }
 
-/// Expand an attribute path (main attribute and, when `members` makes them
-/// terms, sub-attributes and compound-value member names) to full IRIs.
+/// Expand a value path (attribute and, when `members` makes them terms,
+/// sub-attributes and compound-value member names) to full IRIs.
 ///
 /// The member names of a compound value expand for the same reason the attribute name does: JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so `address[city]` addresses the expansion of `city` under the request `@context`, not the four letters the client typed.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`FilterError::InvalidAttributeName`] when the attribute, one of its
-/// sub-attributes or one of its compound-value members does not expand to a
-/// usable attribute name.
+/// Returns [`QueryError::TermExpansion`] when the attribute, one of its
+/// sub-attributes or one of its compound-value members does not expand,
+/// carrying [`TermExpansionError::NotAnIri`] when it expands to something that
+/// is not an absolute IRI, and [`QueryError::Filter`] carrying
+/// [`FilterError::InvalidAttributeName`] when it does not expand to a usable
+/// attribute name.
 pub async fn expand_value_path(mut path: ValuePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<ValuePath, QueryError> {
     path.attribute = expanded_attribute_name(&expander.expand_term(path.attribute.as_str()).await?)?;
     if members.sub_attributes_are_terms() {
@@ -225,9 +237,9 @@ pub async fn expand_value_path(mut path: ValuePath, members: NestedNames<'_>, ex
     Ok(path)
 }
 
-/// Expand the members of a trailing path, in order.
+/// Expand the members of a trailing group, in order.
 ///
-/// Clause 4.9 evaluates a trailing path as an ECMA 262 `MemberExpression`
+/// Clause 4.9 evaluates a trailing group as an ECMA 262 `MemberExpression`
 /// against the seed target value, so a member the `@context` maps to a JSON-LD
 /// keyword, as the core context maps `type` and `id`, is no IRI-keyed member of
 /// an expanded value and is read as the member of its own name.
@@ -252,14 +264,16 @@ async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpa
 ///
 /// This is what turns an `expandValues` or `jsonKeys` opt-in list into the
 /// names [`apply_expand_values`] and [`JsonKeyAttributes`] key a filter by
-/// (clause 4.9): both match against the terminal attribute of an
-/// already-expanded predicate path, so a compact opt-in list would key nothing
+/// (clause 4.9): both match against the terminal attribute of the path of an
+/// already-expanded query term, so a compact opt-in list would key nothing
 /// at all. It is also how a path's sub-attributes and compound-value members
 /// are expanded.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// Returns [`QueryError::TermExpansion`] when a term does not expand, carrying
+/// [`TermExpansionError::NotAnIri`] when it expands to something that is not an
+/// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_attribute_names(terms: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeName>, QueryError> {
@@ -360,7 +374,7 @@ mod tests {
         }
     }
 
-    /// Parses and expands a `q` filter expression, `None` when `q` is absent or
+    /// Parses and expands a `q` filter, `None` when `q` is absent or
     /// blank.
     async fn parse_and_expand(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Filter>, QueryError> {
         let Some(q_str) = q.map(str::trim).filter(|trimmed| !trimmed.is_empty()) else {
@@ -370,7 +384,7 @@ mod tests {
         Ok(Some(expand_filter(filter, json_keys, expander).await?))
     }
 
-    /// Clause 4.9 reads a trailing path as an ECMA 262 `MemberExpression`, so
+    /// Clause 4.9 reads a trailing group as an ECMA 262 `MemberExpression`, so
     /// a member the `@context` maps to a JSON-LD keyword is the member of its
     /// own name, while an attribute so mapped still names no attribute.
     #[tokio::test]
@@ -481,7 +495,7 @@ mod tests {
                 }
                 AttributePath::Local(local) => panic!("expected a hop, got {local:?}"),
             },
-            other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected an equality predicate, got {other:?}"),
+            other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected an equality query term, got {other:?}"),
         }
     }
 
@@ -506,7 +520,7 @@ mod tests {
         );
     }
 
-    /// The opt-in names key predicates whose paths were already expanded, so an
+    /// The opt-in names key query terms whose paths were already expanded, so an
     /// expanded list applied to an expanded filter is what actually rewrites a
     /// value.
     #[tokio::test]
@@ -823,7 +837,7 @@ mod tests {
                 assert_eq!(path.terminal().attribute.as_str(), "https://example.com/name");
                 assert_eq!(pattern.as_str(), "^A.*");
             }
-            other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected a pattern predicate, got {other:?}"),
+            other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected a pattern query term, got {other:?}"),
         }
     }
 
@@ -904,7 +918,7 @@ mod tests {
             .expect("expands")
             .expect("present");
         match expanded {
-            Filter::Term(QueryTerm::Ordering { operator, .. }) => assert_eq!(operator, OrderingOperator::GreaterEq),
+            Filter::Term(QueryTerm::Ordering { operator, .. }) => assert_eq!(operator, OrderingOperator::GreaterOrEqual),
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected a comparison, got {other:?}"),
         }
     }

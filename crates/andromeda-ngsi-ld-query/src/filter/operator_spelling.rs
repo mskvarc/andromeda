@@ -3,7 +3,7 @@
 //! One owner for how each comparison and conjunction operator is spelled, so
 //! the tokeniser, the serialiser and any restricted subset of the language,
 //! such as the snapshot purge filter (clause 5.16.7), cannot drift on the
-//! token strings. The [`predicate`](crate::filter::query_term) operator types
+//! token strings. The [`query_term`](crate::filter::query_term) operator types
 //! render their clause 4.9 tokens from here.
 
 /// `==`, the equality operator.
@@ -13,11 +13,11 @@ pub const UNEQUAL: &str = "!=";
 /// `>`, the greater-than operator.
 pub const GREATER: &str = ">";
 /// `>=`, the greater-than-or-equal operator.
-pub const GREATER_EQ: &str = ">=";
+pub const GREATER_OR_EQUAL: &str = ">=";
 /// `<`, the less-than operator.
 pub const LESS: &str = "<";
 /// `<=`, the less-than-or-equal operator.
-pub const LESS_EQ: &str = "<=";
+pub const LESS_OR_EQUAL: &str = "<=";
 /// `;`, the conjunction (logical AND) operator.
 pub const AND: &str = ";";
 /// `|`, the disjunction (logical OR) operator.

@@ -97,7 +97,7 @@ pub enum ReachingMember {
     /// A `pick` or `omit` term carrying a clause 4.21 sub-projection.
     #[display("pick/omit select Linked Entity members")]
     Projection,
-    /// A `q` predicate whose attribute path crosses a Relationship.
+    /// A `q` query term whose attribute path crosses a Relationship.
     #[display("q traverses a Linked Entity")]
     Filter,
 }

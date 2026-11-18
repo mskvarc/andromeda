@@ -1,4 +1,4 @@
-//! What a position in a `q` expression requires, and what it held instead.
+//! What a position in a `q` filter requires, and what it held instead.
 
 use crate::filter::parser::lexer::{Token, TokenKind};
 use strum::Display;
@@ -31,7 +31,7 @@ pub enum Expectation {
     GuardTerminator,
 }
 
-/// What stood where a parse of a `q` expression failed.
+/// What stood where a parse of a `q` filter failed.
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 pub enum Found {
     /// A token of this kind.

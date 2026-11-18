@@ -1,4 +1,4 @@
-//! An entity selector as a query writes it, before its type expression is
+//! An entity selector as a query writes it, before its type selection is
 //! expanded (clause 5.2.33).
 
 use crate::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::borrow::Cow;
 
 /// One entity selector as a query writes it (clause 5.2.33): identifiers, an
-/// identifier pattern and a type expression, the type optional since clause
+/// identifier pattern and a type selection, the type optional since clause
 /// 6.4.3.2 leaves it optional on a query.
 ///
 /// A query's selection is the union of its selectors: `{id:A,type:T1}` and
@@ -18,7 +18,7 @@ pub struct WrittenEntitySelector {
     pub ids: Option<Vec<Identifier>>,
     /// A regular expression the selector's identifiers must match (`idPattern`).
     pub id_pattern: Option<Pattern>,
-    /// The selector's parsed type-selection expression (clause 4.17 `type`).
+    /// The selector's type selection (clause 4.17 `type`).
     pub type_selection: Option<WrittenTypeSelection>,
 }
 
@@ -33,15 +33,15 @@ impl WrittenEntitySelector {
     #[must_use]
     pub fn effective<'a>(
         structured: &'a [Self],
-        id: Option<&[Identifier]>,
+        ids: Option<&[Identifier]>,
         id_pattern: Option<&Pattern>,
-        type_: Option<&WrittenTypeSelection>,
+        type_selection: Option<&WrittenTypeSelection>,
     ) -> Cow<'a, [Self]> {
         if structured.is_empty() {
             Cow::Owned(vec![Self {
-                ids: id.map(<[Identifier]>::to_vec),
-                id_pattern: id_pattern.cloned(), // clone: the implicit selector owns its values
-                type_selection: type_.cloned(),  // clone: the implicit selector owns its values
+                ids: ids.map(<[Identifier]>::to_vec),
+                id_pattern: id_pattern.cloned(),         // clone: the implicit selector owns its values
+                type_selection: type_selection.cloned(), // clone: the implicit selector owns its values
             }])
         } else {
             Cow::Borrowed(structured)

@@ -72,7 +72,7 @@ pub struct EntityIdsQuery {
 /// Builds a parameterized SQL query to retrieve the heads of the entities
 /// `window` selects, counting every match when `count` asks for it.
 ///
-/// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
+/// Generates filter conditions from the compiled query (IDs, types, attrs, q filter,
 /// geo filter, scope query), ordering, and pagination clauses, joining only the
 /// relations those clauses read.
 ///

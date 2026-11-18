@@ -146,12 +146,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
+        entity_selector_expansion::expand_entity_selectors,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         namespace_expander::{EXAMPLE_NAMESPACE, NamespaceExpander},
         projection::attrs_selection::{AttrsAdmission, expand_attrs_admitted},
         scope::scope_query::ScopeQuery,
-        selector_compilation::compile_entity_selectors,
         temporal::{
             compiled::CompiledTemporalQuery,
             instance_selection::InstanceSelection,
@@ -188,7 +188,7 @@ mod tests {
         expander: &NamespaceExpander,
     ) -> EntitySelection {
         EntitySelection::builder()
-            .selectors(compile_entity_selectors(selectors, expander).await.expect("selectors compile"))
+            .selectors(expand_entity_selectors(selectors, expander).await.expect("selectors compile"))
             .attrs(
                 expand_attrs_admitted(attrs.unwrap_or_default(), AttrsAdmission::AttributeNamesOnly, expander)
                     .await

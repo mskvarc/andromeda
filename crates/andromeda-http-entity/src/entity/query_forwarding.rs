@@ -156,7 +156,7 @@ impl QueryForwarding<'_> {
     /// 4.12, `TooManyResults`).
     pub(crate) async fn run(&self) -> Result<ForwardedQueryResults, ProblemResponse> {
         // The expanded context source filter selects the registrations; the
-        // raw expression is forwarded as the client wrote it (clause 5.7.2.4
+        // written filter is forwarded as the client wrote it (clause 5.7.2.4
         // propagates it into discovery).
         let csf = self.admitted.registration_filters.csf();
         // Clause 4.12: one budget bounds everything the query gathers, from

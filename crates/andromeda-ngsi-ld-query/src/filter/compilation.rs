@@ -56,9 +56,11 @@ impl FilterOptIns {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-    /// [`FilterError::InvalidAttributeName`] when a name does not expand to a
-    /// usable attribute name.
+    /// Returns [`QueryError::TermExpansion`] when a name does not expand, carrying
+    /// [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
+    /// when it expands to something that is not an absolute IRI, and
+    /// [`QueryError::Filter`] carrying [`FilterError::InvalidAttributeName`](crate::filter::filter_error::FilterError::InvalidAttributeName) when a
+    /// name does not expand to a usable attribute name.
     pub async fn expanded(
         json_keys: Option<&[AttributeName]>,
         expand_values: Option<&[AttributeName]>,
@@ -121,9 +123,12 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`FilterError::InvalidAttributeName`] when a term or an opted-in operand
-/// does not expand.
+/// Returns [`QueryError::TermExpansion`] when a term or an opted-in operand does
+/// not expand, carrying
+/// [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
+/// when it expands to something that is not an absolute IRI, and
+/// [`QueryError::Filter`] carrying [`FilterError::InvalidAttributeName`](crate::filter::filter_error::FilterError::InvalidAttributeName) when a
+/// name does not expand to a usable attribute name.
 pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Filter, QueryError> {
     // clone: expansion consumes its tree, and every compilation of the request reads the admitted filter again
     let filter = expand_filter(filter.0.clone(), &opt_ins.json_keys, expander).await?;

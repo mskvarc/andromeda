@@ -221,7 +221,7 @@ const fn narrowed_by_geo(selection: &EntitySelection, geo: GeoRole) -> bool {
 }
 
 /// The relation a selection is driven by: the membership walk when every
-/// selector selects by a type expression that has a range to walk and names no
+/// selector selects by a type selection that has a range to walk and names no
 /// identifier, and no geo-query playing `geo` narrows the selection,
 /// `entities` otherwise.
 ///

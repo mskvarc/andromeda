@@ -1,4 +1,4 @@
-//! The trailing `[…]` group of a clause 4.9 attribute path.
+//! The trailing `[…]` group of a clause 4.9 value path.
 //!
 //! The clause 4.9 ABNF writes the group as `[DottedPath]`, a member expression
 //! into a compound value, and its prose gives a `LanguageProperty`'s group a

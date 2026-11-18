@@ -50,7 +50,7 @@ impl TermExpander for ContextualExpander<'_> {
     }
 }
 
-/// The query-language failure a JSON-LD expansion failure becomes.
+/// The term expansion error a JSON-LD expansion failure becomes.
 ///
 /// The engine already yields an [`IriBuf`], so a term that expands to something
 /// that is not an absolute IRI surfaces here as an expansion failure rather than
@@ -59,11 +59,11 @@ impl TermExpander for ContextualExpander<'_> {
 /// in hand.
 fn expansion_failed(term: &str, error: &JsonLdError) -> TermExpansionError {
     tracing::debug!(term, error = %error, "a query term did not expand against the request @context");
-    expansion_failure(error)
+    expansion_error(error)
 }
 
-/// The class of expansion failure a JSON-LD failure is.
-const fn expansion_failure(error: &JsonLdError) -> TermExpansionError {
+/// The term expansion error class a JSON-LD failure falls in.
+const fn expansion_error(error: &JsonLdError) -> TermExpansionError {
     match error {
         JsonLdError::TypeNotExpanded | JsonLdError::TermNotExpanded => TermExpansionError::NotExpanded,
         JsonLdError::TermIsKeyword => TermExpansionError::Keyword,
@@ -98,7 +98,7 @@ mod tests {
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
         error::JsonLdError,
-        term_expansion::{ContextualExpander, expansion_failure},
+        term_expansion::{ContextualExpander, expansion_error},
     };
     use andromeda_ngsi_ld_query::term_expander::{TermExpander, TermExpansionError};
     use iri_rs::IriBuf;
@@ -119,11 +119,11 @@ mod tests {
 
     #[test]
     fn a_json_ld_failure_is_classified_by_what_went_wrong() {
-        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TermNotExpanded), TermExpansionError::NotExpanded);
-        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TypeNotExpanded), TermExpansionError::NotExpanded);
+        pretty_assertions::assert_eq!(expansion_error(&JsonLdError::TermNotExpanded), TermExpansionError::NotExpanded);
+        pretty_assertions::assert_eq!(expansion_error(&JsonLdError::TypeNotExpanded), TermExpansionError::NotExpanded);
         let not_an_iri = IriBuf::new("not an iri".to_owned()).expect_err("no scheme");
         pretty_assertions::assert_eq!(
-            expansion_failure(&JsonLdError::ContextUrlNotIri(not_an_iri)),
+            expansion_error(&JsonLdError::ContextUrlNotIri(not_an_iri)),
             TermExpansionError::ContextUnprocessable
         );
     }

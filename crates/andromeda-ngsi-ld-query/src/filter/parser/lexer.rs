@@ -3,7 +3,7 @@
 use crate::filter::{filter_error::FilterError, parser::quoted_string::scan_quoted_literal};
 use strum::EnumDiscriminants;
 
-/// A single lexical token of a `q` expression.
+/// A single lexical token of a `q` filter.
 ///
 /// [`TokenKind`] names a token without its text. A parse failure reports a
 /// kind rather than the Rust variant name, so the `BadRequestData` detail a
@@ -71,10 +71,10 @@ pub enum Token {
     /// `)`
     #[strum_discriminants(display(")"))]
     RParen,
-    /// `[`, opening a compound value path.
+    /// `[`, opening a trailing group.
     #[strum_discriminants(display("["))]
     LBracket,
-    /// `]`, closing a compound value path.
+    /// `]`, closing a trailing group.
     #[strum_discriminants(display("]"))]
     RBracket,
     /// `{`, opening a linked-entity traversal.
@@ -94,7 +94,7 @@ pub enum Token {
     Comma,
 }
 
-/// Split a `q` expression into tokens.
+/// Split the text of a `q` filter into tokens.
 ///
 /// # Errors
 ///
@@ -339,7 +339,7 @@ pub(in crate::filter) fn is_bare_uri(text: &str) -> bool {
 /// separates sub-attributes, so a dotted word splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OperandPosition {
-    /// The right-hand side of an equality operator.
+    /// The equality value that follows `==` or `!=`.
     EqualityValue,
     /// An attribute path, an ordering or pattern operand, or a connective.
     Other,
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn the_range_separator_wins_over_the_sub_attribute_separator() {
-        // `1..5` is a range, not `1.` `.5`; `a.b` is a sub-attribute path.
+        // `1..5` is a range, not `1.` `.5`; `a.b` is an attribute and a sub-attribute.
         assert_eq!(lex("1..5"), vec![number("1"), Token::Dots, number("5")]);
         assert_eq!(lex("a.b"), vec![ident("a"), Token::Dot, ident("b")]);
     }
@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(lex("urn:ngsi-ld:Vehicle:A4567"), vec![ident("urn:ngsi-ld:Vehicle:A4567")]);
     }
 
-    /// In an attribute path `.` is the sub-attribute separator (clause 4.9),
+    /// In a value path `.` is the sub-attribute separator (clause 4.9),
     /// which outranks its role inside a hostname: an IRI written there splits.
     /// That is not a limitation in practice, because an absolute IRI reaches the
     /// AST through term expansion rather than through this tokeniser: what a
@@ -674,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_predicate_lexes_into_its_parts() {
+    fn a_whole_query_term_lexes_into_its_parts() {
         assert_eq!(
             lex("temperature.observedAt>=2017-12-24T12:00:00Z;name~=\"^A.*\""),
             vec![

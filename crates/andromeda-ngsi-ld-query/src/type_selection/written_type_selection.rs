@@ -12,16 +12,16 @@ use std::{
     str::FromStr,
 };
 
-/// Raw (pre-expansion) type expression AST node.
+/// A type selection as the client wrote it, before expansion.
 ///
 /// Leaf nodes contain compact type names that must be expanded to full IRIs
 /// via the JSON-LD context before use in queries.
 ///
 /// This is the form a stored resource carries: clause 5.2.33 puts a `type` in
 /// an `EntitySelector`, and it reaches the broker before any `@context` has
-/// been applied to it. The wire form is the clause 4.17 expression itself, so a
+/// been applied to it. The wire form is the clause 4.17 text itself, so a
 /// subscription that selected `Building|Tower` gives back an equivalent
-/// expression rather than a regex someone rebuilt from it.
+/// selection rather than a regex someone rebuilt from it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum WrittenTypeSelection {
@@ -36,7 +36,7 @@ pub enum WrittenTypeSelection {
 }
 
 impl WrittenTypeSelection {
-    /// Whether a set of entity type names satisfies this expression.
+    /// Whether a set of entity type names satisfies this selection.
     ///
     /// Names are compared whole, so the selector `Building` does not match an
     /// entity typed `MyBuilding`.
@@ -49,11 +49,11 @@ impl WrittenTypeSelection {
         }
     }
 
-    /// The single type name this expression selects, when it selects exactly
+    /// The single type name this selection selects, when it selects exactly
     /// one.
     ///
     /// A caller that indexes subscriptions by type can only do so for a leaf;
-    /// a boolean expression has no single key to file it under.
+    /// a boolean combination has no single key to file it under.
     #[must_use]
     pub const fn as_single_type(&self) -> Option<&EntityTypeName> {
         match self {
@@ -64,7 +64,7 @@ impl WrittenTypeSelection {
         }
     }
 
-    /// The type names the expression names, in order of appearance.
+    /// The type names the selection names, in order of appearance.
     ///
     /// The wildcard names none. As [`ExpandedTypeSelection::named_types`], this
     /// over-approximates a conjunction.
@@ -77,16 +77,16 @@ impl WrittenTypeSelection {
         }
     }
 
-    /// The expression a stored resource holds, read as the IRIs its leaves
+    /// The selection a stored resource holds, read as the IRIs its leaves
     /// already are: the inverse of [`ExpandedTypeSelection::into_written`].
     ///
-    /// A resource stores its type expressions expanded, so every leaf of one
+    /// A resource stores its type selections expanded, so every leaf of one
     /// read back is the absolute IRI the request's `@context` expanded it to.
     ///
     /// # Errors
     ///
     /// Returns [`TermExpansionError::NotAnIri`] when a leaf is no absolute IRI,
-    /// which an expression expanded before it was stored never holds.
+    /// which a selection expanded before it was stored never holds.
     pub fn to_expanded(&self) -> Result<ExpandedTypeSelection, TermExpansionError> {
         match self {
             WrittenTypeSelection::Wildcard => Ok(ExpandedTypeSelection::Wildcard),
@@ -145,7 +145,7 @@ impl TryFrom<String> for WrittenTypeSelection {
 /// is nested inside another group.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Nesting {
-    /// The whole expression, where a disjunction stands unparenthesised.
+    /// The whole selection, where a disjunction stands unparenthesised.
     Top,
     /// A child of a `;` or `,` group, where a nested disjunction is enclosed.
     InGroup,

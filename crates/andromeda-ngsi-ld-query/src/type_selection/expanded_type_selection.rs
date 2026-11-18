@@ -5,11 +5,11 @@ use iri_rs::IriBuf;
 use serde::Serialize;
 use std::slice;
 
-/// Boolean expression over entity type IRIs (NGSI-LD S4.17).
+/// A type selection over entity type IRIs (clause 4.17).
 ///
 /// Supports AND (`And`), OR (`Or`), and single type (`Type`) nodes.
-/// Constructed by parsing the `type` query parameter's selection language
-/// grammar and expanding compact type names to full IRIs.
+/// Constructed by parsing the `type` query parameter and expanding compact
+/// type names to full IRIs.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExpandedTypeSelection {
@@ -24,7 +24,7 @@ pub enum ExpandedTypeSelection {
 }
 
 impl ExpandedTypeSelection {
-    /// Whether a set of expanded entity type IRIs satisfies this expression.
+    /// Whether a set of expanded entity type IRIs satisfies this selection.
     ///
     /// The counterpart of [`WrittenTypeSelection::matches`] on the other side of
     /// expansion: the same clause 4.17 boolean structure, with leaves compared
@@ -41,12 +41,12 @@ impl ExpandedTypeSelection {
         }
     }
 
-    /// The operands of the expression's top-level disjunction (clause 4.17 `|`
-    /// or `,`), in the order written, or the expression itself when it is no
+    /// The operands of the selection's top-level disjunction (clause 4.17 `|`
+    /// or `,`), in the order written, or the selection itself when it is no
     /// disjunction.
     ///
     /// Clause 4.17 nests no disjunction inside another group, so each
-    /// alternative of a parsed expression is one type, a parenthesised
+    /// alternative of a parsed selection is one type, a parenthesised
     /// conjunction, or the wildcard standing alone.
     #[must_use]
     pub const fn alternatives(&self) -> &[ExpandedTypeSelection] {
@@ -56,7 +56,7 @@ impl ExpandedTypeSelection {
         }
     }
 
-    /// The type IRIs the expression names, in order of appearance.
+    /// The type IRIs the selection names, in order of appearance.
     ///
     /// The wildcard names none. A caller that must hand a flat list of types to
     /// code that does not read the boolean structure uses this, knowing it
@@ -72,7 +72,7 @@ impl ExpandedTypeSelection {
         }
     }
 
-    /// Convert an expanded expression into the serialisable expression shape.
+    /// Convert an expanded type selection into its written form.
     ///
     /// Full IRIs satisfy the same clause-4.6.2 name grammar as compact type
     /// names. This conversion lets a stored resource retain the clause-4.17
@@ -110,8 +110,8 @@ mod tests {
     use iri_rs::IriBuf;
     use std::slice;
 
-    /// A stored expression reads back as the expanded expression it was
-    /// written from, every leaf the IRI it holds.
+    /// A stored type selection reads back as the expanded type selection it
+    /// was written from, every leaf the IRI it holds.
     #[test]
     fn a_stored_type_selection_reads_back_as_the_expanded_type_selection_it_was_written_from() {
         let expanded = ExpandedTypeSelection::Or(vec![
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn an_expanded_type_selection_converts_to_a_written_tree_with_iri_leaves() {
         let expanded = ExpandedTypeSelection::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
-        let raw = expanded.into_written().expect("expanded IRIs are valid NGSI-LD names");
-        pretty_assertions::assert_eq!(raw.to_string(), "https://example.com/Building,https://example.com/Tower");
+        let written = expanded.into_written().expect("expanded IRIs are valid NGSI-LD names");
+        pretty_assertions::assert_eq!(written.to_string(), "https://example.com/Building,https://example.com/Tower");
     }
 }

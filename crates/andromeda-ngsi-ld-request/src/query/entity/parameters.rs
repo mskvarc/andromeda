@@ -73,7 +73,7 @@ pub struct EntityQueryParameters {
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
-    /// The `q` filter expression (clause 4.9), parsed at the request boundary.
+    /// The `q` filter (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
@@ -145,8 +145,8 @@ pub struct EntityQueryParameters {
     /// The `GeoProperty` a `GeoJSON` response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
-    /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
-    /// are contacted during distributed operations. Uses the q-expression grammar.
+    /// Context Source Filter (S6.4.3.2) for filtering which CSRs
+    /// are contacted during distributed operations. Uses the `q` filter grammar.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub csf: Option<Filter>,
 }
@@ -372,7 +372,7 @@ mod tests {
         );
     }
 
-    /// Clause 4.21: `observation{temperature,humidity}` is one raw term naming
+    /// Clause 4.21: `observation{temperature,humidity}` is one written term naming
     /// the `observation` relationship with two linked-entity sub-terms.
     #[test]
     fn pick_with_a_linked_entity_group_parses_to_one_term_with_two_children() {

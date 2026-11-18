@@ -3,39 +3,40 @@
 use crate::filter::value_path::ValuePath;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-/// The attribute axis a `q` predicate compares along (clause 4.9 `Attribute`).
+/// The attribute path a query term compares along (clause 4.9 `Attribute`).
 ///
 /// Clause 4.9 gives an attribute reference three axes. Two of them stay inside
 /// one entity and are carried by [`ValuePath`]. The third (the
 /// `LinkedEntityRelation` production, written `rel{…}`) crosses a Relationship
 /// into the entity it names, and may be chained. This enum is that distinction:
-/// a path is either wholly local, or one hop followed by a path that is itself
-/// either local or a further hop.
+/// an attribute path is either a local value path, or one hop followed by an
+/// attribute path that is itself either local or a further hop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttributePath {
-    /// A path addressing an attribute of the entity under evaluation.
+    /// A value path addressing an attribute of the entity under evaluation.
     Local(ValuePath),
     /// A hop across a Relationship into the entity it links to.
     Linked {
         /// The Relationship the hop descends through.
         relationship: AttributeName,
         /// Entity types the linked entity is constrained to, empty when the hop
-        /// carried no constraint.
+        /// carried no guard.
         ///
-        /// The clause 4.9 production is
-        /// `*1(EntityType 1*("," EntityType) ":")`, so a constraint needs two or
-        /// more comma-separated types. That is what keeps the grammar
-        /// unambiguous: a lone `prefix:name` inside the braces is a prefixed
-        /// attribute name, never a one-element type constraint.
+        /// Clause 4.9 writes the production as
+        /// `*1(EntityType 1*("," EntityType) ":")` and its EXAMPLE 14 with one
+        /// type, so a guard needs one or more comma-separated types, closed by
+        /// a colon. A prefixed attribute name inside the braces is written
+        /// quoted, because a bare `prefix:name` reads as a guard type followed
+        /// by an attribute.
         guard_types: Vec<AttributeName>,
-        /// The path evaluated against the linked entity.
+        /// The attribute path evaluated against the linked entity.
         inner: Box<AttributePath>,
     },
 }
 
 impl AttributePath {
-    /// The local path this axis terminates at, the attribute whose value the
-    /// predicate ultimately compares.
+    /// The value path this attribute path terminates at, the attribute whose
+    /// value the query term ultimately compares.
     ///
     /// For a hop chain that is the innermost segment, which is the attribute a
     /// value-level concern such as `expandValues` or `jsonKeys` (clause 6.4.3.2)
@@ -49,18 +50,18 @@ impl AttributePath {
         }
     }
 
-    /// Whether this axis crosses into a linked entity.
+    /// Whether this attribute path crosses into a linked entity.
     ///
     /// Testing the outermost segment is enough to answer that for the whole
-    /// axis: a hop wraps everything after it, so a [`AttributePath::Local`] can
+    /// path: a hop wraps everything after it, so an [`AttributePath::Local`] can
     /// never have one nested inside.
     #[must_use]
     pub const fn is_linked(&self) -> bool {
         matches!(self, AttributePath::Linked { .. })
     }
 
-    /// How many Relationship hops this axis crosses before it lands on a local
-    /// attribute.
+    /// How many Relationship hops this attribute path crosses before it lands
+    /// on a local attribute.
     ///
     /// Zero for a wholly local path, one for `rel{attr}`, two for
     /// `rel{rel2{attr}}`, and so on. Clause 5.7.2.4 measures a filter against
@@ -74,7 +75,7 @@ impl AttributePath {
         }
     }
 
-    /// The local path this axis terminates at, mutably.
+    /// The value path this attribute path terminates at, mutably.
     pub fn terminal_mut(&mut self) -> &mut ValuePath {
         match self {
             AttributePath::Local(local) => local,

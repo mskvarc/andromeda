@@ -21,7 +21,7 @@ pub enum OrderingError {
     /// The term used an unsupported direction.
     #[error("invalid orderBy direction: {0}")]
     InvalidDirection(#[source] strum::ParseError),
-    /// The term carried the `[*]` language-suppression marker. Clause 4.9 gives `[*]` to a `q` predicate; clause 4.23.3 has no such marker, so an ordering that suppressed language selection would order by a value the clause never says how to choose.
+    /// The term carried the `[*]` language-suppression marker. Clause 4.9 gives `[*]` to a `q` filter; clause 4.23.3 has no such marker, so an ordering that suppressed language selection would order by a value the clause never says how to choose.
     #[error("invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy")]
     LanguageSuppression,
     /// The term named an RFC 4647 language range. A range selects every key it matches, and clause 4.23.3 gives no rule for which of several selected strings the ordering reads.

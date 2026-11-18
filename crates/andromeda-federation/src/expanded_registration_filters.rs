@@ -53,7 +53,7 @@ impl ExpandedRegistrationFilters {
         let geo = compile_geo_query(geo, &expander, admission).await?;
         let csf = match csf {
             Some(expression) => Some(FilterReading::of_context_source_filter(
-                // clone: the raw filter stays in the query, which forwards it as the client wrote it
+                // clone: the written filter stays in the query, which forwards it as the client wrote it
                 &expand_context_source_filter(expression.clone(), &expander).await?,
             )),
             None => None,

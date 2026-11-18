@@ -141,7 +141,7 @@ fn term() -> BoxedStrategy<String> {
     .boxed()
 }
 
-/// A `Query`: terms joined by `;` and `|`, with groups nested up to four deep.
+/// A `Filter`, the clause 4.9 `Query`: terms joined by `;` and `|`, with groups nested up to four deep.
 pub(crate) fn query() -> BoxedStrategy<String> {
     term()
         .prop_recursive(4, 32, 4, |inner| {

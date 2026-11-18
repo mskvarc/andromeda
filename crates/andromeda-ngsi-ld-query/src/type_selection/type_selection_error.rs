@@ -6,10 +6,10 @@ use thiserror::Error;
 /// The clause 4.17 rule an entity type selection broke.
 #[derive(Debug, Error)]
 pub enum TypeSelectionError {
-    /// The type expression string was empty.
+    /// The type selection text was empty.
     #[error("type expression: empty input")]
     Empty,
-    /// The type expression ended before a primary could be parsed.
+    /// The type selection ended before a primary could be parsed.
     #[error("type expression: unexpected end of input")]
     UnexpectedEnd,
     /// A `)` was expected but not found.

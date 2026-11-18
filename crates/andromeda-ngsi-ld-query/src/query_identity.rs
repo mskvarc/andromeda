@@ -140,7 +140,7 @@ struct SelectorIdentity<'a> {
     /// The identifier pattern, absent when identifiers are named: clause 5.2.33
     /// gives `id` precedence over `idPattern`.
     id_pattern: Option<&'a Pattern>,
-    /// The clause 4.17 alternatives of the expanded type expression, sorted and
+    /// The clause 4.17 alternatives of the expanded type selection, sorted and
     /// deduplicated, so `type=A|B` and `type=B|A` select alike; empty when the
     /// selector names no type.
     types: Vec<&'a ExpandedTypeSelection>,
@@ -189,7 +189,7 @@ impl<'a> EntityAxes<'a> {
     }
 }
 
-/// The clause 4.17 alternatives the type expressions are the union of, sorted
+/// The clause 4.17 alternatives the type selections are the union of, sorted
 /// and deduplicated.
 ///
 /// The selectors of a POST body (clause 5.2.33) are alternatives of one

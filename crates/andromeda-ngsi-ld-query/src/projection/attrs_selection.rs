@@ -43,8 +43,10 @@ impl AttrsAdmission {
 /// # Errors
 ///
 /// Returns [`ProjectionError::ReservedAttrsMember`] for a refused member, and
-/// [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a name
-/// does not expand to an absolute IRI through the active `@context`.
+/// [`QueryError::TermExpansion`] when a name does not expand through the active
+/// `@context`, carrying
+/// [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
+/// when it expands to something that is not an absolute IRI.
 pub async fn expand_attrs_admitted(raw: &[AttributeName], admission: AttrsAdmission, expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
     let mut iris = Vec::with_capacity(raw.len());
     for name in raw {

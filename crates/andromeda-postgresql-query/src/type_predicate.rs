@@ -20,7 +20,7 @@ use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_cont
 use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, SimpleExpr};
 
-/// Render a type expression against the given `entity_type_name_keys` column.
+/// Render a type selection against the given `entity_type_name_keys` column.
 #[must_use]
 pub fn condition(expr: &ExpandedTypeSelection, entity_type_name_keys: &SimpleExpr, types: &ResolvedNames<EntityTypeName>) -> Condition {
     match expr {

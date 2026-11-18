@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_query::filter::{
 use andromeda_ngsi_ld_value_order::number_order::{HeldNumber, number_order};
 use std::{borrow::Cow, cmp::Ordering};
 
-/// One resolved comparison target: the clause 4.9 target value a predicate
+/// One resolved comparison target: the clause 4.9 target value a query term
 /// compares, and where it came from.
 ///
 /// Clause 4.9 forbids the ordering and pattern operators against a

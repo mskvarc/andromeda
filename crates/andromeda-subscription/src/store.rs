@@ -52,7 +52,7 @@ pub struct SubscriptionFields<'a> {
     pub geo_q: Option<&'a WrittenGeoQuery>,
     /// Scope query expression.
     pub scope_q: Option<&'a ScopeQuery>,
-    /// Context source filter expression.
+    /// Context source filter.
     pub csf: Option<&'a Filter>,
     /// The `datasetId` selectors of the Attribute instances notified
     /// (Table 5.2.12-1), `@none` naming the default instance.

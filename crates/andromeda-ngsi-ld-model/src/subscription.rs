@@ -243,7 +243,7 @@ pub struct SubscriptionFilters {
     /// Scope query expression (clause 4.19).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<ScopeQuery>,
-    /// Context source filter expression (clause 4.9), which is a `q` filter
+    /// Context source filter (clause 4.9), which is a `q` filter
     /// over a registration's own properties.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csf: Option<Filter>,

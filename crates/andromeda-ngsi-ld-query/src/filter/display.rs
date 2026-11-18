@@ -1,4 +1,4 @@
-//! Serialize a parsed `q` expression back into NGSI-LD query string format.
+//! Serialize a parsed `q` filter back into NGSI-LD query string format.
 
 use crate::{
     filter::{
@@ -31,7 +31,7 @@ enum MemberSpelling {
 impl fmt::Display for Filter {
     /// Renders a parsed filter back into clause 4.9 syntax.
     ///
-    /// The result parses back to an equal expression; identifiers that would
+    /// The result parses back to an equal filter; identifiers that would
     /// confuse the tokeniser are re-quoted.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
@@ -58,12 +58,12 @@ impl Filter {
     }
 }
 
-/// Write the boolean structure of an expression.
-fn write_filter(buf: &mut String, filter: &Filter, spelling: MemberSpelling) {
+/// Write the boolean structure of a filter.
+fn write_filter(buffer: &mut String, filter: &Filter, spelling: MemberSpelling) {
     match filter {
-        Filter::And(filters) => write_filters(buf, filters, ';', spelling),
-        Filter::Or(filters) => write_filters(buf, filters, '|', spelling),
-        Filter::Term(term) => write_query_term(buf, term, spelling),
+        Filter::And(filters) => write_filters(buffer, filters, ';', spelling),
+        Filter::Or(filters) => write_filters(buffer, filters, '|', spelling),
+        Filter::Term(term) => write_query_term(buffer, term, spelling),
     }
 }
 
@@ -77,17 +77,17 @@ fn write_filter(buf: &mut String, filter: &Filter, spelling: MemberSpelling) {
 /// disjunction. Without this, `(a|b);c` rendered as `a|b;c` and read back as
 /// `a|(b;c)`, so a stored filter changed meaning the first time it was
 /// re-serialised.
-fn write_filters(buf: &mut String, filters: &[Filter], separator: char, spelling: MemberSpelling) {
+fn write_filters(buffer: &mut String, filters: &[Filter], separator: char, spelling: MemberSpelling) {
     for (index, filter) in filters.iter().enumerate() {
         if index > 0 {
-            buf.push(separator);
+            buffer.push(separator);
         }
         if needs_parentheses(filter, separator) {
-            buf.push('(');
-            write_filter(buf, filter, spelling);
-            buf.push(')');
+            buffer.push('(');
+            write_filter(buffer, filter, spelling);
+            buffer.push(')');
         } else {
-            write_filter(buf, filter, spelling);
+            write_filter(buffer, filter, spelling);
         }
     }
 }
@@ -105,28 +105,28 @@ const fn needs_parentheses(filter: &Filter, separator: char) -> bool {
     }
 }
 
-/// Write one leaf predicate: its attribute axis, then its operator and
+/// Write one query term: its attribute path, then its operator and
 /// operand, which clause 4.9 writes after a hop's closing brace
 /// (`rel{attr}=="x"`).
-fn write_query_term(buf: &mut String, term: &QueryTerm, spelling: MemberSpelling) {
-    write_attribute_path(buf, term.path(), spelling, PathHead::Query);
+fn write_query_term(buffer: &mut String, term: &QueryTerm, spelling: MemberSpelling) {
+    write_attribute_path(buffer, term.path(), spelling, PathHead::Query);
     match term {
         QueryTerm::Exists(_) => {}
         QueryTerm::Equality { membership, value, .. } => {
-            buf.push_str(membership.spelling());
-            write_equality_value(buf, value);
+            buffer.push_str(membership.spelling());
+            write_equality_value(buffer, value);
         }
         QueryTerm::Ordering { operator, value, .. } => {
-            buf.push_str(operator.spelling());
-            write_scalar(buf, value);
+            buffer.push_str(operator.spelling());
+            write_scalar(buffer, value);
         }
         QueryTerm::MatchPattern { pattern, .. } => {
-            buf.push_str("~=");
-            write_pattern(buf, pattern);
+            buffer.push_str("~=");
+            write_pattern(buffer, pattern);
         }
         QueryTerm::NotMatchPattern { pattern, .. } => {
-            buf.push_str("!~=");
-            write_pattern(buf, pattern);
+            buffer.push_str("!~=");
+            write_pattern(buffer, pattern);
         }
     }
 }
@@ -140,38 +140,38 @@ enum PathHead {
     Hop,
 }
 
-/// Write an attribute axis, every hop's braces closed, its leading name
+/// Write an attribute path, every hop's braces closed, its leading name
 /// standing at `head`.
-fn write_attribute_path(buf: &mut String, path: &AttributePath, spelling: MemberSpelling, head: PathHead) {
+fn write_attribute_path(buffer: &mut String, path: &AttributePath, spelling: MemberSpelling, head: PathHead) {
     match path {
-        AttributePath::Local(local) => write_value_path(buf, local, spelling, head),
+        AttributePath::Local(local) => write_value_path(buffer, local, spelling, head),
         AttributePath::Linked {
             relationship,
             guard_types,
             inner,
         } => {
-            write_leading_name(buf, relationship.as_str(), head);
-            buf.push('{');
+            write_leading_name(buffer, relationship.as_str(), head);
+            buffer.push('{');
             for (index, guard_type) in guard_types.iter().enumerate() {
                 if index > 0 {
-                    buf.push(',');
+                    buffer.push(',');
                 }
-                write_hop_head_name(buf, guard_type.as_str());
+                write_hop_head_name(buffer, guard_type.as_str());
             }
             if !guard_types.is_empty() {
-                buf.push(':');
+                buffer.push(':');
             }
-            write_attribute_path(buf, inner, spelling, PathHead::Hop);
-            buf.push('}');
+            write_attribute_path(buffer, inner, spelling, PathHead::Hop);
+            buffer.push('}');
         }
     }
 }
 
 /// Write the leading name of a path standing at `head`.
-fn write_leading_name(buf: &mut String, name: &str, head: PathHead) {
+fn write_leading_name(buffer: &mut String, name: &str, head: PathHead) {
     match head {
-        PathHead::Query => write_ident(buf, name),
-        PathHead::Hop => write_hop_head_name(buf, name),
+        PathHead::Query => write_identifier(buffer, name),
+        PathHead::Hop => write_hop_head_name(buffer, name),
     }
 }
 
@@ -179,7 +179,7 @@ fn write_leading_name(buf: &mut String, name: &str, head: PathHead) {
 // writes the optional trailing group, which `derive_more::Display`'s format
 // string cannot express.
 impl fmt::Display for ValuePath {
-    /// Renders one attribute path back into clause 4.9 syntax.
+    /// Renders one value path back into clause 4.9 syntax.
     ///
     /// The result parses back to an equal path through [`FromStr`](std::str::FromStr), which is
     /// what lets an `orderBy` term round-trip: clause 4.23.3 carries its path in
@@ -191,13 +191,13 @@ impl fmt::Display for ValuePath {
     }
 }
 
-/// Write an attribute path, including sub-attributes and compound value keys
+/// Write a value path, including sub-attributes and compound value keys
 /// in `spelling`, its attribute standing at `head`.
-fn write_value_path(buf: &mut String, path: &ValuePath, spelling: MemberSpelling, head: PathHead) {
-    write_leading_name(buf, path.attribute.as_str(), head);
+fn write_value_path(buffer: &mut String, path: &ValuePath, spelling: MemberSpelling, head: PathHead) {
+    write_leading_name(buffer, path.attribute.as_str(), head);
     for sub in &path.sub_attributes {
-        buf.push('.');
-        write_ident(buf, sub.as_str());
+        buffer.push('.');
+        write_identifier(buffer, sub.as_str());
     }
     match &path.trailing {
         Some(TrailingGroup::Members(members)) => {
@@ -205,21 +205,21 @@ fn write_value_path(buf: &mut String, path: &ValuePath, spelling: MemberSpelling
                 MemberSpelling::Addressed => &members.addressed,
                 MemberSpelling::Written => &members.written,
             };
-            buf.push('[');
+            buffer.push('[');
             for (index, name) in names.iter().enumerate() {
                 if index > 0 {
-                    buf.push('.');
+                    buffer.push('.');
                 }
-                write_ident(buf, name.as_str());
+                write_identifier(buffer, name.as_str());
             }
-            buf.push(']');
+            buffer.push(']');
         }
         Some(TrailingGroup::Language(language)) => {
-            buf.push('[');
-            buf.push_str(language.selector().as_str());
-            buf.push(']');
+            buffer.push('[');
+            buffer.push_str(language.selector().as_str());
+            buffer.push(']');
         }
-        Some(TrailingGroup::AllLanguages) => buf.push_str("[*]"),
+        Some(TrailingGroup::AllLanguages) => buffer.push_str("[*]"),
         None => {}
     }
 }
@@ -235,61 +235,61 @@ fn write_value_path(buf: &mut String, path: &ValuePath, spelling: MemberSpelling
 /// leaves the parser two colons and no way to tell which ends the guard, a
 /// case the parser rejects. Quoting closes the name and the filter reads back
 /// unchanged.
-fn write_hop_head_name(buf: &mut String, s: &str) {
-    if s.contains(':') {
-        write_quoted(buf, s);
+fn write_hop_head_name(buffer: &mut String, text: &str) {
+    if text.contains(':') {
+        write_quoted(buffer, text);
     } else {
-        write_ident(buf, s);
+        write_identifier(buffer, text);
     }
 }
 
 /// Write an identifier, quoting it when the tokeniser would otherwise split it.
-fn write_ident(buf: &mut String, s: &str) {
-    if needs_quoting(s) {
-        write_quoted(buf, s);
+fn write_identifier(buffer: &mut String, text: &str) {
+    if needs_quoting(text) {
+        write_quoted(buffer, text);
     } else {
-        buf.push_str(s);
+        buffer.push_str(text);
     }
 }
 
 /// Whether an identifier carries characters the tokeniser treats as structure.
-fn needs_quoting(s: &str) -> bool {
-    s.contains('.') || s.contains(' ') || s.contains('"')
+fn needs_quoting(text: &str) -> bool {
+    text.contains('.') || text.contains(' ') || text.contains('"')
 }
 
-/// Write the right-hand side of a comparison.
-fn write_equality_value(buf: &mut String, value: &EqualityValue) {
+/// Write the equality value of a comparison.
+fn write_equality_value(buffer: &mut String, value: &EqualityValue) {
     match value {
-        EqualityValue::Scalar(s) => write_scalar(buf, s),
+        EqualityValue::Scalar(scalar) => write_scalar(buffer, scalar),
         EqualityValue::Range { min, max } => {
-            write_scalar(buf, min);
-            buf.push_str("..");
-            write_scalar(buf, max);
+            write_scalar(buffer, min);
+            buffer.push_str("..");
+            write_scalar(buffer, max);
         }
         EqualityValue::ValueList(values) => {
             for (i, v) in values.iter().enumerate() {
                 if i > 0 {
-                    buf.push(',');
+                    buffer.push(',');
                 }
-                write_scalar(buf, v);
+                write_scalar(buffer, v);
             }
         }
     }
 }
 
 /// Write one scalar operand.
-fn write_scalar(buf: &mut String, scalar: &Scalar) {
+fn write_scalar(buffer: &mut String, scalar: &Scalar) {
     match scalar {
         // A string is quoted, as the clause 4.9 grammar requires; `dateTime`,
         // `date` and `time` are its unquoted alternatives, and a quoted one
         // would read back as a String.
-        Scalar::Str(_) => write_quoted(buf, &scalar.literal_text()),
+        Scalar::Str(_) => write_quoted(buffer, &scalar.literal_text()),
         // A `URI` an expansion produced can hold characters the tokeniser reads
         // as query syntax; quoted, it reads back as the same text and compares
         // the same.
-        Scalar::Uri(uri) if is_bare_uri(uri) => buf.push_str(uri),
-        Scalar::Uri(uri) => write_quoted(buf, uri),
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => buf.push_str(&scalar.literal_text()),
+        Scalar::Uri(uri) if is_bare_uri(uri) => buffer.push_str(uri),
+        Scalar::Uri(uri) => write_quoted(buffer, uri),
+        Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => buffer.push_str(&scalar.literal_text()),
     }
 }
 
@@ -301,10 +301,10 @@ fn write_scalar(buf: &mut String, scalar: &Scalar) {
 /// again: the lexer ends a quoted token only at a `"` no backslash escapes, so
 /// every `"` the body holds is still escaped, and a body ending in an odd run of
 /// backslashes is no regular expression either engine compiles.
-fn write_pattern(buf: &mut String, pattern: &Pattern) {
-    buf.push('"');
-    buf.push_str(pattern.as_str());
-    buf.push('"');
+fn write_pattern(buffer: &mut String, pattern: &Pattern) {
+    buffer.push('"');
+    buffer.push_str(pattern.as_str());
+    buffer.push('"');
 }
 
 /// Write a double-quoted string literal, escaped as IETF RFC 8259 section 7
@@ -314,9 +314,9 @@ fn write_pattern(buf: &mut String, pattern: &Pattern) {
 /// production starts at U+0020, so the parser refuses a raw control
 /// character. A String decoded from `"a\nb"` holds one, and is written back
 /// with it escaped, or the stored, echoed and forwarded text of an accepted
-/// filter would no longer parse.
-fn write_quoted(buf: &mut String, s: &str) {
-    buf.push_str(&quoted(s));
+/// filter would not parse.
+fn write_quoted(buffer: &mut String, text: &str) {
+    buffer.push_str(&quoted(text));
 }
 
 #[cfg(test)]
@@ -331,10 +331,10 @@ mod tests {
     };
 
     #[test]
-    fn roundtrip_simple_compare() {
+    fn roundtrip_simple_equality_value() {
         let filter = "speed>50".parse::<Filter>().unwrap();
-        let s = filter.to_string();
-        pretty_assertions::assert_eq!(s, "speed>50");
+        let text = filter.to_string();
+        pretty_assertions::assert_eq!(text, "speed>50");
     }
 
     #[test]
@@ -364,31 +364,31 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_string_compare() {
+    fn roundtrip_string_equality_value() {
         let filter = "brandName==\"Mercedes\"".parse::<Filter>().unwrap();
-        let s = filter.to_string();
-        pretty_assertions::assert_eq!(s, "brandName==\"Mercedes\"");
+        let text = filter.to_string();
+        pretty_assertions::assert_eq!(text, "brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_and() {
         let filter = "speed>50;brandName==\"Mercedes\"".parse::<Filter>().unwrap();
-        let s = filter.to_string();
-        pretty_assertions::assert_eq!(s, "speed>50;brandName==\"Mercedes\"");
+        let text = filter.to_string();
+        pretty_assertions::assert_eq!(text, "speed>50;brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_range() {
         let filter = "temperature==10..20".parse::<Filter>().unwrap();
-        let s = filter.to_string();
-        pretty_assertions::assert_eq!(s, "temperature==10..20");
+        let text = filter.to_string();
+        pretty_assertions::assert_eq!(text, "temperature==10..20");
     }
 
     #[test]
     fn roundtrip_value_list() {
         let filter = "color==\"red\",\"blue\"".parse::<Filter>().unwrap();
-        let s = filter.to_string();
-        pretty_assertions::assert_eq!(s, "color==\"red\",\"blue\"");
+        let text = filter.to_string();
+        pretty_assertions::assert_eq!(text, "color==\"red\",\"blue\"");
     }
 
     /// Every operand shape has to survive the round trip: a filter is
@@ -545,16 +545,16 @@ mod tests {
     }
 
     #[test]
-    fn serialize_expanded_iri() {
+    fn display_expanded_iri() {
         let filter = Filter::Term(QueryTerm::Ordering {
             path: AttributePath::Local(ValuePath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             operator: OrderingOperator::Greater,
             value: Scalar::Number(50.into()),
         });
-        let s = filter.to_string();
+        let text = filter.to_string();
         // The IRI must be quoted because it contains a dot
-        pretty_assertions::assert_eq!(s, "\"https://example.com/speed\">50");
-        let parsed = s.parse::<Filter>().unwrap();
+        pretty_assertions::assert_eq!(text, "\"https://example.com/speed\">50");
+        let parsed = text.parse::<Filter>().unwrap();
         match parsed {
             Filter::Term(QueryTerm::Ordering { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "https://example.com/speed");
