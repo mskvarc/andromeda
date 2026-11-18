@@ -60,6 +60,44 @@ impl PlanarGeometry {
     }
 }
 
+/// A position projected onto the horizontal plane: its longitude and latitude
+/// in degrees, without the [`PlanarGeometry`] around them.
+///
+/// A [`PlanarGeometry`] is as large as its largest kind of geometry. A
+/// structure that holds many points keeps this instead, two coordinates, and
+/// builds the point's [`PlanarGeometry`] where a relation is evaluated, which
+/// allocates nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlanarPoint(Coord<f64>);
+
+impl PlanarPoint {
+    /// Project a position onto the horizontal plane.
+    #[must_use]
+    pub const fn project(position: &Position) -> PlanarPoint {
+        PlanarPoint(coord(position))
+    }
+
+    /// The longitude, in degrees.
+    #[must_use]
+    pub const fn longitude(self) -> f64 {
+        self.0.x
+    }
+
+    /// The latitude, in degrees.
+    #[must_use]
+    pub const fn latitude(self) -> f64 {
+        self.0.y
+    }
+}
+
+// Written by hand: a derived `From` converts only from the wrapped `geo`
+// geometry, and a projected point becomes one inside a `Point`.
+impl From<PlanarPoint> for PlanarGeometry {
+    fn from(point: PlanarPoint) -> PlanarGeometry {
+        PlanarGeometry(GeoGeometry::Point(Point(point.0)))
+    }
+}
+
 /// Drop the altitude of every position of a geometry form.
 fn project(form: &GeometryForm) -> GeoGeometry<f64> {
     match form {
@@ -105,7 +143,7 @@ mod tests {
     use crate::{
         form::{GeometryForm, PolygonRings},
         linear_ring::LinearRing,
-        planar::project,
+        planar::{PlanarGeometry, PlanarPoint, project},
         position::Position,
     };
     use geo::{Geometry as GeoGeometry, Point};
@@ -122,6 +160,15 @@ mod tests {
     fn projecting_a_point_drops_its_altitude() {
         let projected = project(&GeometryForm::Point(tall(13.38, 52.52, 34.5)));
         pretty_assertions::assert_eq!(projected, GeoGeometry::Point(Point::new(13.38, 52.52)));
+    }
+
+    #[test]
+    fn a_projected_position_builds_the_projection_of_its_point() {
+        for position in [tall(13.38, 52.52, 34.5), tall(180.0, -17.0, 0.0), tall(-180.0, 90.0, 2.0)] {
+            let point = PlanarPoint::project(&position);
+            pretty_assertions::assert_eq!((point.longitude(), point.latitude()), (position.longitude(), position.latitude()));
+            pretty_assertions::assert_eq!(PlanarGeometry::from(point), PlanarGeometry::project(&GeometryForm::Point(position)));
+        }
     }
 
     #[test]
