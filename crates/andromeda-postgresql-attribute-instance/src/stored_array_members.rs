@@ -219,6 +219,8 @@ mod tests {
 
     #[test]
     fn an_escaped_string_reads_as_its_text() {
-        assert_eq!(members(r#"["a\"bé"]"#), vec![ArrayMember::Text("a\"b\u{e9}".to_owned())]);
+        // The reverse solidus of the unicode escape is a format argument, so no tool rewrites the escape into the character it names.
+        let text = format!(r#"["a\"b{}u00e9"]"#, '\\');
+        assert_eq!(members(&text), vec![ArrayMember::Text("a\"b\u{e9}".to_owned())]);
     }
 }
