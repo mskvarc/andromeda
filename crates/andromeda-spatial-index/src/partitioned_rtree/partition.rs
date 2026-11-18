@@ -33,8 +33,9 @@ impl<E: RTreeObject + Indexed> Default for Partition<E> {
 
 /// What one partition's rebuild changed for the back-index.
 pub(super) struct RebuiltPartition<E: RTreeObject + Indexed> {
-    /// Each snapshot entry the partition now holds, as its object and envelope.
-    pub(super) installed: Vec<(<E as Indexed>::Id, E::Envelope)>,
+    /// Each snapshot entry the partition now holds, as its object and the
+    /// lower corner of its box.
+    pub(super) installed: Vec<(<E as Indexed>::Id, [f64; 2])>,
     /// The objects the partition no longer holds at all.
     pub(super) departed: HashSet<<E as Indexed>::Id>,
 }
@@ -67,7 +68,7 @@ impl<E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed> Partition<E> {
             }
         }
         // clone: the entries move into the new tree, so the installed list owns each identifier
-        let installed = entries.iter().map(|entry| (entry.id().clone(), entry.envelope())).collect();
+        let installed = entries.iter().map(|entry| (entry.id().clone(), entry.envelope().lower())).collect();
         entries.reserve_exact(kept.len());
         entries.extend(kept);
         *tree = PackedRTree::bulk_load(entries);
