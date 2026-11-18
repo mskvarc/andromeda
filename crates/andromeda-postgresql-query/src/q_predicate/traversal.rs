@@ -116,7 +116,7 @@ impl LinkedHop {
     /// tombstone row, and the history probe excludes deletions itself.
     pub(crate) fn probe(&self, relationship_id: AttributeNameKey, guard: &HopGuard, outer: &InstanceScan<'_>, inner: Condition) -> Condition {
         match outer {
-            InstanceScan::Current(rows) => {
+            InstanceScan::Current(rows) | InstanceScan::Walked(rows) => {
                 let probe = self.current_objects(relationship_id, rows);
                 Condition::all().add(SeaExpr::exists(self.completed(probe, guard, GuardedRow::Search(rows), inner)))
             }

@@ -1,0 +1,36 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection_probe.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        (
+          (
+            "ca"."attribute_name_key" = $1
+            AND "ca"."value_uri" = $2
+          )
+          OR (
+            "ca"."attribute_name_key" = $3
+            AND "ca"."value_uri" = $4
+          )
+        ) IS TRUE
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 7
+2: String 'urn:a'
+3: Int 8
+4: String 'urn:b'

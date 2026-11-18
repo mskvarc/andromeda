@@ -27,6 +27,10 @@ pub enum InstanceScan<'a> {
     /// The current state of the entity the enclosing statement names through
     /// these row references.
     Current(&'a EntityRowRefs),
+    /// The current state of each Entity a walk yields, one at a time, through
+    /// these row references: every value is probed on the Entity's own rows,
+    /// read by its key (see [`ProbeShape::Keyed`]).
+    Walked(&'a EntityRowRefs),
     /// The instances of one Temporal Evolution inside a temporal window
     /// (clause 5.7.4.4).
     History(&'a HistoryWindow),
@@ -37,7 +41,7 @@ impl InstanceScan<'_> {
     #[must_use]
     pub const fn schema(&self) -> Option<&DynIden> {
         match self {
-            InstanceScan::Current(rows) => rows.schema(),
+            InstanceScan::Current(rows) | InstanceScan::Walked(rows) => rows.schema(),
             InstanceScan::History(window) => window.schema(),
         }
     }
@@ -46,7 +50,7 @@ impl InstanceScan<'_> {
     #[must_use]
     pub const fn row(&self) -> ProbedRow {
         match self {
-            InstanceScan::Current(rows) => ProbedRow::Current(rows.standing()),
+            InstanceScan::Current(rows) | InstanceScan::Walked(rows) => ProbedRow::Current(rows.standing()),
             InstanceScan::History(_) => ProbedRow::History,
         }
     }
@@ -59,7 +63,7 @@ impl InstanceScan<'_> {
     /// temporal entity's streams, so they stay as they are.
     pub(crate) fn exists_in_tree(&self, id: AttributeNameKey, value: Condition) -> Condition {
         match self {
-            InstanceScan::Current(rows) => probe(id, value, rows, ProbeShape::Walked),
+            InstanceScan::Current(rows) | InstanceScan::Walked(rows) => probe(id, value, rows, ProbeShape::Walked),
             InstanceScan::History(window) => window.exists(id, value, &HistoryAliases::top_level()),
         }
     }
@@ -68,6 +72,7 @@ impl InstanceScan<'_> {
     pub(crate) fn exists(&self, id: AttributeNameKey, value: Condition) -> Condition {
         match self {
             InstanceScan::Current(rows) => exists_on_projection(id, value, rows),
+            InstanceScan::Walked(rows) => probe(id, value, rows, ProbeShape::Keyed),
             InstanceScan::History(window) => window.exists(id, value, &HistoryAliases::top_level()),
         }
     }
@@ -83,7 +88,8 @@ impl InstanceScan<'_> {
             Ok([test]) => Some(self.exists(test.attribute, test.value)),
             Err(tests) if tests.is_empty() => None,
             Err(tests) => Some(match self {
-                InstanceScan::Current(rows) => exists_any_on_projection(tests, rows),
+                InstanceScan::Current(rows) => exists_any_on_projection(tests, rows, ProbeShape::Planned),
+                InstanceScan::Walked(rows) => exists_any_on_projection(tests, rows, ProbeShape::Keyed),
                 InstanceScan::History(window) => window.exists_any(tests, &HistoryAliases::top_level()),
             }),
         }

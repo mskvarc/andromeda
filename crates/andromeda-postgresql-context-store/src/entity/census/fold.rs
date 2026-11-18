@@ -24,7 +24,7 @@ use andromeda_postgresql_schema::{
     census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
     temporal::StreamTypeCensus,
 };
-use andromeda_postgresql_seaquery::{aggregate::count_all, hashed_membership::hashed_membership, literal::int_literal, statement::Statement};
+use andromeda_postgresql_seaquery::{aggregate::count_all, boolean_test::boolean_test, literal::int_literal, statement::Statement};
 use derive_more::{Add, AddAssign};
 use sea_query::{CommonTableExpression, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Query, WithClause, WithQuery};
 use sqlx::{PgPool, Row};
@@ -88,7 +88,7 @@ impl Ledger {
     /// RETURNING delta
     /// ```
     ///
-    /// The key test is a hashed subplan ([`hashed_membership`]), so the grouped
+    /// The key test is a hashed subplan ([`boolean_test`]), so the grouped
     /// keys are built once whatever the planner believes about the ledger's size.
     /// Every key column is `NOT NULL`, which the wrapper requires.
     ///
@@ -110,7 +110,7 @@ impl Ledger {
         let mut moved = Query::delete();
         moved
             .from_table(table_of(target, self.table.clone()))
-            .and_where(hashed_membership(key_tuple().in_subquery(crowded.take())))
+            .and_where(boolean_test(key_tuple().in_subquery(crowded.take())))
             .returning(Query::returning().columns(self.keys.iter().cloned().chain([self.delta.clone()])));
         let total = || Func::sum(Expr::col((Moved, self.delta.clone())));
         let mut summed = Query::select();

@@ -12,7 +12,7 @@ use crate::{
     standing_instant::instant_of,
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
-use andromeda_postgresql_seaquery::{literal::int_literal, pg_array::is_none_of};
+use andromeda_postgresql_seaquery::{boolean_test::boolean_test, literal::int_literal, pg_array::is_none_of};
 use andromeda_postgresql_stored_form::expiry::unexpired;
 use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr};
@@ -44,6 +44,15 @@ pub(crate) enum ProbeShape {
     /// that stops at its first row, and a page cut in walk order stops after
     /// the Entities it keeps.
     Walked,
+    /// A probe of one Entity's own rows, read by its key: the value condition
+    /// is a boolean test no value index answers.
+    ///
+    /// Left to the planner, a probe of a value it believes rare is read from
+    /// the value indexes and keeps the Entity's rows afterwards, so every probe
+    /// reads every row holding the value. Among 100 000 Entities an equality 50
+    /// of them hold, believed to hold 2, costs 11.6 µs per probed Entity that
+    /// way and about 1.7 µs read by the key.
+    Keyed,
 }
 
 /// Wrap a value condition in the correlated `current_attributes` probe.
@@ -66,9 +75,10 @@ pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &Entit
 
 /// [`exists_on_projection`] in the shape `shape` asks for.
 pub(crate) fn probe(id: AttributeNameKey, value: Condition, rows: &EntityRowRefs, shape: ProbeShape) -> Condition {
-    let mut probe = projection_probe(Condition::all().add(of_attribute(id)).add(standing(rows)).add_option(non_empty(value)), rows);
+    let value = non_empty(value).map(|value| shaped(value, shape));
+    let mut probe = projection_probe(Condition::all().add(of_attribute(id)).add(standing(rows)).add_option(value), rows);
     match shape {
-        ProbeShape::Planned => {}
+        ProbeShape::Planned | ProbeShape::Keyed => {}
         ProbeShape::Walked => {
             probe.offset(0);
         }
@@ -76,18 +86,29 @@ pub(crate) fn probe(id: AttributeNameKey, value: Condition, rows: &EntityRowRefs
     Condition::all().add(SeaExpr::exists(probe))
 }
 
+/// `value` as a probe of `shape` tests it: a keyed probe's value is a boolean
+/// test no value index answers, every other probe's the condition itself.
+fn shaped(value: Condition, shape: ProbeShape) -> Condition {
+    match shape {
+        ProbeShape::Planned | ProbeShape::Walked => value,
+        ProbeShape::Keyed => Condition::all().add(boolean_test(SimpleExpr::from(value))),
+    }
+}
+
 /// The correlated probe that holds when one current instance passes any of
-/// `tests`, each read under its own attribute key.
+/// `tests`, each read under its own attribute key, in the shape `shape` asks
+/// for.
 ///
 /// The attribute key moves into each test rather than narrowing the scan, so
 /// every test is a conjunction the value index of its own column leads with,
-/// and the planner can drive the whole probe from a bitmap over all of them.
+/// and a planned probe can be driven from a bitmap over all of them.
 #[must_use]
-pub(crate) fn exists_any_on_projection(tests: Vec<InstanceTest>, rows: &EntityRowRefs) -> Condition {
+pub(crate) fn exists_any_on_projection(tests: Vec<InstanceTest>, rows: &EntityRowRefs, shape: ProbeShape) -> Condition {
     let any = tests.into_iter().fold(Condition::any(), |any, test| {
         let of_attribute = of_attribute(test.attribute);
         any.add(test.arm(of_attribute))
     });
+    let any = shaped(any, shape);
     Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing(rows)).add(any), rows)))
 }
 
@@ -137,7 +158,8 @@ mod tests {
     use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
-    use sea_query::{Condition, ExprTrait, Query, SelectStatement};
+    use pretty_assertions::assert_eq;
+    use sea_query::{Condition, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
 
     fn render(condition: Condition) -> SelectStatement {
         Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
@@ -195,7 +217,46 @@ mod tests {
             "projection-probe-a-shared-probe-pairs-each-attribute-key-with-its-own-value",
             render(exists_any_on_projection(
                 vec![test(7, "urn:a"), test(8, "urn:b")],
-                &EntityRowRefs::unaliased(None)
+                &EntityRowRefs::unaliased(None),
+                ProbeShape::Planned
+            ))
+        );
+    }
+
+    /// A keyed probe tests its value as one boolean test beside the attribute
+    /// key and the correlation, so no value index can answer it.
+    #[test]
+    fn a_keyed_probe_tests_its_value_as_one_boolean_test() {
+        let value = Condition::any()
+            .add(projection_column(CurrentAttributes::ValueString).eq("red"))
+            .add(projection_column(CurrentAttributes::ValueUri).eq("red"));
+        let statement = render(probe(AttributeNameKey::from(7), value, &EntityRowRefs::unaliased(None), ProbeShape::Keyed));
+        assert_statement_snapshot!("projection-probe-a-keyed-probe-tests-its-value-as-one-boolean-test", statement);
+    }
+
+    /// A keyed probe of presence alone has no value to wrap.
+    #[test]
+    fn a_keyed_presence_probe_is_the_planned_one() {
+        let rows = EntityRowRefs::unaliased(None);
+        assert_eq!(
+            render(probe(AttributeNameKey::from(7), Condition::all(), &rows, ProbeShape::Keyed)).to_string(PostgresQueryBuilder),
+            render(exists_on_projection(AttributeNameKey::from(7), Condition::all(), &rows)).to_string(PostgresQueryBuilder)
+        );
+    }
+
+    /// A shared keyed probe wraps the disjunction of its arms whole.
+    #[test]
+    fn a_shared_keyed_probe_tests_its_arms_as_one_boolean_test() {
+        let test = |attribute: i32, value: &str| InstanceTest {
+            attribute: AttributeNameKey::from(attribute),
+            value: Condition::all().add(projection_column(CurrentAttributes::ValueUri).eq(value)),
+        };
+        assert_statement_snapshot!(
+            "projection-probe-a-shared-keyed-probe-tests-its-arms-as-one-boolean-test",
+            render(exists_any_on_projection(
+                vec![test(7, "urn:a"), test(8, "urn:b")],
+                &EntityRowRefs::unaliased(None),
+                ProbeShape::Keyed
             ))
         );
     }

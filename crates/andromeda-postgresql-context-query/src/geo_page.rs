@@ -212,7 +212,7 @@ impl GeoWalk {
 /// spelling, or `georel=near` naming no distance.
 pub(crate) fn geo_probe(source: &PageSource<'_>, geo: &GeoQuery, q: Option<&CompiledFilter>) -> Result<Condition, RenderError> {
     let walked = walked_rows(source.rows);
-    let q = q.map(|q| compile(q.reading(), &InstanceScan::Current(&walked), source.names));
+    let q = q.map(|q| compile(q.reading(), &InstanceScan::Walked(&walked), source.names));
     Ok(Condition::all().add_option(q).add(geo_sql::probe(geo, &walked, &source.names.attributes)?))
 }
 
