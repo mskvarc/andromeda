@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the base image's entrypoint steps, names the superuser and the initial
 # database andromeda, and tunes the server to the container's limits on every
-# start before handing over to postgres.
+# start before handing over to postgres. Sourced, it only defines its steps, as
+# the base image's entrypoint does.
 set -Eeo pipefail
 
 # The base image's entrypoint defines its steps as functions and runs none of
@@ -27,8 +28,7 @@ andromeda_main() {
 	fi
 
 	if [ "$1" = 'postgres' ] && ! _pg_want_help "$@"; then
-		andromeda_default_user
-		docker_setup_env
+		andromeda_setup_env
 		docker_create_db_directories
 		if [ "$(id -u)" = '0' ]; then
 			exec gosu postgres "${BASH_SOURCE[0]}" "$@"
@@ -70,13 +70,17 @@ andromeda_main() {
 	exec "$@"
 }
 
-# The superuser is andromeda unless POSTGRES_USER or POSTGRES_USER_FILE names
-# another, and the initial database follows it. An image-level ENV would not
-# do: the base image refuses a variable set alongside its _FILE form.
-andromeda_default_user() {
+# usage: andromeda_setup_env
+# The base image's environment setup, which exports POSTGRES_USER and
+# POSTGRES_DB with their _FILE forms read. The superuser is andromeda unless
+# POSTGRES_USER or POSTGRES_USER_FILE names another, and the initial database
+# follows it. An image-level ENV would not do: the base image refuses a variable
+# set alongside its _FILE form.
+andromeda_setup_env() {
 	if [ -z "${POSTGRES_USER:-}" ] && [ -z "${POSTGRES_USER_FILE:-}" ]; then
 		export POSTGRES_USER=andromeda
 	fi
+	docker_setup_env
 }
 
 # usage: andromeda_setup_db
@@ -405,4 +409,6 @@ andromeda_command_line_max_connections() {
 	printf '%s' "$value"
 }
 
-andromeda_main "$@"
+if ! _is_sourced; then
+	andromeda_main "$@"
+fi

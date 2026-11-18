@@ -24,21 +24,23 @@ cleanup() {
 trap cleanup EXIT
 
 # usage: wait_ready CONTAINER
-# Waits for TCP, which the socket-only server of first-start initialisation never opens.
+# Waits for the image's health check, which probes over TCP and so never passes
+# the socket-only server of first-start initialisation. A probe of its own here
+# would log a failed connection the health check assertions count.
 wait_ready() {
 	for _ in $(seq 1 120); do
-		if docker exec "$1" pg_isready -q -h 127.0.0.1 2> /dev/null; then
+		if [ "$(docker inspect -f '{{.State.Health.Status}}' "$1")" = healthy ]; then
 			return 0
 		fi
 		if [ "$(docker inspect -f '{{.State.Running}}' "$1")" != true ]; then
 			docker logs "$1" >&2
-			printf 'FAIL %s exited before accepting connections\n' "$1" >&2
+			printf 'FAIL %s exited before it was healthy\n' "$1" >&2
 			exit 1
 		fi
 		sleep 0.5
 	done
 	docker logs "$1" >&2
-	printf 'FAIL %s not ready after 60s\n' "$1" >&2
+	printf 'FAIL %s not healthy after 60s\n' "$1" >&2
 	exit 1
 }
 
@@ -198,6 +200,9 @@ expect 'andromeda is a superuser' "$(sql limits-2g "SELECT rolsuper FROM pg_role
 expect 'no postgres role' "$(sql limits-2g "SELECT count(*) FROM pg_roles WHERE rolname = 'postgres'")" 0
 expect 'psql -U andromeda lands in andromeda' "$(sql limits-2g 'SELECT current_database()')" andromeda
 expect 'postgres is renamed to andromeda' "$(databases limits-2g andromeda andromeda)" andromeda,template0,template1
+# A healthy container has had a probe reach the real server, which logs the
+# role or database a connection names when it does not exist.
+expect 'the health check connects as andromeda to andromeda' "$(logs_mention limits-2g 'does not exist')" no
 
 # TimescaleDB registers its settings only in a database holding the extension.
 sql limits-2g 'CREATE EXTENSION IF NOT EXISTS timescaledb' > /dev/null
@@ -358,9 +363,11 @@ expect 'POSTGRES_USER names the superuser' "$(sql_as custom-role custom "SELECT 
 expect 'POSTGRES_USER names the initial database' "$(databases custom-role custom custom)" custom,template0,template1
 expect 'POSTGRES_USER leaves no andromeda role' \
 	"$(sql_as custom-role custom "SELECT count(*) FROM pg_roles WHERE rolname = 'andromeda'")" 0
+expect 'the health check connects as POSTGRES_USER' "$(logs_mention custom-role 'does not exist')" no
 
 start keep-postgres -e POSTGRES_DB=postgres --
 expect 'POSTGRES_DB=postgres keeps the postgres database' "$(databases keep-postgres andromeda postgres)" postgres,template0,template1
+expect 'the health check connects to POSTGRES_DB' "$(logs_mention keep-postgres 'does not exist')" no
 
 mkdir -p "$mounts/initdb"
 printf 'CREATE TABLE init_probe ();\n' > "$mounts/initdb/10-probe.sql"
@@ -373,6 +380,7 @@ chmod a+r "$mounts/user"
 start user-file -v "$mounts/user:/run/user:ro" -e POSTGRES_USER_FILE=/run/user --
 expect 'POSTGRES_USER_FILE names the superuser' \
 	"$(sql_as user-file fromfile "SELECT count(*) FROM pg_roles WHERE rolname = 'fromfile' AND rolsuper")" 1
+expect 'the health check connects as the POSTGRES_USER_FILE role' "$(logs_mention user-file 'does not exist')" no
 
 # The tuner alone stays within budget (128kB work_mem for 400 connections in 1GB);
 # a work_mem override undoes it.

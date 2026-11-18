@@ -85,9 +85,11 @@ CMD ["postgres"]
 
 # Probes over TCP: the server the entrypoint starts to initialise a new data
 # directory listens on no TCP address, so the check passes only once the real
-# server accepts connections. pg_isready needs no valid role or database.
+# server accepts connections. The probe connects as the superuser to the initial
+# database, both resolved by the entrypoint's own environment setup: a role or
+# database that does not exist would log a failed connection on every probe.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=2m --start-interval=1s --retries=3 \
-    CMD pg_isready -q -h 127.0.0.1 || exit 1
+    CMD ["bash", "-c", "source /usr/local/bin/andromeda-entrypoint.sh && andromeda_setup_env && pg_isready -q -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" || exit 1"]
 
 # CI overrides licenses per edition.
 LABEL org.opencontainers.image.title="PostgreSQL with PostGIS and TimescaleDB" \
