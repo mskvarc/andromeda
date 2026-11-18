@@ -7,28 +7,41 @@
 //! candidate entity, so a reference geometry holding more positions than the
 //! broker resolves in one query makes the query too complex.
 
-use crate::query_error::QueryError;
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_census::GeometryCensusLimits};
+use andromeda_ngsi_ld_geometry::{
+    geometry::Geometry,
+    geometry_census::{GeometryCensusLimits, GeometryOverLimit},
+};
+use thiserror::Error;
+
+/// A reference geometry of a geo-query or a distance ordering holding more
+/// positions than the broker resolves in one query (clause 5.5.6,
+/// `TooComplexQuery`).
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("the reference geometry holds {over}; this broker resolves no query against it, send a simplified geometry")]
+pub struct ReferenceBudgetError {
+    /// The limit the reference geometry holds more than.
+    pub over: GeometryOverLimit,
+}
 
 /// Admit a query's reference geometry holding no more positions than `limits`
 /// admits.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::ReferenceGeometryTooComplex`] for a geometry holding
-/// more positions than `limits` admits.
-pub fn admit_reference_geometry(geometry: &Geometry, limits: GeometryCensusLimits) -> Result<(), QueryError> {
+/// Returns [`ReferenceBudgetError`] for a geometry holding more positions than
+/// `limits` admits.
+pub fn admit_reference_geometry(geometry: &Geometry, limits: GeometryCensusLimits) -> Result<(), ReferenceBudgetError> {
     limits
         .admit_positions(geometry.form().position_count())
-        .map_err(|over| QueryError::ReferenceGeometryTooComplex { over })
+        .map_err(|over| ReferenceBudgetError { over })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{geo::reference_budget::admit_reference_geometry, query_error::QueryError};
+    use crate::geo::reference_budget::admit_reference_geometry;
     use andromeda_ngsi_ld_geometry::{
         geometry::Geometry,
-        geometry_census::{GeometryCensusLimits, GeometryPositionLimit},
+        geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit},
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use serde_json::json;
@@ -59,7 +72,7 @@ mod tests {
     #[test]
     fn a_reference_geometry_past_the_budget_is_too_complex() {
         let refused = admit_reference_geometry(&polygon(6), limit(5)).expect_err("six positions exceed five");
-        assert!(matches!(refused, QueryError::ReferenceGeometryTooComplex { .. }), "{refused:?}");
+        assert!(matches!(refused.over, GeometryOverLimit::Positions { .. }), "{refused:?}");
         pretty_assertions::assert_eq!(
             refused.to_string(),
             "the reference geometry holds more than the 5 positions this broker accepts in one geometry; this broker resolves no query against it, send a simplified geometry"

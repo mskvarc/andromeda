@@ -1,6 +1,6 @@
 //! The interval of the time axis a query reads.
 
-use crate::query_error::QueryError;
+use crate::temporal::time_interval_error::TimeIntervalError;
 use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
 use chrono::{DateTime, Utc};
 use typed_builder::TypedBuilder;
@@ -41,23 +41,23 @@ impl TimeInterval {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ParamTimerelTimeatPair`] when exactly one of
+    /// Returns [`TimeIntervalError::UnpairedTimerel`] when exactly one of
     /// `timerel` and `timeAt` is present,
-    /// [`QueryError::ParamEndTimeAtRequired`] when `timerel` is `between` and
-    /// no `endTimeAt` came with it, [`QueryError::ParamEndTimeAtWithoutBetween`]
+    /// [`TimeIntervalError::EndTimeAtRequired`] when `timerel` is `between` and
+    /// no `endTimeAt` came with it, [`TimeIntervalError::EndTimeAtWithoutBetween`]
     /// when an `endTimeAt` came with any other `timerel` or with none, and
-    /// [`QueryError::ParamEndTimeAtNotAfterTimeAt`] when a `between` closes at
+    /// [`TimeIntervalError::EndTimeAtNotAfterTimeAt`] when a `between` closes at
     /// or before the instant it opens at.
-    pub fn from_parts(timerel: Option<TimeRel>, time_at: Option<DateTime<Utc>>, end_time_at: Option<DateTime<Utc>>) -> Result<TimeInterval, QueryError> {
+    pub fn from_parts(timerel: Option<TimeRel>, time_at: Option<DateTime<Utc>>, end_time_at: Option<DateTime<Utc>>) -> Result<TimeInterval, TimeIntervalError> {
         match (timerel, time_at, end_time_at) {
             (None, None, None) => Ok(TimeInterval::Unbounded),
-            (None, Some(_), _) | (Some(_), None, _) => Err(QueryError::ParamTimerelTimeatPair),
+            (None, Some(_), _) | (Some(_), None, _) => Err(TimeIntervalError::UnpairedTimerel),
             (Some(TimeRel::Before), Some(instant), None) => Ok(TimeInterval::Before(instant)),
             (Some(TimeRel::After), Some(instant), None) => Ok(TimeInterval::After(instant)),
             (Some(TimeRel::Between), Some(from), Some(to)) if to > from => Ok(TimeInterval::Between { from, to }),
-            (Some(TimeRel::Between), Some(_), Some(_)) => Err(QueryError::ParamEndTimeAtNotAfterTimeAt),
-            (Some(TimeRel::Between), Some(_), None) => Err(QueryError::ParamEndTimeAtRequired),
-            (Some(TimeRel::Before | TimeRel::After), Some(_), Some(_)) | (None, None, Some(_)) => Err(QueryError::ParamEndTimeAtWithoutBetween),
+            (Some(TimeRel::Between), Some(_), Some(_)) => Err(TimeIntervalError::EndTimeAtNotAfterTimeAt),
+            (Some(TimeRel::Between), Some(_), None) => Err(TimeIntervalError::EndTimeAtRequired),
+            (Some(TimeRel::Before | TimeRel::After), Some(_), Some(_)) | (None, None, Some(_)) => Err(TimeIntervalError::EndTimeAtWithoutBetween),
         }
     }
 
@@ -206,9 +206,9 @@ impl TemporalWindow {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        query_error::QueryError,
-        temporal::window::{TemporalWindow, TimeInterval},
+    use crate::temporal::{
+        time_interval_error::TimeIntervalError,
+        window::{TemporalWindow, TimeInterval},
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp, time_rel::TimeRel};
     use chrono::{DateTime, Utc};
@@ -250,14 +250,14 @@ mod tests {
             assert!(
                 matches!(
                     TimeInterval::from_parts(Some(timerel), Some(reference), Some(end)),
-                    Err(QueryError::ParamEndTimeAtWithoutBetween)
+                    Err(TimeIntervalError::EndTimeAtWithoutBetween)
                 ),
                 "{timerel}"
             );
         }
         assert!(matches!(
             TimeInterval::from_parts(None, None, Some(end)),
-            Err(QueryError::ParamEndTimeAtWithoutBetween)
+            Err(TimeIntervalError::EndTimeAtWithoutBetween)
         ));
     }
 
@@ -270,7 +270,7 @@ mod tests {
             assert!(
                 matches!(
                     TimeInterval::from_parts(Some(TimeRel::Between), Some(from), Some(to)),
-                    Err(QueryError::ParamEndTimeAtNotAfterTimeAt)
+                    Err(TimeIntervalError::EndTimeAtNotAfterTimeAt)
                 ),
                 "{to}"
             );
@@ -288,11 +288,11 @@ mod tests {
         let end = instant("2024-06-01T00:00:00Z");
         assert!(matches!(
             TimeInterval::from_parts(Some(TimeRel::Between), None, Some(end)),
-            Err(QueryError::ParamTimerelTimeatPair)
+            Err(TimeIntervalError::UnpairedTimerel)
         ));
         assert!(matches!(
             TimeInterval::from_parts(None, Some(end), Some(end)),
-            Err(QueryError::ParamTimerelTimeatPair)
+            Err(TimeIntervalError::UnpairedTimerel)
         ));
     }
 
@@ -308,7 +308,7 @@ mod tests {
         );
         assert!(matches!(
             TimeInterval::from_parts(Some(TimeRel::Between), Some(from), None),
-            Err(QueryError::ParamEndTimeAtRequired)
+            Err(TimeIntervalError::EndTimeAtRequired)
         ));
     }
 
@@ -317,11 +317,11 @@ mod tests {
         let reference = instant("2024-01-01T00:00:00Z");
         assert!(matches!(
             TimeInterval::from_parts(Some(TimeRel::Before), None, None),
-            Err(QueryError::ParamTimerelTimeatPair)
+            Err(TimeIntervalError::UnpairedTimerel)
         ));
         assert!(matches!(
             TimeInterval::from_parts(None, Some(reference), None),
-            Err(QueryError::ParamTimerelTimeatPair)
+            Err(TimeIntervalError::UnpairedTimerel)
         ));
     }
 

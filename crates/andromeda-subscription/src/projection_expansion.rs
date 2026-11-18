@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_query::{
         written_projection_list::WrittenProjectionList,
         written_projection_term::WrittenProjectionTerm,
     },
+    query_error::QueryError,
     term_expander::TermExpander,
 };
 
@@ -33,7 +34,8 @@ pub(crate) async fn expand_notification_projection(
 ) -> Result<(), SubscriptionError> {
     let pick = expand_projection_lists(pick.unwrap_or_default(), expander).await?;
     let omit = expand_projection_lists(omit.unwrap_or_default(), expander).await?;
-    Ok(check_member_exclusivity(&pick, &omit)?)
+    check_member_exclusivity(&pick, &omit).map_err(QueryError::from)?;
+    Ok(())
 }
 
 /// Replace each list with its expansion, answering every term the lists of
@@ -42,7 +44,12 @@ async fn expand_projection_lists(lists: &mut [WrittenProjectionList], expander: 
     let mut member_terms = Vec::new();
     for list in lists {
         let terms = expand_projection_terms(list, expander).await?;
-        *list = terms.iter().map(WrittenProjectionTerm::try_from).collect::<Result<Vec<_>, _>>()?.into();
+        *list = terms
+            .iter()
+            .map(WrittenProjectionTerm::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(QueryError::from)?
+            .into();
         member_terms.extend(terms);
     }
     Ok(member_terms)
@@ -51,7 +58,11 @@ async fn expand_projection_lists(lists: &mut [WrittenProjectionList], expander: 
 #[cfg(test)]
 mod tests {
     use crate::{error::SubscriptionError, projection_expansion::expand_notification_projection};
-    use andromeda_ngsi_ld_query::{namespace_expander::EXAMPLE_NAMESPACE, projection::written_projection_list::WrittenProjectionList, query_error::QueryError};
+    use andromeda_ngsi_ld_query::{
+        namespace_expander::EXAMPLE_NAMESPACE,
+        projection::{projection_error::ProjectionError, written_projection_list::WrittenProjectionList},
+        query_error::QueryError,
+    };
 
     fn lists(raw: &[&str]) -> Vec<WrittenProjectionList> {
         raw.iter().map(|list| list.parse().expect("valid projection list")).collect()
@@ -75,7 +86,10 @@ mod tests {
         ] {
             let result = expanded(pick, omit).await;
             assert!(
-                matches!(&result, Err(SubscriptionError::Query(QueryError::ProjectionMemberPickedAndOmitted { .. }))),
+                matches!(
+                    &result,
+                    Err(SubscriptionError::Query(QueryError::Projection(ProjectionError::MemberPickedAndOmitted { .. })))
+                ),
                 "{pick:?} {omit:?}: {result:?}"
             );
         }

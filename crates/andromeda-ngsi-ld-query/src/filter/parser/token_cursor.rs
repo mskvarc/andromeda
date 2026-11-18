@@ -7,12 +7,10 @@
 //! clause 4.9, and an `orderBy` term is read with the same cursor over the same
 //! tokens as a `q` predicate.
 
-use crate::{
-    filter::{
-        expectation::{Expectation, Found},
-        parser::lexer::{Token, TokenKind},
-    },
-    query_error::QueryError,
+use crate::filter::{
+    expectation::{Expectation, Found},
+    filter_error::FilterError,
+    parser::lexer::{Token, TokenKind},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
@@ -80,14 +78,14 @@ impl<'a> TokenCursor<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::QExpected`] when the stream holds something else,
+    /// Returns [`FilterError::Expected`] when the stream holds something else,
     /// or nothing at all.
-    pub fn expect(&mut self, expected: &Token) -> Result<(), QueryError> {
+    pub fn expect(&mut self, expected: &Token) -> Result<(), FilterError> {
         if self.peek() == Some(expected) {
             self.advance();
             Ok(())
         } else {
-            Err(QueryError::QExpected {
+            Err(FilterError::Expected {
                 expected: Expectation::Token(TokenKind::from(expected)),
                 found: self.found(),
             })
@@ -104,11 +102,11 @@ impl<'a> TokenCursor<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::QExpected`] when the next token carries no name.
-    pub fn parse_ident(&mut self) -> Result<&'a str, QueryError> {
+    /// Returns [`FilterError::Expected`] when the next token carries no name.
+    pub fn parse_ident(&mut self) -> Result<&'a str, FilterError> {
         match self.advance() {
             Some(Token::Ident(text) | Token::QuotedStr(text)) => Ok(text.as_str()),
-            other => Err(QueryError::QExpected {
+            other => Err(FilterError::Expected {
                 expected: Expectation::Token(TokenKind::Ident),
                 found: Found::of(other),
             }),
@@ -119,10 +117,10 @@ impl<'a> TokenCursor<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::QExpected`] when the next token carries no name,
-    /// and [`QueryError::AttributeNameInvalid`] when the name it carries is
+    /// Returns [`FilterError::Expected`] when the next token carries no name,
+    /// and [`FilterError::InvalidAttributeName`] when the name it carries is
     /// outside the clause 4.6.2 grammar.
-    pub fn parse_attribute_name(&mut self) -> Result<AttributeName, QueryError> {
+    pub fn parse_attribute_name(&mut self) -> Result<AttributeName, FilterError> {
         attribute_name(self.parse_ident()?)
     }
 }
@@ -135,8 +133,8 @@ impl<'a> TokenCursor<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::AttributeNameInvalid`] when the name is outside that
+/// Returns [`FilterError::InvalidAttributeName`] when the name is outside that
 /// grammar.
-pub fn attribute_name(raw: &str) -> Result<AttributeName, QueryError> {
-    raw.parse().map_err(QueryError::AttributeNameInvalid)
+pub fn attribute_name(raw: &str) -> Result<AttributeName, FilterError> {
+    raw.parse().map_err(FilterError::InvalidAttributeName)
 }

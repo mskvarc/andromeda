@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
+    query_error::QueryError,
     type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
 };
 use andromeda_telemetry::{
@@ -119,7 +120,7 @@ impl FederationService {
             if let Some(raw) = request.entity_type_selector {
                 let expanded = expand_type_expression(raw, &ContextualExpander::new(&self.engine, resolver.prepared())).await?;
                 let coarse = matches!(expanded, ExpandedTypeSelection::Type(_)).then(|| expanded.clone()); // clone: the store's specification holds a selector of its own
-                let selector = expanded.into_raw()?;
+                let selector = expanded.into_raw().map_err(QueryError::from)?;
                 (selector.named_types(), Some(selector), coarse)
             } else {
                 // A write that carries no `type` in its request is matched against registrations by the local entity's actual types (every one it carries, since clause 5.12 matches on any of them), so a registration scoped to an unrelated type is not taken to cover the write and refuse it. A write to an entity this broker holds only at a source resolves to an empty set and falls back to id-only matching.

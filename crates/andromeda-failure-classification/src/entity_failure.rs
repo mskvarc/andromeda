@@ -63,7 +63,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use andromeda_ngsi_ld_query::query_error::QueryError;
+    use andromeda_ngsi_ld_query::{
+        geo::{geo_query_error::GeoQueryError, reference_budget::ReferenceBudgetError},
+        query_error::QueryError,
+    };
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use http::StatusCode;
@@ -216,11 +219,11 @@ mod tests {
     /// with 403.
     #[test]
     fn a_reference_geometry_over_budget_is_a_403_too_complex_query() {
-        let error = EntityError::Query(QueryError::ReferenceGeometryTooComplex {
+        let error = EntityError::Query(QueryError::GeoQuery(GeoQueryError::ReferenceBudget(ReferenceBudgetError {
             over: GeometryOverLimit::Positions {
                 limit: GeometryPositionLimit::new(one_million()),
             },
-        });
+        })));
 
         let report = classify_entity_error(&error);
 

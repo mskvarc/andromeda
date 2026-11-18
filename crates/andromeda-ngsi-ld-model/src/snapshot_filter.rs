@@ -19,18 +19,16 @@
 use crate::snapshot::{SnapshotPriority, SnapshotType};
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{
-    filter::{
-        Filter,
-        attribute_path::AttributePath,
-        language_matching::LanguageMatching,
-        reading::{
-            family_reading::{MultiValueReading, TargetOrigin},
-            filter_reading::FilterReading,
-            term_reading::TermReading,
-        },
+use andromeda_ngsi_ld_query::filter::{
+    Filter,
+    attribute_path::AttributePath,
+    filter_error::FilterError,
+    language_matching::LanguageMatching,
+    reading::{
+        family_reading::{MultiValueReading, TargetOrigin},
+        filter_reading::FilterReading,
+        term_reading::TermReading,
     },
-    query_error::QueryError,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     q::{
@@ -118,7 +116,7 @@ impl<'t> ResourceMembers<'t> for &'t PurgeCandidate {
 pub enum SnapshotQParseError {
     /// The expression is not one clause 4.9's grammar derives.
     #[error(transparent)]
-    Query(#[from] QueryError),
+    Filter(#[from] FilterError),
     /// A Query Term names something other than a member the purge filter
     /// compares (clause 5.16.7.4).
     #[error("a Query Term names a member the Snapshot data type does not have or the purge filter does not compare")]
@@ -181,7 +179,7 @@ mod tests {
         snapshot::SnapshotPriority,
         snapshot_filter::{PurgeCandidate, SnapshotPurgeFilter, SnapshotQParseError},
     };
-    use andromeda_ngsi_ld_query::query_error::QueryError;
+    use andromeda_ngsi_ld_query::filter::filter_error::FilterError;
     use pretty_assertions::assert_eq;
 
     /// A Snapshot holding every member the purge filter compares.
@@ -371,7 +369,7 @@ mod tests {
             "(snapshotPriority==1",
         ] {
             let refused = q.parse::<SnapshotPurgeFilter>();
-            assert!(matches!(refused, Err(SnapshotQParseError::Query(_))), "{q}: {refused:?}");
+            assert!(matches!(refused, Err(SnapshotQParseError::Filter(_))), "{q}: {refused:?}");
         }
     }
 
@@ -386,6 +384,6 @@ mod tests {
     #[test]
     fn a_grammar_refusal_carries_the_query_error() {
         let error = "snapshotPriority>".parse::<SnapshotPurgeFilter>().expect_err("no operand");
-        assert!(matches!(error, SnapshotQParseError::Query(QueryError::QExpected { .. })), "{error:?}");
+        assert!(matches!(error, SnapshotQParseError::Filter(FilterError::Expected { .. })), "{error:?}");
     }
 }

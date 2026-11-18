@@ -12,7 +12,7 @@
 //! names, so `Home;Vehicle`, `((Home;Vehicle))` and `(Building|House)` are all
 //! outside the language and refused.
 
-use crate::{query_error::QueryError, type_selection::written_type_selection::WrittenTypeSelection};
+use crate::type_selection::{type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use std::iter;
 
@@ -20,16 +20,16 @@ use std::iter;
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TypeExprEmpty`] for blank input,
-/// [`QueryError::TypeExprUnexpectedEnd`] and [`QueryError::TypeExprUnbalanced`]
+/// Returns [`TypeSelectionError::Empty`] for blank input,
+/// [`TypeSelectionError::UnexpectedEnd`] and [`TypeSelectionError::UnbalancedParenthesis`]
 /// for an expression that ends early or leaves a parenthesis open,
-/// [`QueryError::TypeExprUnexpected`] for a character the clause 4.17 grammar
-/// does not admit at its position, and [`QueryError::TypeExprInvalidName`]
+/// [`TypeSelectionError::UnexpectedCharacter`] for a character the clause 4.17 grammar
+/// does not admit at its position, and [`TypeSelectionError::InvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
-pub fn parse(input: &str) -> Result<WrittenTypeSelection, QueryError> {
+pub fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err(QueryError::TypeExprEmpty);
+        return Err(TypeSelectionError::Empty);
     }
     if trimmed == "*" {
         return Ok(WrittenTypeSelection::Wildcard);
@@ -40,7 +40,10 @@ pub fn parse(input: &str) -> Result<WrittenTypeSelection, QueryError> {
 
     if parser.pos < parser.input.len() {
         let ch = parser.input[parser.pos..].chars().next().unwrap_or(' ');
-        return Err(QueryError::TypeExprUnexpected { ch, position: parser.pos });
+        return Err(TypeSelectionError::UnexpectedCharacter {
+            character: ch,
+            position: parser.pos,
+        });
     }
 
     Ok(expr)
@@ -76,7 +79,7 @@ impl<'a> Parser<'a> {
     ///
     /// A single operand is returned as itself rather than wrapped in a
     /// one-element `Or`.
-    fn parse_entity_types(&mut self) -> Result<WrittenTypeSelection, QueryError> {
+    fn parse_entity_types(&mut self) -> Result<WrittenTypeSelection, TypeSelectionError> {
         let first = self.parse_or_entity_type()?;
         if !matches!(self.peek(), Some('|' | ',')) {
             return Ok(first);
@@ -92,7 +95,7 @@ impl<'a> Parser<'a> {
     /// Parses `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`.
     ///
     /// A parenthesised group with a single name is that name.
-    fn parse_or_entity_type(&mut self) -> Result<WrittenTypeSelection, QueryError> {
+    fn parse_or_entity_type(&mut self) -> Result<WrittenTypeSelection, TypeSelectionError> {
         self.skip_whitespace();
         if self.peek() != Some('(') {
             return self.parse_type_name().map(WrittenTypeSelection::Type);
@@ -105,7 +108,7 @@ impl<'a> Parser<'a> {
             rest.push(self.parse_type_name()?);
         }
         if self.peek() != Some(')') {
-            return Err(QueryError::TypeExprUnbalanced(self.pos));
+            return Err(TypeSelectionError::UnbalancedParenthesis { position: self.pos });
         }
         self.advance();
         self.skip_whitespace();
@@ -118,13 +121,13 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses one `EntityType`: a clause 4.6.2 name or a URI.
-    fn parse_type_name(&mut self) -> Result<EntityTypeName, QueryError> {
+    fn parse_type_name(&mut self) -> Result<EntityTypeName, TypeSelectionError> {
         self.skip_whitespace();
         let start = self.pos;
         match self.peek() {
             Some(c) if is_type_char(c) => {}
-            Some(c) => return Err(QueryError::TypeExprUnexpected { ch: c, position: start }),
-            None => return Err(QueryError::TypeExprUnexpectedEnd),
+            Some(c) => return Err(TypeSelectionError::UnexpectedCharacter { character: c, position: start }),
+            None => return Err(TypeSelectionError::UnexpectedEnd),
         }
         while self.peek().is_some_and(is_type_char) {
             self.advance();
@@ -132,7 +135,7 @@ impl<'a> Parser<'a> {
         let name = &self.input[start..self.pos];
         self.skip_whitespace();
         name.parse::<EntityTypeName>()
-            .map_err(|source| QueryError::TypeExprInvalidName { position: start, source })
+            .map_err(|source| TypeSelectionError::InvalidName { position: start, source })
     }
 
     /// Skip over any run of whitespace.
@@ -155,10 +158,7 @@ const fn is_type_char(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        query_error::QueryError,
-        type_selection::{parser::parse, written_type_selection::WrittenTypeSelection},
-    };
+    use crate::type_selection::{parser::parse, type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection};
 
     fn t(name: &str) -> WrittenTypeSelection {
         WrittenTypeSelection::Type(name.parse().expect("valid type name"))
@@ -229,8 +229,8 @@ mod tests {
         // A leaf must satisfy the NGSI-LD name grammar, so a name that is neither
         // a term, a compact IRI, nor an absolute IRI/URI is a parse error rather
         // than a silently accepted `Type` node.
-        assert!(matches!(parse("42bad"), Err(QueryError::TypeExprInvalidName { .. })));
-        assert!(matches!(parse("%%%"), Err(QueryError::TypeExprInvalidName { .. })));
+        assert!(matches!(parse("42bad"), Err(TypeSelectionError::InvalidName { .. })));
+        assert!(matches!(parse("%%%"), Err(TypeSelectionError::InvalidName { .. })));
     }
 
     #[test]

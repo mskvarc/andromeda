@@ -27,17 +27,15 @@
 //! crosses an entity boundary, and clause 4.23.3's grammar is `AttrName`-based
 //! with prose naming only the dotted and bracketed paths.
 
-use crate::{
-    filter::{
-        parser::{
-            lexer::{Token, tokenize},
-            token_cursor::{TokenCursor, attribute_name},
-        },
-        target_language::TargetLanguage,
-        trailing_group::{MemberPath, TrailingGroup},
-        value_path::ValuePath,
+use crate::filter::{
+    filter_error::FilterError,
+    parser::{
+        lexer::{Token, tokenize},
+        token_cursor::{TokenCursor, attribute_name},
     },
-    query_error::QueryError,
+    target_language::TargetLanguage,
+    trailing_group::{MemberPath, TrailingGroup},
+    value_path::ValuePath,
 };
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 
@@ -57,11 +55,11 @@ pub const MAX_SUB_ATTRIBUTE_DEPTH: usize = AttributeNestingLimit::DEFAULT.get();
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QAttributePathTooDeep`] beyond
+/// Returns [`FilterError::PathTooDeep`] beyond
 /// [`MAX_SUB_ATTRIBUTE_DEPTH`].
-pub const fn check_depth(depth: usize) -> Result<(), QueryError> {
+pub const fn check_depth(depth: usize) -> Result<(), FilterError> {
     if depth > MAX_SUB_ATTRIBUTE_DEPTH {
-        return Err(QueryError::QAttributePathTooDeep {
+        return Err(FilterError::PathTooDeep {
             depth,
             limit: MAX_SUB_ATTRIBUTE_DEPTH,
         });
@@ -77,13 +75,13 @@ pub const fn check_depth(depth: usize) -> Result<(), QueryError> {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::AttributeNameInvalid`] when a segment is outside the
-/// clause 4.6.2 name grammar, [`QueryError::TrailingMemberInvalid`] when a
+/// Returns [`FilterError::InvalidAttributeName`] when a segment is outside the
+/// clause 4.6.2 name grammar, [`FilterError::InvalidTrailingMember`] when a
 /// one-member group is neither a name nor a language tag or range,
-/// [`QueryError::QExpected`] when a separator is not followed by a name or a
-/// bracket is left open, and [`QueryError::QAttributePathTooDeep`] beyond
+/// [`FilterError::Expected`] when a separator is not followed by a name or a
+/// bracket is left open, and [`FilterError::PathTooDeep`] beyond
 /// [`MAX_SUB_ATTRIBUTE_DEPTH`].
-pub fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<ValuePath, QueryError> {
+pub fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<ValuePath, FilterError> {
     let attr = attribute_name(leading)?;
     let mut sub_attrs = Vec::new();
 
@@ -117,7 +115,7 @@ pub fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usiz
 /// (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell.
 /// Every reading parses; which ones a request may carry is the
 /// `q_target_languages` level's to say.
-fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<TrailingGroup, QueryError> {
+fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<TrailingGroup, FilterError> {
     if cursor.peek() == Some(&Token::Star) {
         cursor.advance();
         return Ok(TrailingGroup::AllLanguages);
@@ -147,18 +145,18 @@ fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Tra
 ///
 /// # Errors
 ///
-/// Returns the tokeniser's [`QueryError::QUnterminatedString`] or
-/// [`QueryError::QUnexpectedChar`], the [`parse_value_path`] failures, and
-/// [`QueryError::QUnexpectedToken`] when anything follows the path, which is
+/// Returns the tokeniser's [`FilterError::UnterminatedString`] or
+/// [`FilterError::UnexpectedCharacter`], the [`parse_value_path`] failures, and
+/// [`FilterError::UnexpectedToken`] when anything follows the path, which is
 /// what refuses the clause 4.9 `rel{…}` linked-entity axis to a parameter whose
 /// own grammar has no hop.
-pub fn parse_attribute_path(text: &str) -> Result<ValuePath, QueryError> {
+pub fn parse_attribute_path(text: &str) -> Result<ValuePath, FilterError> {
     let tokens = tokenize(text)?;
     let mut cursor = TokenCursor::new(&tokens);
     let leading = cursor.parse_ident()?;
     let path = parse_value_path(&mut cursor, leading, 0)?;
     if !cursor.is_exhausted() {
-        return Err(QueryError::QUnexpectedToken {
+        return Err(FilterError::UnexpectedToken {
             position: cursor.position(),
             token: cursor.found(),
         });
@@ -168,13 +166,11 @@ pub fn parse_attribute_path(text: &str) -> Result<ValuePath, QueryError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        filter::{
-            parser::value_path::{MAX_SUB_ATTRIBUTE_DEPTH, parse_attribute_path},
-            target_language::{LanguageSelector, TargetLanguage},
-            trailing_group::TrailingGroup,
-        },
-        query_error::QueryError,
+    use crate::filter::{
+        filter_error::FilterError,
+        parser::value_path::{MAX_SUB_ATTRIBUTE_DEPTH, parse_attribute_path},
+        target_language::{LanguageSelector, TargetLanguage},
+        trailing_group::TrailingGroup,
     };
     use pretty_assertions::assert_eq;
 
@@ -239,7 +235,7 @@ mod tests {
     #[test]
     fn the_linked_entity_axis_is_not_part_of_a_value_path() {
         let error = parse_attribute_path("rel{attr}").expect_err("a hop is not a ValuePath");
-        assert!(matches!(error, QueryError::QUnexpectedToken { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::UnexpectedToken { .. }), "got {error:?}");
     }
 
     /// A prefixed name is one `AttrName`, so the dot after it still separates
@@ -279,7 +275,7 @@ mod tests {
 
         let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
         let error = parse_attribute_path(&too_deep).expect_err("beyond the limit");
-        assert!(matches!(error, QueryError::QAttributePathTooDeep { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::PathTooDeep { .. }), "got {error:?}");
     }
 
     /// The bracketed members count toward the same budget the dotted segments
@@ -288,7 +284,7 @@ mod tests {
     fn the_depth_limit_counts_compound_members_too() {
         let members = (0..=MAX_SUB_ATTRIBUTE_DEPTH).map(|index| format!("m{index}")).collect::<Vec<_>>().join(".");
         let error = parse_attribute_path(&format!("a[{members}]")).expect_err("beyond the limit");
-        assert!(matches!(error, QueryError::QAttributePathTooDeep { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::PathTooDeep { .. }), "got {error:?}");
     }
 
     /// Annex C.5.13.2: `marque[en-GB]` names a target language no `AttrName`
@@ -335,8 +331,8 @@ mod tests {
     #[test]
     fn a_member_neither_name_nor_tag_is_refused() {
         let error = parse_attribute_path("label[en_GB-x]").expect_err("neither");
-        assert!(matches!(error, QueryError::TrailingMemberInvalid { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidTrailingMember { .. }), "got {error:?}");
         let error = parse_attribute_path("label[en-GB.x]").expect_err("a tag starts no member path");
-        assert!(matches!(error, QueryError::AttributeNameInvalid(_)), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidAttributeName(_)), "got {error:?}");
     }
 }

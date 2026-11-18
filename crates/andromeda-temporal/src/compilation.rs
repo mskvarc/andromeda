@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_query::{
         expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
+    query_error::QueryError,
     selector_compilation::compile_entity_selectors,
     temporal::{
         aggregation_period::AggregationPeriod,
@@ -122,7 +123,7 @@ impl TemporalService {
             // to the member names specified." The ordering needs no context
             // expansion: clause 5.7.4.3 confines it to the `id` member, which
             // names no term.
-            .ordering(TemporalEntityOrdering::of_parameters(&params.ordering)?)
+            .ordering(TemporalEntityOrdering::of_parameters(&params.ordering).map_err(QueryError::from)?)
             .build())
     }
 

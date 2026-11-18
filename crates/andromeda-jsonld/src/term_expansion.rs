@@ -9,10 +9,7 @@ use crate::{
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     error::JsonLdError,
 };
-use andromeda_ngsi_ld_query::{
-    query_error::QueryError,
-    term_expander::{TermExpander, TermExpansionError},
-};
+use andromeda_ngsi_ld_query::term_expander::{TermExpander, TermExpansionError};
 use iri_rs::IriBuf;
 use std::future::Future;
 
@@ -42,12 +39,12 @@ impl<'a> ContextualExpander<'a> {
 // method on a type carrying a lifetime, and this crate documents with private
 // items included.
 impl TermExpander for ContextualExpander<'_> {
-    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
         let (engine, context) = (self.engine, self.context);
         async move { engine.expand_term(term, context).await.map_err(|error| expansion_failed(term, &error)) }
     }
 
-    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
         let (engine, context) = (self.engine, self.context);
         async move { engine.expand_type(term, context).await.map_err(|error| expansion_failed(term, &error)) }
     }
@@ -60,9 +57,9 @@ impl TermExpander for ContextualExpander<'_> {
 /// through a separate re-parse. The query language cannot hold the JSON-LD
 /// failure itself, so it is recorded here, beside the term, while it is still
 /// in hand.
-fn expansion_failed(term: &str, error: &JsonLdError) -> QueryError {
+fn expansion_failed(term: &str, error: &JsonLdError) -> TermExpansionError {
     tracing::debug!(term, error = %error, "a query term did not expand against the request @context");
-    QueryError::TermExpansion(expansion_failure(error))
+    expansion_failure(error)
 }
 
 /// The class of expansion failure a JSON-LD failure is.

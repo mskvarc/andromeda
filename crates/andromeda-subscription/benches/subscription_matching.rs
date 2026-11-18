@@ -28,9 +28,16 @@ use andromeda_ngsi_ld_model::{
     subscription::{SubscriptionStatus, standing::SubscriptionStanding},
 };
 use andromeda_ngsi_ld_query::{
-    filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
+    filter::{
+        Filter,
+        compiled_filter::CompiledFilter,
+        filter_error::FilterError,
+        language_matching::LanguageMatching,
+        parser::parse,
+        reading::filter_reading::FilterReading,
+    },
     projection::expanded_projection::ExpandedProjection,
-    query_error::QueryError,
+    type_selection::type_selection_error::TypeSelectionError,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     q::{
@@ -85,7 +92,10 @@ const FILTERS: [&str; 10] = [
 enum SetupError {
     /// A filter is not a filter.
     #[error("a filter does not parse")]
-    Filter(#[from] QueryError),
+    Filter(#[from] FilterError),
+    /// An entity type is not a type selection.
+    #[error("an entity type is not valid")]
+    TypeSelection(#[from] TypeSelectionError),
     /// The Entity does not decode.
     #[error("the entity does not decode")]
     Entity(#[from] EntityRefusal),
@@ -105,7 +115,7 @@ enum SetupError {
 
 /// The `q` text `filter` with every attribute name written as an expanded
 /// IRI.
-fn expanded(filter: &str) -> Result<Filter, QueryError> {
+fn expanded(filter: &str) -> Result<Filter, FilterError> {
     let mut text = String::with_capacity(filter.len() * 4);
     let mut quoted = false;
     let mut name = String::new();

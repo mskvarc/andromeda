@@ -5,7 +5,7 @@
 //! context alias of the Scope and its expanded IRI name the same Entity member
 //! as the compact term `scope`, so the refusal is decided on the expanded name.
 
-use crate::{query_error::QueryError, term_expander::TermExpander};
+use crate::{projection::projection_error::ProjectionError, query_error::QueryError, term_expander::TermExpander};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties, keyword};
 use iri_rs::IriBuf;
@@ -42,18 +42,18 @@ impl AttrsAdmission {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::AttrsReservedMember`] for a refused member, and
+/// Returns [`ProjectionError::ReservedAttrsMember`] for a refused member, and
 /// [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a name
 /// does not expand to an absolute IRI through the active `@context`.
 pub async fn expand_attrs_admitted(raw: &[AttributeName], admission: AttrsAdmission, expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
     let mut iris = Vec::with_capacity(raw.len());
     for name in raw {
         if refused_keyword(name, admission) {
-            return Err(QueryError::AttrsReservedMember { term: name.clone() }); // clone: the refusal outlives the borrowed request
+            return Err(ProjectionError::ReservedAttrsMember { term: name.clone() }.into()); // clone: the refusal outlives the borrowed request
         }
         let iri = expander.expand_term(name.as_str()).await?;
         if iri.as_str() == expanded_properties::SCOPE.as_str() && !admission.admits_scope() {
-            return Err(QueryError::AttrsReservedMember { term: name.clone() }); // clone: the refusal outlives the borrowed request
+            return Err(ProjectionError::ReservedAttrsMember { term: name.clone() }.into()); // clone: the refusal outlives the borrowed request
         }
         iris.push(iri);
     }
@@ -75,6 +75,7 @@ mod tests {
     use super::{AttrsAdmission, expand_attrs_admitted};
     use crate::{
         namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
+        projection::projection_error::ProjectionError,
         query_error::QueryError,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -113,7 +114,7 @@ mod tests {
             for member in ["id", "type"] {
                 let refused = expand_attrs_admitted(&names(&["speed", member]), admission, &SCOPE_ALIASES).await;
                 assert!(
-                    matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == member),
+                    matches!(refused, Err(QueryError::Projection(ProjectionError::ReservedAttrsMember { ref term })) if term.as_str() == member),
                     "{member} must be refused under {admission:?}, got {refused:?}"
                 );
             }
@@ -124,7 +125,7 @@ mod tests {
     async fn the_compact_scope_is_refused_only_where_the_scope_is_not_an_attribute() {
         let refused = expand_attrs_admitted(&names(&["scope"]), AttrsAdmission::AttributeNamesOnly, &SCOPE_ALIASES).await;
         assert!(
-            matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == "scope"),
+            matches!(refused, Err(QueryError::Projection(ProjectionError::ReservedAttrsMember { ref term })) if term.as_str() == "scope"),
             "{refused:?}"
         );
 
@@ -144,7 +145,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == "https://uri.etsi.org/ngsi-ld/scope"),
+            matches!(refused, Err(QueryError::Projection(ProjectionError::ReservedAttrsMember { ref term })) if term.as_str() == "https://uri.etsi.org/ngsi-ld/scope"),
             "{refused:?}"
         );
     }
@@ -153,7 +154,7 @@ mod tests {
     async fn a_context_alias_of_the_scope_is_refused_as_the_scope_under_attribute_names_only() {
         let refused = expand_attrs_admitted(&names(&["sc"]), AttrsAdmission::AttributeNamesOnly, &SCOPE_ALIASES).await;
         assert!(
-            matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == "sc"),
+            matches!(refused, Err(QueryError::Projection(ProjectionError::ReservedAttrsMember { ref term })) if term.as_str() == "sc"),
             "{refused:?}"
         );
     }

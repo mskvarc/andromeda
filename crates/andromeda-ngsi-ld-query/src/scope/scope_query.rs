@@ -1,9 +1,6 @@
 //! The `scopeQ` query parameter value (clause 4.19).
 
-use crate::{
-    query_error::QueryError,
-    scope::{scope_pattern::ScopePattern, scope_query_error::ScopeQueryError},
-};
+use crate::scope::{scope_pattern::ScopePattern, scope_query_error::ScopeQueryError};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write},
@@ -54,17 +51,17 @@ impl ScopeQuery {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ScopePatternInvalid`] when the expression is
+    /// Returns [`ScopeQueryError`] when the expression is
     /// unbalanced, ends on an operator, conjoins outside parentheses, nests a
     /// group or a disjunction inside one, or contains a pattern outside the
     /// clause 4.19 grammar.
-    pub fn parse(raw: &str) -> Result<ScopeQuery, QueryError> {
+    pub fn parse(raw: &str) -> Result<ScopeQuery, ScopeQueryError> {
         let tokens = tokenize_scope_query(raw);
         let mut parser = ScopeQueryParser { tokens: &tokens, position: 0 };
         let alternatives = parser.parse_or()?;
         if !parser.is_exhausted() {
             // A dangling `)` or trailing operator: the whole input is malformed.
-            return Err(QueryError::ScopePatternInvalid(ScopeQueryError::TrailingInput));
+            return Err(ScopeQueryError::TrailingInput);
         }
         Ok(ScopeQuery { alternatives })
     }
@@ -140,7 +137,7 @@ impl ScopeQueryParser<'_> {
     }
 
     /// Parse `OrScopeQ *(orOp OrScopeQ)`.
-    fn parse_or(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
+    fn parse_or(&mut self) -> Result<Vec<Vec<ScopePattern>>, ScopeQueryError> {
         let mut alternatives = vec![self.parse_alternative()?];
         while matches!(self.peek(), Some(ScopeToken::Or)) {
             self.position += 1;
@@ -151,7 +148,7 @@ impl ScopeQueryParser<'_> {
 
     /// Parse one `OrScopeQ`: a parenthesised conjunction or a single pattern.
     /// A `;` after either is a conjunction outside parentheses.
-    fn parse_alternative(&mut self) -> Result<Vec<ScopePattern>, QueryError> {
+    fn parse_alternative(&mut self) -> Result<Vec<ScopePattern>, ScopeQueryError> {
         let alternative = match self.peek() {
             Some(ScopeToken::Open) => {
                 self.position += 1;
@@ -160,13 +157,13 @@ impl ScopeQueryParser<'_> {
             Some(ScopeToken::Pattern(_) | ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => vec![self.parse_pattern()?],
         };
         match self.peek() {
-            Some(ScopeToken::And) => Err(QueryError::ScopePatternInvalid(ScopeQueryError::UngroupedConjunction)),
+            Some(ScopeToken::And) => Err(ScopeQueryError::UngroupedConjunction),
             Some(ScopeToken::Pattern(_) | ScopeToken::Or | ScopeToken::Open | ScopeToken::Close) | None => Ok(alternative),
         }
     }
 
     /// Parse `ScopeQ *(andOp ScopeQ) ")"` after its opening parenthesis.
-    fn parse_group(&mut self) -> Result<Vec<ScopePattern>, QueryError> {
+    fn parse_group(&mut self) -> Result<Vec<ScopePattern>, ScopeQueryError> {
         let mut conjunction = vec![self.parse_pattern()?];
         loop {
             match self.peek() {
@@ -178,31 +175,31 @@ impl ScopeQueryParser<'_> {
                     self.position += 1;
                     return Ok(conjunction);
                 }
-                Some(ScopeToken::Or | ScopeToken::Open) => return Err(QueryError::ScopePatternInvalid(ScopeQueryError::NestedGroup)),
-                Some(ScopeToken::Pattern(_)) | None => return Err(QueryError::ScopePatternInvalid(ScopeQueryError::UnclosedGroup)),
+                Some(ScopeToken::Or | ScopeToken::Open) => return Err(ScopeQueryError::NestedGroup),
+                Some(ScopeToken::Pattern(_)) | None => return Err(ScopeQueryError::UnclosedGroup),
             }
         }
     }
 
     /// Parse one `ScopeQ` pattern.
-    fn parse_pattern(&mut self) -> Result<ScopePattern, QueryError> {
+    fn parse_pattern(&mut self) -> Result<ScopePattern, ScopeQueryError> {
         match self.peek() {
             Some(ScopeToken::Pattern(pattern)) => {
                 let pattern = ScopePattern::parse(pattern)?;
                 self.position += 1;
                 Ok(pattern)
             }
-            Some(ScopeToken::Open) => Err(QueryError::ScopePatternInvalid(ScopeQueryError::NestedGroup)),
+            Some(ScopeToken::Open) => Err(ScopeQueryError::NestedGroup),
             // An operator, a `)`, or the end of input where a pattern was expected.
-            Some(ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => Err(QueryError::ScopePatternInvalid(ScopeQueryError::MissingPattern)),
+            Some(ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => Err(ScopeQueryError::MissingPattern),
         }
     }
 }
 
 impl FromStr for ScopeQuery {
-    type Err = QueryError;
+    type Err = ScopeQueryError;
 
-    fn from_str(raw: &str) -> Result<ScopeQuery, QueryError> {
+    fn from_str(raw: &str) -> Result<ScopeQuery, ScopeQueryError> {
         ScopeQuery::parse(raw)
     }
 }
@@ -210,9 +207,9 @@ impl FromStr for ScopeQuery {
 // Parsing lives in `ScopeQuery::parse` so borrowed call sites do not allocate;
 // this adapter exists only because `#[serde(try_from = "String")]` requires it.
 impl TryFrom<String> for ScopeQuery {
-    type Error = QueryError;
+    type Error = ScopeQueryError;
 
-    fn try_from(raw: String) -> Result<ScopeQuery, QueryError> {
+    fn try_from(raw: String) -> Result<ScopeQuery, ScopeQueryError> {
         ScopeQuery::parse(&raw)
     }
 }
@@ -259,6 +256,7 @@ impl From<ScopeQuery> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scope::scope_query_error::ScopeQueryError;
 
     fn shape(raw: &str) -> Vec<Vec<String>> {
         ScopeQuery::parse(raw)
@@ -298,13 +296,7 @@ mod tests {
     #[test]
     fn a_conjunction_outside_parentheses_is_rejected() {
         for raw in ["/A;/B", "/A;/B,/C", "/C,/A;/B", "/A;/B|/C", "(/A;/B);/C", "/A/#;/B"] {
-            assert!(
-                matches!(
-                    ScopeQuery::parse(raw),
-                    Err(QueryError::ScopePatternInvalid(ScopeQueryError::UngroupedConjunction))
-                ),
-                "{raw}"
-            );
+            assert!(matches!(ScopeQuery::parse(raw), Err(ScopeQueryError::UngroupedConjunction)), "{raw}");
         }
     }
 
@@ -313,38 +305,26 @@ mod tests {
     #[test]
     fn a_disjunction_or_a_group_inside_a_group_is_rejected() {
         for raw in ["(/A,/B)", "(/A|/B);/C", "((/A;/B))", "(/A;(/B;/C))"] {
-            assert!(
-                matches!(ScopeQuery::parse(raw), Err(QueryError::ScopePatternInvalid(ScopeQueryError::NestedGroup))),
-                "{raw}"
-            );
+            assert!(matches!(ScopeQuery::parse(raw), Err(ScopeQueryError::NestedGroup)), "{raw}");
         }
     }
 
     #[test]
     fn a_malformed_pattern_is_rejected_when_the_scope_query_is_parsed() {
         let error = ScopeQuery::parse("/A,/1Floor").expect_err("must reject");
-        assert!(matches!(error, QueryError::ScopePatternInvalid(ScopeQueryError::InvalidLevel)), "got {error:?}");
+        assert!(matches!(error, ScopeQueryError::InvalidLevel), "got {error:?}");
     }
 
     #[test]
     fn an_empty_alternative_is_rejected() {
-        assert!(matches!(
-            ScopeQuery::parse("/A,"),
-            Err(QueryError::ScopePatternInvalid(ScopeQueryError::MissingPattern))
-        ));
+        assert!(matches!(ScopeQuery::parse("/A,"), Err(ScopeQueryError::MissingPattern)));
         assert!(ScopeQuery::parse("(/A;;/B)").is_err());
     }
 
     #[test]
     fn an_unclosed_group_and_a_dangling_parenthesis_are_told_apart() {
-        assert!(matches!(
-            ScopeQuery::parse("(/A;/B"),
-            Err(QueryError::ScopePatternInvalid(ScopeQueryError::UnclosedGroup))
-        ));
-        assert!(matches!(
-            ScopeQuery::parse("/A)"),
-            Err(QueryError::ScopePatternInvalid(ScopeQueryError::TrailingInput))
-        ));
+        assert!(matches!(ScopeQuery::parse("(/A;/B"), Err(ScopeQueryError::UnclosedGroup)));
+        assert!(matches!(ScopeQuery::parse("/A)"), Err(ScopeQueryError::TrailingInput)));
     }
 
     #[test]

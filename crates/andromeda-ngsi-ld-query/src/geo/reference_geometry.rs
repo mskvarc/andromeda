@@ -10,7 +10,10 @@
 //! built it. Coordinates given as JSON were counted with the request, and are
 //! read into a geometry when the request is decoded.
 
-use crate::{geo::reference_budget::admit_reference_geometry, query_error::QueryError};
+use crate::geo::{
+    geo_query_error::GeoQueryError,
+    reference_budget::{ReferenceBudgetError, admit_reference_geometry},
+};
 use andromeda_ngsi_ld_geometry::{
     coordinates_member::CoordinatesMember,
     geometry::Geometry,
@@ -43,12 +46,12 @@ impl ReferenceGeometry {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ReferenceGeometryTooComplex`] for a geometry past
-    /// `limits` (clause 5.5.6), [`QueryError::GeoCoordinatesInvalid`] for
+    /// Returns [`GeoQueryError::ReferenceBudget`] for a geometry past
+    /// `limits` (clause 5.5.6), [`GeoQueryError::InvalidCoordinates`] for
     /// encoded coordinates that are no JSON text, and
-    /// [`QueryError::ReferenceGeometry`] for coordinates that do not form the
+    /// [`GeoQueryError::InvalidReferenceGeometry`] for coordinates that do not form the
     /// named geometry.
-    pub fn admit(&self, limits: GeometryCensusLimits) -> Result<Geometry, QueryError> {
+    pub fn admit(&self, limits: GeometryCensusLimits) -> Result<Geometry, GeoQueryError> {
         match self {
             ReferenceGeometry::Read(geometry) => {
                 admit_reference_geometry(geometry, limits)?;
@@ -57,11 +60,11 @@ impl ReferenceGeometry {
             }
             ReferenceGeometry::Encoded { geometry_type, coordinates } => {
                 text_coordinates_census(coordinates, limits).map_err(|refusal| match refusal {
-                    GeometryCensusError::OverLimit(over) => QueryError::ReferenceGeometryTooComplex { over },
-                    GeometryCensusError::Syntax(source) => QueryError::GeoCoordinatesInvalid(source),
+                    GeometryCensusError::OverLimit(over) => GeoQueryError::ReferenceBudget(ReferenceBudgetError { over }),
+                    GeometryCensusError::Syntax(source) => GeoQueryError::InvalidCoordinates(source),
                 })?;
-                let written = WrittenCoordinates::from_text(coordinates).map_err(QueryError::GeoCoordinatesInvalid)?;
-                Ok(written.read_as(*geometry_type)?)
+                let written = WrittenCoordinates::from_text(coordinates).map_err(GeoQueryError::InvalidCoordinates)?;
+                written.read_as(*geometry_type).map_err(GeoQueryError::InvalidReferenceGeometry)
             }
         }
     }
@@ -113,7 +116,7 @@ pub enum ReferenceCoordinates<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{geo::reference_geometry::ReferenceGeometry, query_error::QueryError};
+    use crate::geo::{geo_query_error::GeoQueryError, reference_budget::ReferenceBudgetError, reference_geometry::ReferenceGeometry};
     use andromeda_ngsi_ld_geometry::{
         geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit},
         geometry_type::GeometryType,
@@ -164,9 +167,9 @@ mod tests {
         assert!(
             matches!(
                 refused,
-                QueryError::ReferenceGeometryTooComplex {
+                GeoQueryError::ReferenceBudget(ReferenceBudgetError {
                     over: GeometryOverLimit::Positions { .. }
-                }
+                })
             ),
             "{refused:?}"
         );
@@ -175,9 +178,9 @@ mod tests {
         assert!(
             matches!(
                 refused,
-                QueryError::ReferenceGeometryTooComplex {
+                GeoQueryError::ReferenceBudget(ReferenceBudgetError {
                     over: GeometryOverLimit::Values { .. }
-                }
+                })
             ),
             "{refused:?}"
         );
@@ -186,9 +189,9 @@ mod tests {
     #[test]
     fn encoded_coordinates_that_are_no_json_or_no_geometry_are_refused() {
         let refused = encoded("[[0, 0], ").admit(limits(4)).expect_err("no JSON text");
-        assert!(matches!(refused, QueryError::GeoCoordinatesInvalid(_)), "{refused:?}");
+        assert!(matches!(refused, GeoQueryError::InvalidCoordinates(_)), "{refused:?}");
         let refused = encoded("[[0, 0]]").admit(limits(4)).expect_err("one position traces no line");
-        assert!(matches!(refused, QueryError::ReferenceGeometry(_)), "{refused:?}");
+        assert!(matches!(refused, GeoQueryError::InvalidReferenceGeometry(_)), "{refused:?}");
     }
 
     #[test]
@@ -200,7 +203,7 @@ mod tests {
                 .expect("a line"),
         );
         assert!(read.admit(limits(5)).is_ok());
-        assert!(matches!(read.admit(limits(4)), Err(QueryError::ReferenceGeometryTooComplex { .. })));
+        assert!(matches!(read.admit(limits(4)), Err(GeoQueryError::ReferenceBudget(_))));
     }
 
     /// Table 5.2.13-1: the members are written back as they arrived.

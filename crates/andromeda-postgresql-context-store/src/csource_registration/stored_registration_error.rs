@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_lexicon::{
     scope::path::ScopePathError,
     tenant::InvalidTenantName,
 };
-use andromeda_ngsi_ld_query::query_error::QueryError;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelectorError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use mediatype::MediaTypeError;
@@ -43,7 +43,7 @@ pub enum StoredRegistrationError {
     Information(#[from] StoredInformationError),
     /// One `dataset_ids` element is not a dataset selector.
     #[error("a stored registration datasetId is not a dataset selector: {0}")]
-    DatasetId(#[source] Box<QueryError>),
+    DatasetId(#[source] Box<DatasetSelectorError>),
     /// One `scope` label path does not convert back to a scope.
     #[error("a stored registration scope label path is not a scope: {0}")]
     Scope(#[source] ScopePathError),

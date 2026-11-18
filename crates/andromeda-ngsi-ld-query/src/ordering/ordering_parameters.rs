@@ -3,16 +3,10 @@
 use crate::{
     comma_separated_list::{ListedMemberKind, parse_listed},
     defined_token::deserialize_optional_token,
-    ordering::{
-        icu_collation::IcuCollation,
-        ordering_geometry::{OrderingGeometry, OrderingGeometryError},
-        written_ordering_term::WrittenOrderingTerm,
-    },
-    query_error::QueryError,
+    ordering::{icu_collation::IcuCollation, ordering_error::OrderingError, ordering_geometry::OrderingGeometry, written_ordering_term::WrittenOrderingTerm},
 };
 use andromeda_ngsi_ld_geometry::{geometry_type::GeometryType, query_coordinates::QueryCoordinates};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeserializeError};
-use thiserror::Error;
 use typed_builder::TypedBuilder;
 
 /// Parameters that order entity results (ETSI GS CIM 009 v1.9.1 clause 5.2.43).
@@ -29,17 +23,6 @@ pub struct OrderingParameters {
     /// Members and directions that define the result order.
     #[serde(rename = "orderBy", default)]
     pub order_by: Vec<WrittenOrderingTerm>,
-}
-
-/// A malformed ordering definition, whichever binding carried it.
-#[derive(Debug, Error)]
-pub enum OrderingParametersError {
-    /// The reference geometry is malformed or was sent without its coordinates.
-    #[error(transparent)]
-    Geometry(#[from] OrderingGeometryError),
-    /// A distance term names no reference geometry to measure from.
-    #[error(transparent)]
-    Query(#[from] QueryError),
 }
 
 /// The `ordering` member of a clause 5.2.23 Query body (Table 5.2.43-1), whose
@@ -62,9 +45,9 @@ pub struct OrderingBody {
 }
 
 impl TryFrom<OrderingBody> for OrderingParameters {
-    type Error = OrderingParametersError;
+    type Error = OrderingError;
 
-    fn try_from(body: OrderingBody) -> Result<OrderingParameters, OrderingParametersError> {
+    fn try_from(body: OrderingBody) -> Result<OrderingParameters, OrderingError> {
         OrderingParameters::assemble(body.collation, body.coordinates, body.geometry, body.order_by)
     }
 }
@@ -109,21 +92,21 @@ impl OrderingParameters {
         coordinates: Option<QueryCoordinates>,
         geometry_type: Option<GeometryType>,
         order_by: Vec<WrittenOrderingTerm>,
-    ) -> Result<OrderingParameters, OrderingParametersError> {
+    ) -> Result<OrderingParameters, OrderingError> {
         let geometry = match (coordinates, geometry_type) {
             (None, None) => None,
-            (None, Some(_)) => return Err(OrderingGeometryError::WithoutCoordinates.into()),
+            (None, Some(_)) => return Err(OrderingError::GeometryWithoutCoordinates),
             (Some(coordinates), geometry_type) => {
                 let geometry_type = geometry_type.unwrap_or(GeometryType::Point);
-                let written = coordinates.into_written().map_err(OrderingGeometryError::Coordinates)?;
-                let geometry = written.read_as(geometry_type).map_err(OrderingGeometryError::Geometry)?;
+                let written = coordinates.into_written().map_err(OrderingError::InvalidCoordinates)?;
+                let geometry = written.read_as(geometry_type).map_err(OrderingError::InvalidReferenceGeometry)?;
                 Some(OrderingGeometry::new(geometry))
             }
         };
         // Table 6.4.3.2-1 makes `orderFrom` mandatory when `orderBy` orders by
         // distance, so a geo-query's geometry never stands in for it.
         if geometry.is_none() && order_by.iter().any(|term| term.direction.is_distance()) {
-            return Err(QueryError::DistanceOrderWithoutReference.into());
+            return Err(OrderingError::DistanceWithoutReference);
         }
         Ok(OrderingParameters { collation, geometry, order_by })
     }

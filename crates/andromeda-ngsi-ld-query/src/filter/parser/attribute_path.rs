@@ -12,18 +12,16 @@
 //! follow it, so a comparison is written after the closing brace
 //! (`sensor{humidity}==40`, EXAMPLE 13).
 
-use crate::{
-    filter::{
-        attribute_path::AttributePath,
-        expectation::{Expectation, Found},
-        parser::{
-            lexer::Token,
-            token_cursor::{TokenCursor, attribute_name},
-            value_path::{check_depth, parse_value_path},
-        },
-        quoting::Quoting,
+use crate::filter::{
+    attribute_path::AttributePath,
+    expectation::{Expectation, Found},
+    filter_error::FilterError,
+    parser::{
+        lexer::Token,
+        token_cursor::{TokenCursor, attribute_name},
+        value_path::{check_depth, parse_value_path},
     },
-    query_error::QueryError,
+    quoting::Quoting,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
@@ -36,11 +34,11 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QExpected`] when a hop is empty, left unclosed or
+/// Returns [`FilterError::Expected`] when a hop is empty, left unclosed or
 /// holds anything after its path (a comparison written inside the braces), and
 /// the errors of [`parse_value_path`], the entity-type guard and
 /// [`check_depth`].
-pub fn parse_linked_entity_relation<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<AttributePath, QueryError> {
+pub fn parse_linked_entity_relation<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<AttributePath, FilterError> {
     if cursor.peek() != Some(&Token::LBrace) {
         return parse_value_path(cursor, leading, depth).map(AttributePath::Local);
     }
@@ -90,11 +88,11 @@ struct HopGuard<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QExpected`] when a type name is missing, when the
+/// Returns [`FilterError::Expected`] when a type name is missing, when the
 /// guard's terminating colon is absent, or when a bare last name carries two
-/// colons and so is ambiguous, and [`QueryError::AttributeNameInvalid`] when a
+/// colons and so is ambiguous, and [`FilterError::InvalidAttributeName`] when a
 /// type name is outside the clause 4.6.2 grammar.
-fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, QueryError> {
+fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, FilterError> {
     if !opens_guard(cursor) {
         return Ok(HopGuard {
             types: Vec::new(),
@@ -134,11 +132,11 @@ fn opens_guard(cursor: &TokenCursor<'_>) -> bool {
 /// a bare identifier can have the colon glued to it, because a quoted string
 /// ends at its closing quote, and a quoted name is an expanded IRI, whose
 /// own colons are part of the IRI rather than the grammar.
-fn parse_guard_name<'a>(cursor: &mut TokenCursor<'a>) -> Result<(&'a str, Quoting), QueryError> {
+fn parse_guard_name<'a>(cursor: &mut TokenCursor<'a>) -> Result<(&'a str, Quoting), FilterError> {
     match cursor.advance() {
         Some(Token::Ident(name)) => Ok((name.as_str(), Quoting::Bare)),
         Some(Token::QuotedStr(name)) => Ok((name.as_str(), Quoting::Quoted)),
-        other => Err(QueryError::QExpected {
+        other => Err(FilterError::Expected {
             expected: Expectation::EntityType,
             found: Found::of(other),
         }),
@@ -167,7 +165,7 @@ fn parse_guard_name<'a>(cursor: &mut TokenCursor<'a>) -> Result<(&'a str, Quotin
 /// decides neither: its `EntityType` production admits no colon at all,
 /// while real filters do carry prefixed names. Quoting the type says which
 /// was meant, which is what the error asks for.
-fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoting: Quoting) -> Result<Option<(&'a str, Option<&'a str>)>, QueryError> {
+fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoting: Quoting) -> Result<Option<(&'a str, Option<&'a str>)>, FilterError> {
     if cursor.peek() == Some(&Token::Comma) {
         return Ok(None);
     }
@@ -175,7 +173,7 @@ fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoti
         && let Some((last, rest)) = name.split_once(':')
     {
         if rest.contains(':') {
-            return Err(QueryError::QAmbiguousTypeGuard);
+            return Err(FilterError::AmbiguousTypeGuard);
         }
         let inner_leading = (!rest.is_empty()).then_some(rest);
         return Ok(Some((last, inner_leading)));
@@ -187,7 +185,7 @@ fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoti
         let inner_leading = (!rest.is_empty()).then_some(rest);
         return Ok(Some((name, inner_leading)));
     }
-    Err(QueryError::QExpected {
+    Err(FilterError::Expected {
         expected: Expectation::GuardTerminator,
         found: cursor.found(),
     })

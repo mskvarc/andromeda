@@ -1,15 +1,13 @@
 //! How a temporal query orders the entities it matched (clause 5.7.4).
 
-use crate::{
-    ordering::{
-        icu_collation::IcuCollation,
-        ordering_direction::OrderingDirection,
-        ordering_parameters::OrderingParameters,
-        sort_direction::SortDirection,
-        written_ordering_target::WrittenOrderingTarget,
-        written_ordering_term::WrittenOrderingTerm,
-    },
-    query_error::QueryError,
+use crate::ordering::{
+    icu_collation::IcuCollation,
+    ordering_direction::OrderingDirection,
+    ordering_error::OrderingError,
+    ordering_parameters::OrderingParameters,
+    sort_direction::SortDirection,
+    written_ordering_target::WrittenOrderingTarget,
+    written_ordering_term::WrittenOrderingTerm,
 };
 use typed_builder::TypedBuilder;
 
@@ -51,13 +49,13 @@ impl TemporalEntityOrdering {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TemporalOrderingMember`] when a term names an
+    /// Returns [`OrderingError::TemporalMember`] when a term names an
     /// Entity member other than `id`, which clause 5.7.4.4 makes
-    /// `BadRequestData`, and [`QueryError::TemporalOrderingDirection`] when a
+    /// `BadRequestData`, and [`OrderingError::TemporalDirection`] when a
     /// term sorts by distance: Table 6.18.3.2-1 admits only the sorting styles
     /// `asc` and `desc`, and clause 4.23.1 limits sorting by distance to
     /// `GeoProperties`, which the `id` member is not.
-    pub fn of_parameters(ordering: &OrderingParameters) -> Result<Option<TemporalEntityOrdering>, QueryError> {
+    pub fn of_parameters(ordering: &OrderingParameters) -> Result<Option<TemporalEntityOrdering>, OrderingError> {
         for term in &ordering.order_by {
             check_term(term)?;
         }
@@ -73,7 +71,7 @@ impl TemporalEntityOrdering {
 }
 
 /// Reject an ordering term clause 5.7.4.3 does not admit on a temporal query.
-fn check_term(term: &WrittenOrderingTerm) -> Result<(), QueryError> {
+fn check_term(term: &WrittenOrderingTerm) -> Result<(), OrderingError> {
     match WrittenOrderingTarget::classify(&term.path) {
         WrittenOrderingTarget::Id => {}
         WrittenOrderingTarget::Type
@@ -82,20 +80,19 @@ fn check_term(term: &WrittenOrderingTerm) -> Result<(), QueryError> {
         | WrittenOrderingTarget::ModifiedAt
         | WrittenOrderingTarget::Attribute(_) => {
             // clone: the ordering parameters are borrowed and the refusal outlives them
-            return Err(QueryError::TemporalOrderingMember(Box::new(term.path.clone())));
+            return Err(OrderingError::TemporalMember(Box::new(term.path.clone())));
         }
     }
     match term.direction {
         OrderingDirection::Asc | OrderingDirection::Desc => Ok(()),
-        direction @ (OrderingDirection::DistAsc | OrderingDirection::DistDesc) => Err(QueryError::TemporalOrderingDirection(direction)),
+        direction @ (OrderingDirection::DistAsc | OrderingDirection::DistDesc) => Err(OrderingError::TemporalDirection(direction)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        ordering::{icu_collation::IcuCollation, ordering_parameters::OrderingParameters, sort_direction::SortDirection},
-        query_error::QueryError,
+        ordering::{icu_collation::IcuCollation, ordering_error::OrderingError, ordering_parameters::OrderingParameters, sort_direction::SortDirection},
         temporal::ordering::TemporalEntityOrdering,
     };
     use pretty_assertions::assert_eq;
@@ -153,7 +150,7 @@ mod tests {
     fn a_member_other_than_id_is_rejected() {
         for rejected in ["type", "scope", "speed"] {
             let error = TemporalEntityOrdering::of_parameters(&parameters(rejected)).expect_err("only id may order a temporal query");
-            assert!(matches!(error, QueryError::TemporalOrderingMember(_)), "{rejected}: got {error:?}");
+            assert!(matches!(error, OrderingError::TemporalMember(_)), "{rejected}: got {error:?}");
         }
     }
 
@@ -165,7 +162,7 @@ mod tests {
             let ordering: OrderingParameters =
                 serde_json::from_value(serde_json::json!({"orderBy": rejected, "orderFrom": "[8, 40]"})).expect("a distance ordering with its reference");
             let error = TemporalEntityOrdering::of_parameters(&ordering).expect_err("a distance ordering has no GeoProperty to measure");
-            assert!(matches!(error, QueryError::TemporalOrderingDirection(_)), "{rejected}: got {error:?}");
+            assert!(matches!(error, OrderingError::TemporalDirection(_)), "{rejected}: got {error:?}");
         }
     }
 
@@ -184,6 +181,6 @@ mod tests {
     #[test]
     fn a_later_term_naming_another_member_is_still_rejected() {
         let error = TemporalEntityOrdering::of_parameters(&parameters("id,speed")).expect_err("every term is checked");
-        assert!(matches!(error, QueryError::TemporalOrderingMember(_)), "got {error:?}");
+        assert!(matches!(error, OrderingError::TemporalMember(_)), "got {error:?}");
     }
 }

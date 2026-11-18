@@ -63,7 +63,10 @@ mod tests {
     use crate::{parameter_failure::classify_parameter_error, query_failure::classify_query_error};
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_query::filter::{Filter, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+        query_error::QueryError,
+    };
     use andromeda_ngsi_ld_request::{error::ParameterError, pagination::page_size::PageSizeExceeded};
     use pretty_assertions::assert_eq;
     use std::num::NonZeroUsize;
@@ -91,16 +94,17 @@ mod tests {
             NgsiLdErrorType::BadRequestData,
         ];
         for (refusal, error_type) in [too_many, too_deep, tag].into_iter().zip(expected) {
+            let refusal = QueryError::from(refusal);
             let direct = classify_query_error(&refusal);
             let wrapped = classify_parameter_error(&ParameterError::Query(refusal));
             assert_eq!(wrapped, direct);
             assert_eq!(wrapped.error_type(), error_type);
         }
-        let comparisons = classify_parameter_error(&ParameterError::Query(
+        let comparisons = classify_parameter_error(&ParameterError::Query(QueryError::from(
             limits
                 .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
                 .expect_err("too many comparisons"),
-        ));
+        )));
         assert!(comparisons.detail().contains("3 comparisons"), "{}", comparisons.detail());
     }
 

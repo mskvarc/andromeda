@@ -26,9 +26,10 @@ use andromeda_ngsi_ld_query::{
         compilation::{AdmittedFilter, compile_q_filter},
         expansion::{expand_attribute_names, expand_csf_expr},
     },
+    geo::geo_query_error::GeoQueryError,
     query_error::QueryError,
     term_expander::TermExpander,
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression},
+    type_selection::expansion::expand_type_expression,
 };
 use std::mem;
 
@@ -43,7 +44,7 @@ async fn expand_selector_types(selectors: &mut [EntitySelector], expander: &impl
     for selector in selectors {
         selector.type_ = expand_type_expression(&selector.type_, expander)
             .await
-            .and_then(ExpandedTypeSelection::into_raw)?;
+            .and_then(|selection| selection.into_raw().map_err(QueryError::from))?;
     }
     Ok(())
 }
@@ -58,8 +59,8 @@ async fn expand_notification(notification: &mut NotificationRequest, expander: &
 
 /// Expand the geoproperty a `geoQ` names.
 async fn expand_geoproperty(geoproperty: &mut NgsiLdReference, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
-    let iri = expander.expand_term(geoproperty.as_ref()).await?;
-    *geoproperty = NgsiLdReference::try_from(iri.to_string()).map_err(QueryError::AttributeNameInvalid)?;
+    let iri = expander.expand_term(geoproperty.as_ref()).await.map_err(QueryError::from)?;
+    *geoproperty = NgsiLdReference::try_from(iri.to_string()).map_err(|refused| QueryError::from(GeoQueryError::InvalidGeoproperty(refused)))?;
     Ok(())
 }
 

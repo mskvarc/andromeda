@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_query::{
     filter::Filter,
     geo::written_geo_query::WrittenGeoQuery,
     pattern::Pattern,
+    query_error::QueryError,
     scope::scope_query::ScopeQuery,
     type_selection::written_type_selection::WrittenTypeSelection,
 };
@@ -113,20 +114,26 @@ impl<'q> Gathered<'q> {
                     })
                     .collect::<Result<_, _>>()?;
             }
-            ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<WrittenTypeSelection>()?),
-            ForwardedParameter::IdPattern => self.selection.id_pattern = Some(Pattern::parse(value)?),
+            ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<WrittenTypeSelection>().map_err(QueryError::from)?),
+            ForwardedParameter::IdPattern => self.selection.id_pattern = Some(Pattern::parse(value).map_err(QueryError::from)?),
             ForwardedParameter::Limit | ForwardedParameter::Offset | ForwardedParameter::Options => self.uri.push((parameter, value)),
             ForwardedParameter::Attrs => self.attrs = Some(attribute_names(value)?),
-            ForwardedParameter::Q => self.q = Some(value.parse::<Filter>()?),
+            ForwardedParameter::Q => self.q = Some(value.parse::<Filter>().map_err(QueryError::from)?),
             ForwardedParameter::JsonKeys => self.json_keys = Some(attribute_names(value)?),
             ForwardedParameter::Georel => self.geo.georel = Some(value),
             ForwardedParameter::Geometry => self.geo.geometry = Some(value),
             ForwardedParameter::Coordinates => self.geo.coordinates = Some(value),
             ForwardedParameter::Geoproperty => self.geo.geoproperty = Some(forwarded_name::<NgsiLdReference>(value)?),
-            ForwardedParameter::ScopeQ => self.scope_q = Some(value.parse::<ScopeQuery>()?),
-            ForwardedParameter::Csf => self.csf = Some(value.parse::<Filter>()?),
+            ForwardedParameter::ScopeQ => self.scope_q = Some(value.parse::<ScopeQuery>().map_err(QueryError::from)?),
+            ForwardedParameter::Csf => self.csf = Some(value.parse::<Filter>().map_err(QueryError::from)?),
             ForwardedParameter::DatasetId => {
-                self.dataset_id = Some(value.split(',').map(DatasetSelector::parse).collect::<Result<_, _>>()?);
+                self.dataset_id = Some(
+                    value
+                        .split(',')
+                        .map(DatasetSelector::parse)
+                        .collect::<Result<_, _>>()
+                        .map_err(QueryError::from)?,
+                );
             }
             ForwardedParameter::Lang => self.lang = Some(value.parse::<LanguageFilter>().map_err(FederationInvariant::ForwardedLanguageFilter)?),
             ForwardedParameter::Join => self.join = Some(value.parse::<JoinMode>().map_err(FederationInvariant::ForwardedJoin)?),

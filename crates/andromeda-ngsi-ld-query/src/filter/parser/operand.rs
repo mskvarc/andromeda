@@ -15,12 +15,12 @@ use crate::{
     filter::{
         equality_value::EqualityValue,
         expectation::{Expectation, Found},
+        filter_error::FilterError,
         parser::{lexer::Token, quoted_string::decode_quoted_str, token_cursor::TokenCursor},
         quoting::Quoting,
         scalar::Scalar,
     },
     pattern::Pattern,
-    query_error::QueryError,
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, date_time::NgsiLdDateTime, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_number::JsonNumber;
@@ -30,10 +30,10 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QExpected`] when no operand stands where one is
+/// Returns [`FilterError::Expected`] when no operand stands where one is
 /// required, and one of the literal-typing variants when an operand satisfies
 /// no clause 4.9 production.
-pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<EqualityValue, QueryError> {
+pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<EqualityValue, FilterError> {
     if cursor.peek_ahead(1) == Some(&Token::Dots) {
         let min = parse_comparable_value(cursor)?;
         cursor.advance();
@@ -63,15 +63,15 @@ pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<EqualityValue
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QExpected`] when no operand stands where one is
-/// required, [`QueryError::QInvalidNumber`] for a malformed `Number`, and
-/// [`QueryError::QInvalidDateTime`], [`QueryError::QInvalidDate`] or
-/// [`QueryError::QInvalidTime`] for a bare literal written in a clause 4.6.3
+/// Returns [`FilterError::Expected`] when no operand stands where one is
+/// required, [`FilterError::InvalidNumber`] for a malformed `Number`, and
+/// [`FilterError::InvalidDateTime`], [`FilterError::InvalidDate`] or
+/// [`FilterError::InvalidTime`] for a bare literal written in a clause 4.6.3
 /// form it does not satisfy.
-fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
+fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, FilterError> {
     match cursor.advance() {
         Some(Token::NumberLit(literal)) => {
-            let number = literal.parse::<JsonNumber>().map_err(QueryError::QInvalidNumber)?;
+            let number = literal.parse::<JsonNumber>().map_err(FilterError::InvalidNumber)?;
             Ok(Scalar::Number(number))
         }
         // Clause 4.9 `ComparableValue = Number / quotedStr / dateTime / date /
@@ -81,7 +81,7 @@ fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
         Some(Token::Ident(literal)) => Scalar::from_literal(literal, Quoting::Bare),
         Some(Token::True) => Ok(Scalar::Bool(true)),
         Some(Token::False) => Ok(Scalar::Bool(false)),
-        other => Err(QueryError::QExpected {
+        other => Err(FilterError::Expected {
             expected: Expectation::Value,
             found: Found::of(other),
         }),
@@ -97,13 +97,13 @@ fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QExpected`] naming [`Expectation::ComparableValue`]
+/// Returns [`FilterError::Expected`] naming [`Expectation::ComparableValue`]
 /// when the operand is a boolean or a bare word, and the [`parse_scalar`]
 /// failures otherwise.
-pub fn parse_comparable_value(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
+pub fn parse_comparable_value(cursor: &mut TokenCursor<'_>) -> Result<Scalar, FilterError> {
     let token = cursor.peek();
     let scalar = parse_scalar(cursor)?;
-    let refused = || QueryError::QExpected {
+    let refused = || FilterError::Expected {
         expected: Expectation::ComparableValue,
         found: Found::of(token),
     };
@@ -121,18 +121,18 @@ pub fn parse_comparable_value(cursor: &mut TokenCursor<'_>) -> Result<Scalar, Qu
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QExpected`] when no operand stands where one is
+/// Returns [`FilterError::Expected`] when no operand stands where one is
 /// required, and the [`Pattern::parse`] failures when the operand is not a
 /// regular expression both of the broker's engines run.
-pub fn parse_pattern_string(cursor: &mut TokenCursor<'_>) -> Result<Pattern, QueryError> {
+pub fn parse_pattern_string(cursor: &mut TokenCursor<'_>) -> Result<Pattern, FilterError> {
     match cursor.advance() {
         // Clause 4.9 `QueryTerm =/ Attribute patternOp RegExp`: `RegExp` is its
         // own terminal, "a regular expression as mandated by IEEE 1003.2", not a
         // `quotedStr`. Its metacharacters include the backslash, so the body is
         // the pattern as written. Resolving RFC 8259 escapes here would refuse
         // `^example\.com$`.
-        Some(Token::QuotedStr(literal) | Token::Ident(literal)) => Pattern::parse(literal),
-        other => Err(QueryError::QExpected {
+        Some(Token::QuotedStr(literal) | Token::Ident(literal)) => Pattern::parse(literal).map_err(FilterError::from),
+        other => Err(FilterError::Expected {
             expected: Expectation::PatternString,
             found: Found::of(other),
         }),
@@ -147,34 +147,34 @@ pub fn parse_pattern_string(cursor: &mut TokenCursor<'_>) -> Result<Pattern, Que
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QInvalidDateTime`] when `raw` is not a clause 4.6.3
+/// Returns [`FilterError::InvalidDateTime`] when `raw` is not a clause 4.6.3
 /// `DateTime` (a numeric zone offset in place of the mandatory `Z`, or a
 /// fraction longer than six digits).
-pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
-    raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get).map_err(QueryError::QInvalidDateTime)
+pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, FilterError> {
+    raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get).map_err(FilterError::InvalidDateTime)
 }
 
 /// Parse a clause 4.6.3 `Date` operand.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QInvalidDate`] when `raw` is not a clause 4.6.3
+/// Returns [`FilterError::InvalidDate`] when `raw` is not a clause 4.6.3
 /// `Date`, whose components "shall appear in the string; reduced
 /// representations are not permitted".
-pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
-    raw.parse::<NgsiLdDate>().map(NgsiLdDate::get).map_err(QueryError::QInvalidDate)
+pub fn parse_date(raw: &str) -> Result<NaiveDate, FilterError> {
+    raw.parse::<NgsiLdDate>().map(NgsiLdDate::get).map_err(FilterError::InvalidDate)
 }
 
 /// Parse a clause 4.6.3 `Time` operand.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QInvalidTime`] when `raw` is not a clause 4.6.3
+/// Returns [`FilterError::InvalidTime`] when `raw` is not a clause 4.6.3
 /// `Time` (one written without the mandatory `Z` designator, or one carrying
 /// a numeric offset, since the clause states that the string
 /// "shall not contain expressions of the difference between local time and UTC").
-pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
-    raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(QueryError::QInvalidTime)
+pub fn parse_time(raw: &str) -> Result<NaiveTime, FilterError> {
+    raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(FilterError::InvalidTime)
 }
 
 #[cfg(test)]

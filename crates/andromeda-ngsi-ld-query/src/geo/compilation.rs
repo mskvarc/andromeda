@@ -1,11 +1,11 @@
 //! Compilation of the geo query parameter group into a [`CompiledGeoQuery`].
 
 use crate::{
-    filter::expansion::expanded_attribute_name,
-    geo::{admission::GeoQueryAdmission, compiled_geo_query::CompiledGeoQuery, written_geo_query::WrittenGeoQuery},
+    geo::{admission::GeoQueryAdmission, compiled_geo_query::CompiledGeoQuery, geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
     query_error::QueryError,
     term_expander::TermExpander,
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::compact::properties;
 
 /// Compile geo query parameters into a [`CompiledGeoQuery`].
@@ -20,11 +20,11 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::NearDistanceBand`] for a distance band `admission`
+/// Returns [`GeoQueryError::NearDistanceBand`] for a distance band `admission`
 /// refuses, the refusal of [`ReferenceGeometry::admit`](crate::geo::reference_geometry::ReferenceGeometry::admit)
 /// for a reference geometry past the limits or encoded coordinates that are no
 /// geometry, and [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`]
-/// or [`QueryError::AttributeNameInvalid`] when the `geoproperty` term does
+/// or [`GeoQueryError::InvalidGeoproperty`] when the `geoproperty` term does
 /// not expand to a usable attribute name.
 pub async fn compile_geo_query(
     input: Option<&WrittenGeoQuery>,
@@ -34,20 +34,31 @@ pub async fn compile_geo_query(
     let Some(input) = input else {
         return Ok(None);
     };
-    admission.near_band.admit(&input.georel)?;
-    let geometry = input.reference.admit(admission.limits)?;
+    admission.near_band.admit(&input.georel).map_err(QueryError::from)?;
+    let geometry = input.reference.admit(admission.limits).map_err(QueryError::from)?;
     let geoproperty = input.geoproperty.as_ref().map_or(properties::LOCATION, AsRef::<str>::as_ref);
     Ok(Some(CompiledGeoQuery {
         georel: input.georel.clone(),
         geometry,
-        geoproperty: expanded_attribute_name(&expander.expand_term(geoproperty).await?)?,
+        geoproperty: expander
+            .expand_term(geoproperty)
+            .await?
+            .as_str()
+            .parse::<AttributeName>()
+            .map_err(GeoQueryError::InvalidGeoproperty)?,
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, near_distance_band::NearDistanceBand, written_geo_query::WrittenGeoQuery},
+        geo::{
+            admission::GeoQueryAdmission,
+            compilation::compile_geo_query,
+            geo_query_error::GeoQueryError,
+            near_distance_band::NearDistanceBand,
+            written_geo_query::WrittenGeoQuery,
+        },
         namespace_expander::EXAMPLE_NAMESPACE_TYPED,
         query_error::QueryError,
     };
@@ -94,7 +105,7 @@ mod tests {
         .expect("valid decoded geo query");
         assert!(matches!(
             compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused)).await,
-            Err(QueryError::NearDistanceBand)
+            Err(QueryError::GeoQuery(GeoQueryError::NearDistanceBand))
         ));
         assert!(
             compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Admitted))

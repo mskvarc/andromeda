@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::{
     filter::{
         compiled_filter::CompiledFilter,
         expansion::expand_q_expr,
+        filter_error::FilterError,
         json_key_attributes::JsonKeyAttributes,
         language_matching::LanguageMatching,
         parser::parse,
@@ -45,7 +46,10 @@ fn hundred_terms() -> String {
 enum SetupError {
     /// The filter does not parse.
     #[error("the filter does not parse")]
-    Filter(#[from] QueryError),
+    Filter(#[from] FilterError),
+    /// A term of the filter does not expand through the `@context`.
+    #[error("the filter does not expand")]
+    Expansion(#[from] QueryError),
     /// The runtime the expansion awaits on cannot be built.
     #[error("the runtime cannot be built")]
     Runtime(#[from] io::Error),

@@ -1,11 +1,17 @@
 //! The `aggrPeriodDuration` bucket width of an aggregated temporal query
 //! (clause 4.5.19).
 
-use crate::{
-    query_error::QueryError,
-    temporal::{period_grid::PeriodGrid, window::TimeInterval},
-};
-use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;
+use crate::temporal::{period_grid::PeriodGrid, window::TimeInterval};
+use andromeda_ngsi_ld_lexicon::duration::{Iso8601Duration, Iso8601DurationError};
+use thiserror::Error;
+
+/// Why an `aggrPeriodDuration` value is refused.
+#[derive(Debug, Error)]
+pub enum AggregationPeriodError {
+    /// The value is neither empty nor a valid ISO 8601 duration.
+    #[error("invalid aggrPeriodDuration value: {0}")]
+    InvalidDuration(#[source] Iso8601DurationError),
+}
 
 /// A non-zero aggregation bucket width.
 ///
@@ -26,14 +32,14 @@ impl AggregationPeriod {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ParamAggrPeriodDurationInvalid`] when the value is
+    /// Returns [`AggregationPeriodError::InvalidDuration`] when the value is
     /// neither one of those inputs nor a valid ISO 8601 duration.
-    pub fn parse(raw: &str) -> Result<Option<AggregationPeriod>, QueryError> {
+    pub fn parse(raw: &str) -> Result<Option<AggregationPeriod>, AggregationPeriodError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return Ok(None);
         }
-        let duration = trimmed.parse::<Iso8601Duration>().map_err(QueryError::ParamAggrPeriodDurationInvalid)?;
+        let duration = trimmed.parse::<Iso8601Duration>().map_err(AggregationPeriodError::InvalidDuration)?;
         if duration.is_zero() {
             return Ok(None);
         }
@@ -133,9 +139,10 @@ pub mod optional {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        query_error::QueryError,
-        temporal::{aggregation_period::AggregationPeriod, period_grid::PeriodGrid, window::TimeInterval},
+    use crate::temporal::{
+        aggregation_period::{AggregationPeriod, AggregationPeriodError},
+        period_grid::PeriodGrid,
+        window::TimeInterval,
     };
     use pretty_assertions::assert_eq;
 
@@ -157,7 +164,7 @@ mod tests {
     #[test]
     fn a_value_that_is_not_an_iso_8601_duration_is_rejected() {
         let error = AggregationPeriod::parse("one hour").expect_err("must reject");
-        assert!(matches!(error, QueryError::ParamAggrPeriodDurationInvalid(_)), "got {error:?}");
+        assert!(matches!(error, AggregationPeriodError::InvalidDuration(_)), "got {error:?}");
     }
 
     #[test]

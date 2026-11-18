@@ -79,7 +79,7 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, S
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the query's
 /// reference geometry has no EWKB spelling the store can bind, and
-/// [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::query_error::QueryError::NearWithoutDistance) when
+/// [`RenderError::Query`] carrying [`GeoQueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::geo::geo_query_error::GeoQueryError::NearWithoutDistance) when
 /// `georel=near` names neither `maxDistance` nor `minDistance`, which clause
 /// 4.10 requires at least one of.
 pub fn condition(
@@ -214,7 +214,7 @@ pub fn restriction(georel: &GeoRel, reference: &Geometry, subject: &StoredGeomet
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
 /// geometry has no EWKB spelling the store can bind, and [`RenderError::Query`]
-/// carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::query_error::QueryError::NearWithoutDistance) when `georel=near` names neither
+/// carrying [`GeoQueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::geo::geo_query_error::GeoQueryError::NearWithoutDistance) when `georel=near` names neither
 /// `maxDistance` nor `minDistance`.
 pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
     let reference = encode(geometry.form())?;
@@ -291,7 +291,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
+        geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing, geo_query_error::GeoQueryError},
         query_error::QueryError,
     };
     use andromeda_postgresql_encoding::ewkb::encode;
@@ -441,7 +441,10 @@ mod tests {
             LOCATION,
         );
         let error = condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect_err("must reject");
-        assert!(matches!(error, RenderError::Query(QueryError::NearWithoutDistance)), "got {error:?}");
+        assert!(
+            matches!(error, RenderError::Query(QueryError::GeoQuery(GeoQueryError::NearWithoutDistance))),
+            "got {error:?}"
+        );
     }
 
     #[test]
@@ -790,12 +793,12 @@ mod tests {
             let geo = point_query(unbounded.clone(), geoproperty);
             let probed = probe(&geo, &WALKED, &names).expect_err("the probe must refuse");
             assert!(
-                matches!(probed, RenderError::Query(QueryError::NearWithoutDistance)),
+                matches!(probed, RenderError::Query(QueryError::GeoQuery(GeoQueryError::NearWithoutDistance))),
                 "{geoproperty}: got {probed:?}"
             );
             let matched = matches(&geo, &UNALIASED, &UNNARROWED, &names).expect_err("the matches must refuse");
             assert!(
-                matches!(matched, RenderError::Query(QueryError::NearWithoutDistance)),
+                matches!(matched, RenderError::Query(QueryError::GeoQuery(GeoQueryError::NearWithoutDistance))),
                 "{geoproperty}: got {matched:?}"
             );
         }

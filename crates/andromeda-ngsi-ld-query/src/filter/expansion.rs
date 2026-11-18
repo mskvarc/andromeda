@@ -16,6 +16,7 @@ use crate::{
     filter::{
         Filter,
         attribute_path::AttributePath,
+        filter_error::FilterError,
         json_key_attributes::JsonKeyAttributes,
         nested_names::NestedNames,
         operand_coercion::OperandCoercion,
@@ -39,7 +40,7 @@ use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 ///
 /// Returns a `Q*` variant of [`QueryError`] when the expression is outside the
 /// clause 4.9 grammar, and [`QueryError::TermExpansion`],
-/// [`QueryError::TermNotAnIri`] or [`QueryError::AttributeNameInvalid`] when a
+/// [`QueryError::TermNotAnIri`] or [`FilterError::InvalidAttributeName`] when a
 /// term does not expand to a usable attribute name.
 #[cfg(test)]
 pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Filter>, QueryError> {
@@ -61,7 +62,7 @@ pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttr
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
+/// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_q_expr(expr: Filter, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Filter, QueryError> {
     let members = NestedNames::Terms(json_keys);
@@ -89,7 +90,7 @@ async fn expand_q_pred(pred: QueryTerm, members: NestedNames<'_>, expander: &imp
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
+/// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_csf_expr(expr: Filter, expander: &impl TermExpander) -> Result<Filter, QueryError> {
     walk_predicates(expr, &|pred| expand_pred_terms(pred, NestedNames::Verbatim, expander)).await
@@ -185,7 +186,7 @@ async fn expand_pred_terms(pred: QueryTerm, members: NestedNames<'_>, expander: 
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`QueryError::AttributeNameInvalid`] when a segment, a hop's Relationship or
+/// [`FilterError::InvalidAttributeName`] when a segment, a hop's Relationship or
 /// one of its guard types does not expand to a usable attribute name.
 pub async fn expand_query_path(path: AttributePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<AttributePath, QueryError> {
     match path {
@@ -231,7 +232,7 @@ where
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`QueryError::AttributeNameInvalid`] when the attribute, one of its
+/// [`FilterError::InvalidAttributeName`] when the attribute, one of its
 /// sub-attributes or one of its compound-value members does not expand to a
 /// usable attribute name.
 pub async fn expand_attr_path(mut path: ValuePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<ValuePath, QueryError> {
@@ -266,8 +267,8 @@ async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpa
     for member in members {
         names.push(match expander.expand_term(member.as_str()).await {
             Ok(iri) => expanded_attribute_name(&iri)?,
-            Err(QueryError::TermExpansion(TermExpansionError::Keyword)) => member.clone(),
-            Err(other) => return Err(other),
+            Err(TermExpansionError::Keyword) => member.clone(),
+            Err(other) => return Err(other.into()),
         });
     }
     Ok(names)
@@ -285,7 +286,7 @@ async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpa
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
+/// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_attribute_names(terms: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeName>, QueryError> {
     let mut expanded_names = Vec::with_capacity(terms.len());
@@ -334,10 +335,10 @@ async fn expand_compare_values<S: BuildHasher + Sync>(
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::AttributeNameInvalid`] when the IRI does not satisfy
+/// Returns [`FilterError::InvalidAttributeName`] when the IRI does not satisfy
 /// the clause 4.6.2 attribute-name grammar.
-pub fn expanded_attribute_name(iri: &IriBuf) -> Result<AttributeName, QueryError> {
-    iri.as_str().parse().map_err(QueryError::AttributeNameInvalid)
+pub fn expanded_attribute_name(iri: &IriBuf) -> Result<AttributeName, FilterError> {
+    iri.as_str().parse().map_err(FilterError::InvalidAttributeName)
 }
 
 #[cfg(test)]
@@ -349,6 +350,7 @@ mod tests {
             display::serialize,
             equality_value::EqualityValue,
             expansion::{apply_expand_values, expand_attribute_names, expand_csf_expr, expand_json_keys, expand_q_expr, expand_q_expression},
+            filter_error::FilterError,
             json_key_attributes::JsonKeyAttributes,
             parser,
             query_term::{OrderingOperator, QueryTerm},
@@ -375,19 +377,13 @@ mod tests {
     struct KeywordTypeExpander;
 
     impl TermExpander for KeywordTypeExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             let keyword = term == "type";
             let delegated = CORE_MEMBER_EXPANDER.expand_term(term);
-            async move {
-                if keyword {
-                    Err(QueryError::TermExpansion(TermExpansionError::Keyword))
-                } else {
-                    delegated.await
-                }
-            }
+            async move { if keyword { Err(TermExpansionError::Keyword) } else { delegated.await } }
         }
 
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             CORE_MEMBER_EXPANDER.expand_type(term)
         }
     }
@@ -608,7 +604,7 @@ mod tests {
             "tier==gold",
         ] {
             let error = parser::parse(q).expect_err("a bare word is no value");
-            assert!(matches!(error, QueryError::QBareWord), "{q}: {error:?}");
+            assert!(matches!(error, FilterError::BareWord), "{q}: {error:?}");
         }
     }
 

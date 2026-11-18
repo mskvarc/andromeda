@@ -8,12 +8,10 @@ use crate::{
         trailing_group::TrailingGroup,
         value_path::ValuePath,
     },
-    ordering::ordering_direction::OrderingDirection,
-    query_error::QueryError,
+    ordering::{ordering_direction::OrderingDirection, ordering_error::OrderingError},
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
-use thiserror::Error;
 
 /// A parsed `orderBy` term. `attr` is the raw request text, before it is classified and expanded into a [`CompiledOrderingTerm`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,51 +23,33 @@ pub struct WrittenOrderingTerm {
     pub direction: OrderingDirection,
 }
 
-/// A malformed clause-4.23 ordering term.
-#[derive(Debug, Error)]
-pub enum OrderTermError {
-    /// The term did not satisfy the clause 4.9 `ValuePath` production that
-    /// clause 4.23.3 delegates its `AttrName` to.
-    #[error("invalid orderBy member: {0}")]
-    Member(#[source] QueryError),
-    /// The term used an unsupported direction.
-    #[error("invalid orderBy direction: {0}")]
-    Direction(#[source] strum::ParseError),
-    /// The term carried the `[*]` language-suppression marker. Clause 4.9 gives `[*]` to a `q` predicate; clause 4.23.3 has no such marker, so an ordering that suppressed language selection would order by a value the clause never says how to choose.
-    #[error("invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy")]
-    LanguageSuppression,
-    /// The term named an RFC 4647 language range. A range selects every key it matches, and clause 4.23.3 gives no rule for which of several selected strings the ordering reads.
-    #[error("invalid orderBy member: a language range selects several languages, and orderBy orders by one value")]
-    LanguageRange,
-}
-
 impl FromStr for WrittenOrderingTerm {
-    type Err = OrderTermError;
+    type Err = OrderingError;
 
-    fn from_str(raw: &str) -> Result<WrittenOrderingTerm, OrderTermError> {
+    fn from_str(raw: &str) -> Result<WrittenOrderingTerm, OrderingError> {
         let raw = raw.trim();
         let (member, direction) = match raw.split_once(';') {
             Some((member, direction)) => {
-                let direction = direction.trim().parse::<OrderingDirection>().map_err(OrderTermError::Direction)?;
+                let direction = direction.trim().parse::<OrderingDirection>().map_err(OrderingError::InvalidDirection)?;
                 (member.trim(), direction)
             }
             None => (raw, OrderingDirection::Asc),
         };
-        let attr = parse_attribute_path(member).map_err(OrderTermError::Member)?;
+        let attr = parse_attribute_path(member).map_err(OrderingError::Path)?;
         if attr.trailing == Some(TrailingGroup::AllLanguages) {
-            return Err(OrderTermError::LanguageSuppression);
+            return Err(OrderingError::LanguageSuppression);
         }
         if attr.target_language().is_some_and(LanguageSelector::is_range) {
-            return Err(OrderTermError::LanguageRange);
+            return Err(OrderingError::LanguageRange);
         }
         Ok(WrittenOrderingTerm { path: attr, direction })
     }
 }
 
 impl TryFrom<String> for WrittenOrderingTerm {
-    type Error = OrderTermError;
+    type Error = OrderingError;
 
-    fn try_from(value: String) -> Result<WrittenOrderingTerm, OrderTermError> {
+    fn try_from(value: String) -> Result<WrittenOrderingTerm, OrderingError> {
         value.parse()
     }
 }
@@ -98,10 +78,7 @@ impl From<WrittenOrderingTerm> for String {
 mod tests {
     use crate::{
         filter::target_language::LanguageSelector,
-        ordering::{
-            ordering_direction::OrderingDirection,
-            written_ordering_term::{OrderTermError, WrittenOrderingTerm},
-        },
+        ordering::{ordering_direction::OrderingDirection, ordering_error::OrderingError, written_ordering_term::WrittenOrderingTerm},
     };
     use pretty_assertions::assert_eq;
 
@@ -145,7 +122,7 @@ mod tests {
     fn a_linked_entity_traversal_is_not_an_ordering_member() {
         for rejected in ["rel{attr}", "rel{Building,Store:attr}"] {
             let error = rejected.parse::<WrittenOrderingTerm>().expect_err("a hop is not an ordering member");
-            assert!(matches!(error, OrderTermError::Member(_)), "{rejected}: got {error:?}");
+            assert!(matches!(error, OrderingError::Path(_)), "{rejected}: got {error:?}");
         }
     }
 
@@ -153,14 +130,14 @@ mod tests {
     #[test]
     fn the_language_suppression_marker_is_not_an_ordering_member() {
         let error = "name[*]".parse::<WrittenOrderingTerm>().expect_err("[*] orders by no defined value");
-        assert!(matches!(error, OrderTermError::LanguageSuppression), "got {error:?}");
+        assert!(matches!(error, OrderingError::LanguageSuppression), "got {error:?}");
     }
 
     /// Clause 4.23.3 orders by one value; a range selects several languages.
     #[test]
     fn a_language_range_is_not_an_ordering_member_but_a_full_tag_is() {
         let error = "name[de-*-DE]".parse::<WrittenOrderingTerm>().expect_err("a range orders by no one value");
-        assert!(matches!(error, OrderTermError::LanguageRange), "got {error:?}");
+        assert!(matches!(error, OrderingError::LanguageRange), "got {error:?}");
         let parsed = term("name[en-GB]");
         assert_eq!(parsed.path.target_language().map(LanguageSelector::as_str), Some("en-GB"));
         assert_eq!(parsed.to_string(), "name[en-GB]");
@@ -192,7 +169,7 @@ mod tests {
         for rejected in ["!name", "!name.observedAt", "!name;asc"] {
             let error = rejected.parse::<WrittenOrderingTerm>().expect_err("a bang prefix is not an ordering member");
             assert!(
-                matches!(error, OrderTermError::Member(_) | OrderTermError::Direction(_)),
+                matches!(error, OrderingError::Path(_) | OrderingError::InvalidDirection(_)),
                 "{rejected}: got {error:?}"
             );
         }
@@ -208,6 +185,6 @@ mod tests {
     #[test]
     fn an_unsupported_direction_is_rejected() {
         let error = "name;sideways".parse::<WrittenOrderingTerm>().expect_err("no such direction");
-        assert!(matches!(error, OrderTermError::Direction(_)), "got {error:?}");
+        assert!(matches!(error, OrderingError::InvalidDirection(_)), "got {error:?}");
     }
 }

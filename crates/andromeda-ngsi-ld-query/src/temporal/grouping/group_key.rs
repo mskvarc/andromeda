@@ -7,8 +7,7 @@
 //! member token is that member, and anything carrying a path is a value key.
 
 use crate::{
-    filter::{parser::value_path::parse_attribute_path, value_path::ValuePath},
-    query_error::QueryError,
+    filter::{filter_error::FilterError, parser::value_path::parse_attribute_path, value_path::ValuePath},
     temporal::grouping::entity_member::EntityMember,
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
@@ -36,7 +35,7 @@ impl GroupKey {
     ///
     /// Returns the [`parse_attribute_path`] failures when the name is not a
     /// well-formed clause 4.9 `ValuePath`.
-    pub fn parse(name: &str) -> Result<GroupKey, QueryError> {
+    pub fn parse(name: &str) -> Result<GroupKey, FilterError> {
         let path = parse_attribute_path(name)?;
         if let Some(member) = path.is_simple().then(|| EntityMember::classify(path.attribute.as_str())).flatten() {
             return Ok(GroupKey::Member(member));

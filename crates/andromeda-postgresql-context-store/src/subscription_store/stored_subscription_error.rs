@@ -8,7 +8,7 @@
 use andromeda_context_commit::subscription_key::SubscriptionKeyOutOfRange;
 use andromeda_http_headers::language::LanguageFilterError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, spec_version::SpecVersionParseError};
-use andromeda_ngsi_ld_query::query_error::QueryError;
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelectorError, filter::filter_error::FilterError, scope::scope_query_error::ScopeQueryError};
 use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use iri_rs::InvalidIri;
 use thiserror::Error;
@@ -24,7 +24,7 @@ pub enum StoredSubscriptionError {
     Key(#[source] SubscriptionKeyOutOfRange),
     /// One `dataset_ids` element is neither a URI nor `@none`.
     #[error("a stored subscription datasetId is neither a URI nor @none: {0}")]
-    DatasetId(#[source] Box<QueryError>),
+    DatasetId(#[source] Box<DatasetSelectorError>),
     /// The `entities` column does not deserialize.
     #[error("the stored subscription entities do not deserialize: {0}")]
     Entities(#[source] serde_json::Error),
@@ -43,16 +43,16 @@ pub enum StoredSubscriptionError {
     NotificationTrigger(#[source] UnknownCompactCode),
     /// The `q` column is not a query.
     #[error("a stored subscription q is not a query: {0}")]
-    Q(#[source] Box<QueryError>),
+    Q(#[source] Box<FilterError>),
     /// The `q_written_members` column is not a query.
     #[error("a stored subscription q, as its members were written, is not a query: {0}")]
-    QWrittenMembers(#[source] Box<QueryError>),
+    QWrittenMembers(#[source] Box<FilterError>),
     /// The `scope_q` column is not a scope query.
     #[error("a stored subscription scopeQ is not a scope query: {0}")]
-    ScopeQ(#[source] Box<QueryError>),
+    ScopeQ(#[source] Box<ScopeQueryError>),
     /// The `csf` column is not a query.
     #[error("a stored subscription csf is not a query: {0}")]
-    Csf(#[source] Box<QueryError>),
+    Csf(#[source] Box<FilterError>),
     /// The `notification` column does not deserialize.
     #[error("the stored subscription notification parameters do not deserialize: {0}")]
     Notification(#[source] serde_json::Error),

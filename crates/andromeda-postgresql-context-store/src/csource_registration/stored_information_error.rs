@@ -8,7 +8,7 @@
 //! rather than inventing an `information` the client never wrote.
 
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
-use andromeda_ngsi_ld_query::query_error::QueryError;
+use andromeda_ngsi_ld_query::pattern::pattern_error::PatternError;
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, registry::UnknownCompactCode};
 use thiserror::Error;
 
@@ -77,5 +77,5 @@ pub enum StoredInformationError {
     EntityId(#[source] IdentifierParseError),
     /// An identifier pattern that does not compile.
     #[error("a stored registration information idPattern is not a pattern: {0}")]
-    IdPattern(#[source] Box<QueryError>),
+    IdPattern(#[source] Box<PatternError>),
 }

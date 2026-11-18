@@ -8,9 +8,9 @@
 //!
 //! `pick=observation{temperature,humidity}` selects the `observation` relationship's own representation together with the `temperature` and `humidity` attributes of the entity it links to. Braces nest to any depth, following the linked-entity chain across as many relationships as the client names.
 
-use crate::{
-    projection::written_projection_term::{WrittenProjectionTerm, write_terms},
-    query_error::QueryError,
+use crate::projection::{
+    projection_error::ProjectionError,
+    written_projection_term::{WrittenProjectionTerm, write_terms},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use derive_more::{Deref, From, Into};
@@ -26,20 +26,20 @@ pub struct WrittenProjectionList(Vec<WrittenProjectionTerm>);
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::ProjectionEmptyTerm`] where a name was required but
-/// none was written, [`QueryError::AttributeNameInvalid`] for a name outside
-/// the attribute-name grammar, and [`QueryError::ProjectionUnbalancedBrace`]
+/// Returns [`ProjectionError::EmptyTerm`] where a name was required but
+/// none was written, [`ProjectionError::InvalidAttributeName`] for a name outside
+/// the attribute-name grammar, and [`ProjectionError::UnbalancedBrace`]
 /// when a brace opens without a matching close, closes without a matching
 /// open, or is followed by content outside the grammar.
 impl FromStr for WrittenProjectionList {
-    type Err = QueryError;
+    type Err = ProjectionError;
 
-    fn from_str(raw: &str) -> Result<WrittenProjectionList, QueryError> {
+    fn from_str(raw: &str) -> Result<WrittenProjectionList, ProjectionError> {
         let mut parser = Parser::new(raw);
         let terms = parser.parse_term_list()?;
         match parser.peek() {
             None => Ok(WrittenProjectionList(terms)),
-            Some(_) => Err(QueryError::ProjectionUnbalancedBrace { position: parser.pos }),
+            Some(_) => Err(ProjectionError::UnbalancedBrace { position: parser.pos }),
         }
     }
 }
@@ -78,7 +78,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses `ProjectionTerm *(orOp ProjectionTerm)`, stopping at the first character that is neither a separator nor the start of another term.
-    fn parse_term_list(&mut self) -> Result<Vec<WrittenProjectionTerm>, QueryError> {
+    fn parse_term_list(&mut self) -> Result<Vec<WrittenProjectionTerm>, ProjectionError> {
         let mut terms = Vec::new();
         loop {
             terms.push(self.parse_term()?);
@@ -91,7 +91,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses one `AttrName *1(LinkedEntityTerm)`.
-    fn parse_term(&mut self) -> Result<WrittenProjectionTerm, QueryError> {
+    fn parse_term(&mut self) -> Result<WrittenProjectionTerm, ProjectionError> {
         let start = self.pos;
         while let Some(c) = self.peek() {
             if matches!(c, '{' | '}' | ',' | '|') {
@@ -101,9 +101,9 @@ impl<'a> Parser<'a> {
         }
         let name = self.input[start..self.pos].trim_matches(|c: char| c.is_ascii_whitespace());
         if name.is_empty() {
-            return Err(QueryError::ProjectionEmptyTerm { position: start });
+            return Err(ProjectionError::EmptyTerm { position: start });
         }
-        let name = name.parse::<AttributeName>().map_err(QueryError::AttributeNameInvalid)?;
+        let name = name.parse::<AttributeName>().map_err(ProjectionError::InvalidAttributeName)?;
         let linked = if self.peek() == Some('{') {
             self.parse_linked_entity_term()?
         } else {
@@ -113,12 +113,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses `%x7B ProjectionTerm %x7D` once the next character is known to be `{`. An unclosed brace is reported at the `{` that opened it, the character actually missing its counterpart, rather than at the end of input, which names nothing a client wrote.
-    fn parse_linked_entity_term(&mut self) -> Result<Vec<WrittenProjectionTerm>, QueryError> {
+    fn parse_linked_entity_term(&mut self) -> Result<Vec<WrittenProjectionTerm>, ProjectionError> {
         let brace_position = self.pos;
         self.advance();
         match self.peek() {
-            None => return Err(QueryError::ProjectionUnbalancedBrace { position: brace_position }),
-            Some('}') => return Err(QueryError::ProjectionEmptyTerm { position: self.pos }),
+            None => return Err(ProjectionError::UnbalancedBrace { position: brace_position }),
+            Some('}') => return Err(ProjectionError::EmptyTerm { position: self.pos }),
             Some(_) => {}
         }
         let children = self.parse_term_list()?;
@@ -127,21 +127,22 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(children)
             }
-            Some(_) | None => Err(QueryError::ProjectionUnbalancedBrace { position: brace_position }),
+            Some(_) | None => Err(ProjectionError::UnbalancedBrace { position: brace_position }),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
-        query_error::QueryError,
+    use crate::projection::{
+        projection_error::ProjectionError,
+        written_projection_list::WrittenProjectionList,
+        written_projection_term::WrittenProjectionTerm,
     };
     use serde_json::json;
 
     /// The terms one clause 4.21 string parses to.
-    fn parsed(raw: &str) -> Result<Vec<WrittenProjectionTerm>, QueryError> {
+    fn parsed(raw: &str) -> Result<Vec<WrittenProjectionTerm>, ProjectionError> {
         raw.parse::<WrittenProjectionList>().map(Vec::from)
     }
 
@@ -227,43 +228,43 @@ mod tests {
     #[test]
     fn an_opening_brace_never_closed_is_rejected_at_the_braces_own_position() {
         let error = parsed("a{").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionUnbalancedBrace { position: 1 }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::UnbalancedBrace { position: 1 }), "got {error:?}");
     }
 
     #[test]
     fn a_closing_brace_with_no_matching_open_is_rejected_at_its_position() {
         let error = parsed("a}b").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionUnbalancedBrace { position: 1 }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::UnbalancedBrace { position: 1 }), "got {error:?}");
     }
 
     #[test]
     fn an_empty_brace_group_is_rejected_as_an_empty_term() {
         let error = parsed("a{}").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionEmptyTerm { .. }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::EmptyTerm { .. }), "got {error:?}");
     }
 
     #[test]
     fn a_leading_comma_is_rejected_as_an_empty_term() {
         let error = parsed(",a").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionEmptyTerm { .. }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::EmptyTerm { .. }), "got {error:?}");
     }
 
     #[test]
     fn a_doubled_comma_is_rejected_as_an_empty_term() {
         let error = parsed("a,,b").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionEmptyTerm { .. }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::EmptyTerm { .. }), "got {error:?}");
     }
 
     #[test]
     fn an_empty_input_is_rejected_as_an_empty_term() {
         let error = parsed("").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionEmptyTerm { .. }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::EmptyTerm { .. }), "got {error:?}");
     }
 
     #[test]
     fn trailing_content_after_a_closed_brace_group_is_rejected_at_the_garbage_position() {
         let error = parsed("a{b,c}d").expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionUnbalancedBrace { position: 6 }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::UnbalancedBrace { position: 6 }), "got {error:?}");
     }
 
     /// A stored projection selector is re-serialised whenever it is read back, so the grammar must round-trip through its own `Display` rendering.
@@ -284,7 +285,7 @@ mod tests {
     #[test]
     fn an_unbalanced_list_is_refused() {
         let error = "a{".parse::<WrittenProjectionList>().expect_err("must reject");
-        assert!(matches!(error, QueryError::ProjectionUnbalancedBrace { .. }), "got {error:?}");
+        assert!(matches!(error, ProjectionError::UnbalancedBrace { .. }), "got {error:?}");
     }
 
     /// The stored form is the term tree, not clause 4.21 text.

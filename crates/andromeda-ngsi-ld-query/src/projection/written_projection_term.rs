@@ -1,6 +1,6 @@
 //! One term of a clause 4.21 projection list (`pick`, `omit`) as the client wrote it, with the linked-entity terms nested in it.
 
-use crate::{projection::expanded_projection_term::ExpandedProjectionTerm, query_error::QueryError};
+use crate::projection::{expanded_projection_term::ExpandedProjectionTerm, projection_error::ProjectionError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Deserialize, Serialize};
@@ -44,9 +44,9 @@ impl fmt::Display for WrittenProjectionTerm {
 /// The raw term an expanded projection term is written back as: a keyword
 /// keeps its clause 4.21 spelling and an attribute is named by its IRI.
 impl TryFrom<&ExpandedProjectionTerm> for WrittenProjectionTerm {
-    type Error = QueryError;
+    type Error = ProjectionError;
 
-    fn try_from(term: &ExpandedProjectionTerm) -> Result<WrittenProjectionTerm, QueryError> {
+    fn try_from(term: &ExpandedProjectionTerm) -> Result<WrittenProjectionTerm, ProjectionError> {
         let (name, linked) = match term {
             ExpandedProjectionTerm::Id => (keyword::ID_ALIAS, &[][..]),
             ExpandedProjectionTerm::Type => (keyword::TYPE_ALIAS, &[][..]),
@@ -54,7 +54,7 @@ impl TryFrom<&ExpandedProjectionTerm> for WrittenProjectionTerm {
             ExpandedProjectionTerm::Attribute { iri, linked } => (iri.as_str(), linked.as_slice()),
         };
         Ok(WrittenProjectionTerm {
-            name: name.parse().map_err(QueryError::AttributeNameInvalid)?,
+            name: name.parse().map_err(ProjectionError::InvalidAttributeName)?,
             linked: linked.iter().map(WrittenProjectionTerm::try_from).collect::<Result<_, _>>()?,
         })
     }

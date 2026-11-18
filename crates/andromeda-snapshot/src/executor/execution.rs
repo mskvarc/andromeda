@@ -164,7 +164,7 @@ mod tests {
     use andromeda_entity::error::EntityError;
     use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use andromeda_ngsi_ld_query::query_error::QueryError;
+    use andromeda_ngsi_ld_query::{filter::filter_error::FilterError, query_error::QueryError};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use pretty_assertions::assert_eq;
 
@@ -178,7 +178,7 @@ mod tests {
     /// answers it with, and an internal one its masked summary.
     #[test]
     fn a_failed_local_read_records_the_problem_query_entities_answers_with() {
-        let query = entity_query_failure(EntityError::Query(QueryError::QEmpty)).expect("the query's own failure");
+        let query = entity_query_failure(EntityError::Query(QueryError::Filter(FilterError::Empty))).expect("the query's own failure");
         assert_eq!(
             recorded(&query).map(|(classification, _)| classification),
             Some(ProblemClassification::Category(NgsiLdErrorType::BadRequestData))

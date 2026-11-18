@@ -10,6 +10,7 @@ pub mod expanded_projection_term;
 pub mod expansion;
 pub mod matching;
 pub mod projected_members;
+pub mod projection_error;
 pub mod purge;
 pub mod returned_attributes;
 pub mod written_projection_list;

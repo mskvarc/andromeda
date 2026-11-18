@@ -9,12 +9,10 @@
 //! tag can spell. Which of them a request may carry is the
 //! `q_target_languages` level's to say.
 
-use crate::{
-    filter::{
-        language_matching::LanguageMatching,
-        language_range::{LanguageRange, extended_filter},
-    },
-    query_error::QueryError,
+use crate::filter::{
+    filter_error::FilterError,
+    language_matching::LanguageMatching,
+    language_range::{LanguageRange, extended_filter},
 };
 use langtag::{LangTag, LangTagBuf};
 
@@ -34,12 +32,12 @@ impl TargetLanguage {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TrailingMemberInvalid`] when the text is neither.
-    pub fn parse(text: &str) -> Result<TargetLanguage, QueryError> {
+    /// Returns [`FilterError::InvalidTrailingMember`] when the text is neither.
+    pub fn parse(text: &str) -> Result<TargetLanguage, FilterError> {
         LangTagBuf::new(text.to_owned()).map(TargetLanguage::Tag).or_else(|tag| {
             LanguageRange::new(text.to_owned())
                 .map(TargetLanguage::Range)
-                .map_err(|range| QueryError::TrailingMemberInvalid { tag, range })
+                .map_err(|range| FilterError::InvalidTrailingMember { tag, range })
         })
     }
 
@@ -105,12 +103,10 @@ impl<'a> LanguageSelector<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        filter::{
-            language_matching::LanguageMatching,
-            target_language::{LanguageSelector, TargetLanguage},
-        },
-        query_error::QueryError,
+    use crate::filter::{
+        filter_error::FilterError,
+        language_matching::LanguageMatching,
+        target_language::{LanguageSelector, TargetLanguage},
     };
     use langtag::LangTag;
 
@@ -149,7 +145,7 @@ mod tests {
     fn a_text_neither_tag_nor_range_is_refused() {
         for text in ["en--GB", "toolongsubtag9", "-en", "e*", "en_GB-x", "*"] {
             let error = TargetLanguage::parse(text).expect_err(text);
-            assert!(matches!(error, QueryError::TrailingMemberInvalid { .. }), "{text}: {error:?}");
+            assert!(matches!(error, FilterError::InvalidTrailingMember { .. }), "{text}: {error:?}");
         }
     }
 

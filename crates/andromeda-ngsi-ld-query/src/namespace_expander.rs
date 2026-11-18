@@ -1,9 +1,6 @@
 //! A term expander for tests that resolves terms against a namespace, standing in for a request `@context` without a JSON-LD processor.
 
-use crate::{
-    query_error::QueryError,
-    term_expander::{TermExpander, TermExpansionError},
-};
+use crate::term_expander::{TermExpander, TermExpansionError};
 use iri_rs::{Iri, IriBuf, IriRef, iri};
 use std::future::{Future, ready};
 
@@ -54,7 +51,7 @@ impl NamespaceExpander {
     /// # Errors
     ///
     /// [`TermExpansionError::NotAnIri`] when `term` is no IRI reference or does not resolve.
-    pub fn term_iri(&self, term: &str) -> Result<IriBuf, QueryError> {
+    pub fn term_iri(&self, term: &str) -> Result<IriBuf, TermExpansionError> {
         match self.core_members.iter().find(|(core_term, _)| *core_term == term) {
             Some((_, iri)) => Ok(IriBuf::from(*iri)),
             None => resolved(term, &self.terms),
@@ -66,29 +63,29 @@ impl NamespaceExpander {
     /// # Errors
     ///
     /// [`TermExpansionError::NotAnIri`] when `term` is no IRI reference or does not resolve.
-    pub fn type_iri(&self, term: &str) -> Result<IriBuf, QueryError> {
+    pub fn type_iri(&self, term: &str) -> Result<IriBuf, TermExpansionError> {
         resolved(term, &self.types)
     }
 }
 
 impl TermExpander for NamespaceExpander {
-    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
         ready(self.term_iri(term))
     }
 
-    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
         ready(self.type_iri(term))
     }
 }
 
 /// `term` resolved against `namespace`.
-fn resolved(term: &str, namespace: &Iri<&'static str>) -> Result<IriBuf, QueryError> {
+fn resolved(term: &str, namespace: &Iri<&'static str>) -> Result<IriBuf, TermExpansionError> {
     let reference = IriRef::parse(term).map_err(|_| not_an_iri())?;
     let resolved = reference.resolved(namespace).map_err(|_| not_an_iri())?;
     IriBuf::try_from(resolved).map_err(|_| not_an_iri())
 }
 
 /// The failure of a term that names no IRI.
-const fn not_an_iri() -> QueryError {
-    QueryError::TermExpansion(TermExpansionError::NotAnIri)
+const fn not_an_iri() -> TermExpansionError {
+    TermExpansionError::NotAnIri
 }

@@ -78,7 +78,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_query::{
-        projection::{expanded_projection_term::ExpandedProjectionTerm, written_projection_term::WrittenProjectionTerm},
+        projection::{expanded_projection_term::ExpandedProjectionTerm, projection_error::ProjectionError, written_projection_term::WrittenProjectionTerm},
         query_error::QueryError,
     };
     use iri_rs::IriBuf;
@@ -182,7 +182,10 @@ mod tests {
             .expect_err("one member in both");
 
         assert!(
-            matches!(&error, EntityError::Query(QueryError::ProjectionMemberPickedAndOmitted { .. })),
+            matches!(
+                &error,
+                EntityError::Query(QueryError::Projection(ProjectionError::MemberPickedAndOmitted { .. }))
+            ),
             "{error:?}"
         );
     }

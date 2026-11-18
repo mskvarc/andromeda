@@ -4,336 +4,336 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "en"
   accepted Tag(en)
 ")n"
-  refused TrailingMemberInvalid { tag: LangTag(")n"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(")n"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: ')n' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "{en"
-  refused TrailingMemberInvalid { tag: LangTag("{en"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("{en"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '{en' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "n"
-  refused TrailingMemberInvalid { tag: LangTag("n"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("n"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'n' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "enZ"
   accepted Tag(enZ)
 "en-GB"
   accepted Tag(en-GB)
 "en-G|"
-  refused TrailingMemberInvalid { tag: LangTag("en-G|"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-G|"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-G|' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "en-G\t"
-  refused TrailingMemberInvalid { tag: LangTag("en-G\t"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-G\t"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-G\t' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "en{GB"
-  refused TrailingMemberInvalid { tag: LangTag("en{GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en{GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'en{GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en-GB+"
-  refused TrailingMemberInvalid { tag: LangTag("en-GB+"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-GB+"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-GB+' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "zh-Hant-TW"
   accepted Tag(zh-Hant-TW)
 "z-Hant-TW"
-  refused TrailingMemberInvalid { tag: LangTag("z-Hant-TW"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("z-Hant-TW"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'z-Hant-TW' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "zh-Hant-T!W"
-  refused TrailingMemberInvalid { tag: LangTag("zh-Hant-T!W"), range: Subtag { index: 3 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("zh-Hant-T!W"), range: Subtag { index: 3 } }
+  variant InvalidTrailingMember
   detail "q expression: 'zh-Hant-T!W' is neither a member name nor an RFC 5646 language tag (subtag 3 of a language range is neither 1 to 8 letters and digits nor '*')"
 "zh-ant-TW"
   accepted Tag(zh-ant-TW)
 "zh-0Hant-TW"
-  refused TrailingMemberInvalid { tag: LangTag("zh-0Hant-TW"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("zh-0Hant-TW"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'zh-0Hant-TW' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "x-private"
   accepted Tag(x-private)
 "x*-private"
-  refused TrailingMemberInvalid { tag: LangTag("x*-private"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("x*-private"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'x*-private' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "x-prvate"
   accepted Tag(x-prvate)
 "x-|private"
-  refused TrailingMemberInvalid { tag: LangTag("x-|private"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("x-|private"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'x-|private' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "x-pr@vate"
-  refused TrailingMemberInvalid { tag: LangTag("x-pr@vate"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("x-pr@vate"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'x-pr@vate' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "de-*-DE"
   accepted Range(LanguageRange("de-*-DE"))
 "de%-*-DE"
-  refused TrailingMemberInvalid { tag: LangTag("de%-*-DE"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("de%-*-DE"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'de%-*-DE' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "de--DE"
-  refused TrailingMemberInvalid { tag: LangTag("de--DE"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("de--DE"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'de--DE' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "de-;-DE"
-  refused TrailingMemberInvalid { tag: LangTag("de-;-DE"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("de-;-DE"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'de-;-DE' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "*-GB"
   accepted Range(LanguageRange("*-GB"))
 "*- B"
-  refused TrailingMemberInvalid { tag: LangTag("*- B"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*- B"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: '*- B' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "*-B"
   accepted Range(LanguageRange("*-B"))
 "=-GB"
-  refused TrailingMemberInvalid { tag: LangTag("=-GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("=-GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '=-GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*GB"
-  refused TrailingMemberInvalid { tag: LangTag("*GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '*GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en-*"
   accepted Range(LanguageRange("en-*"))
 "en-*+"
-  refused TrailingMemberInvalid { tag: LangTag("en-*+"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-*+"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-*+' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "e.-*"
-  refused TrailingMemberInvalid { tag: LangTag("e.-*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("e.-*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'e.-*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en*"
-  refused TrailingMemberInvalid { tag: LangTag("en*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'en*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en--*"
-  refused TrailingMemberInvalid { tag: LangTag("en--*"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en--*"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en--*' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "*"
-  refused TrailingMemberInvalid { tag: LangTag("*"), range: LoneWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*"), range: LoneWildcard }
+  variant InvalidTrailingMember
   detail "q expression: '*' is neither a member name nor an RFC 5646 language tag ('*' alone selects every language, it is not a language range)"
 "<"
-  refused TrailingMemberInvalid { tag: LangTag("<"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("<"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '<' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "\t*"
-  refused TrailingMemberInvalid { tag: LangTag("\t*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("\t*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '\t*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*{"
-  refused TrailingMemberInvalid { tag: LangTag("*{"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*{"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '*{' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "(*"
-  refused TrailingMemberInvalid { tag: LangTag("(*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("(*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '(*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 ""
-  refused TrailingMemberInvalid { tag: LangTag(""), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(""), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "}"
-  refused TrailingMemberInvalid { tag: LangTag("}"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("}"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '}' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "~"
-  refused TrailingMemberInvalid { tag: LangTag("~"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("~"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '~' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "Z"
-  refused TrailingMemberInvalid { tag: LangTag("Z"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("Z"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'Z' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "+"
-  refused TrailingMemberInvalid { tag: LangTag("+"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("+"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '+' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en_GB"
-  refused TrailingMemberInvalid { tag: LangTag("en_GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en_GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'en_GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en _GB"
-  refused TrailingMemberInvalid { tag: LangTag("en _GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en _GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'en _GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "[en_GB"
-  refused TrailingMemberInvalid { tag: LangTag("[en_GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("[en_GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '[en_GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*en_GB"
-  refused TrailingMemberInvalid { tag: LangTag("*en_GB"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*en_GB"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '*en_GB' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "enGB"
   accepted Tag(enGB)
 "e"
-  refused TrailingMemberInvalid { tag: LangTag("e"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("e"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'e' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "-"
-  refused TrailingMemberInvalid { tag: LangTag("-"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("-"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '-' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 ">e"
-  refused TrailingMemberInvalid { tag: LangTag(">e"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(">e"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '>e' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "toolongsubtag"
-  refused TrailingMemberInvalid { tag: LangTag("toolongsubtag"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("toolongsubtag"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'toolongsubtag' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "toolonsubtag"
-  refused TrailingMemberInvalid { tag: LangTag("toolonsubtag"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("toolonsubtag"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'toolonsubtag' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "toolongsubt#ag"
-  refused TrailingMemberInvalid { tag: LangTag("toolongsubt#ag"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("toolongsubt#ag"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'toolongsubt#ag' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "toolongsubt=g"
-  refused TrailingMemberInvalid { tag: LangTag("toolongsubt=g"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("toolongsubt=g"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'toolongsubt=g' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "tool)ongsubtag"
-  refused TrailingMemberInvalid { tag: LangTag("tool)ongsubtag"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("tool)ongsubtag"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'tool)ongsubtag' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en--GB"
-  refused TrailingMemberInvalid { tag: LangTag("en--GB"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en--GB"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en--GB' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "en-}GB"
-  refused TrailingMemberInvalid { tag: LangTag("en-}GB"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-}GB"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-}GB' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "en--9GB"
-  refused TrailingMemberInvalid { tag: LangTag("en--9GB"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en--9GB"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en--9GB' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "e--GB"
-  refused TrailingMemberInvalid { tag: LangTag("e--GB"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("e--GB"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'e--GB' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "en->-GB"
-  refused TrailingMemberInvalid { tag: LangTag("en->-GB"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en->-GB"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en->-GB' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "i-klingon"
   accepted Tag(i-klingon)
 "i-kling{n"
-  refused TrailingMemberInvalid { tag: LangTag("i-kling{n"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("i-kling{n"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'i-kling{n' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "i-klingo{n"
-  refused TrailingMemberInvalid { tag: LangTag("i-klingo{n"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("i-klingo{n"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'i-klingo{n' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "i-kligon"
-  refused TrailingMemberInvalid { tag: LangTag("i-kligon"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("i-kligon"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'i-kligon' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "i<-klingon"
-  refused TrailingMemberInvalid { tag: LangTag("i<-klingon"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("i<-klingon"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: 'i<-klingon' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "en-GB-oed"
   accepted Tag(en-GB-oed)
 "en-GB{-oed"
-  refused TrailingMemberInvalid { tag: LangTag("en-GB{-oed"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-GB{-oed"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-GB{-oed' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "en-GB-oe"
-  refused TrailingMemberInvalid { tag: LangTag("en-GB-oe"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-GB-oe"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'en-GB-oe' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "enGB-oed"
-  refused TrailingMemberInvalid { tag: LangTag("enGB-oed"), range: NoWildcard }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("enGB-oed"), range: NoWildcard }
+  variant InvalidTrailingMember
   detail "q expression: 'enGB-oed' is neither a member name nor an RFC 5646 language tag (a language range without a '*' subtag is a language tag)"
 "en-GB-~oed"
-  refused TrailingMemberInvalid { tag: LangTag("en-GB-~oed"), range: Subtag { index: 3 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("en-GB-~oed"), range: Subtag { index: 3 } }
+  variant InvalidTrailingMember
   detail "q expression: 'en-GB-~oed' is neither a member name nor an RFC 5646 language tag (subtag 3 of a language range is neither 1 to 8 letters and digits nor '*')"
 "1"
-  refused TrailingMemberInvalid { tag: LangTag("1"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("1"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '1' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 " 1"
-  refused TrailingMemberInvalid { tag: LangTag(" 1"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(" 1"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: ' 1' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "19"
-  refused TrailingMemberInvalid { tag: LangTag("19"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("19"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '19' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "de-DE-u-co-phonebk"
   accepted Tag(de-DE-u-co-phonebk)
 "de-DE-u-co-ponebk"
   accepted Tag(de-DE-u-co-ponebk)
 "de-DE--co-phonebk"
-  refused TrailingMemberInvalid { tag: LangTag("de-DE--co-phonebk"), range: Subtag { index: 3 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("de-DE--co-phonebk"), range: Subtag { index: 3 } }
+  variant InvalidTrailingMember
   detail "q expression: 'de-DE--co-phonebk' is neither a member name nor an RFC 5646 language tag (subtag 3 of a language range is neither 1 to 8 letters and digits nor '*')"
 "de-DE-u-co-phonek"
   accepted Tag(de-DE-u-co-phonek)
 "de-DE-u-co-phone;k"
-  refused TrailingMemberInvalid { tag: LangTag("de-DE-u-co-phone;k"), range: Subtag { index: 5 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("de-DE-u-co-phone;k"), range: Subtag { index: 5 } }
+  variant InvalidTrailingMember
   detail "q expression: 'de-DE-u-co-phone;k' is neither a member name nor an RFC 5646 language tag (subtag 5 of a language range is neither 1 to 8 letters and digits nor '*')"
 "**"
-  refused TrailingMemberInvalid { tag: LangTag("**"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("**"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '**' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "**["
-  refused TrailingMemberInvalid { tag: LangTag("**["), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("**["), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '**[' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "#*"
-  refused TrailingMemberInvalid { tag: LangTag("#*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("#*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '#*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*]"
-  refused TrailingMemberInvalid { tag: LangTag("*]"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*]"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '*]' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*-*"
   accepted Range(LanguageRange("*-*"))
 "*-*#"
-  refused TrailingMemberInvalid { tag: LangTag("*-*#"), range: Subtag { index: 2 } }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*-*#"), range: Subtag { index: 2 } }
+  variant InvalidTrailingMember
   detail "q expression: '*-*#' is neither a member name nor an RFC 5646 language tag (subtag 2 of a language range is neither 1 to 8 letters and digits nor '*')"
 "-*"
-  refused TrailingMemberInvalid { tag: LangTag("-*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("-*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '-*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*,*"
-  refused TrailingMemberInvalid { tag: LangTag("*,*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*,*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '*,*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 "*{*"
-  refused TrailingMemberInvalid { tag: LangTag("*{*"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag("*{*"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: '*{*' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 " en"
-  refused TrailingMemberInvalid { tag: LangTag(" en"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(" en"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: ' en' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 ":en"
-  refused TrailingMemberInvalid { tag: LangTag(":en"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(":en"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: ':en' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 " en:"
-  refused TrailingMemberInvalid { tag: LangTag(" en:"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(" en:"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: ' en:' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
 " ~en"
-  refused TrailingMemberInvalid { tag: LangTag(" ~en"), range: FirstSubtag }
-  variant TrailingMemberInvalid
+  refused InvalidTrailingMember { tag: LangTag(" ~en"), range: FirstSubtag }
+  variant InvalidTrailingMember
   detail "q expression: ' ~en' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"

@@ -205,7 +205,9 @@ impl TemporalQueryParameters {
         // Which orderings clause 5.7.4.3 admits is a property of the ordering
         // itself; the request seam asks the compiled form rather than
         // restating the rule, and compilation later reads the same answer.
-        TemporalEntityOrdering::of_parameters(&self.ordering).map_err(ParameterError::Query)?;
+        TemporalEntityOrdering::of_parameters(&self.ordering)
+            .map_err(QueryError::from)
+            .map_err(ParameterError::Query)?;
         if matches!(operation, TemporalQueryOperation::Query | TemporalQueryOperation::EntityMap) {
             if self.timerel.is_none() || self.time_at.is_none() {
                 return Err(ParameterError::TimerelTimeatRequired);

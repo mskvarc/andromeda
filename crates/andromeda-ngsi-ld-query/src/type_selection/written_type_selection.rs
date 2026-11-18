@@ -1,9 +1,8 @@
 //! An entity type selection (clause 4.17) as the client wrote it, its type names compact.
 
 use crate::{
-    query_error::QueryError,
     term_expander::TermExpansionError,
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, parser},
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, parser, type_selection_error::TypeSelectionError},
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use iri_rs::IriBuf;
@@ -86,14 +85,14 @@ impl WrittenTypeSelection {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TermExpansion`] when a leaf is no absolute IRI,
+    /// Returns [`TermExpansionError::NotAnIri`] when a leaf is no absolute IRI,
     /// which an expression expanded before it was stored never holds.
-    pub fn as_expanded(&self) -> Result<ExpandedTypeSelection, QueryError> {
+    pub fn as_expanded(&self) -> Result<ExpandedTypeSelection, TermExpansionError> {
         match self {
             WrittenTypeSelection::Wildcard => Ok(ExpandedTypeSelection::Wildcard),
             WrittenTypeSelection::Type(name) => IriBuf::new(name.as_str().to_owned())
                 .map(ExpandedTypeSelection::Type)
-                .map_err(|_| QueryError::TermExpansion(TermExpansionError::NotAnIri)),
+                .map_err(|_| TermExpansionError::NotAnIri),
             WrittenTypeSelection::And(children) => children
                 .iter()
                 .map(WrittenTypeSelection::as_expanded)
@@ -122,9 +121,9 @@ impl WrittenTypeSelection {
 }
 
 impl FromStr for WrittenTypeSelection {
-    type Err = QueryError;
+    type Err = TypeSelectionError;
 
-    fn from_str(raw: &str) -> Result<WrittenTypeSelection, QueryError> {
+    fn from_str(raw: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
         parser::parse(raw)
     }
 }
@@ -132,9 +131,9 @@ impl FromStr for WrittenTypeSelection {
 // Parsing lives in `FromStr` so borrowed call sites do not allocate; this
 // adapter exists only because `#[serde(try_from = "String")]` requires it.
 impl TryFrom<String> for WrittenTypeSelection {
-    type Error = QueryError;
+    type Error = TypeSelectionError;
 
-    fn try_from(raw: String) -> Result<WrittenTypeSelection, QueryError> {
+    fn try_from(raw: String) -> Result<WrittenTypeSelection, TypeSelectionError> {
         raw.parse()
     }
 }

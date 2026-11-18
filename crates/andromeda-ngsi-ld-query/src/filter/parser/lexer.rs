@@ -1,6 +1,6 @@
 //! Tokeniser for the NGSI-LD Query Language (clause 4.9).
 
-use crate::{filter::parser::quoted_string::scan_quoted_literal, query_error::QueryError};
+use crate::filter::{filter_error::FilterError, parser::quoted_string::scan_quoted_literal};
 use strum::EnumDiscriminants;
 
 /// A single lexical token of a `q` expression.
@@ -98,10 +98,10 @@ pub enum Token {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QUnterminatedString`] when a double-quoted literal is
-/// left open, and [`QueryError::QUnexpectedChar`] when a character can start no
+/// Returns [`FilterError::UnterminatedString`] when a double-quoted literal is
+/// left open, and [`FilterError::UnexpectedCharacter`] when a character can start no
 /// token of the clause 4.9 grammar.
-pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
+pub fn tokenize(input: &str) -> Result<Vec<Token>, FilterError> {
     let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
     let mut cursor = 0;
@@ -126,7 +126,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
 ///
 /// The multi-character operators are matched before their prefixes, because
 /// clause 4.9 spells `!~=` with a `!` that does not open a `!=`.
-fn scan_token(chars: &[char], start: usize, position: OperandPosition) -> Result<(Token, usize), QueryError> {
+fn scan_token(chars: &[char], start: usize, position: OperandPosition) -> Result<(Token, usize), FilterError> {
     match chars[start] {
         ';' => Ok((Token::Semi, start + 1)),
         '|' => Ok((Token::Pipe, start + 1)),
@@ -153,7 +153,10 @@ fn scan_token(chars: &[char], start: usize, position: OperandPosition) -> Result
         '-' if starts_digit(chars, start + 1) => Ok(scan_signed_number(chars, start)),
         digit if digit.is_ascii_digit() => Ok(scan_digit_run(chars, start)),
         name if name.is_alphanumeric() || matches!(name, '_' | ':' | '/') => Ok(scan_identifier(chars, start, position)),
-        other => Err(QueryError::QUnexpectedChar { ch: other, position: start }),
+        other => Err(FilterError::UnexpectedCharacter {
+            character: other,
+            position: start,
+        }),
     }
 }
 
@@ -182,7 +185,7 @@ fn consume_digits(chars: &[char], from: usize) -> usize {
 /// different grammars, and the tokeniser cannot see which production the
 /// literal stands in. The escape rules therefore belong to whichever operand
 /// parser consumes the token, not here.
-fn scan_quoted_string(chars: &[char], start: usize) -> Result<(Token, usize), QueryError> {
+fn scan_quoted_string(chars: &[char], start: usize) -> Result<(Token, usize), FilterError> {
     let (body, next) = scan_quoted_literal(chars, start)?;
     Ok((Token::QuotedStr(body), next))
 }
@@ -378,9 +381,9 @@ impl OperandPosition {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        filter::parser::lexer::{Token, tokenize},
-        query_error::QueryError,
+    use crate::filter::{
+        filter_error::FilterError,
+        parser::lexer::{Token, tokenize},
     };
     use pretty_assertions::assert_eq;
 
@@ -658,13 +661,16 @@ mod tests {
     #[test]
     fn a_quoted_literal_left_open_is_rejected() {
         let error = tokenize("name==\"unterminated").expect_err("must reject");
-        assert!(matches!(error, QueryError::QUnterminatedString), "got {error:?}");
+        assert!(matches!(error, FilterError::UnterminatedString), "got {error:?}");
     }
 
     #[test]
     fn a_character_that_starts_no_token_is_rejected_with_its_position() {
         let error = tokenize("speed==@").expect_err("must reject");
-        assert!(matches!(error, QueryError::QUnexpectedChar { ch: '@', position: 7 }), "got {error:?}");
+        assert!(
+            matches!(error, FilterError::UnexpectedCharacter { character: '@', position: 7 }),
+            "got {error:?}"
+        );
     }
 
     #[test]

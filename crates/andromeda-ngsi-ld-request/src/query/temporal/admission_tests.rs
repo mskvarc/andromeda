@@ -14,7 +14,7 @@ use crate::{
 use andromeda_linked_retrieval::admission::{LinkedMember, LinkedOperation, ReachingMember, TemporalJoin};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, filter_error::FilterError, language_targeting::LanguageTargeting},
     query_error::QueryError,
     temporal::window::TimeInterval,
 };
@@ -70,13 +70,16 @@ fn a_q_past_the_comparison_limit_is_refused_at_validation() {
         admitted(operation, TemporalJoin::Spec, &many_comparisons(1000), admission).expect("1000 comparisons are within the limit");
         let refused = admitted(operation, TemporalJoin::Spec, &many_comparisons(1001), admission).expect_err("1001 comparisons are too many");
         assert!(
-            matches!(refused, ParameterError::Query(QueryError::QTooManyComparisons { .. })),
+            matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
             "{operation:?}: {refused:?}"
         );
     }
     deleted(&many_comparisons(1000), admission).expect("1000 comparisons are within the limit");
     let refused = deleted(&many_comparisons(1001), admission).expect_err("1001 comparisons are too many");
-    assert!(matches!(refused, ParameterError::Query(QueryError::QTooManyComparisons { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
+        "{refused:?}"
+    );
 }
 
 /// Clause 4.9: a full language tag as a target language is admitted at
@@ -89,13 +92,16 @@ fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
         let refused =
             admitted(operation, TemporalJoin::Spec, &query, broker(LanguageTargeting::Specification)).expect_err("the specification level refuses a tag");
         assert!(
-            matches!(refused, ParameterError::Query(QueryError::LanguageTagNotAdmitted(_))),
+            matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_)))),
             "{operation:?}: {refused:?}"
         );
     }
     deleted(&query, broker(LanguageTargeting::LanguageTags)).expect("the language-tags level admits a tag");
     let refused = deleted(&query, broker(LanguageTargeting::Specification)).expect_err("the specification level refuses a tag");
-    assert!(matches!(refused, ParameterError::Query(QueryError::LanguageTagNotAdmitted(_))), "{refused:?}");
+    assert!(
+        matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_)))),
+        "{refused:?}"
+    );
 }
 
 /// Clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4: a temporal operation retrieves
@@ -168,7 +174,10 @@ fn the_admissions_run_complexity_then_hops_then_target_languages() {
     let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
     let hop_and_size = format!("type=Vehicle&{WINDOW}&q=r%7Ba%7D%3D%3D{values}");
     let refused = admitted(TemporalQueryOperation::Query, TemporalJoin::Spec, &hop_and_size, admission).expect_err("a hop and a size");
-    assert!(matches!(refused, ParameterError::Query(QueryError::QTooManyComparisons { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
+        "{refused:?}"
+    );
 }
 
 /// A derived query that names no `q` is admitted as it is, and one that names
