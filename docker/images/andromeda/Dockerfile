@@ -11,17 +11,18 @@ RUN cargo install cargo-chef --locked --version 0.1.78
 
 WORKDIR /build
 
+# Must precede any cargo call in /build. The planner and the builder both inherit the pinned toolchain from this layer,
+# so a source change never downloads it again.
+COPY rust-toolchain.toml ./
+COPY .cargo ./.cargo
+RUN rustup show
+
 FROM chef AS planner
 
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-
-# Must precede any cargo call.
-COPY rust-toolchain.toml ./
-COPY .cargo ./.cargo
-RUN rustup show
 
 # Survives the lockfile changes that invalidate the chef layer.
 ARG SCCACHE_VERSION=0.18.0
