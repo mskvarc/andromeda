@@ -21,7 +21,7 @@ tenant=sto
 failures=0
 
 cleanup() {
-	docker rm -f "$broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$database" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 }
 trap cleanup EXIT

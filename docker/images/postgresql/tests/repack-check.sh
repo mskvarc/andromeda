@@ -67,7 +67,7 @@ cleanup() {
 	for holder in "${holders[@]}"; do
 		kill "$holder" > /dev/null 2>&1 || :
 	done
-	docker rm -f "$broker" "$owner_broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$owner_broker" "$database" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 }
 trap cleanup EXIT

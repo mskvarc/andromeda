@@ -26,7 +26,7 @@ broker="$prefix-broker"
 failures=0
 
 cleanup() {
-	docker rm -f "$broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$database" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 }
 trap cleanup EXIT
@@ -126,7 +126,7 @@ sql "CREATE TEMP TABLE aged AS SELECT * FROM attribute_history LIMIT 1;
 		CASE WHEN a.generated_instance_id IS NULL THEN NULL ELSE gen_random_uuid() END,
 		a.value_type_key, a.value_datatype_key, a.unit_code_id, a.value_boolean, a.verbatim_instance_id, a.value_number, a.value_string,
 		a.value_language, a.value_geometry, a.value_geometry_valid, a.value_geometry_reach, a.value_geometry_members, a.value_object, a.value_uri,
-		a.object_type_keys, a.proof_seals, a.sub_attributes
+		a.object_type_keys, a.sub_attributes
 	FROM aged a CROSS JOIN generate_series(1, 8) n;" > /dev/null
 wait_for "the sweep converts the aged chunk" 1 60 "$aged_status"
 sql "UPDATE attribute_history SET modified_at = modified_at WHERE recorded_at <= now() - interval '30 days'" > /dev/null
