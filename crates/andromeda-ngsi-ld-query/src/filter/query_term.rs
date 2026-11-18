@@ -157,14 +157,14 @@ mod tests {
 
     #[test]
     fn ordering_operators_write_their_token_and_test_their_relation() {
-        for (op, relation, token) in [
+        for (operator, relation, token) in [
             (OrderingOperator::Greater, OrderRelation::Greater, ">"),
             (OrderingOperator::GreaterEq, OrderRelation::GreaterOrEqual, ">="),
             (OrderingOperator::Less, OrderRelation::Less, "<"),
             (OrderingOperator::LessEq, OrderRelation::LessOrEqual, "<="),
         ] {
-            assert_eq!(op.relation(), relation, "{op:?}");
-            assert_eq!(op.spelling(), token, "{op:?}");
+            assert_eq!(operator.relation(), relation, "{operator:?}");
+            assert_eq!(operator.spelling(), token, "{operator:?}");
         }
     }
 }

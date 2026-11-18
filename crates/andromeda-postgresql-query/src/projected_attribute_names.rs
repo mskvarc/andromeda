@@ -96,7 +96,7 @@ mod tests {
         }
     }
 
-    fn order_term(target: ExpandedOrderingTarget, direction: OrderingDirection) -> CompiledOrderingTerm {
+    fn ordering_term(target: ExpandedOrderingTarget, direction: OrderingDirection) -> CompiledOrderingTerm {
         CompiledOrderingTerm {
             target,
             direction,
@@ -159,7 +159,7 @@ mod tests {
     /// does, so its target needs resolving too.
     #[test]
     fn a_distance_ordering_contributes_its_target_geoproperty() {
-        let terms = [order_term(
+        let terms = [ordering_term(
             ordered_attribute("https://example.com/observationPoint"),
             OrderingDirection::DistAsc,
         )];
@@ -174,7 +174,7 @@ mod tests {
     /// by key, so a distance ordering on the default `GeoProperty` resolves it.
     #[test]
     fn a_distance_ordering_on_the_default_geoproperty_resolves_it_for_its_value_keys() {
-        let terms = [order_term(ordered_attribute(LOCATION.as_str()), OrderingDirection::DistAsc)];
+        let terms = [ordering_term(ordered_attribute(LOCATION.as_str()), OrderingDirection::DistAsc)];
         assert_eq!(projected_attribute_names([], None, None, &terms), [name(LOCATION.as_str())]);
     }
 
@@ -184,7 +184,7 @@ mod tests {
     fn a_distance_ordering_on_a_sub_attribute_path_resolves_its_names() {
         let mut path = ValuePath::simple(name("https://example.com/area"));
         path.sub_attributes.push(name("https://example.com/accuracy"));
-        let terms = [order_term(ExpandedOrderingTarget::Attribute(path), OrderingDirection::DistAsc)];
+        let terms = [ordering_term(ExpandedOrderingTarget::Attribute(path), OrderingDirection::DistAsc)];
         assert_eq!(
             collected(&projected_attribute_names([], None, None, &terms)),
             vec!["https://example.com/area", "https://example.com/accuracy"]
@@ -194,7 +194,7 @@ mod tests {
     /// A value ordering reads the attribute's rows by dictionary key.
     #[test]
     fn a_value_ordering_contributes_its_attribute() {
-        let terms = [order_term(ordered_attribute("https://example.com/temperature"), OrderingDirection::Asc)];
+        let terms = [ordering_term(ordered_attribute("https://example.com/temperature"), OrderingDirection::Asc)];
         assert_eq!(projected_attribute_names([], None, None, &terms), [name("https://example.com/temperature")]);
     }
 
@@ -202,9 +202,9 @@ mod tests {
     #[test]
     fn a_keyword_ordering_contributes_no_name() {
         let terms = [
-            order_term(ExpandedOrderingTarget::Id, OrderingDirection::DistAsc),
-            order_term(ExpandedOrderingTarget::Type, OrderingDirection::DistDesc),
-            order_term(ExpandedOrderingTarget::Scope, OrderingDirection::DistAsc),
+            ordering_term(ExpandedOrderingTarget::Id, OrderingDirection::DistAsc),
+            ordering_term(ExpandedOrderingTarget::Type, OrderingDirection::DistDesc),
+            ordering_term(ExpandedOrderingTarget::Scope, OrderingDirection::DistAsc),
         ];
         assert_eq!(projected_attribute_names([], None, None, &terms), [] as [AttributeName; 0]);
     }
@@ -217,7 +217,10 @@ mod tests {
             LanguageMatching::TagEquality,
         );
         let geo = geo_query("https://example.com/observationPoint");
-        let terms = [order_term(ordered_attribute("https://example.com/operationSpace"), OrderingDirection::DistAsc)];
+        let terms = [ordering_term(
+            ordered_attribute("https://example.com/operationSpace"),
+            OrderingDirection::DistAsc,
+        )];
         assert_eq!(
             collected(&projected_attribute_names([], Some(&reading), Some(&geo), &terms)),
             vec![

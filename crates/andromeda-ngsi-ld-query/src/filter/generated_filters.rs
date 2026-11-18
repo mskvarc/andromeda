@@ -89,12 +89,14 @@ fn dotted(names: &'static [&'static str]) -> BoxedStrategy<String> {
 /// A `ValuePath` over `names`: a dotted path, optionally followed by one
 /// bracketed dotted path of plain names or by the wildcard.
 fn value_path(names: &'static [&'static str]) -> BoxedStrategy<String> {
-    let trailing = prop_oneof![
+    let trailing_group = prop_oneof![
         Just(String::new()),
         vec(select(&["city", "en", "zip", "b"][..]), 1..3).prop_map(|members| format!("[{}]", members.join("."))),
         Just("[*]".to_owned()),
     ];
-    (dotted(names), trailing).prop_map(|(path, trailing)| format!("{path}{trailing}")).boxed()
+    (dotted(names), trailing_group)
+        .prop_map(|(path, trailing_group)| format!("{path}{trailing_group}"))
+        .boxed()
 }
 
 /// A `ValuePath` over every name of [`NAMES`], as it stands on its own in an
@@ -132,9 +134,9 @@ fn hop(depth: u32) -> BoxedStrategy<String> {
 fn term() -> BoxedStrategy<String> {
     prop_oneof![
         attribute(3),
-        (attribute(3), select(&["==", "!="][..]), equality_value()).prop_map(|(path, op, operand)| format!("{path}{op}{operand}")),
-        (attribute(3), select(&[">", ">=", "<", "<="][..]), comparable()).prop_map(|(path, op, operand)| format!("{path}{op}{operand}")),
-        (attribute(3), select(&["~=", "!~="][..]), select(&PATTERNS[..])).prop_map(|(path, op, pattern)| format!("{path}{op}{pattern}")),
+        (attribute(3), select(&["==", "!="][..]), equality_value()).prop_map(|(path, operator, operand)| format!("{path}{operator}{operand}")),
+        (attribute(3), select(&[">", ">=", "<", "<="][..]), comparable()).prop_map(|(path, operator, operand)| format!("{path}{operator}{operand}")),
+        (attribute(3), select(&["~=", "!~="][..]), select(&PATTERNS[..])).prop_map(|(path, operator, pattern)| format!("{path}{operator}{pattern}")),
     ]
     .boxed()
 }
@@ -143,7 +145,7 @@ fn term() -> BoxedStrategy<String> {
 pub(crate) fn query() -> BoxedStrategy<String> {
     term()
         .prop_recursive(4, 32, 4, |inner| {
-            (vec(inner, 2..4), select(&[";", "|"][..])).prop_map(|(members, op)| format!("({})", members.join(op)))
+            (vec(inner, 2..4), select(&[";", "|"][..])).prop_map(|(members, operator)| format!("({})", members.join(operator)))
         })
         .boxed()
 }

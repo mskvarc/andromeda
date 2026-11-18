@@ -7,7 +7,7 @@
 use crate::filter::{Filter, attribute_path::AttributePath, value_path::ValuePath};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-/// The top-level attribute every predicate of `expr` addresses, in first-seen
+/// The top-level attribute every predicate of `filter` addresses, in first-seen
 /// order and without repetition.
 ///
 /// A wholly local path names its own attribute. A linked-entity hop names the
@@ -15,19 +15,19 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// evaluation the predicate reads, and the attribute a context source would
 /// have to hold for the hop to begin.
 #[must_use]
-pub fn referenced_attributes(expr: &Filter) -> Vec<&AttributeName> {
+pub fn referenced_attributes(filter: &Filter) -> Vec<&AttributeName> {
     let mut names = Vec::new();
-    collect(expr, &mut names);
+    collect(filter, &mut names);
     names
 }
 
-/// Walk `expr`, pushing each predicate's top-level attribute the first time it
+/// Walk `filter`, pushing each predicate's top-level attribute the first time it
 /// is seen.
-fn collect<'expr>(expr: &'expr Filter, names: &mut Vec<&'expr AttributeName>) {
-    match expr {
-        Filter::And(terms) | Filter::Or(terms) => terms.iter().for_each(|term| collect(term, names)),
-        Filter::Term(pred) => {
-            let name = top_level_attribute(pred.path());
+fn collect<'filter>(filter: &'filter Filter, names: &mut Vec<&'filter AttributeName>) {
+    match filter {
+        Filter::And(filters) | Filter::Or(filters) => filters.iter().for_each(|filter| collect(filter, names)),
+        Filter::Term(term) => {
+            let name = top_level_attribute(term.path());
             if !names.contains(&name) {
                 names.push(name);
             }
@@ -38,7 +38,7 @@ fn collect<'expr>(expr: &'expr Filter, names: &mut Vec<&'expr AttributeName>) {
 /// The attribute of the entity under evaluation that an axis starts from.
 const fn top_level_attribute(path: &AttributePath) -> &AttributeName {
     match path {
-        AttributePath::Local(ValuePath { attribute: attr, .. }) => attr,
+        AttributePath::Local(ValuePath { attribute, .. }) => attribute,
         AttributePath::Linked { relationship, .. } => relationship,
     }
 }
@@ -48,12 +48,12 @@ mod tests {
     use crate::filter::{Filter, referenced_attributes::referenced_attributes};
 
     fn names(q: &str) -> Vec<String> {
-        let expr = q.parse::<Filter>().expect("valid q");
-        referenced_attributes(&expr).into_iter().map(ToString::to_string).collect()
+        let filter = q.parse::<Filter>().expect("valid q");
+        referenced_attributes(&filter).into_iter().map(ToString::to_string).collect()
     }
 
     #[test]
-    fn a_single_predicate_names_its_attribute() {
+    fn a_single_term_names_its_attribute() {
         pretty_assertions::assert_eq!(names("speed>10"), vec!["speed"]);
     }
 

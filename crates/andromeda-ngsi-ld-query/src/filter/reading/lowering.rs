@@ -54,11 +54,11 @@ impl FilterReading {
     /// target languages selecting languageMap keys by `matching`: what the
     /// normal form is taken of.
     #[must_use]
-    pub fn lowered(expr: &Filter, matching: LanguageMatching) -> FilterReading {
-        match expr {
-            Filter::And(terms) => FilterReading::All(terms.iter().map(|term| FilterReading::lowered(term, matching)).collect()),
-            Filter::Or(terms) => FilterReading::Any(terms.iter().map(|term| FilterReading::lowered(term, matching)).collect()),
-            Filter::Term(predicate) => FilterReading::Term(Box::new(TermReading::of(predicate, matching))),
+    pub fn lowered(filter: &Filter, matching: LanguageMatching) -> FilterReading {
+        match filter {
+            Filter::And(filters) => FilterReading::All(filters.iter().map(|filter| FilterReading::lowered(filter, matching)).collect()),
+            Filter::Or(filters) => FilterReading::Any(filters.iter().map(|filter| FilterReading::lowered(filter, matching)).collect()),
+            Filter::Term(term) => FilterReading::Term(Box::new(TermReading::of(term, matching))),
         }
     }
 
@@ -73,8 +73,8 @@ impl FilterReading {
     /// `@context`. Before a trailing group it stays a sub-attribute name, as
     /// the IRI does.
     #[must_use]
-    pub fn lowered_context_source_filter(expr: &Filter) -> FilterReading {
-        FilterReading::lowered(expr, LanguageMatching::TagEquality).ending_on_member_terms()
+    pub fn lowered_context_source_filter(filter: &Filter) -> FilterReading {
+        FilterReading::lowered(filter, LanguageMatching::TagEquality).ending_on_member_terms()
     }
 
     /// The reading with every term whose last sub-attribute is an instance
@@ -116,15 +116,15 @@ impl TermReading {
     /// The reading of one parsed, expanded Query Term, its target language
     /// selecting languageMap keys by `matching`.
     #[must_use]
-    pub fn of(predicate: &QueryTerm, matching: LanguageMatching) -> TermReading {
-        let (hops, local) = hops_to_local(predicate.path());
+    pub fn of(term: &QueryTerm, matching: LanguageMatching) -> TermReading {
+        let (hops, local) = hops_to_local(term.path());
         let (sub_attributes, terminal) = local_reading(local, matching);
         TermReading {
             hops,
             attribute: local.attribute.clone(),
             sub_attributes,
             terminal,
-            test: test_of(predicate),
+            test: test_of(term),
         }
     }
 
@@ -169,12 +169,12 @@ fn hops_to_local(path: &AttributePath) -> (Vec<Hop>, &ValuePath) {
 fn local_reading(path: &ValuePath, matching: LanguageMatching) -> (Vec<AttributeName>, Terminal) {
     match path.ending_member() {
         Some((member, above)) => (above.to_vec(), Terminal::InstanceMember(member)),
-        None => (path.sub_attributes.clone(), trailing_terminal(path, matching)),
+        None => (path.sub_attributes.clone(), trailing_group_terminal(path, matching)),
     }
 }
 
 /// What a path's trailing group ends on at the instance it reaches.
-fn trailing_terminal(path: &ValuePath, matching: LanguageMatching) -> Terminal {
+fn trailing_group_terminal(path: &ValuePath, matching: LanguageMatching) -> Terminal {
     match &path.trailing {
         None | Some(TrailingGroup::AllLanguages) => Terminal::OwnValue,
         Some(TrailingGroup::Language(language)) => Terminal::Language {
@@ -193,14 +193,14 @@ fn trailing_terminal(path: &ValuePath, matching: LanguageMatching) -> Terminal {
 }
 
 /// What a Query Term asks of its target.
-fn test_of(predicate: &QueryTerm) -> Test {
-    match predicate {
+fn test_of(term: &QueryTerm) -> Test {
+    match term {
         QueryTerm::Exists(_) => Test::Exists,
-        QueryTerm::Equality { membership, value: rhs, .. } => Test::Value(ValueTest::new(equality_test(rhs), equality_polarity(*membership))),
-        QueryTerm::Ordering { operator: op, value: rhs, .. } => Test::Value(ValueTest::new(
+        QueryTerm::Equality { membership, value, .. } => Test::Value(ValueTest::new(equality_test(value), equality_polarity(*membership))),
+        QueryTerm::Ordering { operator, value, .. } => Test::Value(ValueTest::new(
             ScalarTest::Ordered {
-                relation: op.relation(),
-                operand: Operand::from(rhs),
+                relation: operator.relation(),
+                operand: Operand::from(value),
             },
             Polarity::Asserted,
         )),
@@ -210,8 +210,8 @@ fn test_of(predicate: &QueryTerm) -> Test {
 }
 
 /// The comparison `==` and `!=` make with a value, a value list or a range.
-fn equality_test(rhs: &EqualityValue) -> ScalarTest {
-    match rhs {
+fn equality_test(value: &EqualityValue) -> ScalarTest {
+    match value {
         EqualityValue::Scalar(scalar) => ScalarTest::EqualsAny(vec![equality_operand(scalar)]),
         EqualityValue::ValueList(values) => ScalarTest::EqualsAny(values.iter().map(equality_operand).collect()),
         EqualityValue::Range { min, max } => Interval::new(Operand::from(min), Operand::from(max)).map_or(ScalarTest::Unsatisfiable, ScalarTest::Within),

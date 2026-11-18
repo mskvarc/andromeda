@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_nested_type_expression_expands_at_every_leaf() {
+    async fn a_nested_type_selection_expands_at_every_leaf() {
         let raw = WrittenTypeSelection::Or(vec![
             WrittenTypeSelection::And(vec![
                 WrittenTypeSelection::Type("Home".parse().expect("valid type name")),

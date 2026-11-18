@@ -249,7 +249,7 @@ mod tests {
     use crate::{entity_row_refs::EntityRowRefs, ordering::attribute_value_order::AttributeValue};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{Filter as QueryExpr, Filter, attribute_path::AttributePath, value_path::ValuePath},
+        filter::{Filter, attribute_path::AttributePath, value_path::ValuePath},
         ordering::sort_direction::SortDirection,
     };
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
@@ -264,7 +264,7 @@ mod tests {
     }
 
     fn path(text: &str) -> ValuePath {
-        let QueryExpr::Term(pred) = text.parse::<Filter>().expect("a path parses as an existence query") else {
+        let Filter::Term(pred) = text.parse::<Filter>().expect("a path parses as an existence query") else {
             panic!("a single predicate");
         };
         let AttributePath::Local(local) = pred.path() else {

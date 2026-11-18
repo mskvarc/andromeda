@@ -100,7 +100,7 @@ mod tests {
     /// An expanded term is written back as the raw tree it came from, the
     /// keywords spelt as clause 4.21 spells them.
     #[test]
-    fn an_expanded_term_converts_back_to_its_raw_tree() {
+    fn an_expanded_term_converts_back_to_its_written_tree() {
         let term = ExpandedProjectionTerm::Attribute {
             iri: IriBuf::new("https://example.com/owner".to_owned()).expect("valid IRI"),
             linked: vec![ExpandedProjectionTerm::Id],

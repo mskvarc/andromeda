@@ -17,14 +17,14 @@ impl ForwardedNames<'_> {
     ///
     /// # Errors
     ///
-    /// Returns the errors of [`ForwardedNames::attr`], [`ForwardedNames::type_expr`],
+    /// Returns the errors of [`ForwardedNames::attr`], [`ForwardedNames::type_selection`],
     /// [`ForwardedNames::q`] and [`ForwardedNames::geoproperty`] when one of
     /// its names does not reword.
     pub(crate) async fn subscription(&self, request: &SubscriptionRequest) -> Result<SubscriptionRequest, FederationError> {
         let mut respelled = request.clone(); // clone: the forwarded copy is a second request, the reduced one is kept
         if let Some(selectors) = respelled.entities.as_set_mut() {
             for selector in selectors {
-                selector.type_ = self.type_expr(&selector.type_).await?;
+                selector.type_ = self.type_selection(&selector.type_).await?;
             }
         }
         if let Some(watched) = respelled.watched_attributes.as_set() {

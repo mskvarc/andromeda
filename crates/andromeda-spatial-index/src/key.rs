@@ -73,7 +73,7 @@ mod tests {
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::IriBuf;
 
-    fn type_expr(raw: &str) -> ExpandedTypeSelection {
+    fn type_selection(raw: &str) -> ExpandedTypeSelection {
         ExpandedTypeSelection::Type(IriBuf::new(raw.to_owned()).expect("a well-formed IRI"))
     }
 
@@ -89,28 +89,34 @@ mod tests {
 
     #[test]
     fn a_single_type_flattens_to_itself() {
-        let flattened = flatten_or_type_iris(&type_expr("https://example.org/Vehicle")).expect("flattens");
+        let flattened = flatten_or_type_iris(&type_selection("https://example.org/Vehicle")).expect("flattens");
         pretty_assertions::assert_eq!(flattened.len(), 1);
         pretty_assertions::assert_eq!(flattened[0].as_str(), "https://example.org/Vehicle");
     }
 
     #[test]
     fn an_alternation_flattens_to_every_branch() {
-        let expr = ExpandedTypeSelection::Or(vec![type_expr("https://example.org/Vehicle"), type_expr("https://example.org/Building")]);
+        let expr = ExpandedTypeSelection::Or(vec![
+            type_selection("https://example.org/Vehicle"),
+            type_selection("https://example.org/Building"),
+        ]);
         let flattened = flatten_or_type_iris(&expr).expect("flattens");
         pretty_assertions::assert_eq!(flattened.len(), 2);
     }
 
     #[test]
     fn an_intersection_refuses_to_flatten_rather_than_narrowing_the_answer() {
-        let expr = ExpandedTypeSelection::And(vec![type_expr("https://example.org/Vehicle"), type_expr("https://example.org/Building")]);
+        let expr = ExpandedTypeSelection::And(vec![
+            type_selection("https://example.org/Vehicle"),
+            type_selection("https://example.org/Building"),
+        ]);
         assert!(flatten_or_type_iris(&expr).is_none());
     }
 
     #[test]
     fn an_intersection_nested_inside_an_alternation_refuses_too() {
-        let nested = ExpandedTypeSelection::And(vec![type_expr("https://example.org/A"), type_expr("https://example.org/B")]);
-        let expr = ExpandedTypeSelection::Or(vec![type_expr("https://example.org/Vehicle"), nested]);
+        let nested = ExpandedTypeSelection::And(vec![type_selection("https://example.org/A"), type_selection("https://example.org/B")]);
+        let expr = ExpandedTypeSelection::Or(vec![type_selection("https://example.org/Vehicle"), nested]);
         assert!(flatten_or_type_iris(&expr).is_none());
     }
 }

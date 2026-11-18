@@ -78,7 +78,7 @@ fn main() -> Result<(), SetupError> {
     group.bench_function("compile", |bencher| {
         bencher.iter_batched(
             || expanded.clone(),
-            |expr| CompiledFilter::new(expr, LanguageMatching::TagEquality),
+            |filter| CompiledFilter::new(filter, LanguageMatching::TagEquality),
             BatchSize::SmallInput,
         );
     });

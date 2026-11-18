@@ -72,8 +72,8 @@ impl<'a> Parser<'a> {
 
     /// Consume the next character.
     fn advance(&mut self) {
-        if let Some(c) = self.peek() {
-            self.pos += c.len_utf8();
+        if let Some(character) = self.peek() {
+            self.pos += character.len_utf8();
         }
     }
 
@@ -93,13 +93,13 @@ impl<'a> Parser<'a> {
     /// Parses one `AttrName *1(LinkedEntityTerm)`.
     fn parse_term(&mut self) -> Result<WrittenProjectionTerm, ProjectionError> {
         let start = self.pos;
-        while let Some(c) = self.peek() {
-            if matches!(c, '{' | '}' | ',' | '|') {
+        while let Some(character) = self.peek() {
+            if matches!(character, '{' | '}' | ',' | '|') {
                 break;
             }
             self.advance();
         }
-        let name = self.input[start..self.pos].trim_matches(|c: char| c.is_ascii_whitespace());
+        let name = self.input[start..self.pos].trim_matches(|character: char| character.is_ascii_whitespace());
         if name.is_empty() {
             return Err(ProjectionError::EmptyTerm { position: start });
         }

@@ -168,15 +168,15 @@ mod tests {
     /// unread, and written back the way they arrived.
     #[test]
     fn string_coordinates_are_held_encoded_and_written_back_as_a_string() {
-        let input = WrittenGeoQuery::from_wire("within", "Polygon", coordinates(json!("[[[0,0],[1,0],[1,1],[0,0]]]")), None).expect("a decoded geo-query");
+        let geo_query = WrittenGeoQuery::from_wire("within", "Polygon", coordinates(json!("[[[0,0],[1,0],[1,1],[0,0]]]")), None).expect("a decoded geo-query");
         pretty_assertions::assert_eq!(
-            input.reference,
+            geo_query.reference,
             ReferenceGeometry::Encoded {
                 geometry_type: GeometryType::Polygon,
                 coordinates: "[[[0,0],[1,0],[1,1],[0,0]]]".to_owned(),
             }
         );
-        let serialized = serde_json::to_value(&input).expect("serializes");
+        let serialized = serde_json::to_value(&geo_query).expect("serializes");
         pretty_assertions::assert_eq!(serialized["coordinates"], json!("[[[0,0],[1,0],[1,1],[0,0]]]"));
     }
 
@@ -211,7 +211,7 @@ mod tests {
     /// at extraction, never held as text.
     #[test]
     fn array_coordinates_are_read_into_the_reference_geometry() {
-        let input = WrittenGeoQuery::from_wire("within", "Point", coordinates(json!([1, 2])), None).expect("a decoded geo-query");
-        assert!(matches!(input.reference, ReferenceGeometry::Read(_)));
+        let geo_query = WrittenGeoQuery::from_wire("within", "Point", coordinates(json!([1, 2])), None).expect("a decoded geo-query");
+        assert!(matches!(geo_query.reference, ReferenceGeometry::Read(_)));
     }
 }

@@ -202,7 +202,7 @@ pub(super) async fn covered_type(
     names: &ForwardedNames<'_>,
 ) -> Result<Option<WrittenTypeSelection>, FederationError> {
     if block.entities.is_none() {
-        return Ok(Some(names.type_expr(entity_type).await?));
+        return Ok(Some(names.type_selection(entity_type).await?));
     }
     let leaves = match entity_type {
         WrittenTypeSelection::Type(name) => vec![name],
@@ -219,7 +219,7 @@ pub(super) async fn covered_type(
             }
             leaves
         }
-        WrittenTypeSelection::Wildcard | WrittenTypeSelection::And(_) => return Ok(Some(names.type_expr(entity_type).await?)),
+        WrittenTypeSelection::Wildcard | WrittenTypeSelection::And(_) => return Ok(Some(names.type_selection(entity_type).await?)),
     };
     let mut covered = Vec::new();
     for name in leaves {

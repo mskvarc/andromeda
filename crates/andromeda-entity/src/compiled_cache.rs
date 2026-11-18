@@ -103,7 +103,7 @@ impl CompiledQueryKey {
             push_field(&mut parameters, field);
         }
         push_ordering_geometry(&mut parameters, params.ordering.geometry.as_ref());
-        push_order_terms(&mut parameters, &params.ordering.order_by);
+        push_ordering_terms(&mut parameters, &params.ordering.order_by);
 
         // The structured POST selectors (clause 5.2.33) are part of the key: two
         // bodies that flatten to the same `id`/`type` summary but group their
@@ -193,7 +193,7 @@ fn push_geo_query(buffer: &mut String, value: Option<&WrittenGeoQuery>) {
 }
 
 /// Append parsed ordering terms without reconstructing a request query string.
-fn push_order_terms(buffer: &mut String, terms: &[WrittenOrderingTerm]) {
+fn push_ordering_terms(buffer: &mut String, terms: &[WrittenOrderingTerm]) {
     push_field(buffer, Some(&terms.len().to_string()));
     for term in terms {
         // The whole path, not just its head: `a.b`, `a[b]` and `a` are three

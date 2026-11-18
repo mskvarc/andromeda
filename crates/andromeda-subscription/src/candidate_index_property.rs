@@ -58,7 +58,7 @@ enum TypeDesc {
 
 #[derive(Debug, Clone)]
 struct SelectorDesc {
-    type_expr: TypeDesc,
+    type_selection: TypeDesc,
     id: Option<usize>,
     id_pattern: Option<usize>,
 }
@@ -88,7 +88,11 @@ fn type_desc() -> impl Strategy<Value = TypeDesc> {
 }
 
 fn selector_desc() -> impl Strategy<Value = SelectorDesc> {
-    (type_desc(), option::of(0..4_usize), option::of(0..ID_PATTERNS.len())).prop_map(|(type_expr, id, id_pattern)| SelectorDesc { type_expr, id, id_pattern })
+    (type_desc(), option::of(0..4_usize), option::of(0..ID_PATTERNS.len())).prop_map(|(type_selection, id, id_pattern)| SelectorDesc {
+        type_selection,
+        id,
+        id_pattern,
+    })
 }
 
 fn subscription_desc() -> impl Strategy<Value = SubscriptionDesc> {
@@ -126,7 +130,7 @@ fn entity_uri(index: usize) -> Result<Identifier, SubscriptionError> {
     format!("urn:ngsi-ld:E:{index}").parse().map_err(|error| internal(&error))
 }
 
-fn type_expression(desc: &TypeDesc) -> String {
+fn type_selection_text(desc: &TypeDesc) -> String {
     match desc {
         TypeDesc::Wildcard => "*".to_owned(),
         TypeDesc::Single(index) => TYPES[*index].to_owned(),
@@ -146,7 +150,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
                     .id_pattern
                     .map(|index| ID_PATTERNS[index].parse().map_err(|error| internal(&error)))
                     .transpose()?,
-                type_: type_expression(&selector.type_expr).parse().map_err(|error| internal(&error))?,
+                type_: type_selection_text(&selector.type_selection).parse().map_err(|error| internal(&error))?,
             })
         })
         .collect::<Result<Vec<_>, SubscriptionError>>()?;

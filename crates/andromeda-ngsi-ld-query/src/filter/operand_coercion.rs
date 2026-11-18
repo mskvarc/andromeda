@@ -30,68 +30,60 @@ pub enum OperandCoercion {
 }
 
 impl OperandCoercion {
-    /// `pred` with the operands of an equality or an ordering expanded; a
+    /// `term` with the operands of an equality or an ordering expanded; a
     /// pattern is no term and existence has no operand.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`]
     /// when an operand does not expand.
-    pub async fn expand_operands(self, pred: QueryTerm, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
-        Ok(match pred {
-            QueryTerm::Equality { path, membership, value: rhs } => QueryTerm::Equality {
-                value: self.expand_rhs(rhs, expander).await?,
+    pub async fn expand_operands(self, term: QueryTerm, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
+        Ok(match term {
+            QueryTerm::Equality { path, membership, value } => QueryTerm::Equality {
+                value: self.expand_equality_value(value, expander).await?,
                 path,
                 membership,
             },
-            QueryTerm::Ordering {
+            QueryTerm::Ordering { path, operator, value } => QueryTerm::Ordering {
+                value: self.expand_scalar(value, expander).await?,
                 path,
-                operator: op,
-                value: rhs,
-            } => QueryTerm::Ordering {
-                value: self.expand_scalar(rhs, expander).await?,
-                path,
-                operator: op,
+                operator,
             },
-            QueryTerm::Exists(_) | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. } => pred,
+            QueryTerm::Exists(_) | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. } => term,
         })
     }
 
-    /// `pred` with the operands [`OperandCoercion::expand_operands`] expanded
+    /// `term` with the operands [`OperandCoercion::expand_operands`] expanded
     /// put back in the terms of the `@context` `compactor` holds.
-    pub async fn compact_operands(self, pred: QueryTerm, compactor: &impl TermCompactor) -> QueryTerm {
-        match pred {
-            QueryTerm::Equality { path, membership, value: rhs } => QueryTerm::Equality {
-                value: self.compact_rhs(rhs, compactor).await,
+    pub async fn compact_operands(self, term: QueryTerm, compactor: &impl TermCompactor) -> QueryTerm {
+        match term {
+            QueryTerm::Equality { path, membership, value } => QueryTerm::Equality {
+                value: self.compact_equality_value(value, compactor).await,
                 path,
                 membership,
             },
-            QueryTerm::Ordering {
+            QueryTerm::Ordering { path, operator, value } => QueryTerm::Ordering {
+                value: self.compact_scalar(value, compactor).await,
                 path,
-                operator: op,
-                value: rhs,
-            } => QueryTerm::Ordering {
-                value: self.compact_scalar(rhs, compactor).await,
-                path,
-                operator: op,
+                operator,
             },
-            QueryTerm::Exists(_) | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. } => pred,
+            QueryTerm::Exists(_) | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. } => term,
         }
     }
 
     /// Expand the operands of an equality; a range is bounded by two ordered
     /// values, neither of which is a term.
-    async fn expand_rhs(self, rhs: EqualityValue, expander: &impl TermExpander) -> Result<EqualityValue, QueryError> {
-        match rhs {
+    async fn expand_equality_value(self, value: EqualityValue, expander: &impl TermExpander) -> Result<EqualityValue, QueryError> {
+        match value {
             EqualityValue::Scalar(scalar) => Ok(EqualityValue::Scalar(self.expand_scalar(scalar, expander).await?)),
             EqualityValue::ValueList(values) => {
-                let mut terms = Vec::with_capacity(values.len());
-                for value in values {
-                    terms.push(self.expand_scalar(value, expander).await?);
+                let mut scalars = Vec::with_capacity(values.len());
+                for scalar in values {
+                    scalars.push(self.expand_scalar(scalar, expander).await?);
                 }
-                Ok(EqualityValue::ValueList(terms))
+                Ok(EqualityValue::ValueList(scalars))
             }
-            EqualityValue::Range { .. } => Ok(rhs),
+            EqualityValue::Range { .. } => Ok(value),
         }
     }
 
@@ -114,17 +106,17 @@ impl OperandCoercion {
     }
 
     /// Compact the operands of an equality; a range is left as it is.
-    async fn compact_rhs(self, rhs: EqualityValue, compactor: &impl TermCompactor) -> EqualityValue {
-        match rhs {
+    async fn compact_equality_value(self, value: EqualityValue, compactor: &impl TermCompactor) -> EqualityValue {
+        match value {
             EqualityValue::Scalar(scalar) => EqualityValue::Scalar(self.compact_scalar(scalar, compactor).await),
             EqualityValue::ValueList(values) => {
                 let mut compacted = Vec::with_capacity(values.len());
-                for value in values {
-                    compacted.push(self.compact_scalar(value, compactor).await);
+                for scalar in values {
+                    compacted.push(self.compact_scalar(scalar, compactor).await);
                 }
                 EqualityValue::ValueList(compacted)
             }
-            EqualityValue::Range { .. } => rhs,
+            EqualityValue::Range { .. } => value,
         }
     }
 

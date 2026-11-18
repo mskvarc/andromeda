@@ -59,8 +59,8 @@ mod tests {
     /// of a boolean expression gets its own members back.
     #[tokio::test]
     async fn every_term_keeps_its_members_in_both_spellings() {
-        let expr = persisted_round_trip("speed>1;(address[city]==\"Berlin\"|name[en]==\"Door\")").await;
-        let rendered = (expr.to_string(), expr.written_member_text());
+        let filter = persisted_round_trip("speed>1;(address[city]==\"Berlin\"|name[en]==\"Door\")").await;
+        let rendered = (filter.to_string(), filter.written_member_text());
         pretty_assertions::assert_eq!(
             rendered,
             (

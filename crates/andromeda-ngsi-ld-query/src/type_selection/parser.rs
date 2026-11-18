@@ -36,17 +36,17 @@ pub(super) fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionEr
     }
 
     let mut parser = Parser::new(trimmed);
-    let expr = parser.parse_entity_types()?;
+    let type_selection = parser.parse_entity_types()?;
 
     if parser.pos < parser.input.len() {
-        let ch = parser.input[parser.pos..].chars().next().unwrap_or(' ');
+        let character = parser.input[parser.pos..].chars().next().unwrap_or(' ');
         return Err(TypeSelectionError::UnexpectedCharacter {
-            character: ch,
+            character,
             position: parser.pos,
         });
     }
 
-    Ok(expr)
+    Ok(type_selection)
 }
 
 /// Cursor over a type selection expression.
@@ -70,8 +70,8 @@ impl<'a> Parser<'a> {
 
     /// Consume the next character.
     fn advance(&mut self) {
-        if let Some(c) = self.peek() {
-            self.pos += c.len_utf8();
+        if let Some(character) = self.peek() {
+            self.pos += character.len_utf8();
         }
     }
 
@@ -125,8 +125,8 @@ impl<'a> Parser<'a> {
         self.skip_whitespace();
         let start = self.pos;
         match self.peek() {
-            Some(c) if is_type_char(c) => {}
-            Some(c) => return Err(TypeSelectionError::UnexpectedCharacter { character: c, position: start }),
+            Some(character) if is_type_char(character) => {}
+            Some(character) => return Err(TypeSelectionError::UnexpectedCharacter { character, position: start }),
             None => return Err(TypeSelectionError::UnexpectedEnd),
         }
         while self.peek().is_some_and(is_type_char) {
@@ -140,8 +140,8 @@ impl<'a> Parser<'a> {
 
     /// Skip over any run of whitespace.
     fn skip_whitespace(&mut self) {
-        while let Some(c) = self.peek() {
-            if c.is_whitespace() {
+        while let Some(character) = self.peek() {
+            if character.is_whitespace() {
                 self.advance();
             } else {
                 break;
@@ -152,8 +152,8 @@ impl<'a> Parser<'a> {
 
 /// Returns `true` for characters that may appear in a type name.
 /// Excludes the expression operators: `|`, `,`, `;`, `(`, `)`.
-const fn is_type_char(c: char) -> bool {
-    !matches!(c, '|' | ',' | ';' | '(' | ')') && !c.is_whitespace()
+const fn is_type_char(character: char) -> bool {
+    !matches!(character, '|' | ',' | ';' | '(' | ')') && !character.is_whitespace()
 }
 
 #[cfg(test)]
@@ -166,33 +166,33 @@ mod tests {
 
     #[test]
     fn parse_single_type() {
-        let expr = parse("Vehicle").unwrap();
-        pretty_assertions::assert_eq!(expr, t("Vehicle"));
+        let type_selection = parse("Vehicle").unwrap();
+        pretty_assertions::assert_eq!(type_selection, t("Vehicle"));
     }
 
     #[test]
     fn parse_or_with_pipe() {
-        let expr = parse("Building|House").unwrap();
-        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
+        let type_selection = parse("Building|House").unwrap();
+        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
     }
 
     #[test]
     fn parse_or_with_comma() {
-        let expr = parse("Building,House").unwrap();
-        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
+        let type_selection = parse("Building,House").unwrap();
+        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
     }
 
     #[test]
     fn parse_parenthesised_conjunction() {
-        let expr = parse("(Home;Vehicle)").unwrap();
-        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]));
+        let type_selection = parse("(Home;Vehicle)").unwrap();
+        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]));
     }
 
     #[test]
     fn parse_mixed_and_or_with_grouping() {
-        let expr = parse("(Home;Vehicle)|Motorhome").unwrap();
+        let type_selection = parse("(Home;Vehicle)|Motorhome").unwrap();
         pretty_assertions::assert_eq!(
-            expr,
+            type_selection,
             WrittenTypeSelection::Or(vec![WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]), t("Motorhome"),])
         );
     }
@@ -220,8 +220,8 @@ mod tests {
 
     #[test]
     fn parse_uri_type_name() {
-        let expr = parse("https://example.com/Vehicle").unwrap();
-        pretty_assertions::assert_eq!(expr, t("https://example.com/Vehicle"));
+        let type_selection = parse("https://example.com/Vehicle").unwrap();
+        pretty_assertions::assert_eq!(type_selection, t("https://example.com/Vehicle"));
     }
 
     #[test]
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn multiple_or_terms() {
-        let expr = parse("A|B|C").unwrap();
-        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::Or(vec![t("A"), t("B"), t("C"),]));
+        let type_selection = parse("A|B|C").unwrap();
+        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("A"), t("B"), t("C"),]));
     }
 }

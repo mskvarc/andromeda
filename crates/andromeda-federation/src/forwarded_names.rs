@@ -138,15 +138,15 @@ impl<'a> ForwardedNames<'a> {
     /// # Errors
     ///
     /// As [`ForwardedNames::attr`].
-    pub(crate) async fn type_expr(&self, expression: &WrittenTypeSelection) -> Result<WrittenTypeSelection, FederationError> {
+    pub(crate) async fn type_selection(&self, expression: &WrittenTypeSelection) -> Result<WrittenTypeSelection, FederationError> {
         match self.rewording {
             Rewording::AsInbound => Ok(expression.clone()),
-            Rewording::Reword => self.reworded_type_expr(expression).await,
+            Rewording::Reword => self.reworded_type_selection(expression).await,
         }
     }
 
     /// Reword every leaf of a type selection.
-    fn reworded_type_expr<'b>(
+    fn reworded_type_selection<'b>(
         &'b self,
         expression: &'b WrittenTypeSelection,
     ) -> Pin<Box<dyn Future<Output = Result<WrittenTypeSelection, FederationError>> + Send + 'b>> {
@@ -164,7 +164,7 @@ impl<'a> ForwardedNames<'a> {
     async fn reworded_children(&self, children: &[WrittenTypeSelection]) -> Result<Vec<WrittenTypeSelection>, FederationError> {
         let mut reworded = Vec::with_capacity(children.len());
         for child in children {
-            reworded.push(self.reworded_type_expr(child).await?);
+            reworded.push(self.reworded_type_selection(child).await?);
         }
         Ok(reworded)
     }
@@ -338,7 +338,7 @@ mod tests {
         let vehicle: EntityTypeName = "Vehicle".parse().expect("a type name");
         pretty_assertions::assert_eq!(names.entity_type(&vehicle).await.expect("rewords").as_str(), "Car");
         let expression: WrittenTypeSelection = "Vehicle,Other".parse().expect("a type selection");
-        pretty_assertions::assert_eq!(names.type_expr(&expression).await.expect("rewords").to_string(), "Car,Other");
+        pretty_assertions::assert_eq!(names.type_selection(&expression).await.expect("rewords").to_string(), "Car,Other");
         let query = "speed>10;brand==\"x\"".parse::<Filter>().expect("a query");
         pretty_assertions::assert_eq!(
             names.q(&query, None).await.expect("rewords").to_string(),

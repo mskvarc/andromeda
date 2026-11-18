@@ -10,7 +10,7 @@ use crate::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
             deserialize_optional_dataset_selectors,
-            deserialize_optional_filter_expr,
+            deserialize_optional_filter,
             deserialize_optional_iso8601_duration,
             deserialize_optional_join_level,
             deserialize_optional_pattern,
@@ -74,7 +74,7 @@ pub struct EntityQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
@@ -147,7 +147,7 @@ pub struct EntityQueryParameters {
     pub geometry_property: Option<AttributeName>,
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
     /// are contacted during distributed operations. Uses the q-expression grammar.
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub csf: Option<Filter>,
 }
 

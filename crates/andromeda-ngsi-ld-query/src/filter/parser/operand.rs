@@ -31,7 +31,7 @@ use andromeda_ngsi_ld_number::JsonNumber;
 /// Returns [`FilterError::Expected`] when no operand stands where one is
 /// required, and one of the literal-typing variants when an operand satisfies
 /// no clause 4.9 production.
-pub(super) fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<EqualityValue, FilterError> {
+pub(super) fn parse_equality_value(cursor: &mut TokenCursor<'_>) -> Result<EqualityValue, FilterError> {
     if cursor.peek_ahead(1) == Some(&Token::Dots) {
         let min = parse_comparable_value(cursor)?;
         cursor.advance();
@@ -144,10 +144,10 @@ mod tests {
 
     /// The equality operand of a filter holding one predicate.
     fn equality_operand(q: &str) -> EqualityValue {
-        let Filter::Term(QueryTerm::Equality { value: rhs, .. }) = q.parse::<Filter>().expect("parse q") else {
+        let Filter::Term(QueryTerm::Equality { value, .. }) = q.parse::<Filter>().expect("parse q") else {
             panic!("a single equality predicate");
         };
-        rhs
+        value
     }
 
     /// The filter keeps the operand the client wrote, a URI included, so a

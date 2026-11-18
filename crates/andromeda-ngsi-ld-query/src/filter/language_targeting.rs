@@ -50,10 +50,10 @@ impl LanguageTargeting {
         }
     }
 
-    /// The least level admitting every target language `expr` names.
+    /// The least level admitting every target language `filter` names.
     #[must_use]
-    pub fn required_by(expr: &Filter) -> LanguageTargeting {
-        expr.terminal_paths().into_iter().map(required_by_path).max().unwrap_or_default()
+    pub fn required_by(filter: &Filter) -> LanguageTargeting {
+        filter.terminal_paths().into_iter().map(required_by_path).max().unwrap_or_default()
     }
 
     /// Admit a filter a request carries under this level.
@@ -64,8 +64,8 @@ impl LanguageTargeting {
     /// only a full tag spells below [`LanguageTargeting::LanguageTags`], and
     /// [`FilterError::LanguageRangeNotAdmitted`] for an extended range below
     /// [`LanguageTargeting::LanguageRanges`].
-    pub fn admit(self, expr: &Filter) -> Result<(), FilterError> {
-        expr.terminal_paths().into_iter().try_for_each(|path| self.admit_path(path))
+    pub fn admit(self, filter: &Filter) -> Result<(), FilterError> {
+        filter.terminal_paths().into_iter().try_for_each(|path| self.admit_path(path))
     }
 
     /// Admit one attribute path, a `q` Query Term's or an `orderBy` term's,

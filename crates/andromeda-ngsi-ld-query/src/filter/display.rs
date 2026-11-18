@@ -35,7 +35,7 @@ impl fmt::Display for Filter {
     /// confuse the tokeniser are re-quoted.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
-        write_expr(&mut text, self, MemberSpelling::Addressed);
+        write_filter(&mut text, self, MemberSpelling::Addressed);
         formatter.write_str(&text)
     }
 }
@@ -53,17 +53,17 @@ impl Filter {
     #[must_use]
     pub fn written_member_text(&self) -> String {
         let mut text = String::new();
-        write_expr(&mut text, self, MemberSpelling::Written);
+        write_filter(&mut text, self, MemberSpelling::Written);
         text
     }
 }
 
 /// Write the boolean structure of an expression.
-fn write_expr(buf: &mut String, expr: &Filter, spelling: MemberSpelling) {
-    match expr {
-        Filter::And(terms) => write_terms(buf, terms, ';', spelling),
-        Filter::Or(terms) => write_terms(buf, terms, '|', spelling),
-        Filter::Term(pred) => write_predicate(buf, pred, spelling),
+fn write_filter(buf: &mut String, filter: &Filter, spelling: MemberSpelling) {
+    match filter {
+        Filter::And(filters) => write_filters(buf, filters, ';', spelling),
+        Filter::Or(filters) => write_filters(buf, filters, '|', spelling),
+        Filter::Term(term) => write_query_term(buf, term, spelling),
     }
 }
 
@@ -77,24 +77,24 @@ fn write_expr(buf: &mut String, expr: &Filter, spelling: MemberSpelling) {
 /// disjunction. Without this, `(a|b);c` rendered as `a|b;c` and read back as
 /// `a|(b;c)`, so a stored filter changed meaning the first time it was
 /// re-serialised.
-fn write_terms(buf: &mut String, terms: &[Filter], separator: char, spelling: MemberSpelling) {
-    for (index, term) in terms.iter().enumerate() {
+fn write_filters(buf: &mut String, filters: &[Filter], separator: char, spelling: MemberSpelling) {
+    for (index, filter) in filters.iter().enumerate() {
         if index > 0 {
             buf.push(separator);
         }
-        if needs_parentheses(term, separator) {
+        if needs_parentheses(filter, separator) {
             buf.push('(');
-            write_expr(buf, term, spelling);
+            write_filter(buf, filter, spelling);
             buf.push(')');
         } else {
-            write_expr(buf, term, spelling);
+            write_filter(buf, filter, spelling);
         }
     }
 }
 
 /// Whether a child of a node written with `separator` has to be parenthesised.
-const fn needs_parentheses(term: &Filter, separator: char) -> bool {
-    match term {
+const fn needs_parentheses(filter: &Filter, separator: char) -> bool {
+    match filter {
         // A leaf binds tighter than every operator.
         Filter::Term(_) => false,
         // `;` binds tighter than `|`, so a conjunction inside a disjunction
@@ -108,17 +108,17 @@ const fn needs_parentheses(term: &Filter, separator: char) -> bool {
 /// Write one leaf predicate: its attribute axis, then its operator and
 /// operand, which clause 4.9 writes after a hop's closing brace
 /// (`rel{attr}=="x"`).
-fn write_predicate(buf: &mut String, pred: &QueryTerm, spelling: MemberSpelling) {
-    write_query_path(buf, pred.path(), spelling, PathHead::Query);
-    match pred {
+fn write_query_term(buf: &mut String, term: &QueryTerm, spelling: MemberSpelling) {
+    write_attribute_path(buf, term.path(), spelling, PathHead::Query);
+    match term {
         QueryTerm::Exists(_) => {}
-        QueryTerm::Equality { membership, value: rhs, .. } => {
+        QueryTerm::Equality { membership, value, .. } => {
             buf.push_str(membership.spelling());
-            write_compare_value(buf, rhs);
+            write_equality_value(buf, value);
         }
-        QueryTerm::Ordering { operator: op, value: rhs, .. } => {
-            buf.push_str(op.spelling());
-            write_scalar(buf, rhs);
+        QueryTerm::Ordering { operator, value, .. } => {
+            buf.push_str(operator.spelling());
+            write_scalar(buf, value);
         }
         QueryTerm::MatchPattern { pattern, .. } => {
             buf.push_str("~=");
@@ -142,9 +142,9 @@ enum PathHead {
 
 /// Write an attribute axis, every hop's braces closed, its leading name
 /// standing at `head`.
-fn write_query_path(buf: &mut String, path: &AttributePath, spelling: MemberSpelling, head: PathHead) {
+fn write_attribute_path(buf: &mut String, path: &AttributePath, spelling: MemberSpelling, head: PathHead) {
     match path {
-        AttributePath::Local(local) => write_attr_path(buf, local, spelling, head),
+        AttributePath::Local(local) => write_value_path(buf, local, spelling, head),
         AttributePath::Linked {
             relationship,
             guard_types,
@@ -161,7 +161,7 @@ fn write_query_path(buf: &mut String, path: &AttributePath, spelling: MemberSpel
             if !guard_types.is_empty() {
                 buf.push(':');
             }
-            write_query_path(buf, inner, spelling, PathHead::Hop);
+            write_attribute_path(buf, inner, spelling, PathHead::Hop);
             buf.push('}');
         }
     }
@@ -186,14 +186,14 @@ impl fmt::Display for ValuePath {
     /// the request text, so the parsed term has to be able to spell itself again.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
-        write_attr_path(&mut text, self, MemberSpelling::Addressed, PathHead::Query);
+        write_value_path(&mut text, self, MemberSpelling::Addressed, PathHead::Query);
         formatter.write_str(&text)
     }
 }
 
 /// Write an attribute path, including sub-attributes and compound value keys
 /// in `spelling`, its attribute standing at `head`.
-fn write_attr_path(buf: &mut String, path: &ValuePath, spelling: MemberSpelling, head: PathHead) {
+fn write_value_path(buf: &mut String, path: &ValuePath, spelling: MemberSpelling, head: PathHead) {
     write_leading_name(buf, path.attribute.as_str(), head);
     for sub in &path.sub_attributes {
         buf.push('.');
@@ -258,16 +258,16 @@ fn needs_quoting(s: &str) -> bool {
 }
 
 /// Write the right-hand side of a comparison.
-fn write_compare_value(buf: &mut String, val: &EqualityValue) {
-    match val {
+fn write_equality_value(buf: &mut String, value: &EqualityValue) {
+    match value {
         EqualityValue::Scalar(s) => write_scalar(buf, s),
         EqualityValue::Range { min, max } => {
             write_scalar(buf, min);
             buf.push_str("..");
             write_scalar(buf, max);
         }
-        EqualityValue::ValueList(vals) => {
-            for (i, v) in vals.iter().enumerate() {
+        EqualityValue::ValueList(values) => {
+            for (i, v) in values.iter().enumerate() {
                 if i > 0 {
                     buf.push(',');
                 }
@@ -332,8 +332,8 @@ mod tests {
 
     #[test]
     fn roundtrip_simple_compare() {
-        let expr = "speed>50".parse::<Filter>().unwrap();
-        let s = expr.to_string();
+        let filter = "speed>50".parse::<Filter>().unwrap();
+        let s = filter.to_string();
         pretty_assertions::assert_eq!(s, "speed>50");
     }
 
@@ -355,39 +355,39 @@ mod tests {
         let Filter::Term(QueryTerm::Equality { path, membership, .. }) = "p==urn:x".parse::<Filter>().unwrap() else {
             panic!("expected an equality");
         };
-        let expr = Filter::Term(QueryTerm::Equality {
+        let filter = Filter::Term(QueryTerm::Equality {
             path,
             membership,
             value: EqualityValue::Scalar(Scalar::Uri("https://example.org/a;b".to_owned())),
         });
-        pretty_assertions::assert_eq!(expr.to_string(), "p==\"https://example.org/a;b\"");
+        pretty_assertions::assert_eq!(filter.to_string(), "p==\"https://example.org/a;b\"");
     }
 
     #[test]
     fn roundtrip_string_compare() {
-        let expr = "brandName==\"Mercedes\"".parse::<Filter>().unwrap();
-        let s = expr.to_string();
+        let filter = "brandName==\"Mercedes\"".parse::<Filter>().unwrap();
+        let s = filter.to_string();
         pretty_assertions::assert_eq!(s, "brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_and() {
-        let expr = "speed>50;brandName==\"Mercedes\"".parse::<Filter>().unwrap();
-        let s = expr.to_string();
+        let filter = "speed>50;brandName==\"Mercedes\"".parse::<Filter>().unwrap();
+        let s = filter.to_string();
         pretty_assertions::assert_eq!(s, "speed>50;brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_range() {
-        let expr = "temperature==10..20".parse::<Filter>().unwrap();
-        let s = expr.to_string();
+        let filter = "temperature==10..20".parse::<Filter>().unwrap();
+        let s = filter.to_string();
         pretty_assertions::assert_eq!(s, "temperature==10..20");
     }
 
     #[test]
     fn roundtrip_value_list() {
-        let expr = "color==\"red\",\"blue\"".parse::<Filter>().unwrap();
-        let s = expr.to_string();
+        let filter = "color==\"red\",\"blue\"".parse::<Filter>().unwrap();
+        let s = filter.to_string();
         pretty_assertions::assert_eq!(s, "color==\"red\",\"blue\"");
     }
 
@@ -396,7 +396,7 @@ mod tests {
     /// re-parsed when it is loaded, so a shape that does not round-trip is a
     /// subscription that silently changes meaning.
     #[test]
-    fn every_scalar_and_compare_value_shape_round_trips() {
+    fn every_scalar_and_equality_value_shape_round_trips() {
         let shapes = [
             "speed>50",
             "speed==10..20",
@@ -427,17 +427,17 @@ mod tests {
 
     #[test]
     fn exact_numeric_operands_round_trip_by_mathematical_value() {
-        for expression in [
+        for written in [
             "speed==18446744073709551616",
             "speed==0.100000000000000005",
             "speed>-2.5e-400",
             "speed==1e2..1.00000000000000000001e2",
             "speed==0.100000000000000004,0.100000000000000005",
         ] {
-            let parsed = expression.parse::<Filter>().unwrap_or_else(|error| panic!("{expression} must parse: {error}"));
+            let parsed = written.parse::<Filter>().unwrap_or_else(|error| panic!("{written} must parse: {error}"));
             let rendered = parsed.to_string();
             let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
-            pretty_assertions::assert_eq!(reparsed, parsed, "mathematical-value round trip of {expression} through {rendered}");
+            pretty_assertions::assert_eq!(reparsed, parsed, "mathematical-value round trip of {written} through {rendered}");
         }
     }
 
@@ -537,21 +537,21 @@ mod tests {
     /// stored subscription's meaning when it is read back and re-serialised.
     #[test]
     fn a_percent_sequence_in_a_quoted_operand_round_trips_unchanged() {
-        let expr = "ref==\"urn:x:a%2Fb\"".parse::<Filter>().expect("parses");
-        let rendered = expr.to_string();
+        let filter = "ref==\"urn:x:a%2Fb\"".parse::<Filter>().expect("parses");
+        let rendered = filter.to_string();
         pretty_assertions::assert_eq!(rendered, "ref==\"urn:x:a%2Fb\"");
         let reparsed = rendered.parse::<Filter>().expect("reparses");
-        pretty_assertions::assert_eq!(reparsed, expr);
+        pretty_assertions::assert_eq!(reparsed, filter);
     }
 
     #[test]
     fn serialize_expanded_iri() {
-        let expr = Filter::Term(QueryTerm::Ordering {
+        let filter = Filter::Term(QueryTerm::Ordering {
             path: AttributePath::Local(ValuePath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             operator: OrderingOperator::Greater,
             value: Scalar::Number(50.into()),
         });
-        let s = expr.to_string();
+        let s = filter.to_string();
         // The IRI must be quoted because it contains a dot
         pretty_assertions::assert_eq!(s, "\"https://example.com/speed\">50");
         let parsed = s.parse::<Filter>().unwrap();
@@ -586,10 +586,10 @@ mod tests {
     #[test]
     fn a_target_language_and_the_every_language_marker_round_trip() {
         for written in ["label[en-GB]==\"x\"", "label[de-*-DE]==\"x\"", "label[*]==\"x\"", "label[zh-Hant-TW]"] {
-            let expr = written.parse::<Filter>().unwrap();
-            pretty_assertions::assert_eq!(expr.to_string(), written);
-            pretty_assertions::assert_eq!(expr.to_string().parse::<Filter>().unwrap(), expr, "{written}");
-            pretty_assertions::assert_eq!(expr.written_member_text(), written);
+            let filter = written.parse::<Filter>().unwrap();
+            pretty_assertions::assert_eq!(filter.to_string(), written);
+            pretty_assertions::assert_eq!(filter.to_string().parse::<Filter>().unwrap(), filter, "{written}");
+            pretty_assertions::assert_eq!(filter.written_member_text(), written);
         }
     }
 
@@ -630,19 +630,19 @@ mod tests {
         };
         for code_point in 0x01_u32..0x20 {
             let control = char::from_u32(code_point).unwrap();
-            let expr = Filter::Term(QueryTerm::Equality {
+            let filter = Filter::Term(QueryTerm::Equality {
                 path: path.clone(),
                 membership,
                 value: EqualityValue::Scalar(Scalar::Str(format!("a{control}b"))),
             });
-            let rendered = expr.to_string();
+            let rendered = filter.to_string();
             assert!(
                 rendered.chars().all(|character| u32::from(character) >= 0x20),
                 "U+{code_point:04X} must be written as an escape, got {rendered:?}"
             );
             let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered:?} must reparse: {error}"));
-            pretty_assertions::assert_eq!(reparsed, expr, "round trip of U+{code_point:04X}");
-            pretty_assertions::assert_eq!(expr.written_member_text(), rendered, "written members of U+{code_point:04X}");
+            pretty_assertions::assert_eq!(reparsed, filter, "round trip of U+{code_point:04X}");
+            pretty_assertions::assert_eq!(filter.written_member_text(), rendered, "written members of U+{code_point:04X}");
         }
     }
 }

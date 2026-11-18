@@ -73,8 +73,8 @@ impl Filter {
     /// filter can be decided.
     pub fn contains_linked_hop(&self) -> bool {
         match self {
-            Filter::And(terms) | Filter::Or(terms) => terms.iter().any(Filter::contains_linked_hop),
-            Filter::Term(pred) => pred.path().is_linked(),
+            Filter::And(filters) | Filter::Or(filters) => filters.iter().any(Filter::contains_linked_hop),
+            Filter::Term(term) => term.path().is_linked(),
         }
     }
 
@@ -87,8 +87,8 @@ impl Filter {
     /// Zero when the filter stays inside the entity under evaluation.
     pub fn linked_depth(&self) -> u32 {
         match self {
-            Filter::And(terms) | Filter::Or(terms) => terms.iter().map(Filter::linked_depth).max().unwrap_or(0),
-            Filter::Term(pred) => pred.path().linked_depth(),
+            Filter::And(filters) | Filter::Or(filters) => filters.iter().map(Filter::linked_depth).max().unwrap_or(0),
+            Filter::Term(term) => term.path().linked_depth(),
         }
     }
 
@@ -96,8 +96,8 @@ impl Filter {
     #[must_use]
     pub fn terms(&self) -> Vec<&QueryTerm> {
         match self {
-            Filter::And(terms) | Filter::Or(terms) => terms.iter().flat_map(Filter::terms).collect(),
-            Filter::Term(pred) => vec![pred],
+            Filter::And(filters) | Filter::Or(filters) => filters.iter().flat_map(Filter::terms).collect(),
+            Filter::Term(term) => vec![term],
         }
     }
 
@@ -105,16 +105,16 @@ impl Filter {
     #[must_use]
     pub fn terminal_paths(&self) -> Vec<&ValuePath> {
         match self {
-            Filter::And(terms) | Filter::Or(terms) => terms.iter().flat_map(Filter::terminal_paths).collect(),
-            Filter::Term(pred) => vec![pred.path().terminal()],
+            Filter::And(filters) | Filter::Or(filters) => filters.iter().flat_map(Filter::terminal_paths).collect(),
+            Filter::Term(term) => vec![term.path().terminal()],
         }
     }
 
     /// The local path every Query Term terminates at, mutably, in pre-order.
     pub fn terminal_paths_mut(&mut self) -> Vec<&mut ValuePath> {
         match self {
-            Filter::And(terms) | Filter::Or(terms) => terms.iter_mut().flat_map(Filter::terminal_paths_mut).collect(),
-            Filter::Term(pred) => vec![pred.path_mut().terminal_mut()],
+            Filter::And(filters) | Filter::Or(filters) => filters.iter_mut().flat_map(Filter::terminal_paths_mut).collect(),
+            Filter::Term(term) => vec![term.path_mut().terminal_mut()],
         }
     }
 
@@ -142,8 +142,8 @@ impl TryFrom<String> for Filter {
 // The wire form is produced by the `Display` above; this exists only because
 // `#[serde(into = "String")]` demands an `Into<String>` and cannot use it.
 impl From<Filter> for String {
-    fn from(expr: Filter) -> String {
-        expr.to_string()
+    fn from(filter: Filter) -> String {
+        filter.to_string()
     }
 }
 
@@ -177,8 +177,8 @@ mod tests {
         ];
 
         for (raw, expected) in cases {
-            let expr = raw.parse::<Filter>().expect("valid filter");
-            pretty_assertions::assert_eq!(expr.linked_depth(), expected, "depth of {raw}");
+            let filter = raw.parse::<Filter>().expect("valid filter");
+            pretty_assertions::assert_eq!(filter.linked_depth(), expected, "depth of {raw}");
         }
     }
 

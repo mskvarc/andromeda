@@ -71,28 +71,28 @@ pub(super) const fn check_depth(depth: usize) -> Result<(), FilterError> {
 /// bracket is left open, and [`FilterError::PathTooDeep`] beyond
 /// [`MAX_SUB_ATTRIBUTE_DEPTH`].
 pub(super) fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<ValuePath, FilterError> {
-    let attr = attribute_name(leading)?;
-    let mut sub_attrs = Vec::new();
+    let attribute = attribute_name(leading)?;
+    let mut sub_attributes = Vec::new();
 
     while cursor.peek() == Some(&Token::Dot) {
         cursor.advance();
-        sub_attrs.push(cursor.parse_attribute_name()?);
-        check_depth(depth + sub_attrs.len())?;
+        sub_attributes.push(cursor.parse_attribute_name()?);
+        check_depth(depth + sub_attributes.len())?;
     }
 
-    let trailing = if cursor.peek() == Some(&Token::LBracket) {
+    let trailing_group = if cursor.peek() == Some(&Token::LBracket) {
         cursor.advance();
-        let trailing = parse_trailing_path(cursor, depth + sub_attrs.len())?;
+        let group = parse_trailing_group(cursor, depth + sub_attributes.len())?;
         cursor.expect(&Token::RBracket)?;
-        Some(trailing)
+        Some(group)
     } else {
         None
     };
 
     Ok(ValuePath {
-        attribute: attr,
-        sub_attributes: sub_attrs,
-        trailing,
+        attribute,
+        sub_attributes,
+        trailing: trailing_group,
     })
 }
 
@@ -104,7 +104,7 @@ pub(super) fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, dept
 /// (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell.
 /// Every reading parses; which ones a request may carry is the
 /// `q_target_languages` level's to say.
-fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<TrailingGroup, FilterError> {
+fn parse_trailing_group(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<TrailingGroup, FilterError> {
     if cursor.peek() == Some(&Token::Star) {
         cursor.advance();
         return Ok(TrailingGroup::AllLanguages);
@@ -184,27 +184,27 @@ mod tests {
     /// `DottedPath = AttrName *(%x2E AttrName)` with no dots at all.
     #[test]
     fn a_bare_name_is_a_path_of_one_segment() {
-        let (attr, subs, members) = spelled("name");
-        assert_eq!(attr, "name");
-        assert_eq!(subs, Vec::<String>::new());
+        let (attribute, sub_attributes, members) = spelled("name");
+        assert_eq!(attribute, "name");
+        assert_eq!(sub_attributes, Vec::<String>::new());
         assert_eq!(members, Vec::<String>::new());
     }
 
     /// Clause 4.23.3 EXAMPLE 5: `?orderBy=name.observedAt`.
     #[test]
     fn a_dotted_path_walks_the_sub_attribute_axis() {
-        let (attr, subs, members) = spelled("name.observedAt");
-        assert_eq!(attr, "name");
-        assert_eq!(subs, vec!["observedAt".to_owned()]);
+        let (attribute, sub_attributes, members) = spelled("name.observedAt");
+        assert_eq!(attribute, "name");
+        assert_eq!(sub_attributes, vec!["observedAt".to_owned()]);
         assert_eq!(members, Vec::<String>::new());
     }
 
     /// Clause 4.23.3 EXAMPLE 4: `?orderBy=address[city]`.
     #[test]
     fn a_bracketed_path_navigates_into_a_compound_value() {
-        let (attr, subs, members) = spelled("address[city]");
-        assert_eq!(attr, "address");
-        assert_eq!(subs, Vec::<String>::new());
+        let (attribute, sub_attributes, members) = spelled("address[city]");
+        assert_eq!(attribute, "address");
+        assert_eq!(sub_attributes, Vec::<String>::new());
         assert_eq!(members, vec!["city".to_owned()]);
     }
 
@@ -212,9 +212,9 @@ mod tests {
     /// two axes combine, and the bracketed list is itself dot-separated.
     #[test]
     fn the_two_axes_combine_in_one_path() {
-        let (attr, subs, members) = spelled("sensor.rawdata[airquality.particulate]");
-        assert_eq!(attr, "sensor");
-        assert_eq!(subs, vec!["rawdata".to_owned()]);
+        let (attribute, sub_attributes, members) = spelled("sensor.rawdata[airquality.particulate]");
+        assert_eq!(attribute, "sensor");
+        assert_eq!(sub_attributes, vec!["rawdata".to_owned()]);
         assert_eq!(members, vec!["airquality".to_owned(), "particulate".to_owned()]);
     }
 
@@ -238,23 +238,23 @@ mod tests {
     /// segments rather than being swallowed into the name.
     #[test]
     fn a_prefixed_name_stays_one_segment_of_a_dotted_path() {
-        let (attr, subs, members) = spelled("ex:address[city]");
-        assert_eq!(attr, "ex:address");
-        assert_eq!(subs, Vec::<String>::new());
+        let (attribute, sub_attributes, members) = spelled("ex:address[city]");
+        assert_eq!(attribute, "ex:address");
+        assert_eq!(sub_attributes, Vec::<String>::new());
         assert_eq!(members, vec!["city".to_owned()]);
 
-        let (attr, subs, _) = spelled("ex:a.b");
-        assert_eq!(attr, "ex:a");
-        assert_eq!(subs, vec!["b".to_owned()]);
+        let (attribute, sub_attributes, _) = spelled("ex:a.b");
+        assert_eq!(attribute, "ex:a");
+        assert_eq!(sub_attributes, vec!["b".to_owned()]);
     }
 
     /// An expanded path round-trips through the tokeniser because its IRIs are
     /// quoted; unquoted, a dot inside an IRI would separate segments.
     #[test]
     fn a_quoted_iri_segment_is_one_name() {
-        let (attr, subs, _) = spelled("\"https://example.com/a\".\"https://example.com/b\"");
-        assert_eq!(attr, "https://example.com/a");
-        assert_eq!(subs, vec!["https://example.com/b".to_owned()]);
+        let (attribute, sub_attributes, _) = spelled("\"https://example.com/a\".\"https://example.com/b\"");
+        assert_eq!(attribute, "https://example.com/a");
+        assert_eq!(sub_attributes, vec!["https://example.com/b".to_owned()]);
     }
 
     #[test]
