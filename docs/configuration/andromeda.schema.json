@@ -459,7 +459,7 @@
             },
             "rebuild_interval": {
               "title": "duration",
-              "description": "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read.",
+              "description": "How often each tenant's index is rebuilt from the database. The first rebuild starts within seconds of the tenant being loaded and runs while the tenant serves requests. Until it completes, the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read.",
               "type": "string"
             }
           },

@@ -68,7 +68,7 @@ sha2 = "0.11.1"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["sync", "time"] }
+tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 tracing = "0.1.44"
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.29.2", features = ["v4"] }

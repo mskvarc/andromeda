@@ -52,8 +52,9 @@ pub enum EntityInvariant {
     /// The executor that prepares a batch off the request task failed.
     #[error("the batch preparation executor failed")]
     BatchPreparationFailed,
-    /// A blocking entity policy task panicked or was cancelled.
-    #[error("a blocking entity policy task did not complete")]
+    /// A task on the blocking pool, an entity policy task or the decode of a
+    /// large store read, panicked or was cancelled.
+    #[error("a blocking entity task did not complete")]
     BlockingTaskFailed,
     /// The commit port returned a different number of outcomes than writes.
     #[error("a batch chunk of {submitted} writes produced {returned} outcomes")]

@@ -8,7 +8,7 @@ use crate::{
         error::TenantAssemblyError,
         name_dictionaries::name_dictionaries,
         snapshot_subscriptions::load_snapshot_subscriptions,
-        spatial::initialize_spatial,
+        spatial::compose_spatial,
     },
 };
 use andromeda_configuration::schema::temporal::storage::TemporalStorageConfig;
@@ -297,13 +297,12 @@ pub(super) async fn initialize_storage(
         tracing::error!(%error, "failed to load subscription cache");
     }
     load_snapshot_subscriptions(&subscription_cache, snapshot_store.as_ref(), &subscription_repository).await;
-    let spatial = initialize_spatial(
+    let spatial = compose_spatial(
         config.entity.spatial_index.consistency,
         &entity_ports.spatial_snapshots,
         tenant,
         spatial_catch_up,
-    )
-    .await?;
+    )?;
     Ok(TenantStorage {
         tenant: tenant.clone(),
         pool,

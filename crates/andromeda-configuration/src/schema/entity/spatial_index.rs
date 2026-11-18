@@ -70,14 +70,15 @@ pub struct SpatialIndexConfig {
     /// Interval between full index rebuilds from the store, in human-readable
     /// form (`"30m"`).
     ///
-    /// The first rebuild runs when the tenant runtime starts, and until it
-    /// completes the store evaluates every geo query. Later rebuilds drop the
+    /// The first rebuild seeds the index within seconds of the tenant being
+    /// loaded and runs while the tenant serves requests. Until it completes,
+    /// the store evaluates every geo query. Later rebuilds drop the
     /// entries of entities deleted since, and under `commit-synchronous` they
     /// are also what brings in a replica's writes. Under `watermark` a geo
     /// query never waits for a rebuild, and the store answers the queries that
     /// arrive while it installs what it read.
     #[schemars(
-        description = "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read."
+        description = "How often each tenant's index is rebuilt from the database. The first rebuild starts within seconds of the tenant being loaded and runs while the tenant serves requests. Until it completes, the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read."
     )]
     pub rebuild_interval: HumanDuration,
 }

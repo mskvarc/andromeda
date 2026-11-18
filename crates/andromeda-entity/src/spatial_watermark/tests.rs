@@ -299,6 +299,24 @@ async fn a_query_arriving_while_a_rebuild_reads_the_store_still_narrows() {
 }
 
 #[tokio::test]
+async fn a_query_arriving_while_the_first_rebuild_reads_the_store_goes_unnarrowed() {
+    let harness = inline_harness();
+    harness.store.write("urn:ngsi-ld:Vehicle:v", 0.0);
+    let release = harness.store.hold_next_full_read();
+    let watermark = Arc::clone(&harness.watermark);
+    let mut seed: BoxFuture<'static, Result<RebuildOutcome, EntityError>> = Box::pin(async move { watermark.rebuild().await });
+    assert!(poll!(&mut seed).is_pending());
+    let reads = harness.store.reads();
+
+    assert_eq!(near(&harness.watermark, 0.0).await, None);
+    assert_eq!(harness.store.reads(), reads, "a query before the first rebuild reads nothing");
+
+    drop(release);
+    seed.await.expect("the store is readable");
+    assert_eq!(near(&harness.watermark, 0.0).await, Some(ids(&["urn:ngsi-ld:Vehicle:v"])));
+}
+
+#[tokio::test]
 async fn a_rebuild_keeps_a_newer_position_a_query_took_in_during_its_read() {
     let StaleRebuild { harness, rebuild, release } = rebuild_reading_a_stale_position().await;
     near(&harness.watermark, 0.0).await;

@@ -68,11 +68,13 @@ pub(in crate::tenant_factory) fn spatial_catch_up_signal(wake: WakeHandle) -> Ar
 /// Register the tasks that keep the tenant's spatial index exact under the
 /// consistency mode it was composed for.
 ///
-/// Every mode with an index rebuilds it periodically, which drops the entries
-/// of entities deleted since, and under `commit-synchronous` brings in the
-/// writes of another broker process sharing the store. Under `watermark` a
-/// wake-driven drain also takes in, in the background, the changes a geo query
-/// leaves to it.
+/// Every mode with an index rebuilds it periodically. The first pass seeds the
+/// index beside the tenant's requests, and until it completes the store
+/// evaluates every geo query. Later passes drop the entries of entities
+/// deleted since, and under `commit-synchronous` bring in the writes of
+/// another broker process sharing the store. Under `watermark` a wake-driven
+/// drain also takes in, in the background, the changes a geo query leaves to
+/// it.
 ///
 /// # Errors
 ///
@@ -108,13 +110,17 @@ pub(super) fn register_spatial_workers(
     }
 }
 
-/// Register one periodic spatial rebuild pass at `cadence`.
+/// Register the periodic spatial rebuild at `cadence`.
+///
+/// The first pass runs once the tenant's tasks start, within the spread the
+/// tenant's supervisor gives every scheduled task, so tenants loaded together
+/// do not all read every location at once.
 fn register_spatial_rebuild<Rebuild, Pass>(supervisor: &TaskSupervisor, cadence: Duration, rebuild: Rebuild) -> Result<(), TenantAssemblyError>
 where
     Rebuild: Fn() -> Pass + Send + Sync + 'static,
     Pass: Future<Output = Result<RebuildOutcome, EntityError>> + Send + 'static,
 {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("spatial-rebuild").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
@@ -172,4 +178,42 @@ fn register_spatial_catch_up(
         }
     });
     supervisor.register_drain(task, wake).map_err(|error| AssemblyInvariant::from(error).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::tasks::spatial_maintenance::register_spatial_rebuild;
+    use andromeda_entity::{port::spatial_snapshot::ChangeHorizon, spatial_reconciliation::RebuildOutcome};
+    use andromeda_task_runtime::supervisor::TaskSupervisor;
+    use std::{sync::Arc, time::Duration};
+    use tokio::{runtime::Handle, sync::Notify, time::timeout};
+
+    /// The rebuild cadence's default.
+    const CADENCE: Duration = Duration::from_mins(30);
+
+    #[tokio::test(start_paused = true)]
+    async fn the_first_rebuild_seeds_the_index_without_waiting_a_cadence() {
+        let process = TaskSupervisor::process(Handle::current());
+        let supervisor = process.tenant(0);
+        let passes = Arc::new(Notify::new());
+        let pass = Arc::clone(&passes);
+
+        register_spatial_rebuild(&supervisor, CADENCE, move || {
+            let pass = Arc::clone(&pass);
+            async move {
+                pass.notify_one();
+                Ok(RebuildOutcome {
+                    located_entities: 0,
+                    horizon: ChangeHorizon::new(1, Vec::new()),
+                })
+            }
+        })
+        .expect("the rebuild registers");
+
+        // Past the ten-second spread a tenant's supervisor gives a scheduled
+        // task, and far short of one cadence.
+        timeout(Duration::from_secs(15), passes.notified())
+            .await
+            .expect("the first rebuild runs within the startup spread");
+    }
 }
