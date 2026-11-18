@@ -32,6 +32,8 @@ ignore = [
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.102 wildcard-name constraints, unreachable: rumqttc links 0.102 only for an error type" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.102 CRL parsing panic, unreachable: rumqttc links 0.102 only for an error type" },
     { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.102 distrusted emSign intermediates, unreachable: rumqttc links 0.102 only for an error type" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained because it wraps chrono, no maintained release exists; jiff's friendly duration format replaces it" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no maintained release exists; the broker's time handling moves to jiff" },
 ]
 
 [bans]
