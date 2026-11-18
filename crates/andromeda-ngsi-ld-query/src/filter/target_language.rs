@@ -10,11 +10,11 @@
 //! `q_target_languages` level's to say.
 
 use crate::{
-    error::QueryError,
     filter::{
         language_matching::LanguageMatching,
         language_range::{LanguageRange, extended_filter},
     },
+    query_error::QueryError,
 };
 use langtag::{LangTag, LangTagBuf};
 
@@ -106,11 +106,11 @@ impl<'a> LanguageSelector<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         filter::{
             language_matching::LanguageMatching,
             target_language::{LanguageSelector, TargetLanguage},
         },
+        query_error::QueryError,
     };
     use langtag::LangTag;
 

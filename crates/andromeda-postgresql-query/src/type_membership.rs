@@ -16,7 +16,7 @@
 //! walk, and neither has any expression it would have to be merged into.
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
 use andromeda_postgresql_schema::current::EntityTypeMembers;
 use andromeda_postgresql_seaquery::literal::{false_literal, int_literal};
 use andromeda_postgresql_stored_form::memberships::Memberships;
@@ -41,12 +41,12 @@ struct TypeMember;
 /// Whether `expr` has a range to walk: every leaf it would merge names a type,
 /// and every conjunction has one such child to narrow.
 #[must_use]
-pub fn drives(expr: &TypeExpr) -> bool {
+pub fn drives(expr: &ExpandedTypeSelection) -> bool {
     match expr {
-        TypeExpr::Wildcard => false,
-        TypeExpr::Type(_) => true,
-        TypeExpr::Or(children) => children.iter().all(drives),
-        TypeExpr::And(children) => children.iter().any(drives),
+        ExpandedTypeSelection::Wildcard => false,
+        ExpandedTypeSelection::Type(_) => true,
+        ExpandedTypeSelection::Or(children) => children.iter().all(drives),
+        ExpandedTypeSelection::And(children) => children.iter().any(drives),
     }
 }
 
@@ -57,7 +57,7 @@ pub fn drives(expr: &TypeExpr) -> bool {
 /// which select their union exactly as a `,` does.
 #[must_use]
 pub fn members_of_any<'a>(
-    exprs: impl IntoIterator<Item = &'a TypeExpr>,
+    exprs: impl IntoIterator<Item = &'a ExpandedTypeSelection>,
     types: &ResolvedNames<EntityTypeName>,
     memberships: Memberships<'_>,
 ) -> Option<SelectStatement> {
@@ -67,12 +67,12 @@ pub fn members_of_any<'a>(
 
 /// The Entities `expr` selects, as `(key, id)` with no repeat, or `None` when
 /// it has no range to walk.
-fn members_of(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, memberships: Memberships<'_>) -> Option<SelectStatement> {
+fn members_of(expr: &ExpandedTypeSelection, types: &ResolvedNames<EntityTypeName>, memberships: Memberships<'_>) -> Option<SelectStatement> {
     match expr {
-        TypeExpr::Wildcard => None,
-        TypeExpr::Type(iri) => Some(range(types.get_str(iri.as_str()).map(EntityTypeNameKey::get), memberships)),
-        TypeExpr::Or(children) => members_of_any(children, types, memberships),
-        TypeExpr::And(children) => {
+        ExpandedTypeSelection::Wildcard => None,
+        ExpandedTypeSelection::Type(iri) => Some(range(types.get_str(iri.as_str()).map(EntityTypeNameKey::get), memberships)),
+        ExpandedTypeSelection::Or(children) => members_of_any(children, types, memberships),
+        ExpandedTypeSelection::And(children) => {
             let (driving, stream) = children
                 .iter()
                 .enumerate()
@@ -101,10 +101,10 @@ fn members_of(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, membership
 /// probes of the membership relation: the filter form of [`members_of_any`],
 /// for a statement that walks some other range.
 #[must_use]
-pub fn membership(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, id: &SimpleExpr, memberships: Memberships<'_>) -> Condition {
+pub fn membership(expr: &ExpandedTypeSelection, types: &ResolvedNames<EntityTypeName>, id: &SimpleExpr, memberships: Memberships<'_>) -> Condition {
     match expr {
-        TypeExpr::Wildcard => Condition::all(),
-        TypeExpr::Type(iri) => Condition::all().add(match types.get_str(iri.as_str()) {
+        ExpandedTypeSelection::Wildcard => Condition::all(),
+        ExpandedTypeSelection::Type(iri) => Condition::all().add(match types.get_str(iri.as_str()) {
             Some(key) => Expr::exists(
                 Query::select()
                     .expr(int_literal(1))
@@ -116,10 +116,10 @@ pub fn membership(expr: &TypeExpr, types: &ResolvedNames<EntityTypeName>, id: &S
             ),
             None => false_literal(),
         }),
-        TypeExpr::And(children) => children
+        ExpandedTypeSelection::And(children) => children
             .iter()
             .fold(Condition::all(), |all, child| all.add(membership(child, types, id, memberships))),
-        TypeExpr::Or(children) => children
+        ExpandedTypeSelection::Or(children) => children
             .iter()
             .fold(Condition::any(), |any, child| any.add(membership(child, types, id, memberships))),
     }
@@ -178,7 +178,7 @@ fn merged(streams: Vec<SelectStatement>, memberships: Memberships<'_>) -> Select
 mod tests {
     use crate::type_membership::{drives, members_of_any, membership};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-    use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
     use andromeda_postgresql_schema::type_membership::MembershipSide;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_form::memberships::Memberships;
@@ -192,8 +192,8 @@ mod tests {
         schema: None,
     };
 
-    fn ty(name: &str) -> TypeExpr {
-        TypeExpr::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))
+    fn ty(name: &str) -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))
     }
 
     fn known() -> ResolvedNames<EntityTypeName> {
@@ -205,7 +205,7 @@ mod tests {
         }))
     }
 
-    fn stream(exprs: &[TypeExpr]) -> SelectStatement {
+    fn stream(exprs: &[ExpandedTypeSelection]) -> SelectStatement {
         members_of_any(exprs, &known(), CURRENT).expect("the selection has a range")
     }
 
@@ -227,14 +227,14 @@ mod tests {
     fn a_disjunction_merges_its_ranges_without_repeats() {
         assert_statement_snapshot!(
             "type-membership-a-disjunction-merges-its-ranges-without-repeats",
-            stream(&[TypeExpr::Or(vec![ty("A"), ty("B")])])
+            stream(&[ExpandedTypeSelection::Or(vec![ty("A"), ty("B")])])
         );
     }
 
     /// Several selectors select their union, as a disjunction does.
     #[test]
     fn several_selectors_merge_as_a_disjunction_does() {
-        assert_eq!(stream(&[ty("A"), ty("B")]), stream(&[TypeExpr::Or(vec![ty("A"), ty("B")])]));
+        assert_eq!(stream(&[ty("A"), ty("B")]), stream(&[ExpandedTypeSelection::Or(vec![ty("A"), ty("B")])]));
     }
 
     /// Clause 4.17 `;`: the first range is narrowed by a key probe per other
@@ -243,7 +243,7 @@ mod tests {
     fn a_conjunction_narrows_its_first_range_by_key_probes() {
         assert_statement_snapshot!(
             "type-membership-a-conjunction-narrows-its-first-range-by-key-probes",
-            stream(&[TypeExpr::And(vec![ty("A"), ty("B")])])
+            stream(&[ExpandedTypeSelection::And(vec![ty("A"), ty("B")])])
         );
     }
 
@@ -251,13 +251,13 @@ mod tests {
     /// containing it has a range; a conjunction still walks its typed child.
     #[test]
     fn the_wildcard_has_no_range_unless_a_conjunction_names_a_type() {
-        assert!(!drives(&TypeExpr::Wildcard));
-        assert!(!drives(&TypeExpr::Or(vec![ty("A"), TypeExpr::Wildcard])));
-        assert!(drives(&TypeExpr::And(vec![TypeExpr::Wildcard, ty("A")])));
-        assert!(members_of_any([&TypeExpr::Or(vec![ty("A"), TypeExpr::Wildcard])], &known(), CURRENT).is_none());
+        assert!(!drives(&ExpandedTypeSelection::Wildcard));
+        assert!(!drives(&ExpandedTypeSelection::Or(vec![ty("A"), ExpandedTypeSelection::Wildcard])));
+        assert!(drives(&ExpandedTypeSelection::And(vec![ExpandedTypeSelection::Wildcard, ty("A")])));
+        assert!(members_of_any([&ExpandedTypeSelection::Or(vec![ty("A"), ExpandedTypeSelection::Wildcard])], &known(), CURRENT).is_none());
         assert_statement_snapshot!(
             "type-membership-the-wildcard-has-no-range-unless-a-conjunction-names-a-type",
-            stream(&[TypeExpr::And(vec![TypeExpr::Wildcard, ty("A")])])
+            stream(&[ExpandedTypeSelection::And(vec![ExpandedTypeSelection::Wildcard, ty("A")])])
         );
     }
 
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn the_filter_form_probes_the_membership_key_per_leaf() {
         let id = Expr::col((Alias::new("selected"), Alias::new("id")));
-        let expr = TypeExpr::Or(vec![TypeExpr::And(vec![ty("A"), ty("B")]), ty("Unknown")]);
+        let expr = ExpandedTypeSelection::Or(vec![ExpandedTypeSelection::And(vec![ty("A"), ty("B")]), ty("Unknown")]);
         let statement = Query::select()
             .expr(Expr::val(1))
             .cond_where(Condition::all().add(membership(&expr, &known(), &id, CURRENT)))
@@ -282,7 +282,7 @@ mod tests {
             side: MembershipSide::Current,
             schema: Some(&schema),
         };
-        let statement = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), memberships).expect("the selection has a range");
+        let statement = members_of_any([&ExpandedTypeSelection::And(vec![ty("A"), ty("B")])], &known(), memberships).expect("the selection has a range");
         assert_statement_snapshot!("type-membership-a-branch-walks-its-own-memberships", statement);
     }
 
@@ -294,7 +294,7 @@ mod tests {
             side: MembershipSide::Evolution,
             schema: None,
         };
-        let statement = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), temporal).expect("the selection has a range");
+        let statement = members_of_any([&ExpandedTypeSelection::And(vec![ty("A"), ty("B")])], &known(), temporal).expect("the selection has a range");
         assert_statement_snapshot!("type-membership-a-temporal-selection-walks-the-evolution-memberships", statement);
     }
 }

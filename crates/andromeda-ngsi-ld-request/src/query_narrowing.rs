@@ -38,9 +38,9 @@
 use crate::error::ParameterError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
-    filter::{expression::Expr, referenced_attributes::referenced_attributes},
-    geo::input::GeoQueryInput,
-    type_selection::grammar::TypeExprRaw,
+    filter::{Filter, referenced_attributes::referenced_attributes},
+    geo::written_geo_query::WrittenGeoQuery,
+    type_selection::written_type_selection::WrittenTypeSelection,
     written_entity_selector::WrittenEntitySelector,
 };
 use strum::{Display, IntoEnumIterator};
@@ -78,7 +78,7 @@ pub struct NarrowingInputs<'a> {
     /// Input (a): the clause 4.17 selector of Entity Types, as a flat
     /// parameter.
     #[builder(default = Default::default())]
-    entity_type: Option<&'a TypeExprRaw>,
+    entity_type: Option<&'a WrittenTypeSelection>,
     /// Input (a) as a POST body writes it: one clause 5.2.11 selector per
     /// entry, each carrying its own type selector (clause 5.2.23).
     #[builder(default = Default::default())]
@@ -94,10 +94,10 @@ pub struct NarrowingInputs<'a> {
     purged: Option<&'a [AttributeName]>,
     /// Input (c): the clause 4.9 NGSI-LD Query.
     #[builder(default = Default::default())]
-    q: Option<&'a Expr>,
+    q: Option<&'a Filter>,
     /// Input (d): the clause 4.10 NGSI-LD `GeoQuery`.
     #[builder(default = Default::default())]
-    geo: Option<&'a GeoQueryInput>,
+    geo: Option<&'a WrittenGeoQuery>,
     /// Input (e): whether execution is limited to the local scope.
     #[builder(default = ExecutionScope::Distributed)]
     local_scope: ExecutionScope,
@@ -119,7 +119,7 @@ impl ExecutionScope {
     /// the flat `type` and the `type` of each clause 5.2.33 selector of a POST
     /// body alike.
     #[must_use]
-    pub fn of(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> ExecutionScope {
+    pub fn of(local: Option<bool>, entity_type: Option<&WrittenTypeSelection>, selectors: &[WrittenEntitySelector]) -> ExecutionScope {
         if selects_every_type(entity_type, selectors) {
             ExecutionScope::Local
         } else {
@@ -145,7 +145,11 @@ impl ExecutionScope {
 /// # Errors
 ///
 /// Returns [`ParameterError::WildcardTypeWithLocalFalse`] for that pair.
-pub fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> Result<(), ParameterError> {
+pub fn require_wildcard_locality(
+    local: Option<bool>,
+    entity_type: Option<&WrittenTypeSelection>,
+    selectors: &[WrittenEntitySelector],
+) -> Result<(), ParameterError> {
     match local {
         Some(false) if selects_every_type(entity_type, selectors) => Err(ParameterError::WildcardTypeWithLocalFalse),
         Some(false | true) | None => Ok(()),
@@ -154,11 +158,11 @@ pub fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeE
 
 /// Whether the flat `type` or the `type` of any clause 5.2.33 selector is the
 /// clause 4.17 `*` that selects every Entity Type.
-fn selects_every_type(entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> bool {
+fn selects_every_type(entity_type: Option<&WrittenTypeSelection>, selectors: &[WrittenEntitySelector]) -> bool {
     entity_type
         .into_iter()
-        .chain(selectors.iter().filter_map(|selector| selector.type_.as_ref()))
-        .any(|selection| matches!(selection, TypeExprRaw::Wildcard))
+        .chain(selectors.iter().filter_map(|selector| selector.type_selection.as_ref()))
+        .any(|selection| matches!(selection, WrittenTypeSelection::Wildcard))
 }
 
 /// Which of the clause's inputs one operation enumerates.
@@ -187,7 +191,7 @@ impl NarrowingInputs<'_> {
     /// Whether the request carries any input its operation counts as a narrowing.
     fn narrows(&self) -> bool {
         self.entity_type.is_some()
-            || self.entity_selectors.iter().any(|selector| selector.type_.is_some())
+            || self.entity_selectors.iter().any(|selector| selector.type_selection.is_some())
             || self.geo.is_some()
             || self.attrs.is_some_and(|attrs| self.counts_any(attrs.iter()))
             || self.purged.is_some_and(|purged| self.counts_any(purged.iter()))
@@ -245,21 +249,21 @@ mod tests {
         query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, type_selection::grammar::TypeExprRaw};
+    use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, type_selection::written_type_selection::WrittenTypeSelection};
 
     fn attrs(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a valid Attribute name")).collect()
     }
 
-    fn entity_type() -> TypeExprRaw {
+    fn entity_type() -> WrittenTypeSelection {
         "Vehicle".parse().expect("a valid type selector")
     }
 
-    fn filter(q: &str) -> Expr {
+    fn filter(q: &str) -> Filter {
         q.parse().expect("a valid q")
     }
 
-    fn geo() -> GeoQueryInput {
+    fn geo() -> WrittenGeoQuery {
         serde_urlencoded::from_str::<OptionalGeoQuery>("georel=near%3BmaxDistance==100&geometry=Point&coordinates=[1,2]")
             .expect("a valid geoquery")
             .0

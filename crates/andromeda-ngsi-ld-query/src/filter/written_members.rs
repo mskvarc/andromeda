@@ -5,15 +5,15 @@
 //! stored structured value, while a `LanguageProperty`'s target language and a
 //! raw JSON key are read in the spelling the client wrote. The expanded filter
 //! holds both, and its clause 4.9 text holds only the first; the text
-//! [`serialize_written_members`](crate::filter::serialize::serialize_written_members)
+//! [`serialize_written_members`](crate::filter::display::serialize_written_members)
 //! renders holds the second, and this module joins the two again.
 
-use crate::filter::{expression::Expr, trailing_path::TrailingPath};
+use crate::filter::{Filter, trailing_group::TrailingGroup};
 
-impl Expr {
+impl Filter {
     /// This expression, each trailing member's written spelling read from
     /// `written`: the same filter rendered by
-    /// [`serialize_written_members`](crate::filter::serialize::serialize_written_members)
+    /// [`serialize_written_members`](crate::filter::display::serialize_written_members)
     /// and parsed back.
     ///
     /// The two are one filter in two spellings, so their Query Terms pair up in
@@ -21,12 +21,12 @@ impl Expr {
     /// does every term of an expression whose term count `written` does not
     /// share.
     #[must_use]
-    pub fn with_written_members(mut self, written: &Expr) -> Expr {
+    pub fn with_written_members(mut self, written: &Filter) -> Filter {
         let written_paths = written.terminal_paths();
         let mut own_paths = self.terminal_paths_mut();
         if own_paths.len() == written_paths.len() {
             for (own, written) in own_paths.iter_mut().zip(written_paths) {
-                if let (Some(TrailingPath::Members(own)), Some(written)) = (&mut own.trailing, written.members())
+                if let (Some(TrailingGroup::Members(own)), Some(written)) = (&mut own.trailing, written.members())
                     && own.addressed.len() == written.addressed.len()
                 {
                     own.written.clone_from(&written.addressed);
@@ -41,23 +41,23 @@ impl Expr {
 mod tests {
     use crate::{
         filter::{
+            Filter,
+            display::{serialize, serialize_written_members},
             expansion::expand_q_expr,
-            expression::Expr,
             json_key_attributes::JsonKeyAttributes,
             parser::parse,
-            serialize::{serialize, serialize_written_members},
         },
         namespace_expander::EXAMPLE_NAMESPACE,
     };
 
     /// The filter as a store reads it back: the expanded text, joined with the
     /// written spelling of its members.
-    async fn persisted_round_trip(q: &str) -> Expr {
+    async fn persisted_round_trip(q: &str) -> Filter {
         let expanded = expand_q_expr(parse(q).expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
             .await
             .expect("expands");
-        let addressed: Expr = serialize(&expanded).parse().expect("the expanded text parses");
-        let written: Expr = serialize_written_members(&expanded).parse().expect("the written text parses");
+        let addressed: Filter = serialize(&expanded).parse().expect("the expanded text parses");
+        let written: Filter = serialize_written_members(&expanded).parse().expect("the written text parses");
         addressed.with_written_members(&written)
     }
 

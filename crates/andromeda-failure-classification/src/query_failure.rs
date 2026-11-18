@@ -2,7 +2,7 @@
 
 use crate::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::{error::QueryError, term_expander::TermExpansionFailure};
+use andromeda_ngsi_ld_query::{query_error::QueryError, term_expander::TermExpansionError};
 
 /// Classify a typed NGSI-LD query-language failure.
 #[must_use]
@@ -79,11 +79,11 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         // that "does not meet the requirements of the operation", as the same
         // term is on a write.
         QueryError::TermExpansion(
-            TermExpansionFailure::NotExpanded | TermExpansionFailure::Keyword | TermExpansionFailure::NotAnIri | TermExpansionFailure::ContextUnprocessable,
+            TermExpansionError::NotExpanded | TermExpansionError::Keyword | TermExpansionError::NotAnIri | TermExpansionError::ContextUnprocessable,
         ) => {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
         }
-        QueryError::TermExpansion(TermExpansionFailure::ContextUnavailable) => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
+        QueryError::TermExpansion(TermExpansionError::ContextUnavailable) => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
     }
 }
 
@@ -92,21 +92,21 @@ mod tests {
     use crate::query_failure::classify_query_error;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
-        filter::{complexity::FilterComplexityLimits, expression::Expr, language_targeting::LanguageTargeting, target_language::TargetLanguage},
-        projection::grammar::ProjectionList,
-        term_expander::TermExpansionFailure,
-        type_selection::grammar::TypeExprRaw,
+        filter::{Filter, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting, target_language::TargetLanguage},
+        projection::written_projection_list::WrittenProjectionList,
+        query_error::QueryError,
+        term_expander::TermExpansionError,
+        type_selection::written_type_selection::WrittenTypeSelection,
     };
     use std::num::NonZeroUsize;
 
     #[test]
     fn a_term_naming_no_iri_under_the_request_context_is_bad_request_data() {
         for failure in [
-            TermExpansionFailure::NotExpanded,
-            TermExpansionFailure::Keyword,
-            TermExpansionFailure::NotAnIri,
-            TermExpansionFailure::ContextUnprocessable,
+            TermExpansionError::NotExpanded,
+            TermExpansionError::Keyword,
+            TermExpansionError::NotAnIri,
+            TermExpansionError::ContextUnprocessable,
         ] {
             let error = QueryError::TermExpansion(failure);
             pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{failure:?}");
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn a_context_that_cannot_be_retrieved_is_ld_context_not_available() {
-        let error = QueryError::TermExpansion(TermExpansionFailure::ContextUnavailable);
+        let error = QueryError::TermExpansion(TermExpansionError::ContextUnavailable);
         pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::LdContextNotAvailable);
     }
 
@@ -135,17 +135,17 @@ mod tests {
             "speed-limit>1",
         ]
         .into_iter()
-        .map(|q| q.parse::<Expr>().expect_err("outside the clause 4.9 grammar"))
+        .map(|q| q.parse::<Filter>().expect_err("outside the clause 4.9 grammar"))
         .collect();
         failures.extend(
             ["", "(Home", "Home)", "Home;Vehicle", "Home||Vehicle"]
                 .into_iter()
-                .map(|selection| selection.parse::<TypeExprRaw>().expect_err("outside the clause 4.17 grammar")),
+                .map(|selection| selection.parse::<WrittenTypeSelection>().expect_err("outside the clause 4.17 grammar")),
         );
         failures.extend(
             ["a{b", "a,,b"]
                 .into_iter()
-                .map(|projection| projection.parse::<ProjectionList>().expect_err("outside the projection grammar")),
+                .map(|projection| projection.parse::<WrittenProjectionList>().expect_err("outside the projection grammar")),
         );
         failures.push(QueryError::GeoIncomplete);
         for error in failures {
@@ -162,10 +162,12 @@ mod tests {
             NonZeroUsize::new(2).expect("a positive comparison limit"),
             NonZeroUsize::new(1).expect("a positive nesting limit"),
         );
-        let comparisons = limits.admit(&"a==1,2,3".parse::<Expr>().expect("a filter")).expect_err("too many comparisons");
-        let nesting = limits.admit(&"a;(b|c)".parse::<Expr>().expect("a filter")).expect_err("nested too deep");
+        let comparisons = limits
+            .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
+            .expect_err("too many comparisons");
+        let nesting = limits.admit(&"a;(b|c)".parse::<Filter>().expect("a filter")).expect_err("nested too deep");
         let written = format!("{}a{}", "(".repeat(65), ")".repeat(65))
-            .parse::<Expr>()
+            .parse::<Filter>()
             .expect_err("parenthesised too deep");
         for error in [comparisons, nesting, written] {
             pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::TooComplexQuery, "{error:?}");
@@ -177,9 +179,9 @@ mod tests {
     #[test]
     fn a_bracket_naming_no_target_language_is_bad_request_data() {
         let neither = TargetLanguage::parse("en_GB-x").expect_err("neither a tag nor a range");
-        let tagged: Expr = "name[en-GB]==\"x\"".parse().expect("a filter");
+        let tagged: Filter = "name[en-GB]==\"x\"".parse().expect("a filter");
         let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
-        let ranged: Expr = "name[de-*-DE]==\"x\"".parse().expect("a filter");
+        let ranged: Filter = "name[de-*-DE]==\"x\"".parse().expect("a filter");
         let range = LanguageTargeting::LanguageTags.admit(&ranged).expect_err("a range needs the ranges level");
         for error in [neither, tag, range] {
             pretty_assertions::assert_eq!(classify_query_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{error}");

@@ -12,7 +12,7 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
-    entity_selection::EntitySelector,
+    expanded_entity_selector::ExpandedEntitySelector,
     selector_compilation::compile_entity_selectors,
     written_entity_selector::WrittenEntitySelector,
 };
@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
 /// The selectors of one read, each compiled with its type expression expanded.
 pub(crate) struct ExpandedSelectors {
     /// The compiled selectors, in the order the client wrote them.
-    selectors: Vec<EntitySelector>,
+    selectors: Vec<ExpandedEntitySelector>,
 }
 
 impl ExpandedSelectors {
@@ -45,7 +45,7 @@ impl ExpandedSelectors {
         self.selectors
             .iter()
             .map(|selector| ExpandedEntitySpecification {
-                entity_type: selector.type_expr.as_ref(),
+                entity_type: selector.type_selection.as_ref(),
                 ids: &selector.ids,
                 id_pattern: selector.id_pattern.as_ref(),
             })
@@ -59,14 +59,14 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_query::{
-        type_selection::grammar::{TypeExpr, TypeExprRaw},
+        type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection},
         written_entity_selector::WrittenEntitySelector,
     };
     use serde_json::json;
 
     fn selector(type_: &str) -> WrittenEntitySelector {
         WrittenEntitySelector {
-            type_: Some(type_.parse::<TypeExprRaw>().expect("a valid type expression")),
+            type_selection: Some(type_.parse::<WrittenTypeSelection>().expect("a valid type expression")),
             ..WrittenEntitySelector::default()
         }
     }
@@ -125,6 +125,6 @@ mod tests {
         let expanded = ExpandedSelectors::expand(service.engine(), &prepared, &selectors)
             .await
             .expect("the selectors expand");
-        assert!(matches!(expanded.specifications()[0].entity_type, Some(TypeExpr::Wildcard)));
+        assert!(matches!(expanded.specifications()[0].entity_type, Some(ExpandedTypeSelection::Wildcard)));
     }
 }

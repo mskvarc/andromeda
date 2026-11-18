@@ -6,7 +6,7 @@ use crate::{
     unsupported_representation::UnsupportedRepresentation,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-use andromeda_ngsi_ld_query::comma_separated_list::{ListedItem, listed_members};
+use andromeda_ngsi_ld_query::comma_separated_list::{ListedMemberKind, listed_members};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
 use strum::{Display, EnumString};
@@ -207,7 +207,7 @@ fn single_token(written: &str) -> Result<OptionsToken, UnsupportedRepresentation
 /// Validate and read a comma-separated option list: an empty token anywhere
 /// refuses the list before any token is read.
 fn option_tokens(raw: &str) -> Result<Vec<OptionsToken>, UnsupportedRepresentation> {
-    let tokens = listed_members(raw, ListedItem::OptionsToken)
+    let tokens = listed_members(raw, ListedMemberKind::OptionsToken)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| UnsupportedRepresentation::EmptyOptionsToken)?;
     tokens.into_iter().map(single_token).collect()

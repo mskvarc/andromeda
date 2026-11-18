@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_model::{
         standing::SubscriptionStanding,
     },
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, filter::Filter, scope::scope_query::ScopeQuery};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_postgresql_stored_values::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_subscription::{notifying_since::NotifyingSince, stored_subscription::StoredSubscription};
@@ -125,13 +125,13 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 /// Returns [`ContextStoreError::Database`] when either column cannot be
 /// decoded, and [`ContextStoreError::StoredSubscription`] when either is no
 /// query.
-fn stored_q(row: &PgRow) -> Result<Option<Expr>, ContextStoreError> {
+fn stored_q(row: &PgRow) -> Result<Option<Filter>, ContextStoreError> {
     let q_raw: Option<String> = row.try_get(Subscriptions::Q.unquoted())?;
-    let q: Option<Expr> = q_raw
+    let q: Option<Filter> = q_raw
         .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::Q(Box::new(error))))
         .transpose()?;
     let written_raw: Option<String> = row.try_get(Subscriptions::QWrittenMembers.unquoted())?;
-    let written: Option<Expr> = written_raw
+    let written: Option<Filter> = written_raw
         .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::QWrittenMembers(Box::new(error))))
         .transpose()?;
     Ok(match (q, written) {
@@ -363,11 +363,11 @@ mod tests {
         subscription_store::{mapper::decoded_column, stored_subscription_error::StoredSubscriptionError},
     };
     use andromeda_ngsi_ld_model::query::temporal_query::TemporalQuery;
-    use andromeda_ngsi_ld_query::geo::input::GeoQueryInput;
+    use andromeda_ngsi_ld_query::geo::written_geo_query::WrittenGeoQuery;
     use serde_json::json;
 
     /// The `geoQ` of Table 5.2.13-1, read as the request model reads it.
-    fn geo_q() -> GeoQueryInput {
+    fn geo_q() -> WrittenGeoQuery {
         serde_json::from_value(json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [13.4, 52.5], "geoproperty": "location"}))
             .expect("a readable geoQ")
     }
@@ -384,7 +384,7 @@ mod tests {
             "{stored}"
         );
 
-        let read = decoded_column::<GeoQueryInput>(JsonText::new(&written), StoredSubscriptionError::GeoQ).expect("the column decodes");
+        let read = decoded_column::<WrittenGeoQuery>(JsonText::new(&written), StoredSubscriptionError::GeoQ).expect("the column decodes");
 
         pretty_assertions::assert_eq!(read, Some(geo_q()));
     }
@@ -393,10 +393,10 @@ mod tests {
     /// `geoQ` or no `temporalQ` names itself in the failure.
     #[test]
     fn a_null_column_is_absent_and_a_malformed_one_names_its_member() {
-        let absent = decoded_column::<GeoQueryInput>(JsonText::new(b"null"), StoredSubscriptionError::GeoQ).expect("null decodes");
+        let absent = decoded_column::<WrittenGeoQuery>(JsonText::new(b"null"), StoredSubscriptionError::GeoQ).expect("null decodes");
         assert!(absent.is_none());
 
-        let refused = decoded_column::<GeoQueryInput>(JsonText::new(br#"{"georel": "near;maxDistance==2000"}"#), StoredSubscriptionError::GeoQ);
+        let refused = decoded_column::<WrittenGeoQuery>(JsonText::new(br#"{"georel": "near;maxDistance==2000"}"#), StoredSubscriptionError::GeoQ);
         assert!(matches!(refused, Err(StoredSubscriptionError::GeoQ(_))), "{refused:?}");
 
         let refused = decoded_column::<TemporalQuery>(JsonText::new(br#"{"timerel": "after"}"#), StoredSubscriptionError::TemporalQ);

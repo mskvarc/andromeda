@@ -9,11 +9,12 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
-    entity_selection::{EntitySelection, EntitySelector},
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector,
     filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-    geo::query::GeoQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
     page_window::PageWindow,
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::query_names::QueryNames;
@@ -50,7 +51,11 @@ pub(crate) fn iri(name: &str) -> IriBuf {
 /// The Entities of type `Sensor`.
 pub(crate) fn sensors() -> CompiledEntityQuery {
     let selection = EntitySelection::builder()
-        .selectors(vec![EntitySelector::builder().type_expr(Some(TypeExpr::Type(iri("Sensor")))).build()])
+        .selectors(vec![
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("Sensor"))))
+                .build(),
+        ])
         .build();
     CompiledEntityQuery::builder().selection(selection).build()
 }
@@ -63,7 +68,7 @@ pub(crate) fn sensors_within_square() -> CompiledEntityQuery {
     }))
     .expect("square parses");
     let mut query = sensors();
-    query.selection.geo = Some(GeoQuery {
+    query.selection.geo = Some(CompiledGeoQuery {
         georel: GeoRel::Within,
         geometry: square,
         geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),

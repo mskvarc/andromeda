@@ -21,11 +21,11 @@ use andromeda_ngsi_ld_model::{
     subscription::{NotificationParams, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    filter::expression::Expr,
-    geo::input::GeoQueryInput,
+    dataset_selector::DatasetSelector,
+    filter::Filter,
+    geo::written_geo_query::WrittenGeoQuery,
     page_window::PageWindow,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -47,13 +47,13 @@ pub struct SubscriptionFields<'a> {
     /// Periodic notification interval in seconds.
     pub time_interval: Option<f64>,
     /// NGSI-LD query expression for filtering entities.
-    pub q: Option<&'a Expr>,
+    pub q: Option<&'a Filter>,
     /// Geo-spatial query.
-    pub geo_q: Option<&'a GeoQueryInput>,
+    pub geo_q: Option<&'a WrittenGeoQuery>,
     /// Scope query expression.
     pub scope_q: Option<&'a ScopeQuery>,
     /// Context source filter expression.
-    pub csf: Option<&'a Expr>,
+    pub csf: Option<&'a Filter>,
     /// The `datasetId` selectors of the Attribute instances notified
     /// (Table 5.2.12-1), `@none` naming the default instance.
     pub dataset_id: Option<&'a [DatasetSelector]>,

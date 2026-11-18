@@ -42,7 +42,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    ordering::{sort_direction::SortDirection, term::OrderTarget},
+    ordering::{expanded_ordering_target::ExpandedOrderingTarget, sort_direction::SortDirection},
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
@@ -117,14 +117,18 @@ pub(crate) fn value_walk_order(query: &CompiledEntityQuery, names: &QueryNames, 
         return None;
     };
     let path = match &term.target {
-        OrderTarget::Attribute(path) => path,
-        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => return None,
+        ExpandedOrderingTarget::Attribute(path) => path,
+        ExpandedOrderingTarget::Id
+        | ExpandedOrderingTarget::Type
+        | ExpandedOrderingTarget::Scope
+        | ExpandedOrderingTarget::CreatedAt
+        | ExpandedOrderingTarget::ModifiedAt => return None,
     };
     if !unfiltered || !path.is_simple() || term.direction.is_distance() {
         return None;
     }
     Some(ValueWalkOrder {
-        attribute: names.attributes.get(&path.attr)?,
+        attribute: names.attributes.get(&path.attribute)?,
         direction: SortDirection::from(term.direction),
         collation: ordering_collation(term.collation.as_ref()),
         offset,
@@ -256,14 +260,17 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{EntitySelection, EntitySelector},
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, path::AttrPath},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, value_path::ValuePath},
         ordering::{
-            geometry::OrderingGeometry,
-            term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+            compiled_ordering_term::CompiledOrderingTerm,
+            expanded_ordering_target::ExpandedOrderingTarget,
+            ordering_direction::OrderingDirection,
+            ordering_geometry::OrderingGeometry,
         },
         page_window::PageWindow,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -286,19 +293,21 @@ mod tests {
         }
     }
 
-    fn term(attribute: &str, direction: OrderDirection) -> CompiledOrderTerm {
-        CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple(attribute.parse().expect("valid attribute name"))),
+    fn term(attribute: &str, direction: OrderingDirection) -> CompiledOrderingTerm {
+        CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple(attribute.parse().expect("valid attribute name"))),
             direction,
             collation: None,
         }
     }
 
-    fn vehicles_by(terms: Vec<CompiledOrderTerm>) -> CompiledEntityQuery {
+    fn vehicles_by(terms: Vec<CompiledOrderingTerm>) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
         query.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(
+                    IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI"),
+                )))
                 .build(),
         ];
         query.ordering.terms = terms;
@@ -321,7 +330,7 @@ mod tests {
     fn a_number_ordering_reads_the_carriers_in_value_order() {
         assert_statement_snapshot!(
             "value-walk-page-a-number-ordering-reads-the-carriers-in-value-order",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -330,7 +339,7 @@ mod tests {
     fn a_date_time_ordering_reads_the_carriers_in_instant_order() {
         assert_statement_snapshot!(
             "value-walk-page-a-date-time-ordering-reads-the-carriers-in-instant-order",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -338,7 +347,7 @@ mod tests {
     fn each_walk_is_gated_on_its_column_held_alone() {
         assert_statement_snapshot!(
             "value-walk-page-each-walk-is-gated-on-its-column-held-alone",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -346,7 +355,7 @@ mod tests {
     fn the_occupied_columns_are_read_once() {
         assert_statement_snapshot!(
             "value-walk-page-the-occupied-columns-are-read-once",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -357,7 +366,7 @@ mod tests {
     fn a_carrier_is_its_entitys_first_standing_instance_in_written_order() {
         assert_statement_snapshot!(
             "value-walk-page-a-carrier-is-its-entitys-first-standing-instance-in-written-order",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -367,7 +376,7 @@ mod tests {
     fn entities_without_the_attribute_follow_only_when_both_walks_fall_short() {
         assert_statement_snapshot!(
             "value-walk-page-entities-without-the-attribute-follow-only-when-both-walks-fall-short",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(20, 40))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(20, 40))
         );
     }
 
@@ -375,14 +384,14 @@ mod tests {
     fn the_plain_page_answers_when_neither_column_is_held_alone() {
         assert_statement_snapshot!(
             "value-walk-page-the-plain-page-answers-when-neither-column-is-held-alone",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
     /// Each gate beside the selection's own filters must stay one term.
     #[test]
     fn the_gate_is_one_term_beside_the_selections_other_filters() {
-        let mut query = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
+        let mut query = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
         query.selection.attrs = vec![IriBuf::new(SPEED.to_owned()).expect("valid IRI")];
         assert_statement_snapshot!(
             "value-walk-page-the-gate-is-one-term-beside-the-selections-other-filters",
@@ -397,7 +406,7 @@ mod tests {
     fn a_descending_number_ordering_ranks_numbers_in_the_reversed_sequence_and_keeps_the_identifier_ascending() {
         assert_statement_snapshot!(
             "value-walk-page-a-descending-number-ordering-ranks-numbers-in-the-reversed-sequence-and-keeps-the-identifier-ascending",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Desc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Desc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -408,7 +417,7 @@ mod tests {
     fn a_descending_date_time_ordering_ranks_date_times_first_and_keeps_the_identifier_ascending() {
         assert_statement_snapshot!(
             "value-walk-page-a-descending-date-time-ordering-ranks-date-times-first-and-keeps-the-identifier-ascending",
-            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Desc)]), &PageWindow::offset(100, 0))
+            statement(&vehicles_by(vec![term(SPEED, OrderingDirection::Desc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -416,7 +425,7 @@ mod tests {
     /// statement restates one order whichever branch answered.
     #[test]
     fn a_value_walk_restates_the_order_of_the_plain_page() {
-        for (index, direction) in [OrderDirection::Asc, OrderDirection::Desc].into_iter().enumerate() {
+        for (index, direction) in [OrderingDirection::Asc, OrderingDirection::Desc].into_iter().enumerate() {
             let query = vehicles_by(vec![term(SPEED, direction)]);
             let walked = statement(&query, &PageWindow::offset(100, 0));
             assert_statement_snapshot!(
@@ -436,7 +445,7 @@ mod tests {
     /// window a client asks for ending at 10,000 is walked.
     #[test]
     fn a_client_window_ending_at_the_bound_is_walked() {
-        let query = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
+        let query = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
         assert_statement_snapshot!(
             "value-walk-page-a-client-window-ending-at-the-bound-is-walked-1",
             statement(&query, &PageWindow::offset(100, 9_900).with_lookahead())
@@ -449,8 +458,8 @@ mod tests {
 
     #[test]
     fn an_unfiltered_selection_reads_the_carriers_beside_the_entities() {
-        let mut query = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
-        query.selection.selectors = vec![EntitySelector::builder().build()];
+        let mut query = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
+        query.selection.selectors = vec![ExpandedEntitySelector::builder().build()];
         assert_statement_snapshot!(
             "value-walk-page-an-unfiltered-selection-reads-the-carriers-beside-the-entities",
             statement(&query, &PageWindow::offset(100, 0))
@@ -459,29 +468,29 @@ mod tests {
 
     #[test]
     fn an_ordering_the_value_index_cannot_serve_keeps_the_plain_page() {
-        let mut filtered = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
+        let mut filtered = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
         filtered.selection.q = Some(CompiledFilter::new(
             parse("\"https://example.com/speed\"!=1").expect("valid q"),
             LanguageMatching::TagEquality,
         ));
-        let two_terms = vehicles_by(vec![term(SPEED, OrderDirection::Asc), term(SPEED, OrderDirection::Desc)]);
-        let mut sub_attribute = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
-        if let Some(CompiledOrderTerm {
-            target: OrderTarget::Attribute(path),
+        let two_terms = vehicles_by(vec![term(SPEED, OrderingDirection::Asc), term(SPEED, OrderingDirection::Desc)]);
+        let mut sub_attribute = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
+        if let Some(CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(path),
             ..
         }) = sub_attribute.ordering.terms.first_mut()
         {
-            path.sub_attrs = vec!["https://example.com/accuracy".parse().expect("valid attribute name")];
+            path.sub_attributes = vec!["https://example.com/accuracy".parse().expect("valid attribute name")];
         }
-        let mut distance = vehicles_by(vec![term("https://example.com/location", OrderDirection::DistAsc)]);
+        let mut distance = vehicles_by(vec![term("https://example.com/location", OrderingDirection::DistAsc)]);
         distance.ordering.geometry = Some(OrderingGeometry::new(
             serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [13.4, 52.5] })).expect("point parses"),
         ));
-        let unrecorded = vehicles_by(vec![term("https://example.com/neverWritten", OrderDirection::Asc)]);
+        let unrecorded = vehicles_by(vec![term("https://example.com/neverWritten", OrderingDirection::Asc)]);
         let mut by_identifier = vehicles_by(vec![]);
-        by_identifier.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Id,
-            direction: OrderDirection::Asc,
+        by_identifier.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Id,
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         for (index, query) in [filtered, two_terms, sub_attribute, distance, unrecorded, by_identifier]
@@ -503,7 +512,7 @@ mod tests {
     fn a_value_walk_is_planned_with_its_bound_values_and_runs_serially() {
         let built = build_query(
             &ContextTarget::Live,
-            &vehicles_by(vec![term(SPEED, OrderDirection::Asc)]),
+            &vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]),
             &PageWindow::offset(100, 0),
             CountPolicy::Omit,
             &names(),
@@ -519,7 +528,7 @@ mod tests {
     fn a_counted_value_walk_counts_the_selection_on_its_own() {
         let built = build_query(
             &ContextTarget::Live,
-            &vehicles_by(vec![term(SPEED, OrderDirection::Asc)]),
+            &vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]),
             &PageWindow::offset(100, 0),
             CountPolicy::Emit,
             &names(),

@@ -24,7 +24,7 @@
 
 use crate::{aggregation_group::PromotedGroupFacets, alias::Ah, value_text::value_text};
 use andromeda_ngsi_ld_query::temporal::grouping::{
-    AggregationGrouping,
+    aggregation_grouping::AggregationGrouping,
     bucket_term::{BucketKind, BucketTerm},
     entity_member::EntityMember,
     group_key::GroupKey,
@@ -140,7 +140,7 @@ pub fn apply_grouping(
                 keys.push(expr);
             }
             (GroupKey::Path(path), None) => {
-                project_value_in_effect(select, index, names.attributes.get(&path.attr), axis, branch, of);
+                project_value_in_effect(select, index, names.attributes.get(&path.attribute), axis, branch, of);
                 for column in [group_key_alias(index), group_key_instant_alias(index)] {
                     select.expr_as(Expr::col((value_key_alias(index), column.clone())), column.clone());
                     keys.push(Expr::col((value_key_alias(index), column)));

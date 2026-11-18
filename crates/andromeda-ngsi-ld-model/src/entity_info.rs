@@ -2,7 +2,7 @@
 
 use crate::attribute::one_or_many::OneOrMany;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
 use serde::{Deserialize, Serialize};
 use std::slice;
 use thiserror::Error;
@@ -34,10 +34,10 @@ impl EntityTypeSelection {
 
     /// The selection as a clause 4.17 expression: the one name, or the
     /// alternation of the several.
-    pub fn as_type_expression(&self) -> TypeExprRaw {
+    pub fn as_type_expression(&self) -> WrittenTypeSelection {
         match self {
-            EntityTypeSelection::Single(name) => TypeExprRaw::Type(name.clone()),
-            EntityTypeSelection::Several(names) => TypeExprRaw::Or(names.iter().cloned().map(TypeExprRaw::Type).collect()),
+            EntityTypeSelection::Single(name) => WrittenTypeSelection::Type(name.clone()),
+            EntityTypeSelection::Several(names) => WrittenTypeSelection::Or(names.iter().cloned().map(WrittenTypeSelection::Type).collect()),
         }
     }
 }

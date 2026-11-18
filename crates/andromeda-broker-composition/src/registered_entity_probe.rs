@@ -17,7 +17,8 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    entity_selection::{EntitySelection, EntitySelector as CompiledEntitySelector},
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector as CompiledEntitySelector,
     page_window::PageWindow,
     type_selection::expansion::expand_type_expression,
 };
@@ -59,7 +60,7 @@ impl EntityStoreRegistrationProbe {
         Ok(CompiledEntitySelector::builder()
             .ids(selector.id.iter().cloned().collect())
             .id_pattern(selector.id_pattern.clone())
-            .type_expr(Some(type_expr))
+            .type_selection(Some(type_expr))
             .build())
     }
 
@@ -135,7 +136,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
             let selector = CompiledEntitySelector::builder()
                 .ids(vec![entity_id.clone()])
                 .id_pattern(None)
-                .type_expr(None)
+                .type_selection(None)
                 .build();
             self.presence(vec![selector], attributes).await
         })

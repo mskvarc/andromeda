@@ -23,7 +23,7 @@
 //! linked entity and not `rel`, so only a bare `omit` term takes an Attribute
 //! away.
 
-use crate::projection::{compiled::Projection, term::ProjectionTerm};
+use crate::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
 use andromeda_ngsi_ld_lexicon::scope::presence::ScopePresence;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use iri_rs::{Iri, IriBuf};
@@ -84,11 +84,11 @@ pub enum ProjectedMembers {
 impl ProjectedMembers {
     /// What `projection` requires of an Entity to leave it a member.
     #[must_use]
-    pub fn of(projection: &Projection) -> ProjectedMembers {
-        if projection.is_empty() || projection.keeps(&ProjectionTerm::Id) || projection.keeps(&ProjectionTerm::Type) {
+    pub fn of(projection: &ExpandedProjection) -> ProjectedMembers {
+        if projection.is_empty() || projection.keeps(&ExpandedProjectionTerm::Id) || projection.keeps(&ExpandedProjectionTerm::Type) {
             return ProjectedMembers::Unconditional;
         }
-        let scope = if projection.keeps(&ProjectionTerm::Scope) {
+        let scope = if projection.keeps(&ExpandedProjectionTerm::Scope) {
             ScopeRetention::Kept
         } else {
             ScopeRetention::Removed
@@ -98,7 +98,7 @@ impl ProjectedMembers {
                 .omit
                 .iter()
                 .filter(|term| term.linked_terms().is_empty())
-                .filter_map(ProjectionTerm::attribute_iri)
+                .filter_map(ExpandedProjectionTerm::attribute_iri)
                 .cloned() // clone: the selection owns its names independently of the projection it was read from
                 .collect();
             ProjectedMembers::AnyBesides { attributes, scope }
@@ -114,7 +114,7 @@ impl ProjectedMembers {
             let attributes = projection
                 .pick
                 .iter()
-                .filter_map(ProjectionTerm::attribute_iri)
+                .filter_map(ExpandedProjectionTerm::attribute_iri)
                 .filter(|iri| !omitted_bare(iri))
                 .cloned() // clone: the requirement outlives the projection it was read from
                 .collect();
@@ -169,9 +169,9 @@ impl ProjectedMembers {
 #[cfg(test)]
 mod tests {
     use crate::projection::{
-        compiled::Projection,
+        expanded_projection::ExpandedProjection,
+        expanded_projection_term::ExpandedProjectionTerm,
         projected_members::{ProjectedMembers, ScopeRetention},
-        term::ProjectionTerm,
     };
     use andromeda_ngsi_ld_lexicon::scope::presence::ScopePresence;
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -182,15 +182,15 @@ mod tests {
         IriBuf::new(value.to_string()).expect("valid IRI")
     }
 
-    fn attribute(name: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn attribute(name: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(&format!("https://example.com/{name}")),
             linked: Vec::new(),
         }
     }
 
-    fn linked(name: &str, inner: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn linked(name: &str, inner: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(&format!("https://example.com/{name}")),
             linked: vec![attribute(inner)],
         }
@@ -204,7 +204,7 @@ mod tests {
     /// leaves it that one.
     #[test]
     fn a_pick_admits_an_entity_carrying_a_picked_attribute() {
-        let members = ProjectedMembers::of(&Projection::builder().pick(vec![attribute("name"), attribute("location")]).build());
+        let members = ProjectedMembers::of(&ExpandedProjection::builder().pick(vec![attribute("name"), attribute("location")]).build());
         assert!(!members.admits([], ScopePresence::Absent));
         assert!(!members.admits(["https://example.com/speed"], ScopePresence::Absent));
         assert!(members.admits([NAME], ScopePresence::Absent));
@@ -219,8 +219,8 @@ mod tests {
     #[test]
     fn an_omit_admits_an_entity_carrying_an_attribute_it_spares() {
         let members = ProjectedMembers::of(
-            &Projection::builder()
-                .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, attribute("name")])
+            &ExpandedProjection::builder()
+                .omit(vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, attribute("name")])
                 .build(),
         );
         assert!(!members.admits([NAME], ScopePresence::Absent));
@@ -234,13 +234,13 @@ mod tests {
     #[test]
     fn an_unconditional_requirement_admits_every_entity() {
         assert!(ProjectedMembers::Unconditional.admits([], ScopePresence::Absent));
-        assert!(ProjectedMembers::of(&Projection::builder().pick(vec![ProjectionTerm::Id]).build()).admits([], ScopePresence::Absent));
+        assert!(ProjectedMembers::of(&ExpandedProjection::builder().pick(vec![ExpandedProjectionTerm::Id]).build()).admits([], ScopePresence::Absent));
     }
 
     /// A request that named no projection leaves every Entity whole.
     #[test]
     fn no_projection_selects_every_entity() {
-        assert_eq!(ProjectedMembers::of(&Projection::default()), ProjectedMembers::Unconditional);
+        assert_eq!(ProjectedMembers::of(&ExpandedProjection::default()), ProjectedMembers::Unconditional);
         assert!(!ProjectedMembers::Unconditional.constrains());
     }
 
@@ -249,10 +249,12 @@ mod tests {
     #[test]
     fn a_projection_keeping_id_or_type_selects_every_entity() {
         for projection in [
-            Projection::builder().pick(vec![ProjectionTerm::Id]).build(),
-            Projection::builder().pick(vec![attribute("name"), ProjectionTerm::Type]).build(),
-            Projection::builder().omit(vec![ProjectionTerm::Id, attribute("name")]).build(),
-            Projection::builder().omit(vec![attribute("name")]).build(),
+            ExpandedProjection::builder().pick(vec![ExpandedProjectionTerm::Id]).build(),
+            ExpandedProjection::builder()
+                .pick(vec![attribute("name"), ExpandedProjectionTerm::Type])
+                .build(),
+            ExpandedProjection::builder().omit(vec![ExpandedProjectionTerm::Id, attribute("name")]).build(),
+            ExpandedProjection::builder().omit(vec![attribute("name")]).build(),
         ] {
             assert_eq!(ProjectedMembers::of(&projection), ProjectedMembers::Unconditional, "{projection:?}");
         }
@@ -261,7 +263,7 @@ mod tests {
     /// `pick=name` keeps an Entity only through `name`.
     #[test]
     fn a_pick_of_attributes_selects_the_entities_carrying_one_of_them() {
-        let projection = Projection::builder().pick(vec![attribute("name"), linked("owner", "name")]).build();
+        let projection = ExpandedProjection::builder().pick(vec![attribute("name"), linked("owner", "name")]).build();
         let members = ProjectedMembers::of(&projection);
         assert_eq!(
             members,
@@ -280,7 +282,7 @@ mod tests {
     /// out of what keeps an Entity, and a linked one does not.
     #[test]
     fn a_pick_with_an_omit_selects_through_the_picked_attributes_it_leaves() {
-        let projection = Projection::builder()
+        let projection = ExpandedProjection::builder()
             .pick(vec![attribute("name"), attribute("email"), linked("owner", "name")])
             .omit(vec![attribute("email"), linked("owner", "name")])
             .build();
@@ -296,7 +298,7 @@ mod tests {
     /// A pick naming `scope` keeps an Entity through its scope as well.
     #[test]
     fn a_pick_naming_scope_keeps_the_scope() {
-        let projection = Projection::builder().pick(vec![ProjectionTerm::Scope]).build();
+        let projection = ExpandedProjection::builder().pick(vec![ExpandedProjectionTerm::Scope]).build();
         assert_eq!(
             ProjectedMembers::of(&projection),
             ProjectedMembers::AnyOf {
@@ -311,8 +313,13 @@ mod tests {
     /// itself.
     #[test]
     fn an_omit_of_id_and_type_selects_the_entities_carrying_another_attribute() {
-        let projection = Projection::builder()
-            .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, attribute("name"), linked("owner", "name")])
+        let projection = ExpandedProjection::builder()
+            .omit(vec![
+                ExpandedProjectionTerm::Id,
+                ExpandedProjectionTerm::Type,
+                attribute("name"),
+                linked("owner", "name"),
+            ])
             .build();
         let members = ProjectedMembers::of(&projection);
         assert_eq!(
@@ -332,8 +339,8 @@ mod tests {
     /// An `omit` naming `scope` too takes the scope away as a member.
     #[test]
     fn an_omit_naming_scope_removes_the_scope() {
-        let projection = Projection::builder()
-            .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope])
+        let projection = ExpandedProjection::builder()
+            .omit(vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope])
             .build();
         assert!(matches!(
             ProjectedMembers::of(&projection),

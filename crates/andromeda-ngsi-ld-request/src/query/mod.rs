@@ -20,7 +20,7 @@ pub mod temporal;
 
 use crate::pagination::page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, projection::written_projection_term::WrittenProjectionTerm};
 
 /// The selection and projection parameters every query endpoint has.
 ///
@@ -30,10 +30,10 @@ pub trait SharedQueryParams {
     fn attrs(&self) -> Option<&[AttributeName]>;
 
     /// The `pick` parameter, if present.
-    fn pick(&self) -> Option<&[RawProjectionTerm]>;
+    fn pick(&self) -> Option<&[WrittenProjectionTerm]>;
 
     /// The `omit` parameter, if present.
-    fn omit(&self) -> Option<&[RawProjectionTerm]>;
+    fn omit(&self) -> Option<&[WrittenProjectionTerm]>;
 
     /// The `datasetId` URI/default selectors, if present.
     fn dataset_ids(&self) -> Option<&[DatasetSelector]>;
@@ -60,8 +60,8 @@ macro_rules! impl_shared_query_params {
               dataset_id: $($ds:ident)? }) => {
         impl SharedQueryParams for $ty {
             fn attrs(&self) -> Option<&[AttributeName]> { self.$attrs.as_deref() }
-            fn pick(&self) -> Option<&[RawProjectionTerm]> { impl_shared_query_params!(@opt self $($pick)?) }
-            fn omit(&self) -> Option<&[RawProjectionTerm]> { impl_shared_query_params!(@opt self $($omit)?) }
+            fn pick(&self) -> Option<&[WrittenProjectionTerm]> { impl_shared_query_params!(@opt self $($pick)?) }
+            fn omit(&self) -> Option<&[WrittenProjectionTerm]> { impl_shared_query_params!(@opt self $($omit)?) }
             fn dataset_ids(&self) -> Option<&[DatasetSelector]> { impl_shared_query_params!(@opt self $($ds)?) }
         }
     };

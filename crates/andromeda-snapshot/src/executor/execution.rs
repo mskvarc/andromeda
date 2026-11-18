@@ -164,7 +164,7 @@ mod tests {
     use andromeda_entity::error::EntityError;
     use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::query_error::QueryError;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use pretty_assertions::assert_eq;
 

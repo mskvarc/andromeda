@@ -276,7 +276,7 @@ mod tests {
     use crate::temporal_windowed_deletion::{empty_stream_cleanup_statement, matching_streams_query, windowed_count_statement, windowed_delete_statement};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetFilter,
+        dataset_selector::DatasetFilter,
         temporal::{
             history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
             window::{TemporalWindow, TimeInterval},

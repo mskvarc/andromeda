@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     projection::purge::{DatasetPurgeScope, PurgeMode},
 };
 use std::sync::Arc;
@@ -140,7 +140,7 @@ mod tests {
     use andromeda_ngsi_ld_entity::{attribute_instances::AttributeInstances, entity_state::EntityState};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         projection::purge::{DatasetPurgeScope, PurgeMode},
     };
     use serde_json::json;

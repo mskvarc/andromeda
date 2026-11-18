@@ -119,7 +119,11 @@ mod tests {
         notification::NotificationTrigger,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, geo::input::GeoQueryInput, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{
+        filter::language_matching::LanguageMatching,
+        geo::written_geo_query::WrittenGeoQuery,
+        projection::expanded_projection::ExpandedProjection,
+    };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::{DateTime, Utc};
@@ -144,7 +148,7 @@ mod tests {
     /// when given.
     fn subscription(key: i64, typed: bool, near: Option<Near>) -> CompiledSubscription {
         let compiled_geo_q = near.map_or(SubscriptionGeoFilter::Unrestricted, |near| {
-            let geo_q: GeoQueryInput = serde_json::from_value(json!({
+            let geo_q: WrittenGeoQuery = serde_json::from_value(json!({
                 "georel": "near;maxDistance==200",
                 "geometry": "Point",
                 "coordinates": near.at,
@@ -198,7 +202,7 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             lang: None,
-            notification_projection: Projection::default(),
+            notification_projection: ExpandedProjection::default(),
         }
     }
 

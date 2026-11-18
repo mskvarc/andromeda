@@ -1,6 +1,6 @@
 //! The ICU collations already created on one tenant's database.
 
-use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+use andromeda_ngsi_ld_query::ordering::icu_collation::IcuCollation;
 use andromeda_postgresql_pool::sql_state::{SqlState, violates_unique_constraint};
 use andromeda_postgresql_seaquery::{
     collation::{CreateIcuCollation, PostgresCollation},

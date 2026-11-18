@@ -411,7 +411,7 @@ mod tests {
         notification::ChangeOrigin,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::expanded_projection::ExpandedProjection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_retry::immediate_retry_delay::ImmediateRetryDelay;
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -468,7 +468,7 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             lang: None,
-            notification_projection: Projection::default(),
+            notification_projection: ExpandedProjection::default(),
         }
     }
 

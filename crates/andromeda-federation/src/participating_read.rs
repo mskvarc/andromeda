@@ -19,7 +19,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, geo::query::GeoQuery};
+use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, geo::compiled_geo_query::CompiledGeoQuery};
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 
 /// One read, in the terms its participating registrations are selected by.
@@ -30,7 +30,7 @@ pub struct ParticipatingRead<'a> {
     pub client_query: ClientQuery<'a>,
     /// The query's geoquery, compiled, which a registration's declared
     /// geometry has to admit for it to take part (clause 5.10.2.4).
-    pub geo: Option<&'a GeoQuery>,
+    pub geo: Option<&'a CompiledGeoQuery>,
     /// The operation a registration has to advertise to take part (clause 4.20).
     pub operation: ForwardingOperation,
     /// The `EntityMap` the read runs under, which fixes the registrations that

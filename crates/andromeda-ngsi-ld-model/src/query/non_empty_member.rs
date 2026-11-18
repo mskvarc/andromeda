@@ -2,7 +2,7 @@
 //! `Query` members of Table 5.2.23-1 and the notification members of Table
 //! 5.2.14.1-1.
 
-use andromeda_ngsi_ld_query::ordering::parameters::{OrderingBody, OrderingParameters};
+use andromeda_ngsi_ld_query::ordering::ordering_parameters::{OrderingBody, OrderingParameters};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use thiserror::Error;
 

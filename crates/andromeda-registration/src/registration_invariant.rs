@@ -1,7 +1,7 @@
 //! The invariants registration policy relies on, and how each one broke.
 
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceRegistrationIdParseError;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use iri_rs::InvalidIri;
 use thiserror::Error;
 

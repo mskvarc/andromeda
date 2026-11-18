@@ -17,9 +17,9 @@ use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpa
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::{
     attrs_selection::{AttrsAdmission, expand_attrs_admitted},
-    compiled::Projection,
+    expanded_projection::ExpandedProjection,
     expansion::expand_projection,
-    grammar::RawProjectionTerm,
+    written_projection_term::WrittenProjectionTerm,
 };
 use iri_rs::IriBuf;
 
@@ -37,10 +37,10 @@ impl EntityQueryService {
     /// sub-projection, or when `pick` and `omit` name one member.
     pub async fn compile_projection(
         &self,
-        pick: Option<&[RawProjectionTerm]>,
-        omit: Option<&[RawProjectionTerm]>,
+        pick: Option<&[WrittenProjectionTerm]>,
+        omit: Option<&[WrittenProjectionTerm]>,
         context: &ContextSpec,
-    ) -> Result<Option<Projection>, EntityError> {
+    ) -> Result<Option<ExpandedProjection>, EntityError> {
         if pick.is_none() && omit.is_none() {
             return Ok(None);
         }
@@ -78,8 +78,8 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
-        projection::{grammar::RawProjectionTerm, term::ProjectionTerm},
+        projection::{expanded_projection_term::ExpandedProjectionTerm, written_projection_term::WrittenProjectionTerm},
+        query_error::QueryError,
     };
     use iri_rs::IriBuf;
     use serde_json::json;
@@ -97,8 +97,8 @@ mod tests {
         )
     }
 
-    fn raw(name: &str, linked: Vec<RawProjectionTerm>) -> RawProjectionTerm {
-        RawProjectionTerm {
+    fn raw(name: &str, linked: Vec<WrittenProjectionTerm>) -> WrittenProjectionTerm {
+        WrittenProjectionTerm {
             name: name.parse().expect("valid attribute name"),
             linked,
         }
@@ -133,10 +133,10 @@ mod tests {
         pretty_assertions::assert_eq!(
             compiled.pick,
             vec![
-                ProjectionTerm::Id,
-                ProjectionTerm::Attribute {
+                ExpandedProjectionTerm::Id,
+                ExpandedProjectionTerm::Attribute {
                     iri: iri("hasA"),
-                    linked: vec![ProjectionTerm::Attribute {
+                    linked: vec![ExpandedProjectionTerm::Attribute {
                         iri: iri("temperature"),
                         linked: Vec::new()
                     }],
@@ -161,7 +161,7 @@ mod tests {
         assert!(compiled.pick.is_empty(), "the compiled projection picks nothing: {:?}", compiled.pick);
         pretty_assertions::assert_eq!(
             compiled.omit,
-            vec![ProjectionTerm::Attribute {
+            vec![ExpandedProjectionTerm::Attribute {
                 iri: iri("temperature"),
                 linked: Vec::new()
             }]

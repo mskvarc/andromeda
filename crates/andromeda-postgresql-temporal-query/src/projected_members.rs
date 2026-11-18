@@ -105,9 +105,9 @@ mod tests {
     use crate::projected_members::projected_member_condition;
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         entity_selection::EntitySelection,
-        projection::{compiled::Projection, projected_members::ProjectedMembers, term::ProjectionTerm},
+        projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm, projected_members::ProjectedMembers},
         temporal::{
             compiled::CompiledTemporalQuery,
             instance_selection::InstanceSelection,
@@ -122,7 +122,7 @@ mod tests {
     use iri_rs::IriBuf;
     use sea_query::{Query, SelectStatement};
 
-    fn compiled(projection: &Projection) -> CompiledTemporalQuery {
+    fn compiled(projection: &ExpandedProjection) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
             .entities(EntitySelection::builder().projected_members(ProjectedMembers::of(projection)).build())
             .window(
@@ -143,8 +143,8 @@ mod tests {
             .build()
     }
 
-    fn speed() -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn speed() -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI"),
             linked: Vec::new(),
         }
@@ -168,15 +168,15 @@ mod tests {
     /// A projection that keeps `id` leaves every entity a member.
     #[test]
     fn a_projection_keeping_id_adds_no_condition() {
-        assert!(rendered(&compiled(&Projection::builder().pick(vec![ProjectionTerm::Id]).build())).is_none());
-        assert!(rendered(&compiled(&Projection::default())).is_none());
+        assert!(rendered(&compiled(&ExpandedProjection::builder().pick(vec![ExpandedProjectionTerm::Id]).build())).is_none());
+        assert!(rendered(&compiled(&ExpandedProjection::default())).is_none());
     }
 
     /// Clause 5.7.4.5: a `pick` keeps an entity only through an in-window
     /// instance of a picked Attribute.
     #[test]
     fn a_pick_probes_the_represented_instances_of_the_picked_attributes() {
-        let statement = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");
+        let statement = rendered(&compiled(&ExpandedProjection::builder().pick(vec![speed()]).build())).expect("a condition");
         assert_statement_snapshot!("projected-members-a-pick-probes-the-represented-instances-of-the-picked-attributes", statement);
     }
 
@@ -184,7 +184,7 @@ mod tests {
     /// `datasetId` parameter removes keep no entity alive.
     #[test]
     fn the_dataset_step_bounds_the_instances_that_keep_an_entity() {
-        let mut query = compiled(&Projection::builder().pick(vec![speed()]).build());
+        let mut query = compiled(&ExpandedProjection::builder().pick(vec![speed()]).build());
         query.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
         let statement = rendered(&query).expect("a condition");
         assert_statement_snapshot!("projected-members-the-dataset-step-bounds-the-instances-that-keep-an-entity", statement);
@@ -195,7 +195,9 @@ mod tests {
     #[test]
     fn an_omit_probes_every_other_attribute_and_the_spared_scope() {
         let statement = rendered(&compiled(
-            &Projection::builder().omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, speed()]).build(),
+            &ExpandedProjection::builder()
+                .omit(vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, speed()])
+                .build(),
         ))
         .expect("a condition");
         assert_statement_snapshot!("projected-members-an-omit-probes-every-other-attribute-and-the-spared-scope", statement);

@@ -13,7 +13,7 @@ use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::filter::{expression::Expr, path::QueryPath};
+use andromeda_ngsi_ld_query::filter::{Filter, attribute_path::AttributePath};
 use andromeda_ngsi_ld_query_evaluation::{
     q::hop_steps::{hop_steps, linked_paths},
     queried_entity::attribute_reading::QueriedEntity,
@@ -23,7 +23,7 @@ use std::{borrow::Cow, sync::Arc};
 
 /// One object still to be read, with the path the hop continues along in the
 /// entity it names.
-type PendingStep<'q> = (Identifier, &'q QueryPath);
+type PendingStep<'q> = (Identifier, &'q AttributePath);
 
 impl EntityQueryService {
     /// Read every entity the hops of `filters` reach from `roots`, each as it
@@ -46,10 +46,10 @@ impl EntityQueryService {
         &'s self,
         target: &'s ContextTarget,
         roots: &[E],
-        filters: &[&'s Expr],
+        filters: &[&'s Filter],
         at: DateTime<Utc>,
     ) -> impl Future<Output = Result<LinkedStates, EntityError>> + Send + 's {
-        let paths: Vec<&QueryPath> = filters.iter().flat_map(|filter| linked_paths(filter)).collect();
+        let paths: Vec<&AttributePath> = filters.iter().flat_map(|filter| linked_paths(filter)).collect();
         let pending: Vec<PendingStep<'s>> = roots.iter().flat_map(|root| owned_steps(*root, &paths)).collect();
         self.gather_linked(target, pending, at)
     }
@@ -84,7 +84,7 @@ impl EntityQueryService {
 /// The steps the hops of `paths` take out of `entity`, each object read as the
 /// identifier of the entity it names; an object that is no identifier names
 /// none (clause 4.5.3).
-fn owned_steps<'a, 'q, E: QueriedEntity<'a>>(entity: E, paths: &[&'q QueryPath]) -> Vec<PendingStep<'q>> {
+fn owned_steps<'a, 'q, E: QueriedEntity<'a>>(entity: E, paths: &[&'q AttributePath]) -> Vec<PendingStep<'q>> {
     hop_steps(entity, paths)
         .into_iter()
         .filter_map(|step| Some((step.object.parse::<Identifier>().ok()?, step.inner)))

@@ -1,8 +1,8 @@
 //! A term expander for tests that resolves terms against a namespace, standing in for a request `@context` without a JSON-LD processor.
 
 use crate::{
-    error::QueryError,
-    term_expander::{TermExpander, TermExpansionFailure},
+    query_error::QueryError,
+    term_expander::{TermExpander, TermExpansionError},
 };
 use iri_rs::{Iri, IriBuf, IriRef, iri};
 use std::future::{Future, ready};
@@ -53,7 +53,7 @@ impl NamespaceExpander {
     ///
     /// # Errors
     ///
-    /// [`TermExpansionFailure::NotAnIri`] when `term` is no IRI reference or does not resolve.
+    /// [`TermExpansionError::NotAnIri`] when `term` is no IRI reference or does not resolve.
     pub fn term_iri(&self, term: &str) -> Result<IriBuf, QueryError> {
         match self.core_members.iter().find(|(core_term, _)| *core_term == term) {
             Some((_, iri)) => Ok(IriBuf::from(*iri)),
@@ -65,7 +65,7 @@ impl NamespaceExpander {
     ///
     /// # Errors
     ///
-    /// [`TermExpansionFailure::NotAnIri`] when `term` is no IRI reference or does not resolve.
+    /// [`TermExpansionError::NotAnIri`] when `term` is no IRI reference or does not resolve.
     pub fn type_iri(&self, term: &str) -> Result<IriBuf, QueryError> {
         resolved(term, &self.types)
     }
@@ -90,5 +90,5 @@ fn resolved(term: &str, namespace: &Iri<&'static str>) -> Result<IriBuf, QueryEr
 
 /// The failure of a term that names no IRI.
 const fn not_an_iri() -> QueryError {
-    QueryError::TermExpansion(TermExpansionFailure::NotAnIri)
+    QueryError::TermExpansion(TermExpansionError::NotAnIri)
 }

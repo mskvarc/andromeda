@@ -1,7 +1,7 @@
 //! The concrete reasons a Snapshot request is rejected as `BadRequestData`.
 
 use andromeda_ngsi_ld_model::{notification_header_field::NotificationHeaderFieldError, snapshot::SnapshotStatus};
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use thiserror::Error;
 
 /// Why a Snapshot request violates Snapshot semantics (clause 5.16).

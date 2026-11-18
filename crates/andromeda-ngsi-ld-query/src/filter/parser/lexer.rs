@@ -1,0 +1,713 @@
+//! Tokeniser for the NGSI-LD Query Language (clause 4.9).
+
+use crate::{filter::parser::quoted_string::scan_quoted_literal, query_error::QueryError};
+use strum::EnumDiscriminants;
+
+/// A single lexical token of a `q` expression.
+///
+/// [`TokenKind`] names a token without its text. A parse failure reports a
+/// kind rather than the Rust variant name, so the `BadRequestData` detail a
+/// client receives names the character the clause 4.9 grammar expected; the
+/// three kinds that carry text are described by kind instead, because their
+/// spelling is whatever the client wrote.
+#[derive(Debug, Clone, PartialEq, EnumDiscriminants)]
+#[strum_discriminants(name(TokenKind), derive(derive_more::Display, Hash))]
+pub enum Token {
+    /// A bare identifier: attribute name, IRI, or an unquoted temporal literal.
+    #[strum_discriminants(display("identifier"))]
+    Ident(String),
+    /// A double-quoted string literal, taken verbatim after backslash-escape
+    /// processing. The contents are not percent-decoded: percent-encoding is an
+    /// HTTP-URI transport concern (clause 4.9), decoded once by the HTTP binding
+    /// before the filter reaches this tokeniser, and a `q` carried in a JSON
+    /// body (a subscription) is not percent-encoded at all.
+    #[strum_discriminants(display("quoted string"))]
+    QuotedStr(String),
+    /// A numeric literal, kept as text until the parser types it.
+    #[strum_discriminants(display("number"))]
+    NumberLit(String),
+    /// The `true` keyword.
+    #[strum_discriminants(display("true"))]
+    True,
+    /// The `false` keyword.
+    #[strum_discriminants(display("false"))]
+    False,
+    /// `==`
+    #[strum_discriminants(display("=="))]
+    Eq,
+    /// `!=`
+    #[strum_discriminants(display("!="))]
+    Neq,
+    /// `>`
+    #[strum_discriminants(display(">"))]
+    Gt,
+    /// `>=`
+    #[strum_discriminants(display(">="))]
+    Ge,
+    /// `<`
+    #[strum_discriminants(display("<"))]
+    Lt,
+    /// `<=`
+    #[strum_discriminants(display("<="))]
+    Le,
+    /// `~=`
+    #[strum_discriminants(display("~="))]
+    Match,
+    /// `!~=`
+    #[strum_discriminants(display("!~="))]
+    NotMatch,
+    /// `..`, the range separator.
+    #[strum_discriminants(display(".."))]
+    Dots,
+    /// `;`, the conjunction operator.
+    #[strum_discriminants(display(";"))]
+    Semi,
+    /// `|`, the disjunction operator.
+    #[strum_discriminants(display("|"))]
+    Pipe,
+    /// `(`
+    #[strum_discriminants(display("("))]
+    LParen,
+    /// `)`
+    #[strum_discriminants(display(")"))]
+    RParen,
+    /// `[`, opening a compound value path.
+    #[strum_discriminants(display("["))]
+    LBracket,
+    /// `]`, closing a compound value path.
+    #[strum_discriminants(display("]"))]
+    RBracket,
+    /// `{`, opening a linked-entity traversal.
+    #[strum_discriminants(display("{{"))]
+    LBrace,
+    /// `}`, closing a linked-entity traversal.
+    #[strum_discriminants(display("}}"))]
+    RBrace,
+    /// `*`, the language-suppression marker inside `[*]`.
+    #[strum_discriminants(display("*"))]
+    Star,
+    /// `.`, the sub-attribute separator.
+    #[strum_discriminants(display("."))]
+    Dot,
+    /// `,`, the value-list separator.
+    #[strum_discriminants(display(","))]
+    Comma,
+}
+
+/// Split a `q` expression into tokens.
+///
+/// # Errors
+///
+/// Returns [`QueryError::QUnterminatedString`] when a double-quoted literal is
+/// left open, and [`QueryError::QUnexpectedChar`] when a character can start no
+/// token of the clause 4.9 grammar.
+pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut tokens = Vec::new();
+    let mut cursor = 0;
+    let mut position = OperandPosition::Other;
+
+    while cursor < chars.len() {
+        if matches!(chars[cursor], ' ' | '\t' | '\n' | '\r') {
+            cursor += 1;
+            continue;
+        }
+        let (token, next) = scan_token(&chars, cursor, position)?;
+        position = position.after(&token);
+        tokens.push(token);
+        cursor = next;
+    }
+
+    Ok(tokens)
+}
+
+/// Scan the single token that starts at `start`, returning it together with the
+/// index that follows it.
+///
+/// The multi-character operators are matched before their prefixes, because
+/// clause 4.9 spells `!~=` with a `!` that does not open a `!=`.
+fn scan_token(chars: &[char], start: usize, position: OperandPosition) -> Result<(Token, usize), QueryError> {
+    match chars[start] {
+        ';' => Ok((Token::Semi, start + 1)),
+        '|' => Ok((Token::Pipe, start + 1)),
+        '(' => Ok((Token::LParen, start + 1)),
+        ')' => Ok((Token::RParen, start + 1)),
+        '[' => Ok((Token::LBracket, start + 1)),
+        ']' => Ok((Token::RBracket, start + 1)),
+        '{' => Ok((Token::LBrace, start + 1)),
+        '}' => Ok((Token::RBrace, start + 1)),
+        '*' if is_range_wildcard(chars, start) => Ok(scan_identifier(chars, start, position)),
+        '*' => Ok((Token::Star, start + 1)),
+        ',' => Ok((Token::Comma, start + 1)),
+        '=' if is_at(chars, start + 1, '=') => Ok((Token::Eq, start + 2)),
+        '!' if is_at(chars, start + 1, '~') && is_at(chars, start + 2, '=') => Ok((Token::NotMatch, start + 3)),
+        '!' if is_at(chars, start + 1, '=') => Ok((Token::Neq, start + 2)),
+        '~' if is_at(chars, start + 1, '=') => Ok((Token::Match, start + 2)),
+        '>' if is_at(chars, start + 1, '=') => Ok((Token::Ge, start + 2)),
+        '>' => Ok((Token::Gt, start + 1)),
+        '<' if is_at(chars, start + 1, '=') => Ok((Token::Le, start + 2)),
+        '<' => Ok((Token::Lt, start + 1)),
+        '.' if is_at(chars, start + 1, '.') => Ok((Token::Dots, start + 2)),
+        '.' => Ok((Token::Dot, start + 1)),
+        '"' => scan_quoted_string(chars, start),
+        '-' if starts_digit(chars, start + 1) => Ok(scan_signed_number(chars, start)),
+        digit if digit.is_ascii_digit() => Ok(scan_digit_run(chars, start)),
+        name if name.is_alphanumeric() || matches!(name, '_' | ':' | '/') => Ok(scan_identifier(chars, start, position)),
+        other => Err(QueryError::QUnexpectedChar { ch: other, position: start }),
+    }
+}
+
+/// Whether `chars` holds `expected` at `index`.
+fn is_at(chars: &[char], index: usize, expected: char) -> bool {
+    chars.get(index) == Some(&expected)
+}
+
+/// Whether `chars` holds an ASCII digit at `index`.
+fn starts_digit(chars: &[char], index: usize) -> bool {
+    chars.get(index).is_some_and(char::is_ascii_digit)
+}
+
+/// Advance past a run of ASCII digits, returning the index that follows it.
+fn consume_digits(chars: &[char], from: usize) -> usize {
+    let mut cursor = from;
+    while starts_digit(chars, cursor) {
+        cursor += 1;
+    }
+    cursor
+}
+
+/// Scan a double-quoted literal, keeping its body verbatim.
+///
+/// Clause 4.9 gives a `quotedStr` and a `RegExp` the same lexical shape and
+/// different grammars, and the tokeniser cannot see which production the
+/// literal stands in. The escape rules therefore belong to whichever operand
+/// parser consumes the token, not here.
+fn scan_quoted_string(chars: &[char], start: usize) -> Result<(Token, usize), QueryError> {
+    let (body, next) = scan_quoted_literal(chars, start)?;
+    Ok((Token::QuotedStr(body), next))
+}
+
+/// Consume the optional fraction and exponent of a numeric literal, starting at
+/// the index that follows its integer digits.
+///
+/// A `.` is only a decimal point when a digit follows it and it does not open
+/// the `..` range separator, which otherwise would be swallowed by `1..5`.
+fn scan_number_tail(chars: &[char], from: usize) -> usize {
+    let mut cursor = from;
+    if is_at(chars, cursor, '.') && !is_at(chars, cursor + 1, '.') && starts_digit(chars, cursor + 1) {
+        cursor = consume_digits(chars, cursor + 1);
+    }
+    if is_at(chars, cursor, 'e') || is_at(chars, cursor, 'E') {
+        cursor += 1;
+        if is_at(chars, cursor, '+') || is_at(chars, cursor, '-') {
+            cursor += 1;
+        }
+        cursor = consume_digits(chars, cursor);
+    }
+    cursor
+}
+
+/// Scan a numeric literal that opens with a `-` sign.
+fn scan_signed_number(chars: &[char], start: usize) -> (Token, usize) {
+    let end = scan_number_tail(chars, consume_digits(chars, start + 1));
+    (Token::NumberLit(chars[start..end].iter().collect()), end)
+}
+
+/// Scan a token that opens with an ASCII digit.
+///
+/// Clause 4.9 writes its `dateTime`, `date` and `time` operands unquoted, and
+/// each of the three opens with a digit run that a `Number` cannot continue
+/// with: RFC 8259's `number` production carries neither `-` after its integer
+/// digits nor `:` at all, and clause 4.6.2 makes every `AttrName` open with a
+/// letter, so a digit run followed by either separator is a clause 4.6.3 literal rather than a number followed by punctuation.
+fn scan_digit_run(chars: &[char], start: usize) -> (Token, usize) {
+    let after_digits = consume_digits(chars, start);
+    let opens_time_value = (is_at(chars, after_digits, '-') || is_at(chars, after_digits, ':')) && starts_digit(chars, after_digits + 1);
+    if opens_time_value {
+        return scan_time_value(chars, start, after_digits);
+    }
+    let end = scan_number_tail(chars, after_digits);
+    (Token::NumberLit(chars[start..end].iter().collect()), end)
+}
+
+/// Consume a clause 4.6.3 time value literal as one identifier, stopping before
+/// the `..` range separator so that `2017-12-24..2017-12-25` stays a range,
+/// and before a `,` that separates a value list.
+fn scan_time_value(chars: &[char], start: usize, from: usize) -> (Token, usize) {
+    let mut cursor = from;
+    loop {
+        match chars.get(cursor).copied() {
+            Some('.') if is_at(chars, cursor + 1, '.') => break,
+            Some(',') if is_fraction_comma(chars, cursor) => cursor += 1,
+            Some(current) if is_temporal_char(current) => cursor += 1,
+            // A `char` is unbounded: every other character ends the literal.
+            Some(_) | None => break,
+        }
+    }
+    (Token::Ident(chars[start..cursor].iter().collect()), cursor)
+}
+
+/// Whether the `,` at `index` stands for the decimal point of the seconds of
+/// the time value it continues, rather than separating a value list.
+///
+/// Clause 4.6.3 lets a request write "a comma instead of a decimal point" before
+/// the fraction of the seconds of a `DateTime` and of a `Time`, both of which end
+/// in `Z`, so such a comma is followed by digits and the `Z`. No `Value` of a
+/// clause 4.9 `ValueList` is digits followed by `Z`, so a comma before them
+/// never opens a list member, after any operator.
+fn is_fraction_comma(chars: &[char], index: usize) -> bool {
+    let fraction_end = consume_digits(chars, index + 1);
+    fraction_end > index + 1 && is_at(chars, fraction_end, 'Z')
+}
+
+/// Whether `current` may appear inside an unquoted clause 4.6.3 time value.
+///
+/// Wider than the conformant forms on purpose: a numeric zone offset is
+/// consumed into the literal so that the operand parser can refuse it as a
+/// malformed `dateTime` or `time`, rather than the tokeniser splitting it and
+/// reporting an unexpected character at some position inside it.
+fn is_temporal_char(current: char) -> bool {
+    current.is_alphanumeric() || matches!(current, '-' | ':' | '.' | '+')
+}
+
+/// Scan a bare identifier (an attribute name, a prefixed name, or an IRI a
+/// client wrote unquoted) and recognise the two boolean keywords.
+fn scan_identifier(chars: &[char], start: usize, position: OperandPosition) -> (Token, usize) {
+    let mut cursor = start;
+    while chars
+        .get(cursor)
+        .copied()
+        .is_some_and(|current| position.continues_identifier(chars, cursor, current))
+    {
+        cursor += 1;
+    }
+    let word: String = chars[start..cursor].iter().collect();
+    let token = match word.as_str() {
+        "true" => Token::True,
+        "false" => Token::False,
+        // `&str` is unbounded, so a catch-all is the only way to close this
+        // match; every other word is an identifier.
+        _ => Token::Ident(word),
+    };
+    (token, cursor)
+}
+
+/// Whether `current` may appear inside a bare identifier.
+///
+/// `.` is excluded because clause 4.9 makes it the sub-attribute separator.
+fn is_identifier_char(current: char) -> bool {
+    current.is_alphanumeric() || matches!(current, '_' | ':' | '/' | '-' | '#')
+}
+
+/// Whether `chars` holds, at `index`, the `*` subtag of an RFC 4647 extended
+/// language range (`de-*-DE`, `*-GB`, `en-*`).
+///
+/// A `*` that touches a `-` is a subtag; a lone one stays the `[*]`
+/// every-language marker.
+fn is_range_wildcard(chars: &[char], index: usize) -> bool {
+    is_at(chars, index, '*') && (is_at(chars, index + 1, '-') || index.checked_sub(1).is_some_and(|before| is_at(chars, before, '-')))
+}
+
+/// Whether `current` may appear inside a bare `URI` operand (RFC 3986 section 2).
+///
+/// The URI characters that clause 4.9 also uses as query syntax (`;`, `|`, `(`,
+/// `)`, `,`, `[`, `]`) keep their query meaning, and a `.` that opens `..`
+/// stays the range separator.
+fn is_uri_char(chars: &[char], index: usize, current: char) -> bool {
+    match current {
+        '.' => !is_at(chars, index + 1, '.'),
+        other => is_identifier_char(other) || matches!(other, '~' | '%' | '?' | '@' | '!' | '$' | '&' | '\'' | '*' | '+' | '='),
+    }
+}
+
+/// Whether `text` tokenises back, after `==`, as the one identifier it is.
+#[must_use]
+pub fn is_bare_uri(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    chars.first().is_some_and(|first| first.is_alphabetic())
+        && chars.iter().enumerate().all(|(index, current)| is_uri_char(&chars, index, *current))
+        && !matches!(text, "true" | "false")
+}
+
+/// What the token being scanned can stand for.
+///
+/// Clause 4.9 lets a bare `URI` stand only in a `CompEqualityValue`, after `==`
+/// or `!=` and through the `,` and `..` that continue it. Everywhere else a `.`
+/// separates sub-attributes, so a dotted word splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperandPosition {
+    /// The right-hand side of an equality operator.
+    EqualityValue,
+    /// An attribute path, an ordering or pattern operand, or a connective.
+    Other,
+}
+
+impl OperandPosition {
+    /// The position that follows `token`.
+    const fn after(self, token: &Token) -> OperandPosition {
+        match token {
+            Token::Eq | Token::Neq => OperandPosition::EqualityValue,
+            Token::Comma | Token::Dots | Token::Ident(_) | Token::QuotedStr(_) | Token::NumberLit(_) | Token::True | Token::False => self,
+            Token::Gt
+            | Token::Ge
+            | Token::Lt
+            | Token::Le
+            | Token::Match
+            | Token::NotMatch
+            | Token::Semi
+            | Token::Pipe
+            | Token::LParen
+            | Token::RParen
+            | Token::LBracket
+            | Token::RBracket
+            | Token::LBrace
+            | Token::RBrace
+            | Token::Star
+            | Token::Dot => OperandPosition::Other,
+        }
+    }
+
+    /// Whether `current`, at `index`, continues an identifier scanned here.
+    fn continues_identifier(self, chars: &[char], index: usize, current: char) -> bool {
+        match self {
+            OperandPosition::EqualityValue => is_uri_char(chars, index, current),
+            OperandPosition::Other => is_identifier_char(current) || is_range_wildcard(chars, index),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        filter::parser::lexer::{Token, tokenize},
+        query_error::QueryError,
+    };
+    use pretty_assertions::assert_eq;
+
+    fn lex(input: &str) -> Vec<Token> {
+        tokenize(input).expect("tokenises")
+    }
+
+    fn ident(text: &str) -> Token {
+        Token::Ident(text.to_string())
+    }
+
+    fn number(text: &str) -> Token {
+        Token::NumberLit(text.to_string())
+    }
+
+    #[test]
+    fn every_operator_of_clause_four_nine_lexes_to_its_own_token() {
+        // The two-and three-character operators have to win over their prefixes:
+        // `!~=` is not `!=` followed by `~=`, and `>=` is not `>` followed by `=`.
+        assert_eq!(
+            lex("== != > >= < <= ~= !~="),
+            vec![Token::Eq, Token::Neq, Token::Gt, Token::Ge, Token::Lt, Token::Le, Token::Match, Token::NotMatch]
+        );
+    }
+
+    #[test]
+    fn every_structural_character_lexes_to_its_own_token() {
+        assert_eq!(
+            lex(";|()[]{},"),
+            vec![
+                Token::Semi,
+                Token::Pipe,
+                Token::LParen,
+                Token::RParen,
+                Token::LBracket,
+                Token::RBracket,
+                Token::LBrace,
+                Token::RBrace,
+                Token::Comma
+            ]
+        );
+    }
+
+    /// Clause 4.9 `LinkedEntityRelation = AttrName %x7B LinkedEntityPath %x7D`.
+    /// The braces are structure; the colon that terminates a type guard is not,
+    /// because `:` is a legal identifier character (a prefixed name carries
+    /// one), so it stays glued to the identifier the parser splits it from.
+    #[test]
+    fn a_linked_entity_traversal_lexes_into_its_braces() {
+        assert_eq!(
+            lex("isParkedIn{Building,Store:category}==\"x\""),
+            vec![
+                ident("isParkedIn"),
+                Token::LBrace,
+                ident("Building"),
+                Token::Comma,
+                ident("Store:category"),
+                Token::RBrace,
+                Token::Eq,
+                Token::QuotedStr("x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn whitespace_separates_tokens_without_producing_one() {
+        assert_eq!(lex(" \t\n\r speed \t "), vec![ident("speed")]);
+        assert_eq!(lex(""), Vec::new());
+    }
+
+    #[test]
+    fn the_range_separator_wins_over_the_sub_attribute_separator() {
+        // `1..5` is a range, not `1.` `.5`; `a.b` is a sub-attribute path.
+        assert_eq!(lex("1..5"), vec![number("1"), Token::Dots, number("5")]);
+        assert_eq!(lex("a.b"), vec![ident("a"), Token::Dot, ident("b")]);
+    }
+
+    #[test]
+    fn a_fractional_number_does_not_swallow_the_range_separator() {
+        assert_eq!(lex("1.5..2.5"), vec![number("1.5"), Token::Dots, number("2.5")]);
+    }
+
+    #[test]
+    fn numbers_carry_their_sign_fraction_and_exponent() {
+        assert_eq!(lex("-3"), vec![number("-3")]);
+        assert_eq!(lex("-3.25"), vec![number("-3.25")]);
+        assert_eq!(lex("1e3"), vec![number("1e3")]);
+        assert_eq!(lex("1.5E-3"), vec![number("1.5E-3")]);
+        assert_eq!(lex("-1.5e+3"), vec![number("-1.5e+3")]);
+    }
+
+    #[test]
+    fn true_and_false_are_keywords_rather_than_identifiers() {
+        assert_eq!(lex("true false truthy"), vec![Token::True, Token::False, ident("truthy")]);
+    }
+
+    #[test]
+    fn a_date_like_literal_is_read_as_one_identifier() {
+        // Clause 4.6.3 operands are unquoted, so the digit branch has to hand a
+        // whole RFC 3339 date-time to the parser rather than a number followed
+        // by punctuation.
+        assert_eq!(lex("2017-12-24T12:00:00Z"), vec![ident("2017-12-24T12:00:00Z")]);
+        assert_eq!(lex("2017-12-24"), vec![ident("2017-12-24")]);
+        assert_eq!(lex("2017-12-24T12:00:00+01:00"), vec![ident("2017-12-24T12:00:00+01:00")]);
+    }
+
+    #[test]
+    fn a_date_range_stops_at_the_range_separator() {
+        assert_eq!(lex("2017-12-24..2017-12-25"), vec![ident("2017-12-24"), Token::Dots, ident("2017-12-25")]);
+    }
+
+    /// Clause 4.9's `ComparableValue` admits a bare `time` beside `dateTime` and `date`, so a time of day survives the tokeniser whole.
+    #[test]
+    fn a_bare_time_of_day_is_one_literal() {
+        assert_eq!(lex("12:00:00Z"), vec![ident("12:00:00Z")]);
+        assert_eq!(lex("12:00:00.500000Z"), vec![ident("12:00:00.500000Z")]);
+        assert_eq!(lex("\"12:00:00Z\""), vec![Token::QuotedStr("12:00:00Z".to_string())]);
+    }
+
+    /// Clause 4.6.3 admits a comma for the decimal point of the seconds in a
+    /// request, so a `DateTime` and a `Time` written so survive the tokeniser
+    /// whole, wherever an operand stands.
+    #[test]
+    fn a_comma_before_the_fraction_of_a_time_value_stays_in_the_literal() {
+        assert_eq!(lex("2024-01-01T00:00:00,5Z"), vec![ident("2024-01-01T00:00:00,5Z")]);
+        assert_eq!(lex("12:00:00,123456Z"), vec![ident("12:00:00,123456Z")]);
+        assert_eq!(lex("tm>2024-01-01T00:00:00,5Z"), vec![ident("tm"), Token::Gt, ident("2024-01-01T00:00:00,5Z")]);
+        assert_eq!(
+            lex("t==11:00:00,5Z..13:00:00,25Z"),
+            vec![ident("t"), Token::Eq, ident("11:00:00,5Z"), Token::Dots, ident("13:00:00,25Z")]
+        );
+    }
+
+    /// A comma that digits and a `Z` do not follow separates the members of a
+    /// value list, a time value among them.
+    #[test]
+    fn a_comma_after_a_time_value_still_separates_a_value_list() {
+        assert_eq!(
+            lex("t==2024-01-01T00:00:00,5Z,2024-01-02T00:00:00Z"),
+            vec![
+                ident("t"),
+                Token::Eq,
+                ident("2024-01-01T00:00:00,5Z"),
+                Token::Comma,
+                ident("2024-01-02T00:00:00Z")
+            ]
+        );
+        assert_eq!(
+            lex("d==2024-01-15,2024-01-16"),
+            vec![ident("d"), Token::Eq, ident("2024-01-15"), Token::Comma, ident("2024-01-16")]
+        );
+        assert_eq!(
+            lex("t==12:00:00Z,5e3"),
+            vec![ident("t"), Token::Eq, ident("12:00:00Z"), Token::Comma, number("5e3")]
+        );
+        assert_eq!(
+            lex("t==12:00:00Z,5"),
+            vec![ident("t"), Token::Eq, ident("12:00:00Z"), Token::Comma, number("5")]
+        );
+    }
+
+    /// A digit run that no clause 4.6.3 separator continues is still the
+    /// `Number` production of clause 4.9.
+    #[test]
+    fn a_digit_run_that_no_separator_continues_is_still_a_number() {
+        assert_eq!(lex("12"), vec![number("12")]);
+        assert_eq!(lex("12.5"), vec![number("12.5")]);
+        assert_eq!(lex("12..20"), vec![number("12"), Token::Dots, number("20")]);
+    }
+
+    /// A time-of-day range stops at the range separator exactly as a date range
+    /// does: the `..` is clause 4.9's `dots`, not a fractional part.
+    #[test]
+    fn a_time_of_day_range_stops_at_the_range_separator() {
+        assert_eq!(lex("09:00:00Z..17:00:00Z"), vec![ident("09:00:00Z"), Token::Dots, ident("17:00:00Z")]);
+    }
+
+    #[test]
+    fn an_identifier_carries_the_punctuation_a_compact_name_needs() {
+        assert_eq!(lex("ngsi-ld:speed_1"), vec![ident("ngsi-ld:speed_1")]);
+        assert_eq!(lex("urn:ngsi-ld:Vehicle:A4567"), vec![ident("urn:ngsi-ld:Vehicle:A4567")]);
+    }
+
+    /// In an attribute path `.` is the sub-attribute separator (clause 4.9),
+    /// which outranks its role inside a hostname: an IRI written there splits.
+    /// That is not a limitation in practice, because an absolute IRI reaches the
+    /// AST through term expansion rather than through this tokeniser: what a
+    /// client writes is a compact name.
+    #[test]
+    fn a_dotted_iri_splits_because_the_dot_separates_sub_attributes() {
+        assert_eq!(
+            lex("https://example.com/Vehicle#speed"),
+            vec![ident("https://example"), Token::Dot, ident("com/Vehicle#speed")]
+        );
+    }
+
+    #[test]
+    fn a_dotted_uri_after_an_equality_operator_is_one_identifier() {
+        assert_eq!(lex("p==http://example.org/a"), vec![ident("p"), Token::Eq, ident("http://example.org/a")]);
+        assert_eq!(
+            lex("p!=https://a.example/x?y=1&z=%20~@!$'*+"),
+            vec![ident("p"), Token::Neq, ident("https://a.example/x?y=1&z=%20~@!$'*+")]
+        );
+        assert_eq!(
+            lex("p==http://a.org/x,http://b.org/y;q.r==1"),
+            vec![
+                ident("p"),
+                Token::Eq,
+                ident("http://a.org/x"),
+                Token::Comma,
+                ident("http://b.org/y"),
+                Token::Semi,
+                ident("q"),
+                Token::Dot,
+                ident("r"),
+                Token::Eq,
+                number("1"),
+            ]
+        );
+        assert_eq!(
+            lex("(p==urn:a.b)|q==c"),
+            vec![
+                Token::LParen,
+                ident("p"),
+                Token::Eq,
+                ident("urn:a.b"),
+                Token::RParen,
+                Token::Pipe,
+                ident("q"),
+                Token::Eq,
+                ident("c"),
+            ]
+        );
+        assert_eq!(lex("p==a.b..c.d"), vec![ident("p"), Token::Eq, ident("a.b"), Token::Dots, ident("c.d")]);
+    }
+
+    #[test]
+    fn a_dotted_word_after_an_ordering_or_pattern_operator_still_splits() {
+        assert_eq!(lex("p>a.b"), vec![ident("p"), Token::Gt, ident("a"), Token::Dot, ident("b")]);
+        assert_eq!(lex("p~=a.b"), vec![ident("p"), Token::Match, ident("a"), Token::Dot, ident("b")]);
+    }
+
+    #[test]
+    fn a_quoted_literal_is_taken_verbatim_without_a_second_percent_decode() {
+        // Clause 4.9: a quoted operand is a JSON String (RFC 8259 String
+        // production), not percent-encoded data. Percent-encoding is purely an
+        // HTTP-URI transport concern: the spec requires it "whenever the
+        // string acting as a filter is part of the HTTP binding's URI", and the
+        // HTTP binding decodes the whole `q` once before it reaches this
+        // tokeniser. A `q` carried in a JSON subscription body is not
+        // percent-encoded at all. A second decode here would rewrite `a%2Fb`
+        // into `a/b`, corrupting a URN like `urn:x:a%2Fb` and breaking
+        // parse->serialize idempotency.
+        assert_eq!(lex("\"a%20b\""), vec![Token::QuotedStr("a%20b".to_string())]);
+        assert_eq!(lex("\"a%3Bb\""), vec![Token::QuotedStr("a%3Bb".to_string())]);
+        assert_eq!(lex("\"urn:x:a%2Fb\""), vec![Token::QuotedStr("urn:x:a%2Fb".to_string())]);
+    }
+
+    #[test]
+    fn a_backslash_defers_the_next_character_without_resolving_it() {
+        // The token carries the body as written. Clause 4.9 gives a `quotedStr`
+        // and a `RegExp` the same lexical shape and different grammars, so which
+        // escapes mean what is settled by the operand parser that knows the
+        // production, not here. The escaped quote still does not end the token.
+        assert_eq!(lex(r#""say \"hi\"""#), vec![Token::QuotedStr(r#"say \"hi\""#.to_string())]);
+        assert_eq!(lex(r#""back\\slash""#), vec![Token::QuotedStr(r"back\\slash".to_string())]);
+        assert_eq!(lex(r#""^example\.com$""#), vec![Token::QuotedStr(r"^example\.com$".to_string())]);
+    }
+
+    #[test]
+    fn an_empty_quoted_literal_is_a_token() {
+        assert_eq!(lex("\"\""), vec![Token::QuotedStr(String::new())]);
+    }
+
+    #[test]
+    fn a_quoted_literal_left_open_is_rejected() {
+        let error = tokenize("name==\"unterminated").expect_err("must reject");
+        assert!(matches!(error, QueryError::QUnterminatedString), "got {error:?}");
+    }
+
+    #[test]
+    fn a_character_that_starts_no_token_is_rejected_with_its_position() {
+        let error = tokenize("speed==@").expect_err("must reject");
+        assert!(matches!(error, QueryError::QUnexpectedChar { ch: '@', position: 7 }), "got {error:?}");
+    }
+
+    #[test]
+    fn a_whole_predicate_lexes_into_its_parts() {
+        assert_eq!(
+            lex("temperature.observedAt>=2017-12-24T12:00:00Z;name~=\"^A.*\""),
+            vec![
+                ident("temperature"),
+                Token::Dot,
+                ident("observedAt"),
+                Token::Ge,
+                ident("2017-12-24T12:00:00Z"),
+                Token::Semi,
+                ident("name"),
+                Token::Match,
+                Token::QuotedStr("^A.*".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compound_value_path_lexes_into_its_brackets() {
+        assert_eq!(
+            lex("address[city]==\"Berlin\""),
+            vec![
+                ident("address"),
+                Token::LBracket,
+                ident("city"),
+                Token::RBracket,
+                Token::Eq,
+                Token::QuotedStr("Berlin".to_string()),
+            ]
+        );
+    }
+
+    /// RFC 4647 section 2.2: a `*` subtag touching a `-` belongs to the range
+    /// it stands in, while `[*]` keeps its marker token.
+    #[test]
+    fn a_wildcard_subtag_joins_its_language_range() {
+        assert_eq!(lex("name[de-*-DE]"), vec![ident("name"), Token::LBracket, ident("de-*-DE"), Token::RBracket]);
+        assert_eq!(lex("name[*-GB]"), vec![ident("name"), Token::LBracket, ident("*-GB"), Token::RBracket]);
+        assert_eq!(lex("name[en-*]"), vec![ident("name"), Token::LBracket, ident("en-*"), Token::RBracket]);
+        assert_eq!(lex("name[*]"), vec![ident("name"), Token::LBracket, Token::Star, Token::RBracket]);
+        assert_eq!(lex("name[en-GB]"), vec![ident("name"), Token::LBracket, ident("en-GB"), Token::RBracket]);
+    }
+}

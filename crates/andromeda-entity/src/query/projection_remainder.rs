@@ -19,7 +19,7 @@
 
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, projected_members::ProjectedMembers};
+use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, projected_members::ProjectedMembers};
 use chrono::{DateTime, Utc};
 use derive_more::IsVariant;
 
@@ -39,7 +39,7 @@ pub enum ProjectionRemainder {
 /// instance expired at `now` is not one the compacted entity will carry
 /// (clause 4.22), so only the standing ones count.
 #[must_use]
-pub fn state_remainder(state: &EntityState, projection: &Projection, now: DateTime<Utc>) -> ProjectionRemainder {
+pub fn state_remainder(state: &EntityState, projection: &ExpandedProjection, now: DateTime<Utc>) -> ProjectionRemainder {
     let standing = state
         .attributes()
         .names()

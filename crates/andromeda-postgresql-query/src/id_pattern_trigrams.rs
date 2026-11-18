@@ -11,7 +11,10 @@
 //! The Entity query and stage 1 of the temporal query read the same index
 //! shape over their own catalogue, so they share the decision and the bounds.
 
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, subject_start::SubjectStart};
+use andromeda_ngsi_ld_query::{
+    identifier_axis::IdentifierAxis,
+    pattern::{Pattern, subject_start::SubjectStart},
+};
 
 /// How many identifiers the short walk tests before the index is read.
 ///

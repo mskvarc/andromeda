@@ -34,7 +34,7 @@ use crate::{
     type_predicate::condition as type_condition,
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
 use andromeda_postgresql_schema::{
     current::{Entities, EntityTypeMembers},
     type_membership::MembershipSide,
@@ -153,7 +153,7 @@ pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
 pub fn type_member_rows(
     branch: &HistoryBranch,
     alias: impl IntoIden,
-    exprs: &[&TypeExpr],
+    exprs: &[&ExpandedTypeSelection],
     types: &ResolvedNames<EntityTypeName>,
     walked: &WalkedKeys,
 ) -> Option<TableRef> {
@@ -238,7 +238,7 @@ mod tests {
         entity_rows::{WalkedKeys, entity_rows, holds_visible_evolution, type_member_rows},
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-    use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
@@ -302,8 +302,8 @@ mod tests {
         assert_statement_snapshot!("entity-rows-a-snapshot-reads-its-catalogue-alone", statement);
     }
 
-    fn vehicle() -> TypeExpr {
-        TypeExpr::Type(IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI"))
+    fn vehicle() -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI"))
     }
 
     fn vehicle_is_known() -> ResolvedNames<EntityTypeName> {
@@ -313,7 +313,7 @@ mod tests {
         )])
     }
 
-    fn walked(branch: &HistoryBranch, expr: &TypeExpr) -> SelectStatement {
+    fn walked(branch: &HistoryBranch, expr: &ExpandedTypeSelection) -> SelectStatement {
         rendered(type_member_rows(branch, Alias::new("e"), &[expr], &vehicle_is_known(), &WalkedKeys::Every).expect("the type has a range"))
     }
 
@@ -364,7 +364,7 @@ mod tests {
             type_member_rows(
                 &HistoryBranch::live(),
                 Alias::new("e"),
-                &[&TypeExpr::Wildcard],
+                &[&ExpandedTypeSelection::Wildcard],
                 &vehicle_is_known(),
                 &WalkedKeys::Every
             )

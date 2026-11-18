@@ -3,7 +3,7 @@
 //! A stored Scope is held as an `ltree` label path, its levels joined by `.`,
 //! so a `scopeQ` pattern renders onto the same labels.
 
-use andromeda_ngsi_ld_query::scope::pattern::{ScopePattern, ScopeSegment};
+use andromeda_ngsi_ld_query::scope::scope_pattern::{ScopePattern, ScopeSegment};
 
 /// The PostgreSQL `lquery` a clause 4.18 scope pattern matches with.
 ///
@@ -36,7 +36,7 @@ pub fn pattern_to_lquery(pattern: &ScopePattern) -> String {
 mod tests {
     use crate::ltree::pattern_to_lquery;
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-    use andromeda_ngsi_ld_query::scope::pattern::ScopePattern;
+    use andromeda_ngsi_ld_query::scope::scope_pattern::ScopePattern;
     use pretty_assertions::assert_eq;
 
     fn lquery(raw: &str) -> String {

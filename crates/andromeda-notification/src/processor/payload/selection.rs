@@ -16,7 +16,7 @@ use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce}
 use andromeda_ngsi_ld_entity::{attributes::Attributes, entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::attribute_iri_index::AttributeIriIndex};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, projection::attribute_iri_index::AttributeIriIndex};
 use andromeda_ngsi_ld_vocabulary::prefix;
 use std::{
     borrow::Cow,
@@ -246,7 +246,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-    use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, projection::expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -309,8 +309,8 @@ mod tests {
         names.iter().map(|name| IriBuf::new((*name).to_owned()).expect("valid IRI")).collect()
     }
 
-    fn term(name: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn term(name: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: IriBuf::new(name.to_owned()).expect("valid IRI"),
             linked,
         }
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn a_pick_naming_scope_keeps_the_scope() {
         let state = vehicle();
-        let pick = [term(SPEED, Vec::new()), ProjectionTerm::Scope];
+        let pick = [term(SPEED, Vec::new()), ExpandedProjectionTerm::Scope];
         let selected = Selection::of(&state, rule(ListInForce::Payload(ListTerms::Pick(&pick)), None))
             .apply(&state)
             .into_owned();

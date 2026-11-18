@@ -165,7 +165,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        projection::compiled::Projection,
+        projection::expanded_projection::ExpandedProjection,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -224,7 +224,7 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             lang: None,
-            notification_projection: Projection::default(),
+            notification_projection: ExpandedProjection::default(),
         })
     }
 

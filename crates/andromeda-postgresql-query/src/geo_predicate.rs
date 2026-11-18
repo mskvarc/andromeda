@@ -48,7 +48,7 @@ use andromeda_ngsi_ld_geometry::{
     relation_reading::{AreaCondition, Operand, RelationReading, SpatialTest, TopologicalTest},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
+use andromeda_ngsi_ld_query::geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_schema::current::CurrentAttributes;
@@ -72,18 +72,18 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, S
 /// (clause 4.10).
 ///
 /// The reference geometry is encoded here rather than by each caller: it is
-/// already parsed and validated on [`GeoQuery`], so every target binds the same
+/// already parsed and validated on [`CompiledGeoQuery`], so every target binds the same
 /// bytes for the same query by construction.
 ///
 /// # Errors
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the query's
 /// reference geometry has no EWKB spelling the store can bind, and
-/// [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::error::QueryError::NearWithoutDistance) when
+/// [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::query_error::QueryError::NearWithoutDistance) when
 /// `georel=near` names neither `maxDistance` nor `minDistance`, which clause
 /// 4.10 requires at least one of.
 pub fn condition(
-    geo: &GeoQuery,
+    geo: &CompiledGeoQuery,
     rows: &EntityRowRefs,
     default_location: &DefaultLocationNarrowing,
     attribute_names: &ResolvedNames<AttributeName>,
@@ -110,7 +110,7 @@ pub fn condition(
 ///
 /// The failures of [`condition`].
 pub fn matches(
-    geo: &GeoQuery,
+    geo: &CompiledGeoQuery,
     rows: &EntityRowRefs,
     default_location: &DefaultLocationNarrowing,
     attribute_names: &ResolvedNames<AttributeName>,
@@ -142,7 +142,7 @@ pub fn matches(
 /// # Errors
 ///
 /// The failures of [`condition`].
-pub fn probe(geo: &GeoQuery, rows: &EntityRowRefs, attribute_names: &ResolvedNames<AttributeName>) -> Result<Condition, RenderError> {
+pub fn probe(geo: &CompiledGeoQuery, rows: &EntityRowRefs, attribute_names: &ResolvedNames<AttributeName>) -> Result<Condition, RenderError> {
     match GeoTarget::of(geo, attribute_names) {
         GeoTarget::Location(location_key) => location_probe(geo, rows, location_key),
         GeoTarget::Instances(attribute_name_key) => any_instance_meets(geo, rows, attribute_name_key, BoxIndexing::Unindexed),
@@ -152,7 +152,12 @@ pub fn probe(geo: &GeoQuery, rows: &EntityRowRefs, attribute_names: &ResolvedNam
 
 /// Whether one of the instances of the entity `rows` names, stored under
 /// `attribute_name_key`, meets `geo`, its box tested with `indexing`.
-fn any_instance_meets(geo: &GeoQuery, rows: &EntityRowRefs, attribute_name_key: AttributeNameKey, indexing: BoxIndexing) -> Result<Condition, RenderError> {
+fn any_instance_meets(
+    geo: &CompiledGeoQuery,
+    rows: &EntityRowRefs,
+    attribute_name_key: AttributeNameKey,
+    indexing: BoxIndexing,
+) -> Result<Condition, RenderError> {
     let spatial = restriction(&geo.georel, &geo.geometry, &instance_stored_geometry(INSTANCE_ALIAS), indexing)?;
     // Clause 5.7.2.4: it is enough that one instance of the GeoProperty meets
     // the restriction, which is exactly an existential over the instance rows.
@@ -169,7 +174,7 @@ fn any_instance_meets(geo: &GeoQuery, rows: &EntityRowRefs, attribute_name_key: 
 /// # Errors
 ///
 /// The failures of [`relation_expression`].
-pub fn registration_area(geo: &GeoQuery, subject: &StoredGeometry) -> Result<Option<Condition>, RenderError> {
+pub fn registration_area(geo: &CompiledGeoQuery, subject: &StoredGeometry) -> Result<Option<Condition>, RenderError> {
     match RelationReading::of(&geo.georel).registration {
         AreaCondition::Relation(georel) => restriction(&georel, &geo.geometry, subject, BoxIndexing::Indexed).map(Some),
         AreaCondition::NotWithin => relation_expression(&GeoRel::Within, subject, &geo.geometry).map(|within| Some(Condition::all().add(within.not()))),
@@ -209,7 +214,7 @@ pub fn restriction(georel: &GeoRel, reference: &Geometry, subject: &StoredGeomet
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
 /// geometry has no EWKB spelling the store can bind, and [`RenderError::Query`]
-/// carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::error::QueryError::NearWithoutDistance) when `georel=near` names neither
+/// carrying [`QueryError::NearWithoutDistance`](andromeda_ngsi_ld_query::query_error::QueryError::NearWithoutDistance) when `georel=near` names neither
 /// `maxDistance` nor `minDistance`.
 pub fn relation_expression(georel: &GeoRel, subject: &StoredGeometry, geometry: &Geometry) -> Result<SimpleExpr, RenderError> {
     let reference = encode(geometry.form())?;
@@ -261,7 +266,7 @@ enum GeoTarget {
 impl GeoTarget {
     /// Where the instances of `geo`'s `GeoProperty` are stored, by the keys
     /// `attribute_names` resolved.
-    fn of(geo: &GeoQuery, attribute_names: &ResolvedNames<AttributeName>) -> GeoTarget {
+    fn of(geo: &CompiledGeoQuery, attribute_names: &ResolvedNames<AttributeName>) -> GeoTarget {
         let key = attribute_names.get(&geo.geoproperty);
         if geo.geoproperty.as_str() == LOCATION.as_str() {
             return GeoTarget::Location(key);
@@ -286,8 +291,8 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
-        geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+        geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
+        query_error::QueryError,
     };
     use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
@@ -310,8 +315,8 @@ mod tests {
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
-    fn point_query(georel: GeoRel, geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn point_query(georel: GeoRel, geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
             geoproperty: name(geoproperty),
@@ -323,8 +328,8 @@ mod tests {
     }
 
     /// The same query with the reference point carrying an altitude.
-    fn point_query_3d(georel: GeoRel, geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn point_query_3d(georel: GeoRel, geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0] }))
                 .expect("point with altitude parses"),
@@ -562,8 +567,8 @@ mod tests {
     }
 
     /// A `near` query on a custom `GeoProperty` at the given reference point.
-    fn near_query(longitude: f64, latitude: f64, max_distance: Option<&str>, min_distance: Option<&str>) -> GeoQuery {
-        GeoQuery {
+    fn near_query(longitude: f64, latitude: f64, max_distance: Option<&str>, min_distance: Option<&str>) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: max_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
                 min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
@@ -820,7 +825,7 @@ mod tests {
                 flat.georel
             );
 
-            let matched = |geo: &GeoQuery| {
+            let matched = |geo: &CompiledGeoQuery| {
                 matches(geo, &UNALIASED, &UNNARROWED, &resolved_location())
                     .expect("matches render")
                     .expect("location can match")

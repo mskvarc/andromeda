@@ -5,7 +5,12 @@
 use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError, stored_aggregation_error::StoredAggregationError};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::temporal::GroupKeyValue;
-use andromeda_ngsi_ld_query::temporal::grouping::{AggregationGrouping, bucket_term::BucketKind, entity_member::EntityMember, group_key::GroupKey};
+use andromeda_ngsi_ld_query::temporal::grouping::{
+    aggregation_grouping::AggregationGrouping,
+    bucket_term::BucketKind,
+    entity_member::EntityMember,
+    group_key::GroupKey,
+};
 use andromeda_postgresql_temporal_query::{
     aggregation_group::ObservedUnits,
     aggregation_grouping::{group_key_column, group_key_instant_column},

@@ -2,7 +2,7 @@
 //! compile.
 
 use andromeda_ngsi_ld_query::filter::{
-    expression::Expr,
+    Filter,
     language_matching::LanguageMatching,
     parser::parse,
     reading::{filter_reading::FilterReading, term_reading::TermReading},
@@ -17,7 +17,7 @@ pub(crate) fn reading_of(q: &str) -> FilterReading {
 /// The reading of `q`, one Query Term, its target languages selecting keys by
 /// tag equality.
 pub(crate) fn term_of(q: &str) -> TermReading {
-    let Expr::Pred(predicate) = parse(q).expect("the filter parses") else {
+    let Filter::Term(predicate) = parse(q).expect("the filter parses") else {
         panic!("a filter of one Query Term");
     };
     TermReading::of(&predicate, LanguageMatching::TagEquality)

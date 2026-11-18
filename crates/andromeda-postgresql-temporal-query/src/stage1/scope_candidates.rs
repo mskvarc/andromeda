@@ -19,7 +19,7 @@
 //! contributed is a candidate whatever its local Scope rows hold.
 
 use crate::stage1::{contributed_candidates::contributed_candidates, queued_candidates::queued_candidates};
-use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, temporal::contributed_entities::ContributedEntities};
+use andromeda_ngsi_ld_query::{scope::scope_query::ScopeQuery, temporal::contributed_entities::ContributedEntities};
 use andromeda_postgresql_query::{
     history_source::{HistoryBranch, PendingEntries},
     scope_predicate::{ScopeTarget, pattern_condition},

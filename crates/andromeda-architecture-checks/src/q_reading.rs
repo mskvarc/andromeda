@@ -6,14 +6,14 @@
 //! on its syntax tree is a reading of the clause that can drift from the
 //! others. The guard flags, in any production source outside
 //! `crates/andromeda-ngsi-ld-query/src/filter/`, a pattern that names a
-//! variant of `Predicate`, `SetMembership`, `OrderingOp`, `CompareValue` or
+//! variant of `QueryTerm`, `SetMembership`, `OrderingOperator`, `EqualityValue` or
 //! `Scalar`: a `match` arm, an `if let`, a
 //! `let` with `else`, and the pattern of a `matches!` invocation, nested in
 //! another macro or not. A variant is named as `Type::Variant`, as
 //! `Self::Variant` inside an `impl` of a watched type, through a `use` that
 //! imports it by name, or through a rename of the type; a glob import of a
 //! watched type's variants is a site of its own. Calling an accessor such as
-//! `Predicate::path()` and building a variant stay free, since neither
+//! `QueryTerm::path()` and building a variant stay free, since neither
 //! decides what a term means.
 //!
 //! Every site fails the gate.

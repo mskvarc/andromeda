@@ -5,18 +5,19 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_d
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    entity_selection::{EntitySelection, EntitySelector},
-    geo::query::GeoQuery,
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector,
+    geo::compiled_geo_query::CompiledGeoQuery,
     page_window::PageWindow,
     pattern::Pattern,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
     temporal::{
         compiled::CompiledTemporalQuery,
         instance_selection::InstanceSelection,
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
     },
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_postgresql_query::{
@@ -101,20 +102,20 @@ pub(super) fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) 
 }
 
 /// The `Vehicle` type the selector tests name.
-pub(super) fn vehicle() -> TypeExpr {
-    TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))
+pub(super) fn vehicle() -> ExpandedTypeSelection {
+    ExpandedTypeSelection::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))
 }
 
 /// A query with every filter absent but the entity selectors `selectors`.
-pub(super) fn typed(selectors: Vec<EntitySelector>) -> CompiledTemporalQuery {
+pub(super) fn typed(selectors: Vec<ExpandedEntitySelector>) -> CompiledTemporalQuery {
     let mut compiled = minimal_compiled();
     compiled.entities.selectors = selectors;
     compiled
 }
 
 /// A selector of the `Vehicle` type alone.
-pub(super) fn vehicle_selector() -> EntitySelector {
-    EntitySelector::builder().type_expr(Some(vehicle())).build()
+pub(super) fn vehicle_selector() -> ExpandedEntitySelector {
+    ExpandedEntitySelector::builder().type_selection(Some(vehicle())).build()
 }
 
 /// The attribute names the `attrs`, `q` and window tests resolve: `speed` at
@@ -175,8 +176,8 @@ pub(super) fn sensor_names() -> QueryNames {
 /// 2030-01-01T00:00:00Z` on `observedAt`, every other filter absent.
 pub(super) fn sensors() -> CompiledTemporalQuery {
     let mut compiled = typed(vec![
-        EntitySelector::builder()
-            .type_expr(Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Sensor"))))
+        ExpandedEntitySelector::builder()
+            .type_selection(Some(ExpandedTypeSelection::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Sensor"))))
             .build(),
     ]);
     compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
@@ -195,8 +196,8 @@ pub(super) fn opened(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQue
 pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {
     let mut compiled = sensors();
     compiled.entities.selectors = vec![
-        EntitySelector::builder()
-            .type_expr(ty.map(|ty| TypeExpr::Type(iri(&format!("https://uri.etsi.org/ngsi-ld/default-context/{ty}")))))
+        ExpandedEntitySelector::builder()
+            .type_selection(ty.map(|ty| ExpandedTypeSelection::Type(iri(&format!("https://uri.etsi.org/ngsi-ld/default-context/{ty}")))))
             .id_pattern(Some(Pattern::parse(raw).expect("valid pattern")))
             .build(),
     ];
@@ -215,7 +216,7 @@ pub(super) fn scope_query(raw: &str) -> CompiledTemporalQuery {
 /// `coordinates` on `location`, over the window of [`sensors`].
 pub(super) fn geo_query(georel: GeoRel, coordinates: &serde_json::Value) -> CompiledTemporalQuery {
     let mut compiled = sensors();
-    compiled.entities.geo = Some(GeoQuery {
+    compiled.entities.geo = Some(CompiledGeoQuery {
         georel,
         geometry: point(coordinates),
         geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),

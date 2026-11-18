@@ -8,7 +8,7 @@
 //! rather than inventing an `information` the client never wrote.
 
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, registry::UnknownCompactCode};
 use thiserror::Error;
 

@@ -6,10 +6,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    entity_selection::EntitySelector,
+    expanded_entity_selector::ExpandedEntitySelector,
     geo::{
+        compiled_geo_query::CompiledGeoQuery,
         default_location_narrowing::{DefaultLocationNarrowing, LocationCandidates},
-        query::GeoQuery,
     },
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -24,9 +24,9 @@ use std::{collections::HashSet, sync::Arc};
 /// enumerable set of entity types.
 struct Accelerable<'a> {
     /// The query's geo filter.
-    geo: &'a GeoQuery,
+    geo: &'a CompiledGeoQuery,
     /// The query's one entity selector.
-    selector: &'a EntitySelector,
+    selector: &'a ExpandedEntitySelector,
     /// The expanded types the selector reaches.
     type_iris: Vec<IriBuf>,
 }
@@ -44,7 +44,7 @@ fn accelerable(compiled: &CompiledEntityQuery) -> Option<Accelerable<'_>> {
     let [selector] = compiled.selection.selectors.as_slice() else {
         return None;
     };
-    let type_iris = flatten_or_type_iris(selector.type_expr.as_ref()?)?;
+    let type_iris = flatten_or_type_iris(selector.type_selection.as_ref()?)?;
     Some(Accelerable { geo, selector, type_iris })
 }
 

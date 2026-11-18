@@ -18,7 +18,7 @@ use crate::{
     subscription::{Endpoint, NotificationParams},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
+use andromeda_ngsi_ld_query::projection::written_projection_list::WrittenProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::{As, DisplayFromStr, de::DeserializeAsWrap};
@@ -62,7 +62,7 @@ pub struct NotificationRequest {
         deserialize_with = "deserialize_projection_lists",
         serialize_with = "As::<Option<Vec<DisplayFromStr>>>::serialize"
     )]
-    pub pick: Option<Vec<ProjectionList>>,
+    pub pick: Option<Vec<WrittenProjectionList>>,
     /// The clause 4.21 projection removing the members it names, written as
     /// `pick` is.
     #[serde(
@@ -71,7 +71,7 @@ pub struct NotificationRequest {
         deserialize_with = "deserialize_projection_lists",
         serialize_with = "As::<Option<Vec<DisplayFromStr>>>::serialize"
     )]
-    pub omit: Option<Vec<ProjectionList>>,
+    pub omit: Option<Vec<WrittenProjectionList>>,
     /// Join mode for linked entity retrieval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,
@@ -119,12 +119,12 @@ pub struct NotificationRequest {
 ///
 /// Returns the deserializer's own error when the member is not an array of
 /// projection strings, and a custom error when the array is empty.
-fn deserialize_projection_lists<'de, D>(deserializer: D) -> Result<Option<Vec<ProjectionList>>, D::Error>
+fn deserialize_projection_lists<'de, D>(deserializer: D) -> Result<Option<Vec<WrittenProjectionList>>, D::Error>
 where
     D: Deserializer<'de>,
 {
     Ok(
-        non_empty_member::deserialize_array::<D, DeserializeAsWrap<ProjectionList, DisplayFromStr>>(deserializer)?
+        non_empty_member::deserialize_array::<D, DeserializeAsWrap<WrittenProjectionList, DisplayFromStr>>(deserializer)?
             .map(|lists| lists.into_iter().map(DeserializeAsWrap::into_inner).collect()),
     )
 }

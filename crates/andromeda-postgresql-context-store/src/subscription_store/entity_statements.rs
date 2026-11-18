@@ -28,7 +28,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
+use andromeda_ngsi_ld_query::filter::display::serialize_written_members;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::clock::now;

@@ -4,13 +4,13 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{
+        Filter,
+        display::{serialize, serialize_written_members},
         expansion::expand_q_expr,
-        expression::Expr,
         json_key_attributes::JsonKeyAttributes,
         language_matching::LanguageMatching,
         parser::parse,
         reading::filter_reading::FilterReading,
-        serialize::{serialize, serialize_written_members},
     },
     namespace_expander::EXAMPLE_NAMESPACE,
 };
@@ -18,12 +18,12 @@ use serde_json::json;
 
 /// The filter as a store reads it back: the expanded text, joined with the
 /// written spelling of its members.
-async fn persisted_round_trip(q: &str) -> Expr {
+async fn persisted_round_trip(q: &str) -> Filter {
     let expanded = expand_q_expr(parse(q).expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
         .await
         .expect("expands");
-    let addressed: Expr = serialize(&expanded).parse().expect("the expanded text parses");
-    let written: Expr = serialize_written_members(&expanded).parse().expect("the written text parses");
+    let addressed: Filter = serialize(&expanded).parse().expect("the expanded text parses");
+    let written: Filter = serialize_written_members(&expanded).parse().expect("the written text parses");
     addressed.with_written_members(&written)
 }
 
@@ -48,7 +48,7 @@ async fn a_persisted_target_language_keeps_the_written_tag() {
         &door,
         NoLinkedEntities
     ));
-    let addressed_only: Expr = serialize(&english).parse().expect("parses");
+    let addressed_only: Filter = serialize(&english).parse().expect("parses");
     assert!(
         !filter_holds(&FilterReading::of(&addressed_only, LanguageMatching::TagEquality), &door, NoLinkedEntities),
         "the expanded text alone has lost the tag"

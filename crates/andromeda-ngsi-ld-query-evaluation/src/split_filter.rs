@@ -45,15 +45,15 @@ mod tests {
         entity_filters::EntityFilters,
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
         split_filter::SplitFilter,
     };
     use serde_json::{Value, json};
 
     /// A `within` query over a box around `(13.4, 52.5)`.
-    fn within_berlin() -> GeoQuery {
-        GeoQuery {
+    fn within_berlin() -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(json!({
                 "type": "Polygon",
@@ -64,7 +64,7 @@ mod tests {
         }
     }
 
-    fn selection(q: Option<&str>, geo: Option<GeoQuery>, scope: Option<&str>) -> EntitySelection {
+    fn selection(q: Option<&str>, geo: Option<CompiledGeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
             .q(q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality)))
             .geo(geo)

@@ -18,7 +18,7 @@ use crate::stage1::{
 use andromeda_ngsi_ld_query::{
     entity_selection::ConsideredEntities,
     pattern::Pattern,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
     temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
 };
 use andromeda_postgresql_query::{
@@ -207,7 +207,7 @@ mod tests {
         count_policy::CountPolicy,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         page_window::PageWindow,
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;

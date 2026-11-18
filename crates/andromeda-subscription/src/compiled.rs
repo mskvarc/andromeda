@@ -32,11 +32,11 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     entity_filters::EntityFilters,
-    filter::{expression::Expr, reading::filter_reading::FilterReading},
-    projection::compiled::Projection,
-    scope::query::ScopeQuery,
+    filter::{Filter, reading::filter_reading::FilterReading},
+    projection::expanded_projection::ExpandedProjection,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::q::term_memo::TermInterner;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
@@ -159,7 +159,7 @@ pub struct CompiledSubscription {
     /// compiled to the same projection a query's `pick`/`omit` parameters
     /// compile to (clause 4.21); empty on both sides when the subscription
     /// set neither.
-    pub notification_projection: Projection,
+    pub notification_projection: ExpandedProjection,
     /// Requested notification representation format.
     pub notification_format: Option<ResponseFormat>,
     /// Whether system attributes remain in notification data.
@@ -239,7 +239,7 @@ impl CompiledSubscription {
     }
 
     /// The filters whose `rel{…}` hops cross into linked entities: the `q`.
-    pub fn hopping_filters(&self) -> impl Iterator<Item = &Expr> {
+    pub fn hopping_filters(&self) -> impl Iterator<Item = &Filter> {
         self.compiled_q
             .as_ref()
             .map(|query| query.compiled().expr())

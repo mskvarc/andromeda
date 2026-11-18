@@ -7,7 +7,8 @@ use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admi
 use andromeda_ngsi_ld_model::notification_request::NotificationRequest;
 use andromeda_ngsi_ld_query::projection::{
     exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
-    grammar::{ProjectionList, RawProjectionTerm},
+    written_projection_list::WrittenProjectionList,
+    written_projection_term::WrittenProjectionTerm,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 
@@ -71,8 +72,8 @@ fn validate_projection_exclusivity(notification: &NotificationRequest) -> Result
 /// none of which bounds these references, so the engine admits every one.
 fn admit_linked_references(
     notification: &NotificationRequest,
-    pick: Option<&[RawProjectionTerm]>,
-    omit: Option<&[RawProjectionTerm]>,
+    pick: Option<&[WrittenProjectionTerm]>,
+    omit: Option<&[WrittenProjectionTerm]>,
 ) -> Result<(), SubscriptionError> {
     let request = LinkedRequest::builder()
         .pick(pick)
@@ -84,7 +85,7 @@ fn admit_linked_references(
 }
 
 /// Every term the strings of one projection member hold.
-fn projection_terms(lists: &[ProjectionList]) -> Vec<RawProjectionTerm> {
+fn projection_terms(lists: &[WrittenProjectionList]) -> Vec<WrittenProjectionTerm> {
     // clone: the admission reads the terms of every string as one slice
     lists.iter().flat_map(|list| list.iter().cloned()).collect()
 }

@@ -10,14 +10,14 @@
 //! compiled, so no matching path lowers a filter and the forms cannot
 //! disagree.
 
-use crate::filter::{expression::Expr, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
+use crate::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 
 /// An expanded `q` filter and its reading, lowered under one language
 /// matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledFilter {
     /// The expanded expression.
-    expr: Expr,
+    expr: Filter,
     /// The reading of `expr` in normal form.
     reading: FilterReading,
 }
@@ -26,7 +26,7 @@ impl CompiledFilter {
     /// The expanded `expr`, its target languages selecting languageMap keys by
     /// `matching`.
     #[must_use]
-    pub fn new(expr: Expr, matching: LanguageMatching) -> CompiledFilter {
+    pub fn new(expr: Filter, matching: LanguageMatching) -> CompiledFilter {
         CompiledFilter {
             reading: FilterReading::of(&expr, matching),
             expr,
@@ -35,7 +35,7 @@ impl CompiledFilter {
 
     /// The expanded expression.
     #[must_use]
-    pub const fn expr(&self) -> &Expr {
+    pub const fn expr(&self) -> &Filter {
         &self.expr
     }
 

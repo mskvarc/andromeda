@@ -13,7 +13,7 @@
 use andromeda_entity::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
-use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, projection::compiled::Projection};
+use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, projection::expanded_projection::ExpandedProjection};
 use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
 
 /// The compiled query a response's projection is read from, held so the
@@ -41,7 +41,7 @@ impl RequestProjection {
 
     /// The clause 4.21 projection, or `None` when the request named neither
     /// `pick` nor `omit`.
-    pub(crate) fn projection(&self) -> Option<&Projection> {
+    pub(crate) fn projection(&self) -> Option<&ExpandedProjection> {
         self.compiled
             .as_ref()
             .map(|compiled| &compiled.projection)

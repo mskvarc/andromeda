@@ -28,10 +28,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
-    type_selection::{
-        expansion::expand_type_expression,
-        grammar::{TypeExpr, TypeExprRaw},
-    },
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
 };
 use andromeda_telemetry::{
     federation_ops::{self, FederationOperation},
@@ -118,10 +115,10 @@ impl FederationService {
         // store pre-filter is a coarse superset the match below decides: one
         // bare selected type, or the one type a local entity carries, narrows
         // it, and anything else takes the whole id-covering superset.
-        let (entity_types, type_selector, coarse_type): (Vec<EntityTypeName>, Option<TypeExprRaw>, Option<TypeExpr>) =
+        let (entity_types, type_selector, coarse_type): (Vec<EntityTypeName>, Option<WrittenTypeSelection>, Option<ExpandedTypeSelection>) =
             if let Some(raw) = request.entity_type_selector {
                 let expanded = expand_type_expression(raw, &ContextualExpander::new(&self.engine, resolver.prepared())).await?;
-                let coarse = matches!(expanded, TypeExpr::Type(_)).then(|| expanded.clone()); // clone: the store's specification holds a selector of its own
+                let coarse = matches!(expanded, ExpandedTypeSelection::Type(_)).then(|| expanded.clone()); // clone: the store's specification holds a selector of its own
                 let selector = expanded.into_raw()?;
                 (selector.named_types(), Some(selector), coarse)
             } else {
@@ -130,7 +127,7 @@ impl FederationService {
                 // A stored type name is an IRI; one that were not leaves the
                 // superset unnarrowed, which the precise match still decides.
                 let coarse = match types.as_slice() {
-                    [single] => IriBuf::new(single.to_string()).ok().map(TypeExpr::Type),
+                    [single] => IriBuf::new(single.to_string()).ok().map(ExpandedTypeSelection::Type),
                     _ => None,
                 };
                 (types, None, coarse)

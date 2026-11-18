@@ -56,8 +56,8 @@ pub fn operand_keys(path: PathHash, operand: &Operand) -> Vec<SubAttributeKey> {
 mod tests {
     use crate::sub_attribute_operand_keys::operand_keys;
     use andromeda_ngsi_ld_query::filter::{
+        parser::operand::{parse_date, parse_time},
         reading::operand::Operand,
-        scalar::{parse_date, parse_time},
     };
     use andromeda_postgresql_stored_values::{
         attribute_name_key::AttributeNameKey,

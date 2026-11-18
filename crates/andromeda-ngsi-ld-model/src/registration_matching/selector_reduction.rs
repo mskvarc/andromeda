@@ -25,7 +25,7 @@ use crate::{
     registration::info::RegistrationInfo,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, type_selection::written_type_selection::WrittenTypeSelection};
 use std::slice;
 
 /// The entity selectors of a subscription reduced to what the `information`
@@ -48,7 +48,7 @@ pub fn reduced_selectors(selectors: Option<&[EntitySelector]>, information: &[Re
             every = EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: TypeExprRaw::Wildcard,
+                type_: WrittenTypeSelection::Wildcard,
             };
             slice::from_ref(&every)
         }
@@ -110,19 +110,22 @@ fn narrowed_selector(selector: &EntitySelector, info: &EntityInfo) -> Option<Ent
 /// reading clause 5.12 gives a type selector against an `EntityInfo`. The
 /// wildcard becomes the registered types themselves, so no type outside the
 /// registration reaches the source (clause 4.3.6.1).
-fn narrowed_type(selected: &TypeExprRaw, registered: &EntityTypeSelection) -> Option<TypeExprRaw> {
+fn narrowed_type(selected: &WrittenTypeSelection, registered: &EntityTypeSelection) -> Option<WrittenTypeSelection> {
     let mut kept = Vec::new();
     collect_covered(selected, registered, &mut kept);
-    TypeExprRaw::any_of(kept)
+    WrittenTypeSelection::any_of(kept)
 }
 
 /// Push onto `kept` each alternative of `selected` the `registered` types
 /// satisfy, the wildcard standing for every registered type.
-fn collect_covered(selected: &TypeExprRaw, registered: &EntityTypeSelection, kept: &mut Vec<TypeExprRaw>) {
+fn collect_covered(selected: &WrittenTypeSelection, registered: &EntityTypeSelection, kept: &mut Vec<WrittenTypeSelection>) {
     match selected {
-        TypeExprRaw::Or(alternatives) => alternatives.iter().for_each(|alternative| collect_covered(alternative, registered, kept)),
-        TypeExprRaw::Wildcard => registered.names().iter().for_each(|name| push_once(kept, TypeExprRaw::Type(name.clone()))),
-        TypeExprRaw::Type(_) | TypeExprRaw::And(_) => {
+        WrittenTypeSelection::Or(alternatives) => alternatives.iter().for_each(|alternative| collect_covered(alternative, registered, kept)),
+        WrittenTypeSelection::Wildcard => registered
+            .names()
+            .iter()
+            .for_each(|name| push_once(kept, WrittenTypeSelection::Type(name.clone()))),
+        WrittenTypeSelection::Type(_) | WrittenTypeSelection::And(_) => {
             if selected.matches(registered.names()) {
                 push_once(kept, selected.clone());
             }

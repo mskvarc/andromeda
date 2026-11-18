@@ -12,37 +12,37 @@
 //! written under the same rule. The type is public so every writer reuses it
 //! rather than reimplementing the rule.
 
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
 
 /// The clause 4.21 `pick` / `omit` terms that decide a rendered value's
 /// structural members.
 ///
-/// Borrowed term lists rather than a [`Projection`] because the rule applies at
+/// Borrowed term lists rather than a [`ExpandedProjection`] because the rule applies at
 /// two depths: to a response's own entities, where the lists are the request's
 /// own, and to a Linked Entity, where they are the nested `{...}` sub-terms of
 /// the Relationship that reached it (clause 4.21, clause 5.7.1.5 "applies to
 /// all Entities in the payload in the case of Linked Entity retrieval"). A
 /// nested level holds slices of the request's projection tree and owns no
-/// `Projection` of its own.
+/// `ExpandedProjection` of its own.
 #[derive(Clone, Copy, Debug)]
 pub struct StructuralProjection<'a> {
     /// The `pick` terms in force at this depth.
-    pick: &'a [ProjectionTerm],
+    pick: &'a [ExpandedProjectionTerm],
     /// The `omit` terms in force at this depth.
-    omit: &'a [ProjectionTerm],
+    omit: &'a [ExpandedProjectionTerm],
 }
 
 impl<'a> StructuralProjection<'a> {
     /// The rule stated by one pair of term lists.
     #[must_use]
-    pub const fn new(pick: &'a [ProjectionTerm], omit: &'a [ProjectionTerm]) -> StructuralProjection<'a> {
+    pub const fn new(pick: &'a [ExpandedProjectionTerm], omit: &'a [ExpandedProjectionTerm]) -> StructuralProjection<'a> {
         StructuralProjection { pick, omit }
     }
 
     /// Whether a structural member survives: a non-empty `pick` keeps it only
     /// when it is listed, and an `omit` drops it when it is.
     #[must_use]
-    pub fn keeps(self, keyword: &ProjectionTerm) -> bool {
+    pub fn keeps(self, keyword: &ExpandedProjectionTerm) -> bool {
         if !self.pick.is_empty() && !self.pick.contains(keyword) {
             return false;
         }
@@ -51,8 +51,8 @@ impl<'a> StructuralProjection<'a> {
 }
 
 // A request's own projection states the rule for the entities it selected.
-impl<'a> From<&'a Projection> for StructuralProjection<'a> {
-    fn from(projection: &'a Projection) -> StructuralProjection<'a> {
+impl<'a> From<&'a ExpandedProjection> for StructuralProjection<'a> {
+    fn from(projection: &'a ExpandedProjection) -> StructuralProjection<'a> {
         StructuralProjection::new(&projection.pick, &projection.omit)
     }
 }
@@ -60,7 +60,7 @@ impl<'a> From<&'a Projection> for StructuralProjection<'a> {
 #[cfg(test)]
 mod tests {
     use crate::structural_projection::StructuralProjection;
-    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
 
     fn iri(value: &str) -> IriBuf {
@@ -71,64 +71,64 @@ mod tests {
     /// keeps `id` and drops every other structural member.
     #[test]
     fn pick_of_id_keeps_only_id() {
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Id],
+        let projection = ExpandedProjection {
+            pick: vec![ExpandedProjectionTerm::Id],
             omit: Vec::new(),
         };
         let rule = StructuralProjection::from(&projection);
-        assert!(rule.keeps(&ProjectionTerm::Id));
-        assert!(!rule.keeps(&ProjectionTerm::Type));
-        assert!(!rule.keeps(&ProjectionTerm::Scope));
+        assert!(rule.keeps(&ExpandedProjectionTerm::Id));
+        assert!(!rule.keeps(&ExpandedProjectionTerm::Type));
+        assert!(!rule.keeps(&ExpandedProjectionTerm::Scope));
     }
 
     /// Clause 4.21: `omit` removes the structural members it lists.
     #[test]
     fn omit_of_scope_removes_scope() {
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: Vec::new(),
-            omit: vec![ProjectionTerm::Scope],
+            omit: vec![ExpandedProjectionTerm::Scope],
         };
         let rule = StructuralProjection::from(&projection);
-        assert!(rule.keeps(&ProjectionTerm::Id));
-        assert!(rule.keeps(&ProjectionTerm::Type));
-        assert!(!rule.keeps(&ProjectionTerm::Scope));
+        assert!(rule.keeps(&ExpandedProjectionTerm::Id));
+        assert!(rule.keeps(&ExpandedProjectionTerm::Type));
+        assert!(!rule.keeps(&ExpandedProjectionTerm::Scope));
     }
 
     /// Clause 4.21: `omit` removes `type` when it is listed.
     #[test]
     fn omit_of_type_removes_type() {
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: Vec::new(),
-            omit: vec![ProjectionTerm::Type],
+            omit: vec![ExpandedProjectionTerm::Type],
         };
         let rule = StructuralProjection::from(&projection);
-        assert!(rule.keeps(&ProjectionTerm::Id));
-        assert!(!rule.keeps(&ProjectionTerm::Type));
+        assert!(rule.keeps(&ExpandedProjectionTerm::Id));
+        assert!(!rule.keeps(&ExpandedProjectionTerm::Type));
     }
 
     /// Clause 4.21, literal reading: a non-empty `pick` that names only an
     /// attribute leaves `id` and `type` out, since neither keyword was listed.
     #[test]
     fn pick_of_an_attribute_leaves_id_and_type_out() {
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Attribute {
+        let projection = ExpandedProjection {
+            pick: vec![ExpandedProjectionTerm::Attribute {
                 iri: iri("https://example.com/speed"),
                 linked: Vec::new(),
             }],
             omit: Vec::new(),
         };
         let rule = StructuralProjection::from(&projection);
-        assert!(!rule.keeps(&ProjectionTerm::Id));
-        assert!(!rule.keeps(&ProjectionTerm::Type));
+        assert!(!rule.keeps(&ExpandedProjectionTerm::Id));
+        assert!(!rule.keeps(&ExpandedProjectionTerm::Type));
     }
 
     /// An empty `pick` and empty `omit` select every member with no
     /// restriction, so the structural members are kept.
     #[test]
     fn an_empty_projection_keeps_every_structural_member() {
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let rule = StructuralProjection::from(&projection);
-        for keyword in [ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope] {
+        for keyword in [ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope] {
             assert!(rule.keeps(&keyword), "{keyword:?}");
         }
     }

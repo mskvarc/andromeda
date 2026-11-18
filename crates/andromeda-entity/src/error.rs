@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingExceeded, payload_budget::PayloadBudgetExceeded};
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};

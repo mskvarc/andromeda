@@ -11,18 +11,21 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_d
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
-    entity_selection::{EntitySelection, EntitySelector},
-    filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, path::AttrPath},
-    geo::query::GeoQuery,
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector,
+    filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, value_path::ValuePath},
+    geo::compiled_geo_query::CompiledGeoQuery,
     ordering::{
-        geometry::OrderingGeometry,
-        term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        compiled_ordering_term::CompiledOrderingTerm,
+        expanded_ordering_target::ExpandedOrderingTarget,
+        ordering_direction::OrderingDirection,
+        ordering_geometry::OrderingGeometry,
     },
     page_window::{PageStart, PageWindow},
     pattern::Pattern,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
     standing_instant::StandingInstant,
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
@@ -65,9 +68,11 @@ fn names() -> QueryNames {
     }
 }
 
-fn of_type(name: &str) -> EntitySelector {
-    EntitySelector::builder()
-        .type_expr(Some(TypeExpr::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))))
+fn of_type(name: &str) -> ExpandedEntitySelector {
+    ExpandedEntitySelector::builder()
+        .type_selection(Some(ExpandedTypeSelection::Type(
+            IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"),
+        )))
         .build()
 }
 
@@ -83,18 +88,18 @@ fn filtered(q: &str) -> CompiledEntityQuery {
     )
 }
 
-fn ordered_by(direction: OrderDirection, path: AttrPath) -> CompiledEntityQuery {
+fn ordered_by(direction: OrderingDirection, path: ValuePath) -> CompiledEntityQuery {
     let mut ordered = query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).build());
-    ordered.ordering.terms = vec![CompiledOrderTerm {
-        target: OrderTarget::Attribute(path),
+    ordered.ordering.terms = vec![CompiledOrderingTerm {
+        target: ExpandedOrderingTarget::Attribute(path),
         direction,
         collation: None,
     }];
     ordered
 }
 
-fn attribute(name: &str) -> AttrPath {
-    AttrPath::simple(format!("https://example.com/{name}").parse().expect("valid attribute name"))
+fn attribute(name: &str) -> ValuePath {
+    ValuePath::simple(format!("https://example.com/{name}").parse().expect("valid attribute name"))
 }
 
 fn point() -> Geometry {
@@ -103,7 +108,7 @@ fn point() -> Geometry {
 
 /// The Vehicles within 1 000 m of the point.
 fn vehicles_near() -> CompiledEntityQuery {
-    let near = GeoQuery {
+    let near = CompiledGeoQuery {
         georel: GeoRel::Near {
             max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
             min_distance: None,
@@ -149,12 +154,12 @@ fn filter_read_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, C
 fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
     let first_page = || PageWindow::offset(100, 0);
     let mut by_distance = ordered_by(
-        OrderDirection::DistAsc,
-        AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name")),
+        OrderingDirection::DistAsc,
+        ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name")),
     );
     by_distance.ordering.geometry = Some(OrderingGeometry::new(point()));
     let mut by_sub_attribute = attribute("speed");
-    by_sub_attribute.sub_attrs = vec!["https://example.com/accuracy".parse().expect("valid attribute name")];
+    by_sub_attribute.sub_attributes = vec!["https://example.com/accuracy".parse().expect("valid attribute name")];
     let mut shapes = vec![
         ("plain", query(EntitySelection::builder().build()), first_page(), CountPolicy::Emit),
         (
@@ -184,7 +189,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
             "carrier",
             query(
                 EntitySelection::builder()
-                    .selectors(vec![EntitySelector::builder().build()])
+                    .selectors(vec![ExpandedEntitySelector::builder().build()])
                     .attrs(vec![IriBuf::new(HEAD_SIGN.to_owned()).expect("valid IRI")])
                     .build(),
             ),
@@ -193,13 +198,13 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
         ),
         (
             "value walk",
-            ordered_by(OrderDirection::Asc, attribute("speed")),
+            ordered_by(OrderingDirection::Asc, attribute("speed")),
             first_page(),
             CountPolicy::Emit,
         ),
         (
             "sub-attribute ordering",
-            ordered_by(OrderDirection::Asc, by_sub_attribute),
+            ordered_by(OrderingDirection::Asc, by_sub_attribute),
             first_page(),
             CountPolicy::Emit,
         ),
@@ -209,8 +214,8 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
             query(
                 EntitySelection::builder()
                     .selectors(vec![
-                        EntitySelector::builder()
-                            .type_expr(of_type("StopTime").type_expr)
+                        ExpandedEntitySelector::builder()
+                            .type_selection(of_type("StopTime").type_selection)
                             .id_pattern(Some(Pattern::parse(".*_1196287$").expect("valid pattern")))
                             .build(),
                     ])

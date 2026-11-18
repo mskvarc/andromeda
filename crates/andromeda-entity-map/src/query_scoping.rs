@@ -51,15 +51,15 @@ pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, 
         return;
     }
     selectors.retain_mut(|selector| {
-        let scoped = scope_query_ids(map, selector.id.as_deref());
+        let scoped = scope_query_ids(map, selector.ids.as_deref());
         let admits_an_entity = !scoped.is_empty();
-        selector.id = Some(scoped);
+        selector.ids = Some(scoped);
         admits_an_entity
     });
     *id = match selectors.as_slice() {
         // The flat list summarises a single selector, exactly as the clause
         // 5.2.23 body conversion writes it.
-        [selector] => selector.id.clone(), // clone: the summary owns its copy of the selector's identifiers
+        [selector] => selector.ids.clone(), // clone: the summary owns its copy of the selector's identifiers
         // Several selectors have no single flat summary, and the union decides.
         [_, _, ..] => None,
         // Every selector was emptied, so the union admits nothing.
@@ -92,7 +92,7 @@ mod tests {
     /// One clause 5.2.33 selector over the given identifiers.
     fn selector(entity_ids: &[&str]) -> WrittenEntitySelector {
         WrittenEntitySelector {
-            id: Some(entity_ids.iter().map(|id| identifier(id)).collect()),
+            ids: Some(entity_ids.iter().map(|id| identifier(id)).collect()),
             ..WrittenEntitySelector::default()
         }
     }
@@ -101,7 +101,7 @@ mod tests {
     fn selector_ids(selectors: &[WrittenEntitySelector]) -> Vec<Vec<&str>> {
         selectors
             .iter()
-            .map(|selector| selector.id.as_deref().unwrap_or_default().iter().map(Identifier::as_str).collect())
+            .map(|selector| selector.ids.as_deref().unwrap_or_default().iter().map(Identifier::as_str).collect())
             .collect()
     }
 

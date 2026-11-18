@@ -10,7 +10,7 @@ use andromeda_linked_retrieval::{
     typed::TypedEntities,
 };
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection::ExpandedProjection};
 use andromeda_ngsi_ld_render::{notification_entity::StampedInstants, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{TimeZone, Utc};
@@ -24,8 +24,8 @@ fn entity(document: &Value) -> Entity {
 }
 
 /// The projection that narrows nothing.
-fn whole() -> Projection {
-    Projection {
+fn whole() -> ExpandedProjection {
+    ExpandedProjection {
         pick: Vec::new(),
         omit: Vec::new(),
     }

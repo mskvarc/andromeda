@@ -8,7 +8,7 @@
 use andromeda_context_commit::subscription_key::SubscriptionKeyOutOfRange;
 use andromeda_http_headers::language::LanguageFilterError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError, spec_version::SpecVersionParseError};
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use iri_rs::InvalidIri;
 use thiserror::Error;

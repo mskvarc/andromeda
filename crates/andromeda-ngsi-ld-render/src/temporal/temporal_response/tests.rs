@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
+use andromeda_ngsi_ld_query::projection::expanded_projection_term::ExpandedProjectionTerm;
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
@@ -302,7 +302,7 @@ fn a_conformance_target_renames_the_plural_member() {
 #[test]
 fn pick_without_type_omits_the_type() {
     let body = evolution(json!({"speed": [{"type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z"}]}));
-    let pick = [ProjectionTerm::Id];
+    let pick = [ExpandedProjectionTerm::Id];
     let projection = StructuralProjection::new(&pick, &[]);
     let result = written_with(&TemporalRoot::new(&body, Some(projection)), NORMALIZED, None, None);
     assert_eq!(result["id"], json!("urn:ngsi-ld:Vehicle:1"));
@@ -316,7 +316,7 @@ fn projection_leaving_nothing_is_not_found() {
         TemporalBody::Evolution(entity) => entity,
         TemporalBody::Aggregated(_) => panic!("an evolution is built"),
     });
-    let pick = [ProjectionTerm::Scope];
+    let pick = [ExpandedProjectionTerm::Scope];
     let projection = StructuralProjection::new(&pick, &[]);
     assert!(!TemporalRoot::new(&body, Some(projection)).carries_members(NORMALIZED));
     assert!(TemporalRoot::new(&body, None).carries_members(NORMALIZED));

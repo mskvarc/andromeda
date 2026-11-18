@@ -19,15 +19,12 @@ use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
     filter::language_targeting::LanguageTargeting,
     page_window::PageWindow,
-    projection::{compiled::Projection, returned_attributes::ReturnedAttributes},
-    type_selection::{
-        expansion::expand_type_expression,
-        grammar::{TypeExpr, TypeExprRaw},
-    },
+    projection::{expanded_projection::ExpandedProjection, returned_attributes::ReturnedAttributes},
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
@@ -47,7 +44,7 @@ use std::sync::Arc;
 pub struct RetrievalNarrowing<'a> {
     /// The clause 4.17 selector the entity's types must satisfy, absent when
     /// the request named no `type` (Table 6.5.3.1-1).
-    pub entity_type: Option<&'a TypeExprRaw>,
+    pub entity_type: Option<&'a WrittenTypeSelection>,
     /// The attributes the response is narrowed to; empty selects all.
     pub attrs: &'a [AttributeName],
     /// Whether the clause 4.8 system timestamps are included.
@@ -56,7 +53,7 @@ pub struct RetrievalNarrowing<'a> {
     pub dataset_ids: &'a [DatasetSelector],
     /// The clause 4.21 projection, absent when the request named neither
     /// `pick` nor `omit`.
-    pub projection: Option<&'a Projection>,
+    pub projection: Option<&'a ExpandedProjection>,
 }
 
 impl EntityQueryService {
@@ -82,7 +79,7 @@ impl EntityQueryService {
         let timer = entity::start(EntityOperation::Retrieve);
         let result: Result<ReceivedState, EntityError> = async {
             let wanted_iris = self.expand_attribute_names(narrowing.attrs, context).await?;
-            let unprojected = Projection::default();
+            let unprojected = ExpandedProjection::default();
             let returned = ReturnedAttributes::of(narrowing.projection.unwrap_or(&unprojected), &wanted_iris);
             // Clause 4.8: the entity-level system times sit on the stored row
             // beside the state, so they are read with it rather than asked for
@@ -131,7 +128,7 @@ impl EntityQueryService {
     ///
     /// Returns [`EntityError`] when a type name cannot be expanded through the
     /// context.
-    pub async fn expand_type_selector(&self, selector: &TypeExprRaw, context: &ContextSpec) -> Result<TypeExpr, EntityError> {
+    pub async fn expand_type_selector(&self, selector: &WrittenTypeSelection, context: &ContextSpec) -> Result<ExpandedTypeSelection, EntityError> {
         let prepared = self.engine().prepare_term_context(context);
         Ok(expand_type_expression(selector, &ContextualExpander::new(self.engine(), &prepared)).await?)
     }

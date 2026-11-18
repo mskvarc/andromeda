@@ -3,7 +3,7 @@
 //! filter through.
 
 use crate::admission::{AdmissionError, LinkedOperation, LinkedReference, admit};
-use andromeda_ngsi_ld_query::filter::{expression::Expr, hop_admission::FilterHopAdmission};
+use andromeda_ngsi_ld_query::filter::{Filter, hop_admission::FilterHopAdmission};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
 
@@ -30,7 +30,7 @@ impl FilterHops {
 impl FilterHopAdmission for FilterHops {
     type Refusal = AdmissionError;
 
-    fn admit_hops(&self, filter: &Expr) -> Result<(), AdmissionError> {
+    fn admit_hops(&self, filter: &Filter) -> Result<(), AdmissionError> {
         LinkedReference::of_filter(Some(filter)).map_or(Ok(()), |reference| admit(self.operation, reference, self.join, self.join_level))
     }
 }

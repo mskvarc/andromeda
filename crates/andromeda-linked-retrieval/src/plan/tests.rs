@@ -9,7 +9,7 @@ use crate::{
     test_graph::{FakeSource, Node, Nodes, graph, id, index, node, term},
     traversal::traverse,
 };
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection_term::ExpandedProjectionTerm};
 use pretty_assertions::assert_eq;
 use std::{num::NonZeroU32, slice::from_ref};
 
@@ -29,7 +29,7 @@ fn keys() -> AttributeIriIndex {
     index(&["owner", "manager", "locatedIn", "employer", "name", "email", "size", "next", "back"])
 }
 
-fn leaf(key: &str) -> ProjectionTerm {
+fn leaf(key: &str) -> ExpandedProjectionTerm {
     term(key, Vec::new())
 }
 
@@ -162,7 +162,7 @@ fn an_unaddressed_relationship_nests_its_target_whole() {
 #[test]
 fn an_emptied_linked_entity_is_not_appended() {
     let (graph, index) = (building(1), keys());
-    let pick = [ProjectionTerm::Id, term("locatedIn", vec![leaf("size")])];
+    let pick = [ExpandedProjectionTerm::Id, term("locatedIn", vec![leaf("size")])];
     let plan = JoinPlan::<Nodes>::new(
         RetrievingJoin::Flat,
         &graph,

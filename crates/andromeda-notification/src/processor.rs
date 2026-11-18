@@ -43,7 +43,7 @@ use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::En
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::queried::linked_states::LinkedStates;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_query::filter::Filter;
 use andromeda_retry::retry_delay::RetryDelay;
 use andromeda_subscription::{
     cache::SubscriptionCache,
@@ -334,7 +334,7 @@ impl NotificationProcessor {
         candidates: &[Arc<CompiledSubscription>],
         states: ChangedStates<'_>,
     ) -> Result<LinkedStates, EntityError> {
-        let filters: Vec<&Expr> = candidates.iter().flat_map(|candidate| candidate.hopping_filters()).collect();
+        let filters: Vec<&Filter> = candidates.iter().flat_map(|candidate| candidate.hopping_filters()).collect();
         if filters.is_empty() {
             return Ok(LinkedStates::new());
         }
@@ -368,8 +368,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
-        projection::compiled::Projection,
-        scope::query::ScopeQuery,
+        projection::expanded_projection::ExpandedProjection,
+        scope::scope_query::ScopeQuery,
     };
     use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::NoLinkedEntities;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -451,7 +451,7 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             lang: None,
-            notification_projection: Projection::default(),
+            notification_projection: ExpandedProjection::default(),
         }
     }
 

@@ -21,12 +21,12 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::{entity_selector::EntitySelector, query::body::Query};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    filter::expression::Expr,
-    geo::input::GeoQueryInput,
+    dataset_selector::DatasetSelector,
+    filter::Filter,
+    geo::written_geo_query::WrittenGeoQuery,
     pattern::Pattern,
-    scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
+    scope::scope_query::ScopeQuery,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
@@ -72,13 +72,13 @@ struct Gathered<'q> {
     /// The `attrs` member.
     attrs: Option<Vec<AttributeName>>,
     /// The `q` member.
-    q: Option<Expr>,
+    q: Option<Filter>,
     /// The `jsonKeys` member, naming what `q` reads as literal JSON keys.
     json_keys: Option<Vec<AttributeName>>,
     /// The `scopeQ` member.
     scope_q: Option<ScopeQuery>,
     /// The `csf` member.
-    csf: Option<Expr>,
+    csf: Option<Filter>,
     /// The `datasetId` member.
     dataset_id: Option<Vec<DatasetSelector>>,
     /// The `lang` member.
@@ -113,18 +113,18 @@ impl<'q> Gathered<'q> {
                     })
                     .collect::<Result<_, _>>()?;
             }
-            ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<TypeExprRaw>()?),
+            ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<WrittenTypeSelection>()?),
             ForwardedParameter::IdPattern => self.selection.id_pattern = Some(Pattern::parse(value)?),
             ForwardedParameter::Limit | ForwardedParameter::Offset | ForwardedParameter::Options => self.uri.push((parameter, value)),
             ForwardedParameter::Attrs => self.attrs = Some(attribute_names(value)?),
-            ForwardedParameter::Q => self.q = Some(value.parse::<Expr>()?),
+            ForwardedParameter::Q => self.q = Some(value.parse::<Filter>()?),
             ForwardedParameter::JsonKeys => self.json_keys = Some(attribute_names(value)?),
             ForwardedParameter::Georel => self.geo.georel = Some(value),
             ForwardedParameter::Geometry => self.geo.geometry = Some(value),
             ForwardedParameter::Coordinates => self.geo.coordinates = Some(value),
             ForwardedParameter::Geoproperty => self.geo.geoproperty = Some(forwarded_name::<NgsiLdReference>(value)?),
             ForwardedParameter::ScopeQ => self.scope_q = Some(value.parse::<ScopeQuery>()?),
-            ForwardedParameter::Csf => self.csf = Some(value.parse::<Expr>()?),
+            ForwardedParameter::Csf => self.csf = Some(value.parse::<Filter>()?),
             ForwardedParameter::DatasetId => {
                 self.dataset_id = Some(value.split(',').map(DatasetSelector::parse).collect::<Result<_, _>>()?);
             }
@@ -190,7 +190,7 @@ struct Selection {
     /// The identifiers, none when the query names none.
     ids: Vec<Identifier>,
     /// The type selection, `None` when the query names no type.
-    entity_type: Option<TypeExprRaw>,
+    entity_type: Option<WrittenTypeSelection>,
     /// The id pattern.
     id_pattern: Option<Pattern>,
 }
@@ -211,7 +211,7 @@ impl Selection {
         let pattern_selector = EntitySelector {
             id: None,
             id_pattern: self.id_pattern,
-            type_: self.entity_type.unwrap_or(TypeExprRaw::Wildcard),
+            type_: self.entity_type.unwrap_or(WrittenTypeSelection::Wildcard),
         };
         if self.ids.is_empty() {
             return Some(vec![pattern_selector]);
@@ -253,11 +253,11 @@ impl GeoMembers<'_> {
     /// Returns [`FederationError::Internal`] when only some of `georel`,
     /// `geometry` and `coordinates` are written, or when they do not read
     /// back as a geo-query.
-    fn into_geo_query(self) -> Result<Option<GeoQueryInput>, FederationError> {
+    fn into_geo_query(self) -> Result<Option<WrittenGeoQuery>, FederationError> {
         match (self.georel, self.geometry, self.coordinates) {
             (Some(georel), Some(geometry), Some(coordinates)) => {
                 let geo_query =
-                    GeoQueryInput::from_parameters(georel, geometry, coordinates, self.geoproperty).map_err(FederationInvariant::ForwardedGeoQuery)?;
+                    WrittenGeoQuery::from_parameters(georel, geometry, coordinates, self.geoproperty).map_err(FederationInvariant::ForwardedGeoQuery)?;
                 Ok(Some(geo_query))
             }
             (None, None, None) => Ok(None),
@@ -393,7 +393,7 @@ mod tests {
         params.entity_selectors = ["Alpha", "Beta"]
             .into_iter()
             .map(|raw| WrittenEntitySelector {
-                type_: Some(raw.parse().expect("valid type expression")),
+                type_selection: Some(raw.parse().expect("valid type expression")),
                 ..WrittenEntitySelector::default()
             })
             .collect();

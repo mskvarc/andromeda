@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{
-    scope::{pattern::ScopePattern, query::ScopeQuery},
+    scope::{scope_pattern::ScopePattern, scope_query::ScopeQuery},
     temporal::window::TimeInterval,
 };
 use andromeda_postgresql_schema::temporal::ScopeHistory;
@@ -170,7 +170,7 @@ mod tests {
         window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
-    use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, temporal::window::TimeInterval};
+    use andromeda_ngsi_ld_query::{scope::scope_query::ScopeQuery, temporal::window::TimeInterval};
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement};

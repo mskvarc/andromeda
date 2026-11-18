@@ -2,7 +2,7 @@
 
 use crate::{
     entity_selection::EntitySelection,
-    projection::compiled::Projection,
+    projection::expanded_projection::ExpandedProjection,
     temporal::{
         contributed_entities::ContributedEntities,
         instance_selection::InstanceSelection,
@@ -41,7 +41,7 @@ pub struct CompiledTemporalQuery {
     /// Which members of a matching entity's temporal representation reach the
     /// response (clause 4.21 `pick` / `omit`).
     #[builder(default = Default::default())]
-    pub projection: Projection,
+    pub projection: ExpandedProjection,
     /// How the matching entities are ordered, when the request asked for an
     /// order at all (clause 5.7.4.3).
     ///

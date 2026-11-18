@@ -189,11 +189,12 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
-        scope::query::ScopeQuery,
-        type_selection::grammar::TypeExpr,
+        scope::scope_query::ScopeQuery,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -228,7 +229,11 @@ mod tests {
         let mut query = query("\"https://example.com/status\"==\"fail\"");
         query.selection.selectors = selected
             .iter()
-            .map(|ty| EntitySelector::builder().type_expr(Some(TypeExpr::Type(iri(ty)))).build())
+            .map(|ty| {
+                ExpandedEntitySelector::builder()
+                    .type_selection(Some(ExpandedTypeSelection::Type(iri(ty))))
+                    .build()
+            })
             .collect();
         query.selection.attrs = vec![iri("temperature")];
         query

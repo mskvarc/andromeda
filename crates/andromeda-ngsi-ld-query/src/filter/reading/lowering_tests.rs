@@ -1,7 +1,7 @@
 //! The path half of a lowered Query Term.
 
 use crate::filter::{
-    expression::Expr,
+    Filter,
     instance_metadata::InstanceMetadata,
     language_matching::LanguageMatching,
     parser::parse,
@@ -17,7 +17,7 @@ use crate::filter::{
         value_test::Polarity,
     },
     target_language::TargetLanguage,
-    trailing_path::MemberPath,
+    trailing_group::MemberPath,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use langtag::LangTagBuf;
@@ -250,7 +250,7 @@ fn a_negated_operator_lowers_to_the_complement_of_its_positive_test() {
 /// The boolean structure is kept as written.
 #[test]
 fn a_filter_lowers_its_conjunctions_and_disjunctions_as_written() {
-    let expr: Expr = "a==1;(b==2|c)".parse().expect("a filter");
+    let expr: Filter = "a==1;(b==2|c)".parse().expect("a filter");
     let FilterReading::All(children) = FilterReading::lowered(&expr, LanguageMatching::TagEquality) else {
         panic!("a conjunction");
     };

@@ -17,8 +17,8 @@ use andromeda_ngsi_ld_model::{
     entity_info::{EntityInfo, EntityTypeSelection},
     registration::info::RegistrationInfo,
 };
-use andromeda_ngsi_ld_query::{
-    pattern::Pattern,
+use andromeda_ngsi_ld_query::pattern::{
+    Pattern,
     portable_pattern::{PortablePattern, RenderingRevision},
 };
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_shape::EntityTypeShapeCode};
@@ -320,7 +320,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
-    use andromeda_ngsi_ld_query::portable_pattern::PortablePattern;
+    use andromeda_ngsi_ld_query::pattern::portable_pattern::PortablePattern;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_shape::EntityTypeShapeCode};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};

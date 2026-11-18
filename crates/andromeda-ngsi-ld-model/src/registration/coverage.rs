@@ -8,9 +8,9 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    dataset::DatasetSelector,
-    geo::{query::GeoQuery, registration_area::RegistrationGeometry},
-    scope::query::ScopeQuery,
+    dataset_selector::DatasetSelector,
+    geo::{compiled_geo_query::CompiledGeoQuery, registration_area::RegistrationGeometry},
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::scope_query::scope_query_matches;
 use serde::{Deserialize, Serialize};
@@ -72,7 +72,7 @@ impl RegistrationCoverage {
     /// geoquery names directly matches it or possibly contains a location
     /// that would (clauses 5.10.2.4 and 5.11.2.4).
     #[must_use]
-    pub fn admits_geo_query(&self, geo: &GeoQuery) -> bool {
+    pub fn admits_geo_query(&self, geo: &CompiledGeoQuery) -> bool {
         geo.admits_registration_area(self.geometry(RegistrationGeometry::of(geo)))
     }
 
@@ -118,9 +118,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
-        dataset::DatasetSelector,
-        geo::{query::GeoQuery, registration_area::RegistrationGeometry},
-        scope::query::ScopeQuery,
+        dataset_selector::DatasetSelector,
+        geo::{compiled_geo_query::CompiledGeoQuery, registration_area::RegistrationGeometry},
+        scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval as QueryWindow,
     };
     use chrono::{DateTime, Utc};
@@ -131,8 +131,8 @@ mod tests {
         serde_json::from_value(json!({"type": "Point", "coordinates": [longitude, latitude]})).expect("a valid point")
     }
 
-    fn near_madrid(geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn near_madrid(geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: "near;maxDistance==100000".parse().expect("a valid georel"),
             geometry: point(-3.7, 40.4),
             geoproperty: geoproperty.parse().expect("a valid attribute name"),

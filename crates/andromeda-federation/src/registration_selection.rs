@@ -27,10 +27,10 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     filter::reading::filter_reading::FilterReading,
-    geo::query::GeoQuery,
-    scope::query::ScopeQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    scope::scope_query::ScopeQuery,
     written_entity_selector::WrittenEntitySelector,
 };
 use chrono::Utc;
@@ -55,7 +55,7 @@ pub(crate) struct RegistrationSelection<'a> {
     /// The client's geoquery, compiled: a registration whose declared geometry
     /// cannot hold a matching Entity is not contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).
-    pub(crate) geo: Option<&'a GeoQuery>,
+    pub(crate) geo: Option<&'a CompiledGeoQuery>,
     /// The `datasetId`s the operation selects Attribute instances by: a
     /// registration declaring `datasetId`s is contacted only when it shares
     /// one (clause 5.12).
@@ -205,7 +205,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
     use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSourceRegistration};
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         filter::{
             expansion::expand_q_expr,
             json_key_attributes::JsonKeyAttributes,
@@ -213,8 +213,8 @@ mod tests {
             parser,
             reading::filter_reading::FilterReading,
         },
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
     };
     use chrono::{Duration, Utc};
     use serde_json::json;
@@ -349,7 +349,7 @@ mod tests {
         let berlin = registration_with("urn:ngsi-ld:csr:berlin", json!({"location": {"type": "Point", "coordinates": [13.4, 52.5]}}));
         let anywhere = registration_with("urn:ngsi-ld:csr:anywhere", json!({}));
         let service = offline_service(vec![madrid, berlin, anywhere]);
-        let near_madrid = GeoQuery {
+        let near_madrid = CompiledGeoQuery {
             georel: "near;maxDistance==100000".parse().expect("a valid georel"),
             geometry: serde_json::from_value(json!({"type": "Point", "coordinates": [-3.7, 40.4]})).expect("a valid point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("a valid attribute name"),

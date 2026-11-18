@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_model::{
     temporal::{TemporalHistoryRow, temporal_document::TemporalDocument},
 };
 use andromeda_ngsi_ld_query::{
-    projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection},
+    projection::{attribute_iri_index::AttributeIriIndex, expanded_projection::ExpandedProjection},
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -188,7 +188,7 @@ const fn rendered_timestamps(compiled: &CompiledTemporalQuery) -> SysAttrsInclus
 /// members of this map at all: they are inserted separately once this
 /// function returns, and their half of the rule is applied on the compacted
 /// value instead.
-fn project_attrs(attrs: &mut TemporalAttrMap, projection: &Projection) {
+fn project_attrs(attrs: &mut TemporalAttrMap, projection: &ExpandedProjection) {
     let list = ListInForce::of(Some(projection), &[]);
     if list.is_unrestricted() {
         return;
@@ -242,7 +242,7 @@ mod tests {
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        projection::{compiled::Projection, term::ProjectionTerm},
+        projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm},
         temporal::{
             compiled::CompiledTemporalQuery,
             instance_page::PageDirection,
@@ -289,7 +289,7 @@ mod tests {
         }
     }
 
-    fn compiled(projection: Projection) -> CompiledTemporalQuery {
+    fn compiled(projection: ExpandedProjection) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
             .entities(EntitySelection::builder().build())
             .window(TemporalWindow::builder().timeproperty(TimeProp::Observed).build())
@@ -312,12 +312,12 @@ mod tests {
         vec!["Vehicle".parse().expect("valid type name")]
     }
 
-    fn attribute(name: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute { iri: iri(name), linked }
+    fn attribute(name: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute { iri: iri(name), linked }
     }
 
     /// Assemble `rows` under `projection`, uncut.
-    fn assembled(rows: Vec<TemporalHistoryRow>, projection: Projection) -> EntityDocument {
+    fn assembled(rows: Vec<TemporalHistoryRow>, projection: ExpandedProjection) -> EntityDocument {
         let compiled = compiled(projection);
         TemporalEntityRenderer::new(&entity_id(), &entity_types(), rows, &compiled, None)
             .render()
@@ -345,7 +345,7 @@ mod tests {
     fn pick_of_one_attribute_keeps_only_that_attribute() {
         let entity = assembled(
             vec![row("speed", 0), row("fuel", 1)],
-            Projection {
+            ExpandedProjection {
                 pick: vec![attribute("speed", Vec::new())],
                 omit: Vec::new(),
             },
@@ -361,7 +361,7 @@ mod tests {
     fn omit_of_one_attribute_drops_only_that_attribute() {
         let entity = assembled(
             vec![row("speed", 0), row("fuel", 1)],
-            Projection {
+            ExpandedProjection {
                 pick: Vec::new(),
                 omit: vec![attribute("speed", Vec::new())],
             },
@@ -378,7 +378,7 @@ mod tests {
     fn a_nested_pick_term_still_keeps_its_relationship_on_the_root() {
         let entity = assembled(
             vec![row("isParkedIn", 0), row("fuel", 1)],
-            Projection {
+            ExpandedProjection {
                 pick: vec![attribute("isParkedIn", vec![attribute("category", Vec::new())])],
                 omit: Vec::new(),
             },
@@ -394,7 +394,7 @@ mod tests {
     fn a_nested_omit_term_still_keeps_its_relationship_on_the_root() {
         let entity = assembled(
             vec![row("isParkedIn", 0), row("fuel", 1)],
-            Projection {
+            ExpandedProjection {
                 pick: Vec::new(),
                 omit: vec![attribute("isParkedIn", vec![attribute("category", Vec::new())])],
             },
@@ -416,7 +416,7 @@ mod tests {
         scope_row.value = TemporalValue::Scopes(vec!["/Madrid".parse().expect("a scope path")]);
         let entity = assembled(
             vec![row("speed", 1), scope_row],
-            Projection {
+            ExpandedProjection {
                 pick: vec![attribute("speed", Vec::new())],
                 omit: Vec::new(),
             },
@@ -427,7 +427,7 @@ mod tests {
     /// An empty projection narrows nothing.
     #[test]
     fn an_empty_projection_leaves_every_attribute_in_place() {
-        let entity = assembled(vec![row("speed", 0), row("fuel", 1)], Projection::default());
+        let entity = assembled(vec![row("speed", 0), row("fuel", 1)], ExpandedProjection::default());
         assert!(carries(&entity, "https://example.com/speed"));
         assert!(carries(&entity, "https://example.com/fuel"));
     }
@@ -466,7 +466,7 @@ mod tests {
     fn a_removed_scope_renders_without_observed_at() {
         let mut tombstone = scope_row(0, removed());
         tombstone.observed_at = Some(instant());
-        let entity = assembled(vec![tombstone], Projection::default());
+        let entity = assembled(vec![tombstone], ExpandedProjection::default());
         let rendered = instance_documents(&entity, expanded_properties::SCOPE.as_str());
         assert_eq!(rendered.len(), 1);
         assert_eq!(observed(&rendered[0]), None);
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn a_set_scope_keeps_its_observed_at() {
-        let entity = assembled(vec![scope_row(0, set_scope())], Projection::default());
+        let entity = assembled(vec![scope_row(0, set_scope())], ExpandedProjection::default());
         let rendered = instance_documents(&entity, expanded_properties::SCOPE.as_str());
         assert_eq!(observed(&rendered[0]), Some(instant()));
     }
@@ -485,7 +485,7 @@ mod tests {
         let later = instant() + Duration::minutes(5);
         let mut set_again = scope_row(1, set_scope());
         set_again.observed_at = Some(later);
-        let entity = assembled(vec![scope_row(0, removed()), set_again], Projection::default());
+        let entity = assembled(vec![scope_row(0, removed()), set_again], ExpandedProjection::default());
         let rendered = instance_documents(&entity, expanded_properties::SCOPE.as_str());
         assert_eq!(rendered.len(), 2);
         assert_eq!((observed(&rendered[0]), rendered[0].deleted_at().is_some()), (None, true));
@@ -497,7 +497,7 @@ mod tests {
     fn a_removed_attribute_instance_keeps_its_declared_observed_at() {
         let mut tombstone = row("speed", 0);
         tombstone.value = removed();
-        let entity = assembled(vec![tombstone], Projection::default());
+        let entity = assembled(vec![tombstone], ExpandedProjection::default());
         let rendered = instance_documents(&entity, "https://example.com/speed");
         assert_eq!(observed(&rendered[0]), Some(instant()));
     }
@@ -515,7 +515,7 @@ mod tests {
             direction: PageDirection::Forward,
             boundary: instant() + Duration::minutes(2),
         };
-        let compiled = compiled(Projection::default());
+        let compiled = compiled(ExpandedProjection::default());
         let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), vec![inside, beyond], &compiled, Some(cut))
             .render()
             .expect("the rows render");
@@ -540,7 +540,7 @@ mod tests {
             direction: PageDirection::Forward,
             boundary: instant() + Duration::minutes(2),
         };
-        let compiled = compiled(Projection::default());
+        let compiled = compiled(ExpandedProjection::default());
         let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), rows, &compiled, Some(cut))
             .render()
             .expect("the rows render");

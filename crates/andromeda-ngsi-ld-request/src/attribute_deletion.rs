@@ -5,7 +5,7 @@ use crate::{
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, type_selection::written_type_selection::WrittenTypeSelection};
 use serde::Deserialize;
 
 /// Declare a parameter struct of an attribute deletion: the `datasetId`,
@@ -42,7 +42,7 @@ attribute_deletion_params! {
     EntityAttributeDeletionParams {
         /// The clause 4.17 selector the target entity's types must satisfy.
         #[serde(rename = "type")]
-        pub entity_type: Option<TypeExprRaw>,
+        pub entity_type: Option<WrittenTypeSelection>,
     }
 }
 

@@ -10,7 +10,7 @@ use crate::{
     source::{LevelRead, LinkedSource, RemoteReach, RemoteRead},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection_term::ExpandedProjectionTerm};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
 use enumset::EnumSet;
 use indexmap::IndexMap;
@@ -308,6 +308,6 @@ pub(crate) fn iri(key: &str) -> IriBuf {
 }
 
 /// The projection term naming `key`, nesting `linked`.
-pub(crate) fn term(key: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-    ProjectionTerm::Attribute { iri: iri(key), linked }
+pub(crate) fn term(key: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+    ExpandedProjectionTerm::Attribute { iri: iri(key), linked }
 }

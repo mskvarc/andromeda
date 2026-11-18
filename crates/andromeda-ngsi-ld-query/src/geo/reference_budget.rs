@@ -7,7 +7,7 @@
 //! candidate entity, so a reference geometry holding more positions than the
 //! broker resolves in one query makes the query too complex.
 
-use crate::error::QueryError;
+use crate::query_error::QueryError;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_census::GeometryCensusLimits};
 
 /// Admit a query's reference geometry holding no more positions than `limits`
@@ -25,7 +25,7 @@ pub fn admit_reference_geometry(geometry: &Geometry, limits: GeometryCensusLimit
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::QueryError, geo::reference_budget::admit_reference_geometry};
+    use crate::{geo::reference_budget::admit_reference_geometry, query_error::QueryError};
     use andromeda_ngsi_ld_geometry::{
         geometry::Geometry,
         geometry_census::{GeometryCensusLimits, GeometryPositionLimit},

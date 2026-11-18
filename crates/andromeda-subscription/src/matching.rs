@@ -155,10 +155,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
-        geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
+        geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, near_distance_band::NearDistanceBand, written_geo_query::WrittenGeoQuery},
         namespace_expander::EXAMPLE_NAMESPACE,
-        projection::compiled::Projection,
+        projection::expanded_projection::ExpandedProjection,
+        query_error::QueryError,
         term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_query_evaluation::{geo_query::geo_query_matches, queried_entity::linked_entities::NoLinkedEntities};
@@ -184,7 +184,7 @@ mod tests {
     }
 
     /// A stored `geoQ`, read as the request model reads it.
-    fn stored_geo_q(wire: serde_json::Value) -> GeoQueryInput {
+    fn stored_geo_q(wire: serde_json::Value) -> WrittenGeoQuery {
         serde_json::from_value(wire).expect("a readable geoQ")
     }
 
@@ -225,7 +225,7 @@ mod tests {
             local_only: false,
             ngsild_conformance: None,
             lang: None,
-            notification_projection: Projection::default(),
+            notification_projection: ExpandedProjection::default(),
         }
     }
 
@@ -306,7 +306,7 @@ mod tests {
         })))
         .expect("the subscription geoQ fixture did not compile");
 
-        let request_geo = GeoQueryInput::from_wire(
+        let request_geo = WrittenGeoQuery::from_wire(
             "near;maxDistance==1000",
             "Point",
             serde_json::from_value(serde_json::json!([13.4, 52.5])).expect("coordinates"),

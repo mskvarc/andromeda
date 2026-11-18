@@ -231,11 +231,11 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         cursor::PageCursor,
-        dataset::DatasetSelector,
-        entity_selection::EntitySelector,
+        dataset_selector::DatasetSelector,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
-        geo::query::GeoQuery,
-        ordering::{collation::IcuCollation, sort_direction::SortDirection},
+        geo::compiled_geo_query::CompiledGeoQuery,
+        ordering::{icu_collation::IcuCollation, sort_direction::SortDirection},
         page_window::{PageStart, PageWindow},
         temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
     };
@@ -289,7 +289,11 @@ mod tests {
     #[test]
     fn stage1_timerel_placeholder_is_offset_after_id_filters() {
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"])).build()];
+        compiled.entities.selectors = vec![
+            ExpandedEntitySelector::builder()
+                .ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]))
+                .build(),
+        ];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
         let statement = built(&compiled, &QueryNames::default());
@@ -299,7 +303,7 @@ mod tests {
     #[test]
     fn stage1_count_reuses_the_result_predicate_bind_order() {
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
+        compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
         let page = built(&compiled, &QueryNames::default());
@@ -326,7 +330,7 @@ mod tests {
                 parser::parse("\"https://example.com/speed\">100").unwrap(),
                 LanguageMatching::TagEquality,
             ));
-            compiled.entities.geo = Some(GeoQuery {
+            compiled.entities.geo = Some(CompiledGeoQuery {
                 georel: GeoRel::Within,
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),

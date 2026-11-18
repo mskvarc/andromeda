@@ -4,7 +4,7 @@
 //! retrieve echoes, so the column holds the rendering of each selector in the
 //! order the subscriber wrote them.
 
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 
 /// The stored text of each of `selectors`, or `None` when the subscription
 /// names no `datasetId`.
@@ -15,7 +15,7 @@ pub(crate) fn stored_dataset_ids(selectors: Option<&[DatasetSelector]>) -> Optio
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::dataset_text::stored_dataset_ids;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use pretty_assertions::assert_eq;
 
     #[test]

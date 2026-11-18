@@ -97,7 +97,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
-        geo::query::GeoQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
             contributed_entities::{ContributedEntities, ContributedRendering},
@@ -163,7 +163,7 @@ mod tests {
 
     fn with_near() -> CompiledTemporalQuery {
         let mut compiled = compiled();
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("2000").expect("a positive distance")),
                 min_distance: None,

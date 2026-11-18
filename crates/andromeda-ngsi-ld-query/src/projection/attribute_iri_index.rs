@@ -1,10 +1,10 @@
 //! The expanded IRI of each attribute key a projection may be matched against.
 //!
-//! [`ProjectionTerm::matches_attribute`] needs an attribute key's expanded IRI, and expanding a key needs the request `@context`. Anything applying a projection outside the layer that owns the JSON-LD engine (the renderer applying a clause 4.21 nested projection while it nests linked entities, above all) therefore needs that expansion handed to it already resolved. This index is that hand-over and the one place that expands the keys: each distinct key once per request, through the expander the consumer binds to the request `@context`.
+//! [`ExpandedProjectionTerm::matches_attribute`] needs an attribute key's expanded IRI, and expanding a key needs the request `@context`. Anything applying a projection outside the layer that owns the JSON-LD engine (the renderer applying a clause 4.21 nested projection while it nests linked entities, above all) therefore needs that expansion handed to it already resolved. This index is that hand-over and the one place that expands the keys: each distinct key once per request, through the expander the consumer binds to the request `@context`.
 //!
-//! [`ProjectionTerm::matches_attribute`]: crate::projection::term::ProjectionTerm::matches_attribute
+//! [`ExpandedProjectionTerm::matches_attribute`]: crate::projection::expanded_projection_term::ExpandedProjectionTerm::matches_attribute
 
-use crate::{error::QueryError, projection::term::ProjectionTerm, term_expander::TermExpander};
+use crate::{projection::expanded_projection_term::ExpandedProjectionTerm, query_error::QueryError, term_expander::TermExpander};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
 use std::{collections::HashMap, future::Future};
@@ -62,7 +62,7 @@ impl AttributeIriIndex {
     fn missing_keys<'k>(&self, keys: impl IntoIterator<Item = &'k str>) -> Vec<(&'k str, AttributeName)> {
         let mut missing: Vec<(&'k str, AttributeName)> = Vec::new();
         for key in keys {
-            if ProjectionTerm::keyword(key).is_some() || self.expanded(key).is_some() || missing.iter().any(|(seen, _)| *seen == key) {
+            if ExpandedProjectionTerm::keyword(key).is_some() || self.expanded(key).is_some() || missing.iter().any(|(seen, _)| *seen == key) {
                 continue;
             }
             if let Ok(name) = key.parse::<AttributeName>() {
@@ -97,9 +97,9 @@ impl AttributeIriIndex {
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         namespace_expander::EXAMPLE_NAMESPACE_TYPED,
         projection::attribute_iri_index::AttributeIriIndex,
+        query_error::QueryError,
         term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

@@ -2,8 +2,7 @@
 
 use andromeda_ngsi_ld_query::{
     filter::reading::{comparator::Comparator, order_relation::OrderRelation},
-    pattern::Pattern,
-    subject_start::SubjectStart,
+    pattern::{Pattern, subject_start::SubjectStart},
 };
 use andromeda_postgresql_seaquery::{
     collation::{PostgresCollation, collate},

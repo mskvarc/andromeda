@@ -57,7 +57,7 @@ impl TemporalDeleteParameters {
 #[cfg(test)]
 mod tests {
     use crate::{error::ParameterError, params_from_query, query::temporal::delete_parameters::TemporalDeleteParameters};
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::query_error::QueryError;
 
     fn params(query: &str) -> TemporalDeleteParameters {
         params_from_query!(query, TemporalDeleteParameters)

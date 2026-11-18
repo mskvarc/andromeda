@@ -7,7 +7,7 @@
 //! serves both resources, and it lives here rather than beside either of them.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::comma_separated_list::{ListedItem, parse_listed};
+use andromeda_ngsi_ld_query::comma_separated_list::{ListedMemberKind, parse_listed};
 use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
 /// The names the comma-separated `text` lists.
@@ -17,7 +17,7 @@ use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError
 /// Returns a custom error when the list carries an empty member or a member
 /// that does not satisfy the NGSI-LD attribute-name grammar.
 fn listed<E: DeserializeError>(text: &str) -> Result<Vec<AttributeName>, E> {
-    parse_listed(text, ListedItem::AttributeName).map_err(DeserializeError::custom)
+    parse_listed(text, ListedMemberKind::AttributeName).map_err(DeserializeError::custom)
 }
 
 /// The comma-separated string that lists `names`.

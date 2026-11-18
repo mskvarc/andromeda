@@ -13,10 +13,7 @@
 
 use crate::entity_relations::RowSource;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{
-    entity_selection::{EntitySelection, EntitySelector},
-    identifier_axis::IdentifierAxis,
-};
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, expanded_entity_selector::ExpandedEntitySelector, identifier_axis::IdentifierAxis};
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     operator::{PatternIndexes, pattern as pattern_predicate},
@@ -72,9 +69,9 @@ pub fn condition(selection: &EntitySelection, rows: &EntityRowRefs, types: &Reso
 
 /// Render one selector's identifier, pattern and type predicates, `ANDed`.
 ///
-/// The three axes of a single [`EntitySelector`] hold together (clause 5.2.33):
+/// The three axes of a single [`ExpandedEntitySelector`] hold together (clause 5.2.33):
 /// `{id:A,type:T}` selects entity `A` *and only if* it is a `T`.
-fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>, test: TypeTest) -> Condition {
+fn selector_condition(rows: &EntityRowRefs, selector: &ExpandedEntitySelector, types: &ResolvedNames<EntityTypeName>, test: TypeTest) -> Condition {
     let mut condition = Condition::all();
     match selector.identifier_axis() {
         IdentifierAxis::Ids(ids) => {
@@ -91,7 +88,7 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
         }
         IdentifierAxis::Any => {}
     }
-    if let Some(type_expr) = &selector.type_expr {
+    if let Some(type_expr) = &selector.type_selection {
         match test {
             TypeTest::SearchRow => {
                 condition = condition.add(type_condition(type_expr, &rows.search_column(EntitySearch::EntityTypeNameKeys), types));
@@ -117,9 +114,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::{
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         pattern::Pattern,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -127,8 +125,8 @@ mod tests {
     use iri_rs::IriBuf;
     use sea_query::{Alias, Condition, Expr, Query, SelectStatement};
 
-    fn ty(name: &str) -> TypeExpr {
-        TypeExpr::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))
+    fn ty(name: &str) -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))
     }
 
     fn types() -> ResolvedNames<EntityTypeName> {
@@ -151,7 +149,7 @@ mod tests {
         Pattern::parse(raw).expect("valid pattern")
     }
 
-    fn render(selectors: Vec<EntitySelector>, source: &RowSource) -> Option<SelectStatement> {
+    fn render(selectors: Vec<ExpandedEntitySelector>, source: &RowSource) -> Option<SelectStatement> {
         let selection = EntitySelection::builder().selectors(selectors).build();
         let rows = EntityRowRefs::unaliased(None).keyed_by(Alias::new("selected"));
         condition(&selection, &rows, &types(), source).map(|condition: Condition| Query::select().expr(Expr::val(1)).cond_where(condition).take())
@@ -160,7 +158,11 @@ mod tests {
     /// Driven by `entities`, a type is a containment test on the search row.
     #[test]
     fn a_type_on_an_entities_driven_statement_tests_the_search_row() {
-        let select = render(vec![EntitySelector::builder().type_expr(Some(ty("A"))).build()], &RowSource::Entities).expect("constrains");
+        let select = render(
+            vec![ExpandedEntitySelector::builder().type_selection(Some(ty("A"))).build()],
+            &RowSource::Entities,
+        )
+        .expect("constrains");
         assert_statement_snapshot!("selector-predicate-a-type-on-an-entities-driven-statement-tests-the-search-row", select);
     }
 
@@ -169,8 +171,8 @@ mod tests {
     #[test]
     fn type_only_selectors_add_nothing_to_the_walk() {
         let selectors = vec![
-            EntitySelector::builder().type_expr(Some(ty("A"))).build(),
-            EntitySelector::builder().type_expr(Some(ty("B"))).build(),
+            ExpandedEntitySelector::builder().type_selection(Some(ty("A"))).build(),
+            ExpandedEntitySelector::builder().type_selection(Some(ty("B"))).build(),
         ];
         assert!(render(selectors, &walked()).is_none());
     }
@@ -179,7 +181,12 @@ mod tests {
     #[test]
     fn a_lone_selector_keeps_only_its_pattern_on_the_walk() {
         let select = render(
-            vec![EntitySelector::builder().type_expr(Some(ty("A"))).id_pattern(Some(pattern("urn:a.*"))).build()],
+            vec![
+                ExpandedEntitySelector::builder()
+                    .type_selection(Some(ty("A")))
+                    .id_pattern(Some(pattern("urn:a.*")))
+                    .build(),
+            ],
             &walked(),
         )
         .expect("constrains");
@@ -192,8 +199,11 @@ mod tests {
     fn several_selectors_keep_each_type_and_pattern_pairing_as_key_probes() {
         let select = render(
             vec![
-                EntitySelector::builder().type_expr(Some(ty("A"))).id_pattern(Some(pattern("urn:a.*"))).build(),
-                EntitySelector::builder().type_expr(Some(ty("B"))).build(),
+                ExpandedEntitySelector::builder()
+                    .type_selection(Some(ty("A")))
+                    .id_pattern(Some(pattern("urn:a.*")))
+                    .build(),
+                ExpandedEntitySelector::builder().type_selection(Some(ty("B"))).build(),
             ],
             &walked(),
         )

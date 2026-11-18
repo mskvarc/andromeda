@@ -237,8 +237,8 @@ mod tests {
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::ConsideredEntities,
-        filter::path::AttrPath,
-        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        filter::value_path::ValuePath,
+        ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::{PageStart, PageWindow},
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -296,9 +296,9 @@ mod tests {
     #[test]
     fn a_geo_query_under_an_ordering_keeps_the_plain_page() {
         let mut query = sensors_within_square();
-        query.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
-            direction: OrderDirection::Asc,
+        query.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         assert!(matches!(shape_of(&query, &first_page(), CountPolicy::Omit), PageShape::Plain));

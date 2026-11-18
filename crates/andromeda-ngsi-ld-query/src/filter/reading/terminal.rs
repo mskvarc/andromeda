@@ -1,6 +1,6 @@
 //! What a Query Term's path ends on.
 
-use crate::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::TargetLanguage, trailing_path::MemberPath};
+use crate::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::TargetLanguage, trailing_group::MemberPath};
 use langtag::LangTagBuf;
 
 /// The target a path reaches at the last instance it walks to.

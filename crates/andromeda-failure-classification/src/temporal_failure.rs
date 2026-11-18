@@ -52,7 +52,7 @@ mod tests {
     use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::query_error::QueryError;
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_ngsi_ld_request::{error::ParameterError, unsupported_representation::UnsupportedRepresentation};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;

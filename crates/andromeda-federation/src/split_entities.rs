@@ -1,7 +1,7 @@
 //! What `splitEntities` resolves to for one request or subscription.
 
 use andromeda_configuration::schema::federation::query::SplitEntitiesDefault;
-use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+use andromeda_ngsi_ld_query::scope::scope_query::ScopeQuery;
 
 /// What one request or subscription resolved `splitEntities` to (clauses
 /// 4.3.6.7, 5.7.2.4 and 5.7.4.4).
@@ -54,7 +54,7 @@ pub const fn resolve_split_entities(default: SplitEntitiesDefault, explicit: Opt
 mod tests {
     use crate::split_entities::{SplitEntities, resolve_split_entities};
     use andromeda_configuration::schema::federation::query::SplitEntitiesDefault;
-    use andromeda_ngsi_ld_query::{error::QueryError, scope::query::ScopeQuery};
+    use andromeda_ngsi_ld_query::{query_error::QueryError, scope::scope_query::ScopeQuery};
 
     #[test]
     fn an_explicit_split_entities_wins_and_an_absent_one_takes_the_default() {

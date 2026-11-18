@@ -31,8 +31,8 @@ use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
-    projection::{compiled::Projection, returned_attributes::ReturnedAttributes, term::ProjectionTerm},
-    type_selection::grammar::TypeExprRaw,
+    projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm, returned_attributes::ReturnedAttributes},
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
@@ -177,7 +177,7 @@ fn name(value: &str) -> AttributeName {
     value.parse().expect("a valid attribute name")
 }
 
-fn narrowing<'a>(attrs: &'a [AttributeName], sys_attrs: SysAttrsInclusion, projection: Option<&'a Projection>) -> RetrievalNarrowing<'a> {
+fn narrowing<'a>(attrs: &'a [AttributeName], sys_attrs: SysAttrsInclusion, projection: Option<&'a ExpandedProjection>) -> RetrievalNarrowing<'a> {
     RetrievalNarrowing {
         entity_type: None,
         attrs,
@@ -277,8 +277,8 @@ async fn attrs_naming_no_attribute_of_the_entity_is_not_found() {
 /// still the answer.
 #[tokio::test]
 async fn a_pick_keeping_only_the_id_answers_with_an_entity_without_attributes() {
-    let projection = Projection {
-        pick: vec![ProjectionTerm::Id],
+    let projection = ExpandedProjection {
+        pick: vec![ExpandedProjectionTerm::Id],
         omit: Vec::new(),
     };
     let entity = retrieve(&narrowing(&[], SysAttrsInclusion::Strip, Some(&projection))).await.expect("retrieved");
@@ -290,8 +290,8 @@ async fn a_pick_keeping_only_the_id_answers_with_an_entity_without_attributes() 
 /// leaves nothing to answer with.
 #[tokio::test]
 async fn a_pick_naming_nothing_the_entity_has_is_not_found() {
-    let projection = Projection {
-        pick: vec![ProjectionTerm::Attribute {
+    let projection = ExpandedProjection {
+        pick: vec![ExpandedProjectionTerm::Attribute {
             iri: "https://example.com/brand".parse().expect("valid IRI"),
             linked: Vec::new(),
         }],
@@ -307,7 +307,7 @@ async fn a_pick_naming_nothing_the_entity_has_is_not_found() {
 /// not the target.
 #[tokio::test]
 async fn an_entity_outside_the_type_selector_is_not_found() {
-    let building = TypeExprRaw::Type("Building".parse().expect("a valid type name"));
+    let building = WrittenTypeSelection::Type("Building".parse().expect("a valid type name"));
     let outside = RetrievalNarrowing {
         entity_type: Some(&building),
         ..narrowing(&[], SysAttrsInclusion::Strip, None)
@@ -315,7 +315,7 @@ async fn an_entity_outside_the_type_selector_is_not_found() {
     let error = retrieve(&outside).await.expect_err("not found");
     assert!(matches!(error, EntityError::NotFound { .. }), "{error}");
 
-    let vehicle = TypeExprRaw::Type("Vehicle".parse().expect("a valid type name"));
+    let vehicle = WrittenTypeSelection::Type("Vehicle".parse().expect("a valid type name"));
     let inside = RetrievalNarrowing {
         entity_type: Some(&vehicle),
         ..narrowing(&[], SysAttrsInclusion::Strip, None)

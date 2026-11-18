@@ -21,13 +21,13 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
     projection::{
         exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
-        grammar::RawProjectionTerm,
+        written_projection_term::WrittenProjectionTerm,
     },
-    type_selection::grammar::TypeExprRaw,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use andromeda_ngsi_ld_representation::{
     join_mode::JoinMode,
@@ -48,7 +48,7 @@ pub struct AppendParams {
     /// The clause 4.17 selector the target entity's types must satisfy
     /// (Table 6.6.3.1-1 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
@@ -80,7 +80,7 @@ impl AppendParams {
 pub struct AttributeWriteParams {
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }
@@ -107,7 +107,7 @@ pub struct MergeParams {
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// Whether the operation is confined to this broker (clause 5.5.13).
     pub local: Option<bool>,
 }
@@ -150,7 +150,7 @@ pub struct GetEntityParams {
     /// (Table 6.5.3.1-1 `type`): clause 5.7.1.4 knows the target only as an
     /// entity "whose id (URI), and where specified type, is equivalent".
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
@@ -161,11 +161,11 @@ pub struct GetEntityParams {
     /// Members the response is narrowed to (clause 4.21 `pick`), each term
     /// carrying whatever clause 4.21 sub-projection it was written with.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Members the response drops (clause 4.21 `omit`), each term carrying
     /// whatever clause 4.21 sub-projection it was written with.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Clause-4.15 natural-language selection preferences.
     #[serde(default)]
     pub lang: Option<LanguageFilter>,
@@ -451,7 +451,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].name.as_str(), "linkedTo");
         pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["category"]);
         pretty_assertions::assert_eq!(terms[1].name.as_str(), "id");
-        assert_eq!(terms[1].linked, [] as [RawProjectionTerm; 0]);
+        assert_eq!(terms[1].linked, [] as [WrittenProjectionTerm; 0]);
     }
 
     /// No clause forbids `pick` beside `omit`; Table 6.5.3.1-1 defines them
@@ -564,7 +564,7 @@ mod tests {
         pretty_assertions::assert_eq!(params.representation().expect("simplified is a merge input"), MergeRepresentation::Simplified);
         pretty_assertions::assert_eq!(params.lang.as_ref().map(ToString::to_string).as_deref(), Some("de"));
         pretty_assertions::assert_eq!(params.observed_at.map(|observed| observed.to_string()).as_deref(), Some("2024-01-01T00:00:00Z"));
-        assert!(matches!(params.entity_type, Some(TypeExprRaw::Type(ref name)) if name.as_str() == "Vehicle"));
+        assert!(matches!(params.entity_type, Some(WrittenTypeSelection::Type(ref name)) if name.as_str() == "Vehicle"));
         pretty_assertions::assert_eq!(params.local, Some(true));
     }
 

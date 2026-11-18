@@ -12,9 +12,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected { at position 1"
 "daasetId"
-  accepted Path(AttrPath { attr: AttributeName("daasetId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("daasetId"), sub_attributes: [], trailing: None })
 "datasetIdZ"
-  accepted Path(AttrPath { attr: AttributeName("datasetIdZ"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datasetIdZ"), sub_attributes: [], trailing: None })
 "unitCode"
   accepted Member(UnitCode)
 "unitCod|"
@@ -22,7 +22,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected | at position 1"
 "unitCod\t"
-  accepted Path(AttrPath { attr: AttributeName("unitCod"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCod"), sub_attributes: [], trailing: None })
 "uni{Code"
   refused QUnexpectedToken { position: 1, token: Token(LBrace) }
   variant QUnexpectedToken
@@ -32,25 +32,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '+' at position 7"
 "speed"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None })
 "peed"
-  accepted Path(AttrPath { attr: AttributeName("peed"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("peed"), sub_attributes: [], trailing: None })
 "speed!"
   refused QUnexpectedChar { ch: '!', position: 5 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '!' at position 5"
 "seed"
-  accepted Path(AttrPath { attr: AttributeName("seed"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("seed"), sub_attributes: [], trailing: None })
 "s0peed"
-  accepted Path(AttrPath { attr: AttributeName("s0peed"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("s0peed"), sub_attributes: [], trailing: None })
 "address[city]"
-  accepted Path(AttrPath { attr: AttributeName("address"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("address"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "ad*dress[city]"
   refused QUnexpectedToken { position: 1, token: Token(Star) }
   variant QUnexpectedToken
   detail "q expression: unexpected * at position 1"
 "addres[city]"
-  accepted Path(AttrPath { attr: AttributeName("addres"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("addres"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "ad|dress[city]"
   refused QUnexpectedToken { position: 1, token: Token(Pipe) }
   variant QUnexpectedToken
@@ -60,33 +60,33 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '@' at position 5"
 "refDevice.category"
-  accepted Path(AttrPath { attr: AttributeName("refDevice"), sub_attrs: [AttributeName("category")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("refDevice"), sub_attributes: [AttributeName("category")], trailing: None })
 "refDe%vice.category"
   refused QUnexpectedChar { ch: '%', position: 5 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '%' at position 5"
 "refDevice.ategory"
-  accepted Path(AttrPath { attr: AttributeName("refDevice"), sub_attrs: [AttributeName("ategory")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("refDevice"), sub_attributes: [AttributeName("ategory")], trailing: None })
 "refDevice.;ategory"
   refused QExpected { expected: Token(Ident), found: Token(Semi) }
   variant QExpected
   detail "q expression: expected identifier, found ;"
 "refDevic.category"
-  accepted Path(AttrPath { attr: AttributeName("refDevic"), sub_attrs: [AttributeName("category")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("refDevic"), sub_attributes: [AttributeName("category")], trailing: None })
 "datasetId.foo"
-  accepted Path(AttrPath { attr: AttributeName("datasetId"), sub_attrs: [AttributeName("foo")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datasetId"), sub_attributes: [AttributeName("foo")], trailing: None })
 "datase Id.foo"
   refused QUnexpectedToken { position: 1, token: Token(Ident) }
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "dataseId.foo"
-  accepted Path(AttrPath { attr: AttributeName("dataseId"), sub_attrs: [AttributeName("foo")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("dataseId"), sub_attributes: [AttributeName("foo")], trailing: None })
 "=atasetId.foo"
   refused QUnexpectedChar { ch: '=', position: 0 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '=' at position 0"
 "datsetId.foo"
-  accepted Path(AttrPath { attr: AttributeName("datsetId"), sub_attrs: [AttributeName("foo")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datsetId"), sub_attributes: [AttributeName("foo")], trailing: None })
 "a["
   refused QExpected { expected: Token(Ident), found: EndOfInput }
   variant QExpected
@@ -100,7 +100,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found ."
 "a"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None })
 "a[-"
   refused QUnexpectedChar { ch: '-', position: 2 }
   variant QUnexpectedChar
@@ -186,9 +186,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found >"
 " speed "
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None })
 " sped "
-  accepted Path(AttrPath { attr: AttributeName("sped"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("sped"), sub_attributes: [], trailing: None })
 " speed# "
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -208,9 +208,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected } at position 1"
 "id9"
-  accepted Path(AttrPath { attr: AttributeName("id9"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("id9"), sub_attributes: [], trailing: None })
 "d"
-  accepted Path(AttrPath { attr: AttributeName("d"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("d"), sub_attributes: [], trailing: None })
 "i>d"
   refused QUnexpectedToken { position: 1, token: Token(Gt) }
   variant QUnexpectedToken
@@ -226,7 +226,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected { at position 1"
 "tye"
-  accepted Path(AttrPath { attr: AttributeName("tye"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("tye"), sub_attributes: [], trailing: None })
 "<type"
   refused QExpected { expected: Token(Ident), found: Token(Lt) }
   variant QExpected
@@ -238,33 +238,33 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected { at position 1"
 "scop"
-  accepted Path(AttrPath { attr: AttributeName("scop"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scop"), sub_attributes: [], trailing: None })
 "sope"
-  accepted Path(AttrPath { attr: AttributeName("sope"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("sope"), sub_attributes: [], trailing: None })
 "scop~e"
   refused QUnexpectedChar { ch: '~', position: 4 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 4"
 "observedAt"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None })
 "obs ervedAt"
   refused QUnexpectedToken { position: 1, token: Token(Ident) }
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "obervedAt"
-  accepted Path(AttrPath { attr: AttributeName("obervedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("obervedAt"), sub_attributes: [], trailing: None })
 "oservedAt"
-  accepted Path(AttrPath { attr: AttributeName("oservedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("oservedAt"), sub_attributes: [], trailing: None })
 "observedAt9"
-  accepted Path(AttrPath { attr: AttributeName("observedAt9"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt9"), sub_attributes: [], trailing: None })
 "name[*]"
-  accepted Path(AttrPath { attr: AttributeName("name"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(AllLanguages) })
 "name[]"
   refused QExpected { expected: Token(Ident), found: Token(RBracket) }
   variant QExpected
   detail "q expression: expected identifier, found ]"
 "nae[*]"
-  accepted Path(AttrPath { attr: AttributeName("nae"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("nae"), sub_attributes: [], trailing: Some(AllLanguages) })
 "name[*"
   refused QExpected { expected: Token(RBracket), found: EndOfInput }
   variant QExpected
@@ -274,7 +274,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected ], found ;"
 "name[en-GB]"
-  accepted Path(AttrPath { attr: AttributeName("name"), sub_attrs: [], trailing: Some(Language(Tag(en-GB))) })
+  accepted Path(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(Language(Tag(en-GB))) })
 "name[en-[GB]"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -284,11 +284,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "ame[en-GB]"
-  accepted Path(AttrPath { attr: AttributeName("ame"), sub_attrs: [], trailing: Some(Language(Tag(en-GB))) })
+  accepted Path(ValuePath { attribute: AttributeName("ame"), sub_attributes: [], trailing: Some(Language(Tag(en-GB))) })
 "\"ex:q\""
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None })
 "\"ex:q#\""
-  accepted Path(AttrPath { attr: AttributeName("ex:q#"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q#"), sub_attributes: [], trailing: None })
 "ex:q\""
   refused QUnterminatedString
   variant QUnterminatedString
@@ -302,21 +302,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "DatasetId"
-  accepted Path(AttrPath { attr: AttributeName("DatasetId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("DatasetId"), sub_attributes: [], trailing: None })
 "Da:asetId"
-  accepted Path(AttrPath { attr: AttributeName("Da:asetId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("Da:asetId"), sub_attributes: [], trailing: None })
 "DatasetId:"
-  accepted Path(AttrPath { attr: AttributeName("DatasetId:"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("DatasetId:"), sub_attributes: [], trailing: None })
 "Dat~asetId"
   refused QUnexpectedChar { ch: '~', position: 3 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 3"
 "D:tasetId"
-  accepted Path(AttrPath { attr: AttributeName("D:tasetId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("D:tasetId"), sub_attributes: [], trailing: None })
 "modifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("modifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None })
 "mdifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("mdifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("mdifiedAt"), sub_attributes: [], trailing: None })
 "m#odifiedAt"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -326,21 +326,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "maodifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("maodifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("maodifiedAt"), sub_attributes: [], trailing: None })
 "ty>pe"
   refused QUnexpectedToken { position: 1, token: Token(Gt) }
   variant QUnexpectedToken
   detail "q expression: unexpected > at position 1"
 "createdAt"
-  accepted Path(AttrPath { attr: AttributeName("createdAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None })
 "createdA9"
-  accepted Path(AttrPath { attr: AttributeName("createdA9"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("createdA9"), sub_attributes: [], trailing: None })
 "éreatedAt"
-  accepted Path(AttrPath { attr: AttributeName("éreatedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("éreatedAt"), sub_attributes: [], trailing: None })
 "brandName[*]"
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(AllLanguages) })
 "brandame[*]"
-  accepted Path(AttrPath { attr: AttributeName("brandame"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("brandame"), sub_attributes: [], trailing: Some(AllLanguages) })
 "brand@Name[*]"
   refused QUnexpectedChar { ch: '@', position: 5 }
   variant QUnexpectedChar
@@ -358,21 +358,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected < at position 1"
 "moifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("moifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("moifiedAt"), sub_attributes: [], trailing: None })
 "i"
-  accepted Path(AttrPath { attr: AttributeName("i"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("i"), sub_attributes: [], trailing: None })
 "c:eatedAt"
-  accepted Path(AttrPath { attr: AttributeName("c:eatedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("c:eatedAt"), sub_attributes: [], trailing: None })
 "ceatedAt"
-  accepted Path(AttrPath { attr: AttributeName("ceatedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ceatedAt"), sub_attributes: [], trailing: None })
 "\"https://example.com/q\".a.\"https://example.com/q\""
-  accepted Path(AttrPath { attr: AttributeName("https://example.com/q"), sub_attrs: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: None })
 "\"https://example.com/q\".a.\"https\"://example.com/q\""
   refused QUnterminatedString
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "\"https://example.com/q\".a.\"h-tps://example.com/q\""
-  accepted Path(AttrPath { attr: AttributeName("https://example.com/q"), sub_attrs: [AttributeName("a"), AttributeName("h-tps://example.com/q")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("h-tps://example.com/q")], trailing: None })
 "\tex:q\""
   refused QUnterminatedString
   variant QUnterminatedString
@@ -382,15 +382,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "speed.observedAt[*]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("observedAt")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedAt")], trailing: Some(AllLanguages) })
 "speed.observedAt*]"
   refused QUnexpectedToken { position: 3, token: Token(Star) }
   variant QUnexpectedToken
   detail "q expression: unexpected * at position 3"
 "speed.observedA[*]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("observedA")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedA")], trailing: Some(AllLanguages) })
 "craeatedAt"
-  accepted Path(AttrPath { attr: AttributeName("craeatedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("craeatedAt"), sub_attributes: [], trailing: None })
 "crea;tedAt"
   refused QUnexpectedToken { position: 1, token: Token(Semi) }
   variant QUnexpectedToken
@@ -400,7 +400,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "unitCod:"
-  accepted Path(AttrPath { attr: AttributeName("unitCod:"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCod:"), sub_attributes: [], trailing: None })
 "i@"
   refused QUnexpectedChar { ch: '@', position: 1 }
   variant QUnexpectedChar
@@ -410,19 +410,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found number"
 "modfiedAt"
-  accepted Path(AttrPath { attr: AttributeName("modfiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modfiedAt"), sub_attributes: [], trailing: None })
 "modifiedt"
-  accepted Path(AttrPath { attr: AttributeName("modifiedt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modifiedt"), sub_attributes: [], trailing: None })
 "obs|rvedAt"
   refused QUnexpectedToken { position: 1, token: Token(Pipe) }
   variant QUnexpectedToken
   detail "q expression: unexpected | at position 1"
 "obsevedAt"
-  accepted Path(AttrPath { attr: AttributeName("obsevedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("obsevedAt"), sub_attributes: [], trailing: None })
 "deletedAt"
-  accepted Path(AttrPath { attr: AttributeName("deletedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None })
 "deletedA"
-  accepted Path(AttrPath { attr: AttributeName("deletedA"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deletedA"), sub_attributes: [], trailing: None })
 "de)etedAt"
   refused QUnexpectedToken { position: 1, token: Token(RParen) }
   variant QUnexpectedToken
@@ -432,11 +432,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "observedét"
-  accepted Path(AttrPath { attr: AttributeName("observedét"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedét"), sub_attributes: [], trailing: None })
 "\"ex:q\".observedAt"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("observedAt")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt")], trailing: None })
 "\"ex:q\".bservedAt"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("bservedAt")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("bservedAt")], trailing: None })
 "\"ex:q\".obs<ervedAt"
   refused QUnexpectedToken { position: 3, token: Token(Lt) }
   variant QUnexpectedToken
@@ -450,27 +450,27 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found ]"
 "brandName.observedAt.\"https://example.com/q\""
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("observedAt"), AttributeName("https://example.com/q")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("observedAt"), AttributeName("https://example.com/q")], trailing: None })
 "brandName.observedAt.\"https:#/example.com/q\""
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("observedAt"), AttributeName("https:#/example.com/q")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("observedAt"), AttributeName("https:#/example.com/q")], trailing: None })
 "brandName.observedAt.\"https://exampéle.com/q\""
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("observedAt"), AttributeName("https://exampéle.com/q")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("observedAt"), AttributeName("https://exampéle.com/q")], trailing: None })
 "%modifiedAt"
   refused QUnexpectedChar { ch: '%', position: 0 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '%' at position 0"
 "ZmodifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("ZmodifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ZmodifiedAt"), sub_attributes: [], trailing: None })
 "x_1[*]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(AllLanguages) })
 "x_[*]"
-  accepted Path(AttrPath { attr: AttributeName("x_"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("x_"), sub_attributes: [], trailing: Some(AllLanguages) })
 "x_1[*~"
   refused QUnexpectedChar { ch: '~', position: 5 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 5"
 "\"ex:q\".\"ex:q\".speed[*]"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(AllLanguages) })
 "\"ex:q\".\"ex:q\".spe;d[*]"
   refused QUnexpectedToken { position: 5, token: Token(Semi) }
   variant QUnexpectedToken
@@ -480,7 +480,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "speed.speed.ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("speed"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("speed"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "speed.spee<.ex:name[*]"
   refused QUnexpectedToken { position: 3, token: Token(Lt) }
   variant QUnexpectedToken
@@ -490,41 +490,41 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '\\' at position 2"
 "speed[*]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(AllLanguages) })
 "speed*]"
   refused QUnexpectedToken { position: 1, token: Token(Star) }
   variant QUnexpectedToken
   detail "q expression: unexpected * at position 1"
 "sped[*]"
-  accepted Path(AttrPath { attr: AttributeName("sped"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("sped"), sub_attributes: [], trailing: Some(AllLanguages) })
 "scoape"
-  accepted Path(AttrPath { attr: AttributeName("scoape"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scoape"), sub_attributes: [], trailing: None })
 "scpe"
-  accepted Path(AttrPath { attr: AttributeName("scpe"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scpe"), sub_attributes: [], trailing: None })
 "observedA"
-  accepted Path(AttrPath { attr: AttributeName("observedA"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedA"), sub_attributes: [], trailing: None })
 "speed[en]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "speed[en"
   refused QExpected { expected: Token(RBracket), found: EndOfInput }
   variant QExpected
   detail "q expression: expected ], found end of input"
 "speed[e]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
 "a.brandName[city.city]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) })
 "a.brandName city.city]"
   refused QUnexpectedToken { position: 3, token: Token(Ident) }
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 3"
 "a.brandName[city.ity]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("ity")], written: [AttributeName("city"), AttributeName("ity")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("ity")], written: [AttributeName("city"), AttributeName("ity")] })) })
 "cratedAt"
-  accepted Path(AttrPath { attr: AttributeName("cratedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("cratedAt"), sub_attributes: [], trailing: None })
 "reatedAt"
-  accepted Path(AttrPath { attr: AttributeName("reatedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("reatedAt"), sub_attributes: [], trailing: None })
 "a.a[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("a")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a")], trailing: Some(AllLanguages) })
 "a=a[*]"
   refused QUnexpectedChar { ch: '=', position: 1 }
   variant QUnexpectedChar
@@ -542,19 +542,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 2"
 "deZetedAt"
-  accepted Path(AttrPath { attr: AttributeName("deZetedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deZetedAt"), sub_attributes: [], trailing: None })
 "deletedA-t"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "deletedét"
-  accepted Path(AttrPath { attr: AttributeName("deletedét"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deletedét"), sub_attributes: [], trailing: None })
 "de<letedAt"
   refused QUnexpectedToken { position: 1, token: Token(Lt) }
   variant QUnexpectedToken
   detail "q expression: unexpected < at position 1"
 "observedAt[*]"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(AllLanguages) })
 "ob]servedAt[*]"
   refused QUnexpectedToken { position: 1, token: Token(RBracket) }
   variant QUnexpectedToken
@@ -578,15 +578,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "ex:name"
-  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: None })
 "ex:nae"
-  accepted Path(AttrPath { attr: AttributeName("ex:nae"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:nae"), sub_attributes: [], trailing: None })
 "~ex:name"
   refused QUnexpectedChar { ch: '~', position: 0 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 0"
 "a.observedAt.observedAt"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: None })
 "a.observedAt.ob)ervedAt"
   refused QUnexpectedToken { position: 5, token: Token(RParen) }
   variant QUnexpectedToken
@@ -596,7 +596,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ( at position 5"
 "a[b.b]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) })
 "a[b.;]"
   refused QExpected { expected: Token(Ident), found: Token(Semi) }
   variant QExpected
@@ -606,7 +606,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found ]"
 "ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(AllLanguages) })
 "ex:na*e[*]"
   refused QUnexpectedToken { position: 1, token: Token(Star) }
   variant QUnexpectedToken
@@ -616,7 +616,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected } at position 1"
 "m.difiedAt"
-  accepted Path(AttrPath { attr: AttributeName("m"), sub_attrs: [AttributeName("difiedAt")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("m"), sub_attributes: [AttributeName("difiedAt")], trailing: None })
 "modified~At"
   refused QUnexpectedChar { ch: '~', position: 8 }
   variant QUnexpectedChar
@@ -630,29 +630,29 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ( at position 1"
 "x_1[b]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "xZ1[b]"
-  accepted Path(AttrPath { attr: AttributeName("xZ1"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("xZ1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "x_9[b]"
-  accepted Path(AttrPath { attr: AttributeName("x_9"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x_9"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "unitCod"
-  accepted Path(AttrPath { attr: AttributeName("unitCod"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCod"), sub_attributes: [], trailing: None })
 "uniCode"
-  accepted Path(AttrPath { attr: AttributeName("uniCode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("uniCode"), sub_attributes: [], trailing: None })
 "dataseId"
-  accepted Path(AttrPath { attr: AttributeName("dataseId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("dataseId"), sub_attributes: [], trailing: None })
 "datasetd"
-  accepted Path(AttrPath { attr: AttributeName("datasetd"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datasetd"), sub_attributes: [], trailing: None })
 ":atasetId"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "obseévedAt"
-  accepted Path(AttrPath { attr: AttributeName("obseévedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("obseévedAt"), sub_attributes: [], trailing: None })
 "observedAt.x_1"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("x_1")], trailing: None })
 "observedA.t.x_1"
-  accepted Path(AttrPath { attr: AttributeName("observedA"), sub_attrs: [AttributeName("t"), AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedA"), sub_attributes: [AttributeName("t"), AttributeName("x_1")], trailing: None })
 "ob[servedAt.x_1"
   refused QExpected { expected: Token(RBracket), found: EndOfInput }
   variant QExpected
@@ -666,7 +666,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '\\' at position 4"
 "scoZe"
-  accepted Path(AttrPath { attr: AttributeName("scoZe"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scoZe"), sub_attributes: [], trailing: None })
 "observ(edAt"
   refused QUnexpectedToken { position: 1, token: Token(LParen) }
   variant QUnexpectedToken
@@ -676,13 +676,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '+' at position 4"
 "x_1"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: None })
 "x_1\""
   refused QUnterminatedString
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "a_1"
-  accepted Path(AttrPath { attr: AttributeName("a_1"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("a_1"), sub_attributes: [], trailing: None })
 "mod\\fiedAt"
   refused QUnexpectedChar { ch: '\\', position: 3 }
   variant QUnexpectedChar
@@ -692,9 +692,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found >"
 "ype"
-  accepted Path(AttrPath { attr: AttributeName("ype"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ype"), sub_attributes: [], trailing: None })
 "scop:"
-  accepted Path(AttrPath { attr: AttributeName("scop:"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scop:"), sub_attributes: [], trailing: None })
 "data!setId"
   refused QUnexpectedChar { ch: '!', position: 4 }
   variant QUnexpectedChar
@@ -716,15 +716,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '!' at position 2"
 "étype"
-  accepted Path(AttrPath { attr: AttributeName("étype"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("étype"), sub_attributes: [], trailing: None })
 "speed.a.ex:name[city]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("a"), AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a"), AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "speed}.a.ex:name[city]"
   refused QUnexpectedToken { position: 1, token: Token(RBrace) }
   variant QUnexpectedToken
   detail "q expression: unexpected } at position 1"
 "speed.a.ex:ame[city]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("a"), AttributeName("ex:ame")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a"), AttributeName("ex:ame")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "scope\\"
   refused QUnexpectedChar { ch: '\\', position: 5 }
   variant QUnexpectedChar
@@ -742,31 +742,31 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected | at position 1"
 "oabservedAt"
-  accepted Path(AttrPath { attr: AttributeName("oabservedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("oabservedAt"), sub_attributes: [], trailing: None })
 "obser+vedAt"
   refused QUnexpectedChar { ch: '+', position: 5 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '+' at position 5"
 "a.x_1"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1")], trailing: None })
 "a.x_:1"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_:1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_:1")], trailing: None })
 "a.x_("
   refused QUnexpectedToken { position: 3, token: Token(LParen) }
   variant QUnexpectedToken
   detail "q expression: unexpected ( at position 3"
 "observedAt.ex:name[en.b]"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
 "observedt.ex:name[en.b]"
-  accepted Path(AttrPath { attr: AttributeName("observedt"), sub_attrs: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("observedt"), sub_attributes: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
 "observedAt.ex:name[en.,b]"
   refused QExpected { expected: Token(Ident), found: Token(Comma) }
   variant QExpected
   detail "q expression: expected identifier, found ,"
 "dletedAt"
-  accepted Path(AttrPath { attr: AttributeName("dletedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("dletedAt"), sub_attributes: [], trailing: None })
 "deetedAt"
-  accepted Path(AttrPath { attr: AttributeName("deetedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deetedAt"), sub_attributes: [], trailing: None })
 "delete)dAt"
   refused QUnexpectedToken { position: 1, token: Token(RParen) }
   variant QUnexpectedToken
@@ -780,9 +780,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ; at position 1"
 "unitCZode"
-  accepted Path(AttrPath { attr: AttributeName("unitCZode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCZode"), sub_attributes: [], trailing: None })
 "\"ex:q\".ex:name"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("ex:name")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:name")], trailing: None })
 "\"ex:q\".ex:nam,e"
   refused QUnexpectedToken { position: 3, token: Token(Comma) }
   variant QUnexpectedToken
@@ -796,7 +796,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '=' at position 1"
 "ex:nam"
-  accepted Path(AttrPath { attr: AttributeName("ex:nam"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:nam"), sub_attributes: [], trailing: None })
 "(bservedAt"
   refused QExpected { expected: Token(Ident), found: Token(LParen) }
   variant QExpected
@@ -810,23 +810,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 7"
 "speed.x_1[b]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "speed.x_1[b"
   refused QExpected { expected: Token(RBracket), found: EndOfInput }
   variant QExpected
   detail "q expression: expected ], found end of input"
 "speed.é_1[b]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("é_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("é_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "unitCod9"
-  accepted Path(AttrPath { attr: AttributeName("unitCod9"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCod9"), sub_attributes: [], trailing: None })
 "nitCode"
-  accepted Path(AttrPath { attr: AttributeName("nitCode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("nitCode"), sub_attributes: [], trailing: None })
 "unitC.ode"
-  accepted Path(AttrPath { attr: AttributeName("unitC"), sub_attrs: [AttributeName("ode")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitC"), sub_attributes: [AttributeName("ode")], trailing: None })
 "unitCodeZ"
-  accepted Path(AttrPath { attr: AttributeName("unitCodeZ"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCodeZ"), sub_attributes: [], trailing: None })
 "brandName.x_1.x_1"
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("x_1"), AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: None })
 "brandName.x_1.x_1*"
   refused QUnexpectedToken { position: 5, token: Token(Star) }
   variant QUnexpectedToken
@@ -844,15 +844,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '+' at position 1"
 "x_1.\"ex:q\"[*]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
 "x_1Z.\"ex:q\"[*]"
-  accepted Path(AttrPath { attr: AttributeName("x_1Z"), sub_attrs: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1Z"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
 "x_1<.\"ex:q\"[*]"
   refused QUnexpectedToken { position: 1, token: Token(Lt) }
   variant QUnexpectedToken
   detail "q expression: unexpected < at position 1"
 "cope"
-  accepted Path(AttrPath { attr: AttributeName("cope"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("cope"), sub_attributes: [], trailing: None })
 "observe<At"
   refused QUnexpectedToken { position: 1, token: Token(Lt) }
   variant QUnexpectedToken
@@ -866,7 +866,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "datastId"
-  accepted Path(AttrPath { attr: AttributeName("datastId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datastId"), sub_attributes: [], trailing: None })
 "datasetI/"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -888,19 +888,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected * at position 1"
 "\"ex:q\".brandName.x_1"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
 "\"exq\".brandName.x_1"
-  accepted Path(AttrPath { attr: AttributeName("exq"), sub_attrs: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("exq"), sub_attributes: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
 "\"ex:q\".brandNme.x_1"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("brandNme"), AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandNme"), AttributeName("x_1")], trailing: None })
 "observedAt.a"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("a")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: None })
 "observedAt9a"
-  accepted Path(AttrPath { attr: AttributeName("observedAt9a"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt9a"), sub_attributes: [], trailing: None })
 "observedt.a"
-  accepted Path(AttrPath { attr: AttributeName("observedt"), sub_attrs: [AttributeName("a")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observedt"), sub_attributes: [AttributeName("a")], trailing: None })
 "ex:name.brandName.ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [AttributeName("brandName"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [AttributeName("brandName"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "ex:name.brandName.ex:na+e[*]"
   refused QUnexpectedChar { ch: '+', position: 23 }
   variant QUnexpectedChar
@@ -934,15 +934,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected , at position 1"
 "i0d"
-  accepted Path(AttrPath { attr: AttributeName("i0d"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("i0d"), sub_attributes: [], trailing: None })
 "-type"
   refused QUnexpectedChar { ch: '-', position: 0 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '-' at position 0"
 "id0"
-  accepted Path(AttrPath { attr: AttributeName("id0"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("id0"), sub_attributes: [], trailing: None })
 "i0"
-  accepted Path(AttrPath { attr: AttributeName("i0"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("i0"), sub_attributes: [], trailing: None })
 "id."
   refused QExpected { expected: Token(Ident), found: EndOfInput }
   variant QExpected
@@ -952,9 +952,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected { at position 1"
 "scoe"
-  accepted Path(AttrPath { attr: AttributeName("scoe"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scoe"), sub_attributes: [], trailing: None })
 "ex:name.a.speed"
-  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [AttributeName("a"), AttributeName("speed")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [AttributeName("a"), AttributeName("speed")], trailing: None })
 "e+:name.a.speed"
   refused QUnexpectedChar { ch: '+', position: 1 }
   variant QUnexpectedChar
@@ -968,7 +968,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ( at position 1"
 "un:tCode"
-  accepted Path(AttrPath { attr: AttributeName("un:tCode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("un:tCode"), sub_attributes: [], trailing: None })
 "delete)At"
   refused QUnexpectedToken { position: 1, token: Token(RParen) }
   variant QUnexpectedToken
@@ -990,9 +990,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "speed.brandName[en.city]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
 "speed.brandNae[en.city]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("brandNae")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandNae")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
 "speed.brandName}[en.city]"
   refused QUnexpectedToken { position: 3, token: Token(RBrace) }
   variant QUnexpectedToken
@@ -1002,7 +1002,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '#' at position 0"
 "exname[*]"
-  accepted Path(AttrPath { attr: AttributeName("exname"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("exname"), sub_attributes: [], trailing: Some(AllLanguages) })
 "ex:name[*#"
   refused QUnexpectedChar { ch: '#', position: 9 }
   variant QUnexpectedChar
@@ -1016,7 +1016,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '%' at position 9"
 "brandName.a.x_1"
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("a"), AttributeName("x_1")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("x_1")], trailing: None })
 "br\tandName.a.x_1"
   refused QUnexpectedToken { position: 1, token: Token(Ident) }
   variant QUnexpectedToken
@@ -1038,13 +1038,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "x_1.brandName[en]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "x_1.brandName[e]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
 "x1.brandName[en]"
-  accepted Path(AttrPath { attr: AttributeName("x1"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x1"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "observedAt.observedAt.observedAt[en]"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "(bservedAt.observedAt.observedAt[en]"
   refused QExpected { expected: Token(Ident), found: Token(LParen) }
   variant QExpected
@@ -1054,11 +1054,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "del:tedAt"
-  accepted Path(AttrPath { attr: AttributeName("del:tedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("del:tedAt"), sub_attributes: [], trailing: None })
 "unitCoe"
-  accepted Path(AttrPath { attr: AttributeName("unitCoe"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCoe"), sub_attributes: [], trailing: None })
 "uniétCode"
-  accepted Path(AttrPath { attr: AttributeName("uniétCode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("uniétCode"), sub_attributes: [], trailing: None })
 "crea!edAt"
   refused QUnexpectedChar { ch: '!', position: 4 }
   variant QUnexpectedChar
@@ -1068,17 +1068,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "deltedAt"
-  accepted Path(AttrPath { attr: AttributeName("deltedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deltedAt"), sub_attributes: [], trailing: None })
 "a.\"https://example.com/q\".ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("https://example.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "a.\"https://exampe.com/q\".ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("https://exampe.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://exampe.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "a\"https://example.com/q\".ex:name[*]"
   refused QUnexpectedToken { position: 1, token: Token(QuotedStr) }
   variant QUnexpectedToken
   detail "q expression: unexpected quoted string at position 1"
 "modifiedA"
-  accepted Path(AttrPath { attr: AttributeName("modifiedA"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modifiedA"), sub_attributes: [], trailing: None })
 "mo,ifiedAt"
   refused QUnexpectedToken { position: 1, token: Token(Comma) }
   variant QUnexpectedToken
@@ -1092,19 +1092,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 7"
 "dtasetId"
-  accepted Path(AttrPath { attr: AttributeName("dtasetId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("dtasetId"), sub_attributes: [], trailing: None })
 "dat}setId"
   refused QUnexpectedToken { position: 1, token: Token(RBrace) }
   variant QUnexpectedToken
   detail "q expression: unexpected } at position 1"
 "typ"
-  accepted Path(AttrPath { attr: AttributeName("typ"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("typ"), sub_attributes: [], trailing: None })
 "type%"
   refused QUnexpectedChar { ch: '%', position: 4 }
   variant QUnexpectedChar
   detail "q expression: unexpected character '%' at position 4"
 "a.speed[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("speed")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) })
 "a.sp\\eed[*]"
   refused QUnexpectedChar { ch: '\\', position: 4 }
   variant QUnexpectedChar
@@ -1114,13 +1114,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected ], found ,"
 "\"ex:q\".\"https://example.com/q\".\"https://example.com/q\"[*]"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) })
 "\"ex:q\".\"https://example.com/q\".\"https://exam ple.com/q\"[*]"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\".\"https://example.com/q\".\"https://example.co/q\"[*]"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("https://example.com/q"), AttributeName("https://example.co/q")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("https://example.co/q")], trailing: Some(AllLanguages) })
 ":observedAt"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -1134,11 +1134,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '~' at position 0"
 "scop9"
-  accepted Path(AttrPath { attr: AttributeName("scop9"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scop9"), sub_attributes: [], trailing: None })
 "scape"
-  accepted Path(AttrPath { attr: AttributeName("scape"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("scape"), sub_attributes: [], trailing: None })
 "a[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(AllLanguages) })
 "a*]"
   refused QUnexpectedToken { position: 1, token: Token(Star) }
   variant QUnexpectedToken
@@ -1148,23 +1148,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found ["
 "unitéCode"
-  accepted Path(AttrPath { attr: AttributeName("unitéCode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitéCode"), sub_attributes: [], trailing: None })
 "un{tCode"
   refused QUnexpectedToken { position: 1, token: Token(LBrace) }
   variant QUnexpectedToken
   detail "q expression: unexpected { at position 1"
 "\tmodifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("modifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None })
 "modifiaedAt"
-  accepted Path(AttrPath { attr: AttributeName("modifiaedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modifiaedAt"), sub_attributes: [], trailing: None })
 "*nitCode"
   refused QExpected { expected: Token(Ident), found: Token(Star) }
   variant QExpected
   detail "q expression: expected identifier, found *"
 "unitCodea"
-  accepted Path(AttrPath { attr: AttributeName("unitCodea"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unitCodea"), sub_attributes: [], trailing: None })
 "\"ex:q\"[*]"
-  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(AllLanguages) })
 "\"ex\":q\"[*]"
   refused QUnterminatedString
   variant QUnterminatedString
@@ -1182,19 +1182,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected identifier, found {"
 "a.sped[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("sped")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("sped")], trailing: Some(AllLanguages) })
 "i|"
   refused QUnexpectedToken { position: 1, token: Token(Pipe) }
   variant QUnexpectedToken
   detail "q expression: unexpected | at position 1"
 "\td"
-  accepted Path(AttrPath { attr: AttributeName("d"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("d"), sub_attributes: [], trailing: None })
 "deleted[t"
   refused QExpected { expected: Token(RBracket), found: EndOfInput }
   variant QExpected
   detail "q expression: expected ], found end of input"
 "deleteAt"
-  accepted Path(AttrPath { attr: AttributeName("deleteAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deleteAt"), sub_attributes: [], trailing: None })
 "o*servedAt"
   refused QUnexpectedToken { position: 1, token: Token(Star) }
   variant QUnexpectedToken
@@ -1204,13 +1204,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '@' at position 0"
 "iéd"
-  accepted Path(AttrPath { attr: AttributeName("iéd"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("iéd"), sub_attributes: [], trailing: None })
 "i/"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "tyépe"
-  accepted Path(AttrPath { attr: AttributeName("tyépe"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("tyépe"), sub_attributes: [], trailing: None })
 "9type"
   refused QExpected { expected: Token(Ident), found: Token(NumberLit) }
   variant QExpected
@@ -1224,7 +1224,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "datase0Id"
-  accepted Path(AttrPath { attr: AttributeName("datase0Id"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datase0Id"), sub_attributes: [], trailing: None })
 "da\\asetId"
   refused QUnexpectedChar { ch: '\\', position: 2 }
   variant QUnexpectedChar
@@ -1234,7 +1234,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "t9ype"
-  accepted Path(AttrPath { attr: AttributeName("t9ype"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("t9ype"), sub_attributes: [], trailing: None })
 "typ]e"
   refused QUnexpectedToken { position: 1, token: Token(RBracket) }
   variant QUnexpectedToken
@@ -1256,21 +1256,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected > at position 1"
 "aid"
-  accepted Path(AttrPath { attr: AttributeName("aid"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("aid"), sub_attributes: [], trailing: None })
 "dataetId"
-  accepted Path(AttrPath { attr: AttributeName("dataetId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("dataetId"), sub_attributes: [], trailing: None })
 "sco9e"
-  accepted Path(AttrPath { attr: AttributeName("sco9e"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("sco9e"), sub_attributes: [], trailing: None })
 "obse.vedAt"
-  accepted Path(AttrPath { attr: AttributeName("obse"), sub_attrs: [AttributeName("vedAt")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("obse"), sub_attributes: [AttributeName("vedAt")], trailing: None })
 "obs{rvedAt"
   refused QUnexpectedToken { position: 1, token: Token(LBrace) }
   variant QUnexpectedToken
   detail "q expression: unexpected { at position 1"
 "modiiedAt"
-  accepted Path(AttrPath { attr: AttributeName("modiiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("modiiedAt"), sub_attributes: [], trailing: None })
 "odifiedAt"
-  accepted Path(AttrPath { attr: AttributeName("odifiedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("odifiedAt"), sub_attributes: [], trailing: None })
 ",type"
   refused QExpected { expected: Token(Ident), found: Token(Comma) }
   variant QExpected
@@ -1280,15 +1280,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "a.x_1.ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_1"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "a._1.ex:name[*]"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a.x_.ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "observe.At"
-  accepted Path(AttrPath { attr: AttributeName("observe"), sub_attrs: [AttributeName("At")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("observe"), sub_attributes: [AttributeName("At")], trailing: None })
 "observe>dAt"
   refused QUnexpectedToken { position: 1, token: Token(Gt) }
   variant QUnexpectedToken
@@ -1298,9 +1298,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "obsrvedAt"
-  accepted Path(AttrPath { attr: AttributeName("obsrvedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("obsrvedAt"), sub_attributes: [], trailing: None })
 "brandName.\"ex:q\""
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("ex:q")], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("ex:q")], trailing: None })
 "brandName.ex:q\""
   refused QUnterminatedString
   variant QUnterminatedString
@@ -1314,7 +1314,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '=' at position 3"
 "éscope"
-  accepted Path(AttrPath { attr: AttributeName("éscope"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("éscope"), sub_attributes: [], trailing: None })
 "{cope"
   refused QExpected { expected: Token(Ident), found: Token(LBrace) }
   variant QExpected
@@ -1328,7 +1328,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '%' at position 0"
 "datasetéId"
-  accepted Path(AttrPath { attr: AttributeName("datasetéId"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("datasetéId"), sub_attributes: [], trailing: None })
 "/modifiedAt"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -1350,33 +1350,33 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "tpe"
-  accepted Path(AttrPath { attr: AttributeName("tpe"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("tpe"), sub_attributes: [], trailing: None })
 "t ype"
   refused QUnexpectedToken { position: 1, token: Token(Ident) }
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "typa"
-  accepted Path(AttrPath { attr: AttributeName("typa"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("typa"), sub_attributes: [], trailing: None })
 "*ype"
   refused QExpected { expected: Token(Ident), found: Token(Star) }
   variant QExpected
   detail "q expression: expected identifier, found *"
 "a.brandName.\"https://example.com/q\"[zip.city]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) })
 "a.bran\"Name.\"https://example.com/q\"[zip.city]"
   refused QUnterminatedString
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "a.brandName.\"https://example.com/q\"[zip.ci:y]"
-  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("ci:y")], written: [AttributeName("zip"), AttributeName("ci:y")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("ci:y")], written: [AttributeName("zip"), AttributeName("ci:y")] })) })
 "brandName.brandName[*]"
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("brandName")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) })
 "*randName.brandName[*]"
   refused QExpected { expected: Token(Ident), found: Token(Star) }
   variant QExpected
   detail "q expression: expected identifier, found *"
 "bandName.brandName[*]"
-  accepted Path(AttrPath { attr: AttributeName("bandName"), sub_attrs: [AttributeName("brandName")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("bandName"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) })
 "cr|atedAt"
   refused QUnexpectedToken { position: 1, token: Token(Pipe) }
   variant QUnexpectedToken
@@ -1390,7 +1390,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ; at position 1"
 "speed[en.b]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
 "speed[en..b]"
   refused QExpected { expected: Token(RBracket), found: Token(Dots) }
   variant QExpected
@@ -1400,27 +1400,27 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QExpected
   detail "q expression: expected ], found >"
 "brandName.speed[*]"
-  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("speed")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) })
 "bra dName.speed[*]"
   refused QUnexpectedToken { position: 1, token: Token(Ident) }
   variant QUnexpectedToken
   detail "q expression: unexpected identifier at position 1"
 "brandNme.speed[*]"
-  accepted Path(AttrPath { attr: AttributeName("brandNme"), sub_attrs: [AttributeName("speed")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("brandNme"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) })
 "deleedAt"
-  accepted Path(AttrPath { attr: AttributeName("deleedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deleedAt"), sub_attributes: [], trailing: None })
 "eletedAt"
-  accepted Path(AttrPath { attr: AttributeName("eletedAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("eletedAt"), sub_attributes: [], trailing: None })
 "observedAt.a[en]"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "obs\"rvedAt.a[en]"
   refused QUnterminatedString
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "obsevedAt.a[en]"
-  accepted Path(AttrPath { attr: AttributeName("obsevedAt"), sub_attrs: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("obsevedAt"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "oservedAt[*]"
-  accepted Path(AttrPath { attr: AttributeName("oservedAt"), sub_attrs: [], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("oservedAt"), sub_attributes: [], trailing: Some(AllLanguages) })
 "observedA=[*]"
   refused QUnexpectedChar { ch: '=', position: 9 }
   variant QUnexpectedChar
@@ -1434,7 +1434,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ( at position 1"
 "unZitCode"
-  accepted Path(AttrPath { attr: AttributeName("unZitCode"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("unZitCode"), sub_attributes: [], trailing: None })
 "/nitCode"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -1444,15 +1444,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant AttributeNameInvalid/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "x_1.speed.brandName[b.city]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
 "x0_1.speed.brandName[b.city]"
-  accepted Path(AttrPath { attr: AttributeName("x0_1"), sub_attrs: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x0_1"), sub_attributes: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
 "x_1.sped.brandName[b.city]"
-  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("sped"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("sped"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
 "speed.ex:name.ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("ex:name"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("ex:name"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "speed.ex:n:ame.ex:name[*]"
-  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("ex:n:ame"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+  accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("ex:n:ame"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "speed.ex.:name.ex:name[*]"
   refused AttributeNameInvalid(Invalid)
   variant AttributeNameInvalid/Invalid
@@ -1462,19 +1462,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedToken
   detail "q expression: unexpected ) at position 1"
 "\"https://example.com/q\".x_1[b]"
-  accepted Path(AttrPath { attr: AttributeName("https://example.com/q"), sub_attrs: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "\"https://example.com/q\".x_\"1[b]"
   refused QUnterminatedString
   variant QUnterminatedString
   detail "q expression: unterminated string literal"
 "\"ttps://example.com/q\".x_1[b]"
-  accepted Path(AttrPath { attr: AttributeName("ttps://example.com/q"), sub_attrs: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("ttps://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "observedAt[zip]"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) })
 "obsZrvedAt[zip]"
-  accepted Path(AttrPath { attr: AttributeName("obsZrvedAt"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("obsZrvedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) })
 "observedAt[ip]"
-  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("ip")], written: [AttributeName("ip")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("ip")], written: [AttributeName("ip")] })) })
 "data{etId"
   refused QUnexpectedToken { position: 1, token: Token(LBrace) }
   variant QUnexpectedToken
@@ -1496,18 +1496,18 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant QUnexpectedChar
   detail "q expression: unexpected character '@' at position 5"
 "delet9dAt"
-  accepted Path(AttrPath { attr: AttributeName("delet9dAt"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("delet9dAt"), sub_attributes: [], trailing: None })
 "deleted:t"
-  accepted Path(AttrPath { attr: AttributeName("deleted:t"), sub_attrs: [], trailing: None })
+  accepted Path(ValuePath { attribute: AttributeName("deleted:t"), sub_attributes: [], trailing: None })
 "obser,vedAt"
   refused QUnexpectedToken { position: 1, token: Token(Comma) }
   variant QUnexpectedToken
   detail "q expression: unexpected , at position 1"
 "ex:name[zip.zip]"
-  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zip")], written: [AttributeName("zip"), AttributeName("zip")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zip")], written: [AttributeName("zip"), AttributeName("zip")] })) })
 "ex:name[}ip.zip]"
   refused QExpected { expected: Token(Ident), found: Token(RBrace) }
   variant QExpected
   detail "q expression: expected identifier, found }"
 "ex:name[zip.zp]"
-  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zp")], written: [AttributeName("zip"), AttributeName("zp")] })) })
+  accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zp")], written: [AttributeName("zip"), AttributeName("zp")] })) })

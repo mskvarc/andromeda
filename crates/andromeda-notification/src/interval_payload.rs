@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_model::{
     notification::{NotificationData, SysAttrsSnapshot},
     subscription::Subscription,
 };
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_query::projection::expanded_projection::ExpandedProjection;
 use andromeda_ngsi_ld_render::{notification_data::DataShape, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compilation::{notification_attributes, notification_projection};
@@ -159,7 +159,7 @@ impl PeriodicPayload<'_> {
 /// subscription's `datasetId`, as clause 5.8.6 states, "For each entity in the
 /// notification, only the Attribute instances are to be included that match the
 /// datasetId member in Subscription".
-fn periodic_rule<'s>(sub: &'s Subscription, projection: &'s Projection, attributes: &'s [IriBuf]) -> SelectionRule<'s> {
+fn periodic_rule<'s>(sub: &'s Subscription, projection: &'s ExpandedProjection, attributes: &'s [IriBuf]) -> SelectionRule<'s> {
     SelectionRule {
         list: ListInForce::of(Some(projection), attributes),
         dataset_ids: sub.filters.dataset_id.as_deref(),

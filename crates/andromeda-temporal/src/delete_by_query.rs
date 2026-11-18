@@ -15,7 +15,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedT
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    dataset::DatasetFilter,
+    dataset_selector::DatasetFilter,
     page_window::PageWindow,
     projection::attrs_selection::AttrsAdmission,
     temporal::{

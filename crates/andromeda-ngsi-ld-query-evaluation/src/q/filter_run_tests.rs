@@ -14,8 +14,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{
+        Filter,
         expansion::expand_q_expr,
-        expression::Expr,
         json_key_attributes::JsonKeyAttributes,
         language_matching::LanguageMatching,
         parser::parse,
@@ -34,19 +34,19 @@ use std::borrow::Cow;
 
 /// Whether an expanded entity satisfies an expression, read through the
 /// entity traits.
-fn holds(expr: &Expr, document: &Value) -> bool {
+fn holds(expr: &Filter, document: &Value) -> bool {
     holds_under(expr, document, LanguageMatching::TagEquality)
 }
 
 /// Whether an expanded entity satisfies an expression whose target
 /// languages select keys by `matching`.
-fn holds_under(expr: &Expr, document: &Value, matching: LanguageMatching) -> bool {
+fn holds_under(expr: &Filter, document: &Value, matching: LanguageMatching) -> bool {
     filter_holds(&FilterReading::of(expr, matching), &FixtureEntity::from_expanded(document), NoLinkedEntities)
 }
 
 /// Whether an expanded entity satisfies an expression whose hops cross into
 /// the expanded `linked` entities.
-fn holds_linked(expr: &Expr, document: &Value, linked: &[Value]) -> bool {
+fn holds_linked(expr: &Filter, document: &Value, linked: &[Value]) -> bool {
     let linked: Vec<FixtureEntity> = linked.iter().map(FixtureEntity::from_expanded).collect();
     filter_holds(
         &FilterReading::of(expr, LanguageMatching::TagEquality),
@@ -104,7 +104,7 @@ fn a_single_predicate_is_evaluated_as_its_own_expression() {
     ];
     for raw in terms {
         let expr = parse(raw).expect("parses");
-        let Expr::Pred(pred) = &expr else {
+        let Filter::Term(pred) = &expr else {
             panic!("{raw} is a single Query Term");
         };
         pretty_assertions::assert_eq!(
@@ -953,7 +953,7 @@ fn parking(parking_id: &str, category: &str, parking_type: &str) -> Value {
 
 const DOWNTOWN: &str = "urn:ngsi-ld:OffStreetParking:Downtown1";
 
-fn linked_predicate(inner_value: &str) -> Expr {
+fn linked_predicate(inner_value: &str) -> Filter {
     parse(&format!(
         "\"https://example.com/isParkedIn\"{{\"https://example.com/category\"}}==\"{inner_value}\""
     ))

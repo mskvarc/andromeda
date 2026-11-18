@@ -15,7 +15,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use serde_json::json;
 
 const ENTITY_ID: &str = "urn:ngsi-ld:Vehicle:1";

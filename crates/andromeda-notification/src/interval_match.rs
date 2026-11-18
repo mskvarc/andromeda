@@ -10,7 +10,7 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, query::EntityQueryService};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_query::filter::Filter;
 use andromeda_subscription::{compiled::CompiledSubscription, matching::matches_entity_filters};
 use chrono::{DateTime, Utc};
 
@@ -29,7 +29,7 @@ pub(crate) async fn matching_entities(
     at: DateTime<Utc>,
 ) -> Result<Vec<EntityState>, EntityError> {
     let entities = standing_at(entities, at);
-    let hops: Vec<&Expr> = sub.hopping_filters().collect();
+    let hops: Vec<&Filter> = sub.hopping_filters().collect();
     let linked = if hops.is_empty() {
         LinkedStates::new()
     } else {

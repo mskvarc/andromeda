@@ -11,7 +11,7 @@
 //! JSON-LD layer supplies an implementation bound to one context, and nothing
 //! in this module names it.
 
-use crate::error::QueryError;
+use crate::query_error::QueryError;
 use iri_rs::IriBuf;
 use std::future::Future;
 use thiserror::Error;
@@ -42,7 +42,7 @@ pub trait TermExpander: Sync {
 /// implementation classifies its failure into one of these and records the
 /// detail where it still holds it.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum TermExpansionFailure {
+pub enum TermExpansionError {
     /// The term expands to nothing against the active `@context`.
     #[error("the term expands to nothing against the active @context")]
     NotExpanded,
@@ -63,12 +63,12 @@ pub enum TermExpansionFailure {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::QueryError, term_expander::TermExpansionFailure};
+    use crate::{query_error::QueryError, term_expander::TermExpansionError};
 
     #[test]
     fn an_expansion_failure_names_its_class_in_the_query_error() {
         pretty_assertions::assert_eq!(
-            QueryError::TermExpansion(TermExpansionFailure::NotAnIri).to_string(),
+            QueryError::TermExpansion(TermExpansionError::NotAnIri).to_string(),
             "could not expand a term: the term expands to something that is not an absolute IRI"
         );
     }

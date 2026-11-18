@@ -194,9 +194,9 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        filter::path::AttrPath,
-        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
-        scope::query::ScopeQuery,
+        filter::value_path::ValuePath,
+        ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
+        scope::scope_query::ScopeQuery,
     };
     use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -409,9 +409,9 @@ mod tests {
         let beside = carrying(sensors_within_square(), &["calibration"]);
         assert_eq!(counted_on(&beside, CountPolicy::Emit), Vec::<i32>::new());
         let mut ordered = beside;
-        ordered.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
-            direction: OrderDirection::Asc,
+        ordered.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         assert_eq!(counted(&ordered), Vec::<i32>::new());

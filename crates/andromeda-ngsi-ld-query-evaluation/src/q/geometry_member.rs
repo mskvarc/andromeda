@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_query::filter::{
         family_reading::{MultiValueReading, TargetOrigin},
         geometry_path::GeometryPath,
     },
-    trailing_path::MemberPath,
+    trailing_group::MemberPath,
 };
 use std::borrow::Cow;
 
@@ -125,7 +125,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_ngsi_ld_query::filter::trailing_path::MemberPath;
+    use andromeda_ngsi_ld_query::filter::trailing_group::MemberPath;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::borrow::Cow;

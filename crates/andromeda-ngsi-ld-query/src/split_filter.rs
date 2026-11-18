@@ -25,8 +25,8 @@ use crate::{
     entity_filters::EntityFilters,
     entity_selection::EntitySelection,
     filter::reading::{filter_reading::FilterReading, term_reading::TermReading},
-    geo::query::GeoQuery,
-    scope::pattern::ScopePattern,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    scope::scope_pattern::ScopePattern,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
@@ -40,7 +40,7 @@ pub enum FilterLeaf<'q> {
     /// store renders and the in-memory execution runs.
     Term(&'q TermReading),
     /// The geo-query (clause 4.10).
-    Geo(&'q GeoQuery),
+    Geo(&'q CompiledGeoQuery),
     /// One requirement of one alternative of the scope query (clause 4.19).
     ScopeRequirement(&'q ScopePattern),
 }
@@ -284,8 +284,8 @@ mod tests {
     use crate::{
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
         split_filter::{FilterLeaf, HopMembers, LeafTruths, SplitFilter},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
@@ -295,8 +295,8 @@ mod tests {
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
     /// A `within` query over a box around `(13.4, 52.5)`.
-    fn within_berlin() -> GeoQuery {
-        GeoQuery {
+    fn within_berlin() -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(json!({
                 "type": "Polygon",
@@ -307,7 +307,7 @@ mod tests {
         }
     }
 
-    fn selection(q: Option<&str>, geo: Option<GeoQuery>, scope: Option<&str>) -> EntitySelection {
+    fn selection(q: Option<&str>, geo: Option<CompiledGeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
             .q(q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality)))
             .geo(geo)

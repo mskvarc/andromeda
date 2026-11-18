@@ -2,11 +2,11 @@
 
 use crate::{
     filter::reading::filter_reading::FilterReading,
-    geo::query::GeoQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
     pattern::Pattern,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
     temporal::window::TimeInterval,
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time_prop::TimeProp};
 use iri_rs::IriBuf;
@@ -28,7 +28,7 @@ pub struct CompiledCsrQuery {
     pub ids: Vec<Identifier>,
     /// The expanded clause 4.17 type selector matched against registered
     /// entity types (clause 5.12).
-    pub entity_type: Option<TypeExpr>,
+    pub entity_type: Option<ExpandedTypeSelection>,
     /// Optional entity identifier pattern matched against registered entity
     /// identifiers and patterns (clause 5.12).
     pub id_pattern: Option<Pattern>,
@@ -41,7 +41,7 @@ pub struct CompiledCsrQuery {
     /// the registrations' Context Source Properties (clause 4.9 `csf`).
     pub csf: Option<FilterReading>,
     /// Geo-spatial filter against the registration's `location`.
-    pub geo: Option<GeoQuery>,
+    pub geo: Option<CompiledGeoQuery>,
     /// Scope query matched against the registration's `scope` (clause 4.19).
     pub scope_q: Option<ScopeQuery>,
     /// The context sources the request already passed through (clause 4.3.6.4).

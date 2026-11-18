@@ -4,8 +4,8 @@ use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
     filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
-    geo::query::GeoQuery,
-    scope::query::ScopeQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     geo_query::geo_query_matches,
@@ -364,14 +364,14 @@ fn point(longitude: f64, latitude: f64) -> Geometry {
 #[test]
 fn a_geo_query_reads_every_geometry_the_state_holds() {
     let entity = state(&instance_members());
-    let near = |longitude, latitude| GeoQuery {
+    let near = |longitude, latitude| CompiledGeoQuery {
         georel: "near;maxDistance==1000".parse().expect("a georel"),
         geometry: point(longitude, latitude),
         geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),
     };
     assert!(geo_query_matches(&near(13.4, 52.5), &entity));
     assert!(!geo_query_matches(&near(2.35, 48.85), &entity));
-    let elsewhere = GeoQuery {
+    let elsewhere = CompiledGeoQuery {
         geoproperty: "https://example.com/address".parse().expect("an attribute name"),
         ..near(13.4, 52.5)
     };

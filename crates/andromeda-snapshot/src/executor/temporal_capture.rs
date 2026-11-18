@@ -57,8 +57,8 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
-    error::QueryError,
     page_window::{PageStart, PageWindow},
+    query_error::QueryError,
     temporal::window::TimeInterval,
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation};

@@ -17,7 +17,7 @@ pub(crate) fn dataset_ids_parameter(datasets: DatasetOverlap<'_>) -> Option<Stri
 mod tests {
     use crate::forwarded_query::dataset_ids::dataset_ids_parameter;
     use andromeda_ngsi_ld_model::registration::dataset_overlap::DatasetOverlap;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use pretty_assertions::assert_eq;
 
     fn datasets(raw: &[&str]) -> Vec<DatasetSelector> {

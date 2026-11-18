@@ -297,8 +297,8 @@ mod tests {
     use crate::q_predicate::structured_target::carries_operand;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::filter::{
+        parser::operand::{parse_date, parse_date_time, parse_time},
         reading::operand::Operand,
-        scalar::{parse_date, parse_date_time, parse_time},
     };
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};

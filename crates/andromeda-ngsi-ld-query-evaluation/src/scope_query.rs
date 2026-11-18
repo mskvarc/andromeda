@@ -1,7 +1,7 @@
 //! Whether an entity held in memory satisfies a scope query (clause 4.19).
 
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+use andromeda_ngsi_ld_query::scope::scope_query::ScopeQuery;
 
 /// Whether `scopes` satisfy `query`.
 ///
@@ -25,7 +25,7 @@ where
 mod tests {
     use crate::{queried_entity::scoped_entity::ScopedEntity, scope_query::scope_query_matches};
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-    use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+    use andromeda_ngsi_ld_query::scope::scope_query::ScopeQuery;
 
     /// An entity carrying the given scopes (clause 4.18).
     struct ScopedFixture(Vec<ScopePath>);

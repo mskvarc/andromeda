@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
 };
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
@@ -196,27 +196,31 @@ fn entity(id: &str) -> Entity {
 }
 
 /// A projection keeping the given structural members only.
-fn pick(terms: Vec<ProjectionTerm>) -> Projection {
-    Projection { pick: terms, omit: Vec::new() }
+fn pick(terms: Vec<ExpandedProjectionTerm>) -> ExpandedProjection {
+    ExpandedProjection { pick: terms, omit: Vec::new() }
 }
 
 /// A projection dropping the given structural members.
-fn omit(terms: Vec<ProjectionTerm>) -> Projection {
-    Projection { pick: Vec::new(), omit: terms }
+fn omit(terms: Vec<ExpandedProjectionTerm>) -> ExpandedProjection {
+    ExpandedProjection { pick: Vec::new(), omit: terms }
 }
 
 /// Every clause 4.21 rule exercised.
-fn projections() -> Vec<Option<Projection>> {
-    let speed = ProjectionTerm::Attribute {
+fn projections() -> Vec<Option<ExpandedProjection>> {
+    let speed = ExpandedProjectionTerm::Attribute {
         iri: IriBuf::new("https://example.org/speed".to_owned()).expect("an IRI"),
         linked: Vec::new(),
     };
     vec![
         None,
-        Some(pick(vec![ProjectionTerm::Id])),
+        Some(pick(vec![ExpandedProjectionTerm::Id])),
         Some(pick(vec![speed])),
-        Some(omit(vec![ProjectionTerm::Type, ProjectionTerm::Scope])),
-        Some(pick(vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope])),
+        Some(omit(vec![ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope])),
+        Some(pick(vec![
+            ExpandedProjectionTerm::Id,
+            ExpandedProjectionTerm::Type,
+            ExpandedProjectionTerm::Scope,
+        ])),
     ]
 }
 
@@ -570,8 +574,8 @@ fn an_entity_typed_like_a_relationship_family_keeps_its_values() {
 fn a_collection_mixing_projections_writes_each_entity_by_its_own_rule() {
     let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
     let families = entity("urn:ngsi-ld:Building:families");
-    let omitted = omit(vec![ProjectionTerm::Type, ProjectionTerm::Scope]);
-    let kept = pick(vec![ProjectionTerm::Id, ProjectionTerm::Type]);
+    let omitted = omit(vec![ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope]);
+    let kept = pick(vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type]);
     let bodies = [
         (&families, Some(StructuralProjection::from(&omitted))),
         (&families, Some(StructuralProjection::from(&kept))),

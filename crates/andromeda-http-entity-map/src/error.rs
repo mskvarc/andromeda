@@ -16,7 +16,7 @@ use andromeda_federation::error::FederationError;
 use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_response::{entity_map_failure::classify_entity_map_error, problem_response::ProblemResponse};
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;

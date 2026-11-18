@@ -33,7 +33,7 @@ use andromeda_ngsi_ld_query::{
     filter::reading::filter_reading::FilterReading,
     query_identity::{IdentifierScope, QueryIdentity},
     temporal::compiled::CompiledTemporalQuery,
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_ngsi_ld_request::follow_up_inputs::FollowUpInputs;
 use iri_rs::IriBuf;
@@ -56,7 +56,7 @@ pub enum FingerprintedRequest<'a> {
     /// Retrieve Entity.
     RetrieveEntity {
         /// The expanded clause 5.7.1.3 type selector, when the request names one.
-        entity_type: Option<&'a TypeExpr>,
+        entity_type: Option<&'a ExpandedTypeSelection>,
         /// The expanded attribute list.
         attrs: &'a [IriBuf],
         /// Every other input of the request.
@@ -146,11 +146,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, expression::Expr, language_matching::LanguageMatching},
-        geo::query::GeoQuery,
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        geo::compiled_geo_query::CompiledGeoQuery,
         namespace_expander::{EXAMPLE_NAMESPACE, NamespaceExpander},
         projection::attrs_selection::{AttrsAdmission, expand_attrs_admitted},
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         selector_compilation::compile_entity_selectors,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -183,7 +183,7 @@ mod tests {
     async fn compiled(
         selectors: &[WrittenEntitySelector],
         attrs: Option<&[AttributeName]>,
-        q: Option<&Expr>,
+        q: Option<&Filter>,
         scope_q: Option<&ScopeQuery>,
         expander: &NamespaceExpander,
     ) -> EntitySelection {
@@ -388,14 +388,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_changed_geo_query_is_a_changed_request() -> Result<(), EntityMapError> {
-        let within = |coordinates: &str| GeoQuery {
+        let within = |coordinates: &str| CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_str::<Geometry>(&format!(r#"{{"type":"Polygon","coordinates":{coordinates}}}"#)).expect("a polygon"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),
         };
         let params = serde_urlencoded::from_str::<EntityQueryParameters>("").expect("a valid test fixture");
         let inputs = FollowUpInputs::of_entity_query(&params, ContextReference::new(CONTEXT));
-        let fingerprint = |geo: Option<GeoQuery>| {
+        let fingerprint = |geo: Option<CompiledGeoQuery>| {
             let selection = EntitySelection::builder().geo(geo).build();
             fingerprint_of(FingerprintedRequest::QueryEntities {
                 selection: &selection,

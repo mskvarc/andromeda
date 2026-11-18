@@ -14,7 +14,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
     reading::family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueLayout, family_reading},
-    trailing_path::MemberPath,
+    trailing_group::MemberPath,
 };
 
 /// Resolve a compound value path (`address[city]`) at one attribute or

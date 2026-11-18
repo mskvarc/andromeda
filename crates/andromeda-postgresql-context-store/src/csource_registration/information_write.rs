@@ -16,7 +16,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
-use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
+use andromeda_ngsi_ld_query::pattern::portable_pattern::RenderingRevision;
 use andromeda_postgresql_encoding::array_literal::{IntegerArrayLiteral, TextArrayLiteral};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::csr::RegistrationInformation;

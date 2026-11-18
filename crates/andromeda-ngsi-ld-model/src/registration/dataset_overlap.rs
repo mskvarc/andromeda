@@ -7,7 +7,7 @@
 //! listed ones the request selects, and for every listed one when the request
 //! selects every instance.
 
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 
 /// How the `datasetId`s of a request meet the ones a registration lists. An
 /// empty list names no `datasetId`, as an absent one does, and `@none` is a
@@ -71,7 +71,7 @@ impl<'a> DatasetOverlap<'a> {
 #[cfg(test)]
 mod tests {
     use crate::registration::dataset_overlap::DatasetOverlap;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use pretty_assertions::assert_eq;
 
     fn datasets(raw: &[&str]) -> Vec<DatasetSelector> {

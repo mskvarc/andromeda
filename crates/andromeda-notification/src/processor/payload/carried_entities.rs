@@ -120,7 +120,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::entity::Entity;
-    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{
+        attribute_iri_index::AttributeIriIndex,
+        expanded_projection::ExpandedProjection,
+        expanded_projection_term::ExpandedProjectionTerm,
+    };
     use andromeda_ngsi_ld_render::{
         geometry_selection::GeometrySelection,
         notification_data::DataShape,
@@ -203,14 +207,14 @@ mod tests {
         index
     }
 
-    fn leaf(key: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn leaf(key: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(key),
             linked: Vec::new(),
         }
     }
 
-    fn shape(join: Option<JoinMode>, projection: &Projection) -> CarriedShape<'_> {
+    fn shape(join: Option<JoinMode>, projection: &ExpandedProjection) -> CarriedShape<'_> {
         CarriedShape {
             format: ResponseFormat::Normalized,
             join,
@@ -245,7 +249,7 @@ mod tests {
     /// notified entity.
     #[test]
     fn a_flat_join_writes_the_linked_entities_after_every_notified_entity() {
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
@@ -260,7 +264,7 @@ mod tests {
     /// Relationship of every notified entity naming it.
     #[test]
     fn an_inline_join_nests_the_linked_entity_into_every_notified_entity() {
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
@@ -274,7 +278,7 @@ mod tests {
     /// No traversal, or `join=@none`, writes the notified entities alone.
     #[test]
     fn without_linked_entities_only_the_notified_entities_are_written() {
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
@@ -289,9 +293,9 @@ mod tests {
     /// from every entity of the payload.
     #[test]
     fn the_structural_projection_narrows_every_entity_of_the_payload() {
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: Vec::new(),
-            omit: vec![ProjectionTerm::Type, ProjectionTerm::Id],
+            omit: vec![ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Id],
         };
         let buildings = buildings();
         let linked = city(&buildings);
@@ -309,7 +313,9 @@ mod tests {
     /// narrows the flat Linked Entity as it narrows the notified entities.
     #[test]
     fn a_plain_pick_narrows_a_flat_linked_entity() {
-        let projection = Projection::builder().pick(vec![ProjectionTerm::Id, leaf("name"), leaf("locatedAt")]).build();
+        let projection = ExpandedProjection::builder()
+            .pick(vec![ExpandedProjectionTerm::Id, leaf("name"), leaf("locatedAt")])
+            .build();
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
@@ -326,7 +332,7 @@ mod tests {
     /// them.
     #[test]
     fn the_conformance_amends_every_entity_of_the_payload() {
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let buildings = vec![notified(&json!({
             "id": "urn:ngsi-ld:Building:1",
             "type": ["Building", "Landmark"],
@@ -365,7 +371,7 @@ mod tests {
     /// subscription naming none leaves the language map whole.
     #[test]
     fn the_subscription_lang_reduces_every_language_property_of_the_payload() {
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let places = vec![notified(&json!({
             "id": "urn:ngsi-ld:Place:1",
             "type": "Place",
@@ -389,7 +395,7 @@ mod tests {
     /// Relationship keeps the `object` naming it.
     #[test]
     fn an_emptied_linked_entity_is_not_written() {
-        let projection = Projection::builder().pick(vec![leaf("locatedAt")]).build();
+        let projection = ExpandedProjection::builder().pick(vec![leaf("locatedAt")]).build();
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();

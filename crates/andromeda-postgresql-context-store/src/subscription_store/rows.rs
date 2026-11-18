@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::{
     query::temporal_query::TemporalQuery,
     subscription::{NotificationParams, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, filter::Filter, geo::written_geo_query::WrittenGeoQuery, scope::scope_query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 
@@ -40,13 +40,13 @@ pub struct SubscriptionRow {
     /// Periodic notification interval seconds.
     pub time_interval: Option<f64>,
     /// NGSI-LD q expression.
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Geo query (nullable).
-    pub geo_q: Option<GeoQueryInput>,
+    pub geo_q: Option<WrittenGeoQuery>,
     /// Scope query expression.
     pub scope_q: Option<ScopeQuery>,
     /// Context source filter.
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// Expanded attribute names whose `q` operands were coerced (clause 5.2.12 `expandValues`).
     pub expand_values: Option<Vec<AttributeName>>,
     /// Expanded attribute names whose `q` object keys were expanded (clause 5.2.12 `jsonKeys`).

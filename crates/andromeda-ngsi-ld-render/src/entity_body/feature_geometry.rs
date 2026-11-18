@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_model::attribute::{
     geo_property_value::GeoPropertyValue,
     instance::{Attribute, AttributeValue},
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, compact_to_expanded};
 use geojson::Geometry as GeoJsonGeometry;
 use serde::{Serialize, Serializer};

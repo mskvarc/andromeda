@@ -1,6 +1,6 @@
 //! The compiled, context-expanded form of an entity query.
 
-use crate::{entity_selection::EntitySelection, ordering::compiled::ResultOrdering, projection::compiled::Projection};
+use crate::{entity_selection::EntitySelection, ordering::result_ordering::ResultOrdering, projection::expanded_projection::ExpandedProjection};
 use typed_builder::TypedBuilder;
 
 /// A fully compiled entity query, ready to be lowered to a store query.
@@ -9,7 +9,7 @@ use typed_builder::TypedBuilder;
 /// active JSON-LD context. All identifiers are expanded IRIs.
 ///
 /// The parts are held separately because they change for unrelated reasons:
-/// [`EntitySelection`] decides which rows come back, [`Projection`] and
+/// [`EntitySelection`] decides which rows come back, [`ExpandedProjection`] and
 /// [`ResultOrdering`] decide only what is done with them, and the SQL builders
 /// read one or the other rather than the whole record.
 ///
@@ -22,7 +22,7 @@ pub struct CompiledEntityQuery {
     pub selection: EntitySelection,
     /// Which members of a matching entity reach the response (clause 4.21).
     #[builder(default = Default::default())]
-    pub projection: Projection,
+    pub projection: ExpandedProjection,
     /// How matching entities are ordered (clause 4.23).
     #[builder(default = Default::default())]
     pub ordering: ResultOrdering,

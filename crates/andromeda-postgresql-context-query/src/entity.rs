@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_query::{
     filter::reading::term_reading::TermReading,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
@@ -371,29 +371,33 @@ mod tests {
         count_policy::CountPolicy,
         cursor::PageCursor,
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
-        error::QueryError,
+        entity_selection::{ConsideredEntities, EntitySelection},
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{
+            Filter,
+            attribute_path::AttributePath,
             compiled_filter::CompiledFilter,
-            expression::Expr,
             language_matching::LanguageMatching,
             parser,
-            path::{AttrPath, QueryPath},
-            predicate::{OrderingOp, Predicate},
+            query_term::{OrderingOperator, QueryTerm},
             scalar::Scalar,
+            value_path::ValuePath,
         },
-        geo::query::GeoQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
         ordering::{
-            collation::IcuCollation,
-            geometry::OrderingGeometry,
-            term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+            compiled_ordering_term::CompiledOrderingTerm,
+            expanded_ordering_target::ExpandedOrderingTarget,
+            icu_collation::IcuCollation,
+            ordering_direction::OrderingDirection,
+            ordering_geometry::OrderingGeometry,
         },
         page_window::{PageStart, PageWindow},
         pattern::Pattern,
-        projection::{compiled::Projection, projected_members::ProjectedMembers, term::ProjectionTerm},
+        projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm, projected_members::ProjectedMembers},
+        query_error::QueryError,
         read_order::ReadOrder,
-        scope::query::ScopeQuery,
-        type_selection::grammar::TypeExpr,
+        scope::scope_query::ScopeQuery,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{error::RenderError, query_names::QueryNames};
@@ -534,9 +538,9 @@ mod tests {
     #[test]
     fn the_head_statement_restates_every_key_of_the_page_order() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::ModifiedAt,
-            direction: OrderDirection::Desc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::ModifiedAt,
+            direction: OrderingDirection::Desc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -582,14 +586,14 @@ mod tests {
         ]))
     }
 
-    fn projected(projection: &Projection) -> CompiledEntityQuery {
+    fn projected(projection: &ExpandedProjection) -> CompiledEntityQuery {
         let mut q = empty_query();
         q.selection.projected_members = ProjectedMembers::of(projection);
         q
     }
 
-    fn speed_term() -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn speed_term() -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri("https://example.com/speed"),
             linked: Vec::new(),
         }
@@ -601,10 +605,10 @@ mod tests {
     #[test]
     fn a_pick_of_attributes_selects_the_entities_carrying_one_of_them() {
         let q = projected(
-            &Projection::builder()
+            &ExpandedProjection::builder()
                 .pick(vec![
                     speed_term(),
-                    ProjectionTerm::Attribute {
+                    ExpandedProjectionTerm::Attribute {
                         iri: iri("https://example.com/neverWritten"),
                         linked: Vec::new(),
                     },
@@ -622,8 +626,13 @@ mod tests {
     #[test]
     fn an_omit_of_id_and_type_selects_the_entities_carrying_another_attribute() {
         let q = projected(
-            &Projection::builder()
-                .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope, speed_term()])
+            &ExpandedProjection::builder()
+                .omit(vec![
+                    ExpandedProjectionTerm::Id,
+                    ExpandedProjectionTerm::Type,
+                    ExpandedProjectionTerm::Scope,
+                    speed_term(),
+                ])
                 .build(),
         );
         let built = build_counted(&q, &speed_and_scope_are_known());
@@ -633,7 +642,7 @@ mod tests {
     /// A projection that keeps `scope` keeps an entity through its scope paths.
     #[test]
     fn a_pick_of_scope_selects_the_scoped_entities() {
-        let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Scope]).build());
+        let q = projected(&ExpandedProjection::builder().pick(vec![ExpandedProjectionTerm::Scope]).build());
         let built = build_counted(&q, &speed_and_scope_are_known());
         assert_statement_snapshot!("entity-a-pick-of-scope-selects-the-scoped-entities", built.select);
     }
@@ -641,7 +650,7 @@ mod tests {
     /// Every entity has an `id`, so a projection keeping it selects them all.
     #[test]
     fn a_pick_of_id_selects_every_entity() {
-        let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Id, speed_term()]).build());
+        let q = projected(&ExpandedProjection::builder().pick(vec![ExpandedProjectionTerm::Id, speed_term()]).build());
         let built = build_counted(&q, &speed_and_scope_are_known());
         assert_statement_snapshot!("entity-a-pick-of-id-selects-every-entity", built.select);
     }
@@ -649,7 +658,7 @@ mod tests {
     #[test]
     fn build_with_ids() {
         let mut q = empty_query();
-        q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
+        q.selection.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
         let built = build(&q, &known_types());
         assert_statement_snapshot!("entity-build-with-ids", built.select);
     }
@@ -673,7 +682,7 @@ mod tests {
     fn considering_no_entity_survives_beside_the_other_filters() {
         let mut q = empty_query();
         q.selection.considered = ConsideredEntities::NoEntity;
-        q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a"])).build()];
+        q.selection.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:a"])).build()];
         let built = build(&q, &known_types());
         assert_statement_snapshot!("entity-considering-no-entity-survives-beside-the-other-filters", built.select);
     }
@@ -693,8 +702,8 @@ mod tests {
     #[test]
     fn a_near_query_with_a_candidate_id_set_binds_one_array_beside_the_geometry() {
         let mut q = empty_query();
-        q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b", "urn:c"])).build()];
-        q.selection.geo = Some(GeoQuery {
+        q.selection.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:a", "urn:b", "urn:c"])).build()];
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
@@ -714,7 +723,7 @@ mod tests {
     fn build_with_id_pattern() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .id_pattern(Some(Pattern::parse("urn:ngsi-ld:Vehicle:.*").unwrap()))
                 .build(),
         ];
@@ -729,8 +738,8 @@ mod tests {
     fn build_with_single_type() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -743,8 +752,8 @@ mod tests {
     fn an_unknown_type_selector_matches_nothing() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/NeverWritten"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/NeverWritten"))))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -756,8 +765,8 @@ mod tests {
     fn the_count_of_a_type_page_counts_the_walk() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
         let count = build_counted(&q, &known_types()).count.expect("count requested");
@@ -770,9 +779,9 @@ mod tests {
     fn a_typed_selector_naming_identifiers_filters_the_search_row() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:a"]))
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -786,14 +795,14 @@ mod tests {
     fn a_typed_geo_query_tests_its_types_on_the_search_row() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Or(vec![
-                    TypeExpr::Type(iri("https://example.com/Vehicle")),
-                    TypeExpr::Type(iri("https://example.com/Home")),
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Or(vec![
+                    ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
+                    ExpandedTypeSelection::Type(iri("https://example.com/Home")),
                 ])))
                 .build(),
         ];
-        q.selection.geo = Some(GeoQuery {
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
@@ -812,13 +821,13 @@ mod tests {
         let mut q = empty_query();
         // (Home AND Vehicle) OR Motorhome
         q.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Or(vec![
-                    TypeExpr::And(vec![
-                        TypeExpr::Type(iri("https://example.com/Home")),
-                        TypeExpr::Type(iri("https://example.com/Vehicle")),
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Or(vec![
+                    ExpandedTypeSelection::And(vec![
+                        ExpandedTypeSelection::Type(iri("https://example.com/Home")),
+                        ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
                     ]),
-                    TypeExpr::Type(iri("https://example.com/Motorhome")),
+                    ExpandedTypeSelection::Type(iri("https://example.com/Motorhome")),
                 ])))
                 .build(),
         ];
@@ -830,8 +839,8 @@ mod tests {
     fn build_with_count() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
         let built = build_counted(&q, &known_types());
@@ -847,13 +856,13 @@ mod tests {
         // match `(A,T2)`.
         let mut q = empty_query();
         q.selection.selectors = vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:ngsi-ld:Entity:A"]))
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/T1"))))
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/T1"))))
                 .build(),
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:ngsi-ld:Entity:B"]))
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/T2"))))
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/T2"))))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -883,10 +892,10 @@ mod tests {
     fn build_with_q_comparison() {
         let mut cq = empty_query();
         cq.selection.q = Some(CompiledFilter::new(
-            Expr::Pred(Predicate::Ordering {
-                path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
-                op: OrderingOp::Greater,
-                rhs: Scalar::Number(50.into()),
+            Filter::Term(QueryTerm::Ordering {
+                path: AttributePath::Local(ValuePath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+                operator: OrderingOperator::Greater,
+                value: Scalar::Number(50.into()),
             }),
             LanguageMatching::TagEquality,
         ));
@@ -902,10 +911,10 @@ mod tests {
         // plain: no index orders it.
         let mut cq = empty_query();
         cq.selection.q = Some(CompiledFilter::new(
-            Expr::Pred(Predicate::Ordering {
-                path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
-                op: OrderingOp::Greater,
-                rhs: Scalar::Str("m".to_owned()),
+            Filter::Term(QueryTerm::Ordering {
+                path: AttributePath::Local(ValuePath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+                operator: OrderingOperator::Greater,
+                value: Scalar::Str("m".to_owned()),
             }),
             LanguageMatching::TagEquality,
         ));
@@ -1036,9 +1045,9 @@ mod tests {
     #[test]
     fn build_with_order_by_asc() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/name".parse().expect("valid attribute name"))),
-            direction: OrderDirection::Asc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/name".parse().expect("valid attribute name"))),
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1048,9 +1057,9 @@ mod tests {
     #[test]
     fn build_with_order_by_collation() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/name".parse().expect("valid attribute name"))),
-            direction: OrderDirection::Asc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/name".parse().expect("valid attribute name"))),
+            direction: OrderingDirection::Asc,
             collation: Some(IcuCollation::parse("und-u-ks-identic").expect("valid collation")),
         }];
         let built = build(&q, &known_types());
@@ -1062,9 +1071,9 @@ mod tests {
     #[test]
     fn build_with_order_by_created_at_reads_the_identity_column() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::CreatedAt,
-            direction: OrderDirection::Asc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::CreatedAt,
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1075,9 +1084,9 @@ mod tests {
     #[test]
     fn build_with_order_by_created_at_desc_reverses_the_order() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::CreatedAt,
-            direction: OrderDirection::Desc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::CreatedAt,
+            direction: OrderingDirection::Desc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1089,9 +1098,9 @@ mod tests {
     #[test]
     fn build_with_order_by_modified_at_reads_the_identity_column() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::ModifiedAt,
-            direction: OrderDirection::Asc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::ModifiedAt,
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1102,10 +1111,10 @@ mod tests {
     /// entity stores no scope path array.
     #[test]
     fn ordering_by_scope_ranks_an_unscoped_entity_last() {
-        for (index, direction) in [OrderDirection::Asc, OrderDirection::Desc].into_iter().enumerate() {
+        for (index, direction) in [OrderingDirection::Asc, OrderingDirection::Desc].into_iter().enumerate() {
             let mut q = empty_query();
-            q.ordering.terms = vec![CompiledOrderTerm {
-                target: OrderTarget::Scope,
+            q.ordering.terms = vec![CompiledOrderingTerm {
+                target: ExpandedOrderingTarget::Scope,
                 direction,
                 collation: None,
             }];
@@ -1119,7 +1128,7 @@ mod tests {
     #[test]
     fn a_distance_ordering_beside_a_geo_query_without_a_reference_geometry_is_refused() {
         let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                 min_distance: None,
@@ -1127,9 +1136,9 @@ mod tests {
             geometry: point(&serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
-            direction: OrderDirection::DistAsc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
+            direction: OrderingDirection::DistAsc,
             collation: None,
         }];
         let target = ContextTarget::Live;
@@ -1140,9 +1149,9 @@ mod tests {
     #[test]
     fn build_with_order_by_dist_without_geo_returns_error() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
-            direction: OrderDirection::DistAsc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
+            direction: OrderingDirection::DistAsc,
             collation: None,
         }];
         let target = ContextTarget::Live;
@@ -1159,9 +1168,9 @@ mod tests {
         }))
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
-            direction: OrderDirection::DistAsc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
+            direction: OrderingDirection::DistAsc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1171,7 +1180,7 @@ mod tests {
     #[test]
     fn build_with_order_by_dist_ordering_geometry_takes_precedence() {
         let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("1000000").expect("positive distance")),
                 min_distance: None,
@@ -1185,9 +1194,9 @@ mod tests {
         }))
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
-            direction: OrderDirection::DistAsc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
+            direction: OrderingDirection::DistAsc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1202,9 +1211,9 @@ mod tests {
     /// keeps the altitude it was given.
     #[test]
     fn a_three_dimensional_ordering_geometry_renders_the_same_distance_sql() {
-        let ordering_term = CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
-            direction: OrderDirection::DistAsc,
+        let ordering_term = CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
+            direction: OrderingDirection::DistAsc,
             collation: None,
         };
 
@@ -1266,7 +1275,7 @@ mod tests {
     #[test]
     fn geo_default_location_includes_expiration_guard() {
         let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("5000").expect("positive distance")),
                 min_distance: None,
@@ -1301,7 +1310,7 @@ mod tests {
 
         for (index, georel) in variants.into_iter().enumerate() {
             let mut q = empty_query();
-            q.selection.geo = Some(GeoQuery {
+            q.selection.geo = Some(CompiledGeoQuery {
                 georel,
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
@@ -1321,7 +1330,7 @@ mod tests {
     #[test]
     fn a_named_geoproperty_filters_through_its_attribute_instance_rows() {
         let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
@@ -1344,7 +1353,7 @@ mod tests {
     #[test]
     fn an_unrecorded_geoproperty_filters_everything_out_without_failing() {
         let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
+        q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/neverRecorded".parse().expect("valid attribute name"),
@@ -1379,7 +1388,7 @@ mod tests {
         ];
         for (index, georel) in relations.into_iter().enumerate() {
             let mut q = empty_query();
-            q.selection.geo = Some(GeoQuery {
+            q.selection.geo = Some(CompiledGeoQuery {
                 georel,
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
@@ -1405,9 +1414,9 @@ mod tests {
     #[test]
     fn an_order_by_attribute_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/o'brien".parse().expect("valid attribute name"))),
-            direction: OrderDirection::Asc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/o'brien".parse().expect("valid attribute name"))),
+            direction: OrderingDirection::Asc,
             collation: None,
         }];
         let built = build(&q, &known_types());
@@ -1429,9 +1438,9 @@ mod tests {
         }))
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(AttrPath::simple("https://example.com/o'brien".parse().expect("valid attribute name"))),
-            direction: OrderDirection::DistAsc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/o'brien".parse().expect("valid attribute name"))),
+            direction: OrderingDirection::DistAsc,
             collation: None,
         }];
         let names = attributes_only(ResolvedNames::from_pairs([(
@@ -1447,9 +1456,9 @@ mod tests {
     #[test]
     fn requested_ordering_keeps_its_sort_keys_under_an_offset_window() {
         let mut q = empty_query();
-        q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Id,
-            direction: OrderDirection::Desc,
+        q.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::Id,
+            direction: OrderingDirection::Desc,
             collation: None,
         }];
         let built = build_paged(&q, &PageWindow::offset(10, 30), CountPolicy::Omit, &known_types());

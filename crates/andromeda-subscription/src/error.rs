@@ -5,7 +5,7 @@ use andromeda_jsonld::{compound_context_host::ContextHostingError, error::JsonLd
 use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryOverLimit;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use thiserror::Error;
 

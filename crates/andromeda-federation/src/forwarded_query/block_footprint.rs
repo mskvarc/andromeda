@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_model::{
     registration::info::RegistrationInfo,
     registration_matching::entity_specification::{EntitySpecification, TypeConstraint},
 };
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
 use std::slice;
 
 /// The entity selection one block contributes to a forwarded request: the
@@ -24,7 +24,7 @@ pub(super) struct BlockSelection {
     /// The pattern to write as `idPattern`.
     pub(super) id_pattern: Option<String>,
     /// The type selector to write as `type`, spelled in the forwarding context.
-    pub(super) entity_type: Option<TypeExprRaw>,
+    pub(super) entity_type: Option<WrittenTypeSelection>,
 }
 
 impl BlockSelection {
@@ -48,7 +48,7 @@ impl BlockSelection {
         block: &RegistrationInfo,
         ids: Option<&[Identifier]>,
         id_pattern: Option<&Pattern>,
-        entity_type: Option<&TypeExprRaw>,
+        entity_type: Option<&WrittenTypeSelection>,
         names: &ForwardedNames<'_>,
     ) -> Result<Option<BlockSelection>, FederationError> {
         let mut selection = BlockSelection::default();
@@ -197,29 +197,29 @@ async fn covered_attrs(client_attrs: &[AttributeName], declared: &[&AttributeNam
 /// against the request context, and [`FederationError::Internal`] when a type
 /// does not spell as a name in the forwarding context.
 pub(super) async fn covered_type(
-    entity_type: &TypeExprRaw,
+    entity_type: &WrittenTypeSelection,
     block: &RegistrationInfo,
     names: &ForwardedNames<'_>,
-) -> Result<Option<TypeExprRaw>, FederationError> {
+) -> Result<Option<WrittenTypeSelection>, FederationError> {
     if block.entities.is_none() {
         return Ok(Some(names.type_expr(entity_type).await?));
     }
     let leaves = match entity_type {
-        TypeExprRaw::Type(name) => vec![name],
-        TypeExprRaw::Or(children) => {
+        WrittenTypeSelection::Type(name) => vec![name],
+        WrittenTypeSelection::Or(children) => {
             let mut leaves = Vec::with_capacity(children.len());
             for child in children {
                 match child {
-                    TypeExprRaw::Type(name) => leaves.push(name),
+                    WrittenTypeSelection::Type(name) => leaves.push(name),
                     // A nested boolean group cannot be narrowed member by member,
                     // and an alternation only makes sense as a flat one, so a
                     // block covering none of its flat leaves covers nothing here.
-                    TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => return Ok(None),
+                    WrittenTypeSelection::Wildcard | WrittenTypeSelection::And(_) | WrittenTypeSelection::Or(_) => return Ok(None),
                 }
             }
             leaves
         }
-        TypeExprRaw::Wildcard | TypeExprRaw::And(_) => return Ok(Some(names.type_expr(entity_type).await?)),
+        WrittenTypeSelection::Wildcard | WrittenTypeSelection::And(_) => return Ok(Some(names.type_expr(entity_type).await?)),
     };
     let mut covered = Vec::new();
     for name in leaves {
@@ -234,10 +234,10 @@ pub(super) async fn covered_type(
             id_pattern: None,
         };
         if specification.matches_entity_axis(block) {
-            covered.push(TypeExprRaw::Type(names.entity_type(name).await?));
+            covered.push(WrittenTypeSelection::Type(names.entity_type(name).await?));
         }
     }
-    Ok(TypeExprRaw::any_of(covered))
+    Ok(WrittenTypeSelection::any_of(covered))
 }
 
 /// The block's explicitly named identifiers, or, when it names none, the
@@ -265,7 +265,7 @@ fn block_identifiers(block: &RegistrationInfo) -> (Vec<Identifier>, Option<Strin
 ///
 /// Returns [`FederationError::Internal`] when a type does not spell as a name
 /// in the forwarding context.
-fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<Option<TypeExprRaw>, FederationError> {
+fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<Option<WrittenTypeSelection>, FederationError> {
     let Some(selectors) = block.entities.as_deref() else {
         return Ok(None);
     };
@@ -278,7 +278,7 @@ fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<O
             }
         }
     }
-    Ok(TypeExprRaw::any_of(spelled.into_iter().map(TypeExprRaw::Type).collect()))
+    Ok(WrittenTypeSelection::any_of(spelled.into_iter().map(WrittenTypeSelection::Type).collect()))
 }
 
 #[cfg(test)]

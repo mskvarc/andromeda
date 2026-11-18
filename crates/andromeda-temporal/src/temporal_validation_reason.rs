@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReferenceError,
     unit_code_resolution::UnitCodeRefusal,
 };
-use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+use andromeda_ngsi_ld_query::ordering::icu_collation::IcuCollation;
 use thiserror::Error;
 
 /// Why a temporal request or representation is invalid.

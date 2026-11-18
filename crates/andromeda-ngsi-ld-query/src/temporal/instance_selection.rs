@@ -1,6 +1,6 @@
 //! Which attribute instances a temporal query returns for a qualifying entity.
 
-use crate::{dataset::DatasetSelector, temporal::instance_page::InstancePage};
+use crate::{dataset_selector::DatasetSelector, temporal::instance_page::InstancePage};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 

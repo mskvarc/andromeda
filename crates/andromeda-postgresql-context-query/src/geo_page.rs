@@ -61,7 +61,7 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
     filter::compiled_filter::CompiledFilter,
-    geo::query::GeoQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
     page_window::PageWindow,
     read_order::ReadOrder,
 };
@@ -99,7 +99,7 @@ pub(crate) const GEO_CANDIDATE_BOUND: u64 = 10_000;
 /// A geo-query and the Entities its matches name.
 pub(crate) struct GeoMatches<'q> {
     /// The geo-query each walked Entity is probed for.
-    pub(crate) geo: &'q GeoQuery,
+    pub(crate) geo: &'q CompiledGeoQuery,
     /// `SELECT "entity_key" …` of every instance of the geo-query's
     /// `GeoProperty` that meets it, read through the spatial indexes, once per
     /// matching instance and in no order.
@@ -138,7 +138,7 @@ pub(crate) fn geo_matches<'q>(
 /// some Entity, and the page has no `orderBy` and carries no total on its
 /// rows. Whether the geo-query has matches to read is left to
 /// [`matches_of`].
-pub(crate) fn geo_page_query<'q>(query: &'q CompiledEntityQuery, window: &PageWindow, count: CountPolicy) -> Option<&'q GeoQuery> {
+pub(crate) fn geo_page_query<'q>(query: &'q CompiledEntityQuery, window: &PageWindow, count: CountPolicy) -> Option<&'q CompiledGeoQuery> {
     let selection = &query.selection;
     let considered = match selection.considered {
         ConsideredEntities::Selected => true,
@@ -210,7 +210,7 @@ impl GeoWalk {
 ///
 /// Fails as rendering the geo-query fails: a reference geometry with no EWKB
 /// spelling, or `georel=near` naming no distance.
-pub(crate) fn geo_probe(source: &PageSource<'_>, geo: &GeoQuery, q: Option<&CompiledFilter>) -> Result<Condition, RenderError> {
+pub(crate) fn geo_probe(source: &PageSource<'_>, geo: &CompiledGeoQuery, q: Option<&CompiledFilter>) -> Result<Condition, RenderError> {
     let walked = walked_rows(source.rows);
     let q = q.map(|q| compile(q.reading(), &InstanceScan::Walked(&walked), source.names));
     Ok(Condition::all().add_option(q).add(geo_sql::probe(geo, &walked, &source.names.attributes)?))

@@ -5,6 +5,7 @@
 //! and the expansion of compact names to IRIs; rendering the expanded tree
 //! against a store belongs to that backend.
 
+pub mod expanded_type_selection;
 pub mod expansion;
-pub mod grammar;
 pub mod parser;
+pub mod written_type_selection;

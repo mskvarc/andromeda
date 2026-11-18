@@ -5,8 +5,8 @@ use crate::document::EntityDocument;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
     filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
-    geo::query::GeoQuery,
-    scope::query::ScopeQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     geo_query::geo_query_matches,
@@ -187,7 +187,7 @@ fn a_deleted_member_is_absent_and_an_empty_member_is_present() {
 #[test]
 fn a_geo_query_and_a_scope_query_read_what_the_document_writes() {
     let written = document();
-    let near = GeoQuery {
+    let near = CompiledGeoQuery {
         georel: "near;maxDistance==1000".parse().expect("a georel"),
         geometry: Geometry::new(GeometryForm::Point(Position::try_new(13.4, 52.5, None).expect("a CRS84 position"))),
         geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),

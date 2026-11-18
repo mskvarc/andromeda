@@ -324,8 +324,8 @@ mod tests {
         typed_column::typed_column_condition,
     };
     use andromeda_ngsi_ld_query::filter::{
+        parser::operand::{parse_date, parse_time},
         reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation},
-        scalar::{parse_date, parse_time},
     };
     use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;

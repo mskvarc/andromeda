@@ -2,7 +2,7 @@
 
 use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::comma_separated_list::{CommaSeparatedListError, ListedItem, listed_members};
+use andromeda_ngsi_ld_query::comma_separated_list::{CommaSeparatedListError, ListedMemberKind, listed_members};
 
 /// Which optional blocks a tenant read includes.
 ///
@@ -69,7 +69,7 @@ impl TenantOptions {
         let Some(written) = written else {
             return Ok(options);
         };
-        for keyword in listed_members(written, ListedItem::OptionsToken) {
+        for keyword in listed_members(written, ListedMemberKind::OptionsToken) {
             let keyword = keyword?.parse().map_err(|_| TenantOptionsRefusal::Unsupported)?;
             let selected = match keyword {
                 TenantOption::SysAttrs => &mut options.sys_attrs,
@@ -88,7 +88,7 @@ impl TenantOptions {
 mod tests {
     use crate::options::{TenantOption, TenantOptions, TenantOptionsRefusal};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_query::comma_separated_list::{CommaSeparatedListError, ListedItem};
+    use andromeda_ngsi_ld_query::comma_separated_list::{CommaSeparatedListError, ListedMemberKind};
 
     #[test]
     fn an_absent_value_selects_nothing() {
@@ -122,7 +122,7 @@ mod tests {
             pretty_assertions::assert_eq!(
                 TenantOptions::parse(Some(written)),
                 Err(TenantOptionsRefusal::EmptyKeyword(CommaSeparatedListError::EmptyMember {
-                    list: ListedItem::OptionsToken
+                    kind: ListedMemberKind::OptionsToken
                 })),
                 "{written:?}"
             );
@@ -145,7 +145,7 @@ mod tests {
     fn every_refusal_is_invalid_request() {
         for refusal in [
             TenantOptionsRefusal::EmptyKeyword(CommaSeparatedListError::EmptyMember {
-                list: ListedItem::OptionsToken,
+                kind: ListedMemberKind::OptionsToken,
             }),
             TenantOptionsRefusal::Unsupported,
             TenantOptionsRefusal::Duplicate(TenantOption::Usage),

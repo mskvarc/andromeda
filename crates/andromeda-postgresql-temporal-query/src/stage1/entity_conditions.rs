@@ -5,7 +5,8 @@
 use crate::{projected_members::projected_member_condition, stage1::evolution_walk::TypeTest, value_filters::value_filter_condition};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
-    entity_selection::{ConsideredEntities, EntitySelector},
+    entity_selection::ConsideredEntities,
+    expanded_entity_selector::ExpandedEntitySelector,
     identifier_axis::IdentifierAxis,
     temporal::compiled::CompiledTemporalQuery,
 };
@@ -95,7 +96,12 @@ pub(super) fn build_entity_conditions_for_temporal(
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a
 /// selector means.
-fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>, type_test: TypeTest, pattern_test: PatternTest) -> Condition {
+fn temporal_selector_condition(
+    selector: &ExpandedEntitySelector,
+    types: &ResolvedNames<EntityTypeName>,
+    type_test: TypeTest,
+    pattern_test: PatternTest,
+) -> Condition {
     let mut condition = Condition::all();
     match (selector.identifier_axis(), pattern_test) {
         (IdentifierAxis::Ids(ids), PatternTest::Tested | PatternTest::Answered) => {
@@ -110,7 +116,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
         }
         (IdentifierAxis::Pattern(_), PatternTest::Answered) | (IdentifierAxis::Any, PatternTest::Tested | PatternTest::Answered) => {}
     }
-    match (&selector.type_expr, type_test) {
+    match (&selector.type_selection, type_test) {
         (Some(type_expr), TypeTest::TypeKeys) => {
             condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, Entities::EvolutionTypeNameKeys)), types));
         }
@@ -129,11 +135,11 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
-        entity_selection::EntitySelector,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
-        geo::query::GeoQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
         page_window::PageWindow,
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
             contributed_entities::{ContributedEntities, ContributedRendering},
@@ -153,7 +159,11 @@ mod tests {
     fn an_identifier_list_past_the_parameter_ceiling_binds_as_one_array() {
         let raw: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&raw.iter().map(String::as_str).collect::<Vec<_>>())).build()];
+        compiled.entities.selectors = vec![
+            ExpandedEntitySelector::builder()
+                .ids(ids(&raw.iter().map(String::as_str).collect::<Vec<_>>()))
+                .build(),
+        ];
         let (sql, values) = built(&compiled, &speed_and_address()).build(PostgresQueryBuilder);
         assert!(sql.contains(r#""e"."id" = ANY($"#), "{sql}");
         assert!(values.0.len() < 100, "{} parameters", values.0.len());
@@ -232,13 +242,13 @@ mod tests {
     /// aggregation, with an identifier selector and a bounded window.
     fn filtered_compiled() -> CompiledTemporalQuery {
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
+        compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
             parser::parse("\"https://example.com/speed\">100").unwrap(),
             LanguageMatching::TagEquality,
         ));
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
@@ -430,7 +440,7 @@ mod tests {
     #[test]
     fn a_default_location_geo_query_reads_the_windowed_history_instances() {
         let mut compiled = minimal_compiled();
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
@@ -446,7 +456,7 @@ mod tests {
     fn a_temporal_geo_query_restricts_the_geo_instances_to_the_window() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2020-07-01T12:05:00Z"));
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("2000").expect("positive distance")),
                 min_distance: None,
@@ -473,7 +483,7 @@ mod tests {
     #[test]
     fn a_temporal_geo_query_on_a_named_geoproperty_reads_the_windowed_history_instances() {
         let mut compiled = minimal_compiled();
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
@@ -490,7 +500,7 @@ mod tests {
     #[test]
     fn a_temporal_geoproperty_iri_never_reaches_the_statement_text() {
         let mut compiled = minimal_compiled();
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),

@@ -20,16 +20,17 @@
 use andromeda_jsonld::engine::expansion_context_id::ExpansionContextId;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
-    filter::{language_targeting::LanguageTargeting, serialize::serialize_attr_path},
-    geo::{input::GeoQueryInput, reference_geometry::ReferenceGeometry},
+    filter::{display::serialize_attr_path, language_targeting::LanguageTargeting},
+    geo::{reference_geometry::ReferenceGeometry, written_geo_query::WrittenGeoQuery},
     ordering::{
-        collation::IcuCollation,
-        geometry::OrderingGeometry,
-        term::{OrderDirection, OrderTerm},
+        icu_collation::IcuCollation,
+        ordering_direction::OrderingDirection,
+        ordering_geometry::OrderingGeometry,
+        written_ordering_term::WrittenOrderingTerm,
     },
-    projection::grammar::RawProjectionTerm,
+    projection::written_projection_term::WrittenProjectionTerm,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{query::entity::parameters::EntityQueryParameters, representation_parameter::WrittenValue};
@@ -112,9 +113,9 @@ impl CompiledQueryKey {
         push_field(&mut parameters, Some(&params.entity_selectors.len().to_string()));
         for selector in &params.entity_selectors {
             let id_pattern = selector.id_pattern.as_ref().map(ToString::to_string);
-            push_uri_list(&mut parameters, selector.id.as_deref());
+            push_uri_list(&mut parameters, selector.ids.as_deref());
             push_field(&mut parameters, id_pattern.as_deref());
-            push_field(&mut parameters, selector.type_.as_ref().map(ToString::to_string).as_deref());
+            push_field(&mut parameters, selector.type_selection.as_ref().map(ToString::to_string).as_deref());
         }
 
         CompiledQueryKey {
@@ -139,7 +140,7 @@ fn push_attribute_list(buffer: &mut String, value: Option<&[AttributeName]>) {
 /// Append an ordered `pick` / `omit` raw projection-term list in its
 /// canonical clause 4.21 text rendering, including any linked-entity
 /// sub-projection each term carries.
-fn push_projection_term_list(buffer: &mut String, value: Option<&[RawProjectionTerm]>) {
+fn push_projection_term_list(buffer: &mut String, value: Option<&[WrittenProjectionTerm]>) {
     match value {
         Some(terms) => {
             let rendered = terms.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
@@ -175,7 +176,7 @@ fn push_dataset_list(buffer: &mut String, value: Option<&[DatasetSelector]>) {
 ///
 /// Coordinates still encoded are keyed by their text, so two spellings of one
 /// geometry compile once each.
-fn push_geo_query(buffer: &mut String, value: Option<&GeoQueryInput>) {
+fn push_geo_query(buffer: &mut String, value: Option<&WrittenGeoQuery>) {
     if let Some(value) = value {
         push_field(buffer, Some(&value.georel.to_string()));
         let geometry = match &value.reference {
@@ -192,18 +193,18 @@ fn push_geo_query(buffer: &mut String, value: Option<&GeoQueryInput>) {
 }
 
 /// Append parsed ordering terms without reconstructing a request query string.
-fn push_order_terms(buffer: &mut String, terms: &[OrderTerm]) {
+fn push_order_terms(buffer: &mut String, terms: &[WrittenOrderingTerm]) {
     push_field(buffer, Some(&terms.len().to_string()));
     for term in terms {
         // The whole path, not just its head: `a.b`, `a[b]` and `a` are three
         // different orderings, and a key spelling only `a` would serve one
         // compiled query for all of them.
-        push_field(buffer, Some(&serialize_attr_path(&term.attr)));
+        push_field(buffer, Some(&serialize_attr_path(&term.path)));
         let direction = match term.direction {
-            OrderDirection::Asc => "asc",
-            OrderDirection::Desc => "desc",
-            OrderDirection::DistAsc => "dist-asc",
-            OrderDirection::DistDesc => "dist-desc",
+            OrderingDirection::Asc => "asc",
+            OrderingDirection::Desc => "desc",
+            OrderingDirection::DistAsc => "dist-asc",
+            OrderingDirection::DistDesc => "dist-desc",
         };
         push_field(buffer, Some(direction));
     }

@@ -1,32 +1,20 @@
 //! Comparison operands of a `q` predicate (clause 4.9).
 
-use crate::{error::QueryError, filter::quoting::Quoting};
+use crate::{
+    filter::{
+        parser::operand::{parse_date, parse_date_time, parse_time},
+        quoting::Quoting,
+    },
+    query_error::QueryError,
+};
 use andromeda_ngsi_ld_lexicon::time::{
     date::NgsiLdDate,
-    date_time::NgsiLdDateTime,
     rendering::{instant_text, time_of_day_text},
-    time_of_day::NgsiLdTime,
     value::TimeValueForm,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use iri_rs::Iri;
-
-/// The right-hand side of a comparison predicate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompareValue {
-    /// A single scalar value (e.g. `speed>50`).
-    Scalar(Scalar),
-    /// A range of two values (e.g. `speed==10..20`).
-    Range {
-        /// The lower bound of the range (inclusive).
-        min: Scalar,
-        /// The upper bound of the range (inclusive).
-        max: Scalar,
-    },
-    /// A list of values (e.g. `status==\"active\",\"pending\"`).
-    ValueList(Vec<Scalar>),
-}
 
 /// A scalar value in a `q` expression.
 ///
@@ -130,52 +118,15 @@ impl Scalar {
     }
 }
 
-/// Parse a clause 4.6.3 `DateTime` operand.
-///
-/// Returns the instant rather than a [`Scalar`] wrapping it: a caller that
-/// needs the value back out of the variant it was just placed in has to prove
-/// the variant, and there is nothing to prove here.
-///
-/// # Errors
-///
-/// Returns [`QueryError::QInvalidDateTime`] when `raw` is not a clause 4.6.3
-/// `DateTime` (a numeric zone offset in place of the mandatory `Z`, or a
-/// fraction longer than six digits).
-pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
-    raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get).map_err(QueryError::QInvalidDateTime)
-}
-
-/// Parse a clause 4.6.3 `Date` operand.
-///
-/// # Errors
-///
-/// Returns [`QueryError::QInvalidDate`] when `raw` is not a clause 4.6.3
-/// `Date`, whose components "shall appear in the string; reduced
-/// representations are not permitted".
-pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
-    raw.parse::<NgsiLdDate>().map(NgsiLdDate::get).map_err(QueryError::QInvalidDate)
-}
-
-/// Parse a clause 4.6.3 `Time` operand.
-///
-/// # Errors
-///
-/// Returns [`QueryError::QInvalidTime`] when `raw` is not a clause 4.6.3
-/// `Time` (one written without the mandatory `Z` designator, or one carrying
-/// a numeric offset, since the clause states that the string
-/// "shall not contain expressions of the difference between local time and UTC").
-pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
-    raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(QueryError::QInvalidTime)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         filter::{
+            parser::operand::{parse_date, parse_date_time, parse_time},
             quoting::Quoting,
-            scalar::{Scalar, parse_date, parse_date_time, parse_time},
+            scalar::Scalar,
         },
+        query_error::QueryError,
     };
     use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 

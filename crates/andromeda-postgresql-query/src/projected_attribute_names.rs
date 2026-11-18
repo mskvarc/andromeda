@@ -14,8 +14,8 @@ use crate::q_predicate::attribute_names::referenced_attribute_names;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::reading::filter_reading::FilterReading,
-    geo::query::GeoQuery,
-    ordering::term::{CompiledOrderTerm, OrderTarget},
+    geo::compiled_geo_query::CompiledGeoQuery,
+    ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget},
 };
 
 /// Collect the names a query reads by dictionary key.
@@ -30,8 +30,8 @@ use andromeda_ngsi_ld_query::{
 pub fn projected_attribute_names<'a>(
     members: impl IntoIterator<Item = &'a str>,
     q: Option<&FilterReading>,
-    geo: Option<&GeoQuery>,
-    order_terms: &[CompiledOrderTerm],
+    geo: Option<&CompiledGeoQuery>,
+    order_terms: &[CompiledOrderingTerm],
 ) -> Vec<AttributeName> {
     let mut names: Vec<AttributeName> = members.into_iter().filter_map(|member| member.parse().ok()).collect();
     if let Some(q) = q {
@@ -48,14 +48,18 @@ pub fn projected_attribute_names<'a>(
     // attribute's rows by the same key.
     for term in order_terms {
         match &term.target {
-            OrderTarget::Attribute(path) => {
+            ExpandedOrderingTarget::Attribute(path) => {
                 // clone: the caller owns the resolved list, which outlives the query
-                names.push(path.attr.clone());
-                names.extend(path.ending_member().map_or(path.sub_attrs.as_slice(), |(_, above)| above).iter().cloned());
+                names.push(path.attribute.clone());
+                names.extend(path.ending_member().map_or(path.sub_attributes.as_slice(), |(_, above)| above).iter().cloned());
             }
             // None of the clause 4.23 keywords names an attribute, so none of
             // them has a dictionary row.
-            OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => {}
+            ExpandedOrderingTarget::Id
+            | ExpandedOrderingTarget::Type
+            | ExpandedOrderingTarget::Scope
+            | ExpandedOrderingTarget::CreatedAt
+            | ExpandedOrderingTarget::ModifiedAt => {}
         }
     }
     names
@@ -67,9 +71,9 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{language_matching::LanguageMatching, parser, path::AttrPath, reading::filter_reading::FilterReading},
-        geo::query::GeoQuery,
-        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading, value_path::ValuePath},
+        geo::compiled_geo_query::CompiledGeoQuery,
+        ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use iri_rs::IriBuf;
@@ -80,20 +84,20 @@ mod tests {
     }
 
     /// A distance ordering names one attribute, which is the simple path.
-    fn ordered_attribute(value: &str) -> OrderTarget {
-        OrderTarget::Attribute(AttrPath::simple(name(value)))
+    fn ordered_attribute(value: &str) -> ExpandedOrderingTarget {
+        ExpandedOrderingTarget::Attribute(ValuePath::simple(name(value)))
     }
 
-    fn geo_query(geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn geo_query(geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
             geoproperty: name(geoproperty),
         }
     }
 
-    fn order_term(target: OrderTarget, direction: OrderDirection) -> CompiledOrderTerm {
-        CompiledOrderTerm {
+    fn order_term(target: ExpandedOrderingTarget, direction: OrderingDirection) -> CompiledOrderingTerm {
+        CompiledOrderingTerm {
             target,
             direction,
             collation: None,
@@ -155,7 +159,10 @@ mod tests {
     /// does, so its target needs resolving too.
     #[test]
     fn a_distance_ordering_contributes_its_target_geoproperty() {
-        let terms = [order_term(ordered_attribute("https://example.com/observationPoint"), OrderDirection::DistAsc)];
+        let terms = [order_term(
+            ordered_attribute("https://example.com/observationPoint"),
+            OrderingDirection::DistAsc,
+        )];
         assert_eq!(
             collected(&projected_attribute_names([], None, None, &terms)),
             vec!["https://example.com/observationPoint"]
@@ -167,7 +174,7 @@ mod tests {
     /// by key, so a distance ordering on the default `GeoProperty` resolves it.
     #[test]
     fn a_distance_ordering_on_the_default_geoproperty_resolves_it_for_its_value_keys() {
-        let terms = [order_term(ordered_attribute(LOCATION.as_str()), OrderDirection::DistAsc)];
+        let terms = [order_term(ordered_attribute(LOCATION.as_str()), OrderingDirection::DistAsc)];
         assert_eq!(projected_attribute_names([], None, None, &terms), [name(LOCATION.as_str())]);
     }
 
@@ -175,9 +182,9 @@ mod tests {
     /// ranks by the value at the end of the path, read by key.
     #[test]
     fn a_distance_ordering_on_a_sub_attribute_path_resolves_its_names() {
-        let mut path = AttrPath::simple(name("https://example.com/area"));
-        path.sub_attrs.push(name("https://example.com/accuracy"));
-        let terms = [order_term(OrderTarget::Attribute(path), OrderDirection::DistAsc)];
+        let mut path = ValuePath::simple(name("https://example.com/area"));
+        path.sub_attributes.push(name("https://example.com/accuracy"));
+        let terms = [order_term(ExpandedOrderingTarget::Attribute(path), OrderingDirection::DistAsc)];
         assert_eq!(
             collected(&projected_attribute_names([], None, None, &terms)),
             vec!["https://example.com/area", "https://example.com/accuracy"]
@@ -187,7 +194,7 @@ mod tests {
     /// A value ordering reads the attribute's rows by dictionary key.
     #[test]
     fn a_value_ordering_contributes_its_attribute() {
-        let terms = [order_term(ordered_attribute("https://example.com/temperature"), OrderDirection::Asc)];
+        let terms = [order_term(ordered_attribute("https://example.com/temperature"), OrderingDirection::Asc)];
         assert_eq!(projected_attribute_names([], None, None, &terms), [name("https://example.com/temperature")]);
     }
 
@@ -195,9 +202,9 @@ mod tests {
     #[test]
     fn a_keyword_ordering_contributes_no_name() {
         let terms = [
-            order_term(OrderTarget::Id, OrderDirection::DistAsc),
-            order_term(OrderTarget::Type, OrderDirection::DistDesc),
-            order_term(OrderTarget::Scope, OrderDirection::DistAsc),
+            order_term(ExpandedOrderingTarget::Id, OrderingDirection::DistAsc),
+            order_term(ExpandedOrderingTarget::Type, OrderingDirection::DistDesc),
+            order_term(ExpandedOrderingTarget::Scope, OrderingDirection::DistAsc),
         ];
         assert_eq!(projected_attribute_names([], None, None, &terms), [] as [AttributeName; 0]);
     }
@@ -210,7 +217,7 @@ mod tests {
             LanguageMatching::TagEquality,
         );
         let geo = geo_query("https://example.com/observationPoint");
-        let terms = [order_term(ordered_attribute("https://example.com/operationSpace"), OrderDirection::DistAsc)];
+        let terms = [order_term(ordered_attribute("https://example.com/operationSpace"), OrderingDirection::DistAsc)];
         assert_eq!(
             collected(&projected_attribute_names([], Some(&reading), Some(&geo), &terms)),
             vec![

@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
-use andromeda_ngsi_ld_query::geo::input::GeoQueryInputError;
+use andromeda_ngsi_ld_query::geo::written_geo_query::GeoQueryInputError;
 use andromeda_retry::schedule_error::BackoffScheduleError;
 use mediatype::MediaTypeBuf;
 use std::num::ParseIntError;

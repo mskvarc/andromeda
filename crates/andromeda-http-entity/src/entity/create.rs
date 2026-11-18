@@ -36,7 +36,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_ngsi_ld_query::type_selection::written_type_selection::WrittenTypeSelection;
 use axum::http::{HeaderMap, Method};
 
 /// Create Entity (clause 5.6.1): 201 with the entity's `Location` when every
@@ -83,7 +83,7 @@ pub(crate) async fn create(
         EntityTypeValue::Single(name) => Some(name),
         EntityTypeValue::Multiple(names) => names.first(),
     }
-    .map(|name| TypeExprRaw::Type(name.clone())); // clone: the one-type selector owns the type it names
+    .map(|name| WrittenTypeSelection::Type(name.clone())); // clone: the one-type selector owns the type it names
 
     let forwarded = state
         .forwarding

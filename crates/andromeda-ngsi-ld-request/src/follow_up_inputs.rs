@@ -32,7 +32,11 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, ordering::parameters::OrderingParameters, projection::grammar::RawProjectionTerm};
+use andromeda_ngsi_ld_query::{
+    dataset_selector::DatasetSelector,
+    ordering::ordering_parameters::OrderingParameters,
+    projection::written_projection_term::WrittenProjectionTerm,
+};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use serde::Serialize;
 use std::num::NonZeroU32;
@@ -73,9 +77,9 @@ pub struct FollowUpInputs<'a> {
     /// The Attributes whose values are raw JSON, in one order.
     json_keys: Vec<&'a AttributeName>,
     /// The clause 4.21 `pick` terms, in one order.
-    pick: Vec<&'a RawProjectionTerm>,
+    pick: Vec<&'a WrittenProjectionTerm>,
     /// The clause 4.21 `omit` terms, in one order.
-    omit: Vec<&'a RawProjectionTerm>,
+    omit: Vec<&'a WrittenProjectionTerm>,
     /// How Linked Entities are retrieved (clause 4.5.23).
     join: Option<JoinMode>,
     /// The depth Linked Entities are retrieved to.
@@ -188,8 +192,8 @@ fn names(names: Option<&[AttributeName]>) -> Vec<&AttributeName> {
 }
 
 /// `terms` sorted and deduplicated.
-fn terms(terms: Option<&[RawProjectionTerm]>) -> Vec<&RawProjectionTerm> {
-    let mut terms: Vec<&RawProjectionTerm> = terms.unwrap_or_default().iter().collect();
+fn terms(terms: Option<&[WrittenProjectionTerm]>) -> Vec<&WrittenProjectionTerm> {
+    let mut terms: Vec<&WrittenProjectionTerm> = terms.unwrap_or_default().iter().collect();
     terms.sort_unstable();
     terms.dedup();
     terms
