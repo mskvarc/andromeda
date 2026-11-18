@@ -10,6 +10,7 @@ use crate::{
         blocking_executor::{BlockingExecutor, BlockingTask},
         reader::EntityReader,
         retrieved_entity::RetrievedEntity,
+        spatial_catch_up_signal::SpatialCatchUpSignal,
     },
 };
 use andromeda_context_commit::{
@@ -19,6 +20,7 @@ use andromeda_context_commit::{
     deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
     entity_version::EntityVersion,
+    error::CommitError,
     store_instant::StoreInstant,
     write_outcome::WriteOutcome,
 };
@@ -27,8 +29,14 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+use async_lock::{RwLock, RwLockWriteGuardArc};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::{
+    channel::oneshot,
+    future::{pending, try_join_all},
+};
 use std::{
     collections::HashMap,
     num::NonZeroUsize,
@@ -37,6 +45,7 @@ use std::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    thread,
 };
 
 /// What a [`RecordingCommitter`] saw: every write it was handed, the instant
@@ -216,6 +225,126 @@ pub(crate) struct UnusedBlockingExecutor;
 impl BlockingExecutor for UnusedBlockingExecutor {
     async fn execute(&self, _tasks: Vec<Box<dyn BlockingTask>>, _concurrency: NonZeroUsize) -> Result<(), EntityError> {
         Ok(())
+    }
+}
+
+/// A blocking executor that runs every task on the caller's thread, in order,
+/// before the call returns.
+pub(crate) struct InlineBlockingExecutor;
+
+#[async_trait]
+impl BlockingExecutor for InlineBlockingExecutor {
+    async fn execute(&self, tasks: Vec<Box<dyn BlockingTask>>, _concurrency: NonZeroUsize) -> Result<(), EntityError> {
+        tasks.into_iter().try_for_each(BlockingTask::run)
+    }
+}
+
+/// A blocking executor that runs each task on a thread of its own once its
+/// gate is open, as a blocking pool does. A caller that stops waiting leaves
+/// the task to run to completion.
+pub(crate) struct GatedBlockingExecutor {
+    /// Open while no write guard is held on it.
+    gate: Arc<RwLock<()>>,
+    /// The write guard that keeps the gate closed.
+    closed: Mutex<Option<RwLockWriteGuardArc<()>>>,
+    /// How many tasks were handed over so far.
+    queued: AtomicUsize,
+}
+
+impl GatedBlockingExecutor {
+    /// An executor whose gate is open.
+    pub(crate) fn open() -> GatedBlockingExecutor {
+        GatedBlockingExecutor {
+            gate: Arc::new(RwLock::new(())),
+            closed: Mutex::new(None),
+            queued: AtomicUsize::new(0),
+        }
+    }
+
+    /// Hold every task handed over from now until [`GatedBlockingExecutor::release`].
+    pub(crate) fn hold(&self) {
+        let guard = self.gate.try_write_arc().expect("no task runs while the gate closes");
+        *self.closed.lock().expect("the gate lock is not poisoned") = Some(guard);
+    }
+
+    /// Let every held task run.
+    pub(crate) fn release(&self) {
+        self.closed.lock().expect("the gate lock is not poisoned").take();
+    }
+
+    /// How many tasks were handed over so far.
+    pub(crate) fn queued(&self) -> usize {
+        self.queued.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl BlockingExecutor for GatedBlockingExecutor {
+    async fn execute(&self, tasks: Vec<Box<dyn BlockingTask>>, _concurrency: NonZeroUsize) -> Result<(), EntityError> {
+        let finished = tasks.into_iter().map(|task| {
+            let (done, finished) = oneshot::channel();
+            let gate = Arc::clone(&self.gate);
+            self.queued.fetch_add(1, Ordering::SeqCst);
+            thread::spawn(move || {
+                let _open = gate.read_blocking();
+                let _ignored = done.send(task.run());
+            });
+            finished
+        });
+        let outcomes = try_join_all(finished).await.expect("every task thread reports back");
+        outcomes.into_iter().collect()
+    }
+}
+
+/// A spatial catch-up signal that counts its wakes.
+#[derive(Default)]
+pub(crate) struct RecordingSignal {
+    /// How many wakes were asked for.
+    wakes: AtomicUsize,
+}
+
+impl RecordingSignal {
+    /// How many wakes were asked for so far.
+    pub(crate) fn wakes(&self) -> usize {
+        self.wakes.load(Ordering::SeqCst)
+    }
+}
+
+impl SpatialCatchUpSignal for RecordingSignal {
+    fn wake(&self) {
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// What a [`ScriptedCommitter`] does with every commit it is handed.
+pub(crate) enum Script {
+    /// Every write lands with this outcome.
+    Answer(fn() -> WriteOutcome),
+    /// The commit never completes, as when the request is dropped while the
+    /// store is committing.
+    Hang,
+    /// The commit fails as an unreachable store does.
+    Fail,
+}
+
+/// A committer answering every commit by its script.
+pub(crate) struct ScriptedCommitter(pub(crate) Script);
+
+impl ContextCommitter for ScriptedCommitter {
+    fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        match self.0 {
+            Script::Answer(outcome) => Box::pin(async move { Ok(writes.iter().map(|_| outcome()).collect()) }),
+            Script::Hang => Box::pin(pending()),
+            Script::Fail => Box::pin(async { Err(CommitError::Persistence(PersistenceFailure::Unavailable)) }),
+        }
+    }
+
+    fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.commit(&ContextTarget::Live, accepted_at, writes)
+    }
+
+    fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        self.commit(target, SystemInstant::new(replay.record.recorded_at()), writes)
     }
 }
 

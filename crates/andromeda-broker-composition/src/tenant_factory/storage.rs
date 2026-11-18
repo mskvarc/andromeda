@@ -23,6 +23,7 @@ use andromeda_entity::{
         query::EntityQueryStore,
         reader::EntityReader,
         registry_types::RegistryTypeSource,
+        spatial_catch_up_signal::SpatialCatchUpSignal,
         spatial_snapshot::EntitySpatialSnapshotSource,
     },
     spatial_acceleration::SpatialAcceleration,
@@ -205,11 +206,15 @@ fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextR
 /// transaction-pooling proxy would break. Serving then runs over `serving_url`,
 /// which is the pooler when one is configured. The two URLs name the same
 /// database and are identical when no pooler is configured.
+///
+/// `spatial_catch_up` is what a `watermark` spatial index wakes its
+/// background catch-up through.
 pub(super) async fn initialize_storage(
     config: &TenantFactoryConfig,
     serving_url: &Url,
     migration_url: &Url,
     tenant: &TenantRef,
+    spatial_catch_up: Arc<dyn SpatialCatchUpSignal>,
 ) -> Result<TenantStorage, TenantAssemblyError> {
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.tenancy.default_tenant.max_connections.get(),
@@ -292,7 +297,13 @@ pub(super) async fn initialize_storage(
         tracing::error!(%error, "failed to load subscription cache");
     }
     load_snapshot_subscriptions(&subscription_cache, snapshot_store.as_ref(), &subscription_repository).await;
-    let spatial = initialize_spatial(config.entity.spatial_index.consistency, &entity_ports.spatial_snapshots, tenant).await?;
+    let spatial = initialize_spatial(
+        config.entity.spatial_index.consistency,
+        &entity_ports.spatial_snapshots,
+        tenant,
+        spatial_catch_up,
+    )
+    .await?;
     Ok(TenantStorage {
         tenant: tenant.clone(),
         pool,

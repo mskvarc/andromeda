@@ -7,9 +7,10 @@
 use crate::{
     configuration::section_admission::database_defaults,
     tenant_factory::{
-        background_pacer::{BackgroundPacer, TenantObligations},
+        background_pacer::BackgroundPacer,
         commit_consequence::RuntimeCommitConsequencePublisher,
         error::TenantAssemblyError,
+        obligation_source::TenantObligations,
         periodic_due::PeriodicDue,
         runtime::BrokerTenantRuntime,
         services::{TenantServiceCollaborators, construct_services},
@@ -21,6 +22,7 @@ use crate::{
             TenantTaskChannels,
             snapshot_delivery_signal,
             snapshot_preparation_start::register_snapshot_preparation_slots,
+            spatial_maintenance::spatial_catch_up_signal,
             supervise_tasks,
         },
         temporal_history::compose_temporal_history,
@@ -72,6 +74,7 @@ mod error;
 #[cfg(test)]
 mod held_change_fixture;
 mod name_dictionaries;
+mod obligation_source;
 mod periodic_due;
 /// Runtime ownership and ordered shutdown.
 pub(crate) mod runtime;
@@ -261,7 +264,10 @@ async fn build_tenant_state(
     subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
     let signals = TenantSignals::new(config.notifications.evaluation.max_queued_changes);
-    let storage = initialize_storage(config, serving_url, migration_url, tenant).await?;
+    // The spatial catch-up drain's wake channel is created before the index it
+    // serves, which holds its handle from the seed on.
+    let (spatial_catch_up_wake, spatial_catch_up_receiver) = wake_channel();
+    let storage = initialize_storage(config, serving_url, migration_url, tenant, spatial_catch_up_signal(spatial_catch_up_wake)).await?;
     // One pacer for every background pass the tenant runs, created before the
     // first of them is registered, so one obligation read decides for all of
     // them while the tenant is quiet.
@@ -332,6 +338,7 @@ async fn build_tenant_state(
         side_effect_wake: side_effect_receiver,
         snapshot_status_wake,
         snapshot_status_receiver,
+        spatial_catch_up_wake: spatial_catch_up_receiver,
         pacer: Arc::clone(&pacer),
         periodic: PeriodicPacing {
             ceiling: config.notifications.periodic.max_poll_interval.duration(),

@@ -135,6 +135,9 @@ pub enum PostgresType {
     /// `uuid[]`.
     #[iden = "uuid[]"]
     UuidArray,
+    /// `xid8[]`, a list of transaction identifiers.
+    #[iden = "xid8[]"]
+    Xid8Array,
     /// `sub_attribute`: one sub-attribute of an attribute instance.
     #[iden = "sub_attribute"]
     SubAttribute,
@@ -197,6 +200,7 @@ mod tests {
         assert_eq!(PostgresType::JsonbArray.to_string(), "jsonb[]");
         assert_eq!(PostgresType::TimestamptzArray.to_string(), "timestamptz[]");
         assert_eq!(PostgresType::Float8Array.to_string(), "float8[]");
+        assert_eq!(PostgresType::Xid8Array.to_string(), "xid8[]");
     }
 
     #[test]

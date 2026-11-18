@@ -22,7 +22,9 @@ pub mod registry_types;
 pub mod retrieved_entity;
 /// The caller-owned ports entity policy is constructed over.
 pub mod service_ports;
-/// Typed spatial-index rebuild snapshots.
+/// The wake that asks for a background spatial catch-up pass.
+pub mod spatial_catch_up_signal;
+/// Typed reads of the store's entity locations, for the spatial index.
 pub mod spatial_snapshot;
 /// One Entity of a read over many, read back or named as unreadable.
 pub mod stored_entry;

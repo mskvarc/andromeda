@@ -8,11 +8,11 @@ use tracing::warn;
 /// How the query path consults the resident spatial index, one variant per
 /// [`SpatialConsistency`](andromeda_configuration::schema::entity::spatial_index::SpatialConsistency) mode.
 ///
-/// Cloning shares the index: every query service of a tenant narrows through
-/// the one index the tenant's commits and rebuilds maintain.
+/// Cloning shares the index. Every query service of a tenant narrows through
+/// the one index the tenant's commits, catch-ups and rebuilds maintain.
 #[derive(Clone)]
 pub enum SpatialAcceleration {
-    /// No index: the store evaluates every geo query.
+    /// No index. The store evaluates every geo query.
     StoreVerified,
     /// An index every live commit updates before it returns.
     CommitSynchronous(Arc<SpatialEntityIndex>),
@@ -21,24 +21,21 @@ pub enum SpatialAcceleration {
 }
 
 impl SpatialAcceleration {
-    /// The index a geo query arriving now may be narrowed through, or `None`
-    /// when the store must evaluate it in full.
+    /// Run `read` over the index a geo query arriving now may be narrowed
+    /// through, or return `None` when the store must evaluate it in full.
     ///
-    /// Under [`SpatialAcceleration::Watermark`] this first catches the index up
-    /// with every change the store committed before the call. A catch-up that
-    /// cannot read the store leaves the index behind it, so the query is then
-    /// handed to the store unnarrowed rather than narrowed by a stale index.
-    pub async fn index_for_query(&self) -> Option<&SpatialEntityIndex> {
+    /// Under [`SpatialAcceleration::Watermark`] the index first takes in every
+    /// change the store committed before the call, when they are few enough.
+    /// An index behind the store, or one that cannot read it, hands the query
+    /// to the store unnarrowed rather than narrowing it by stale entries.
+    pub async fn narrow<R>(&self, read: impl FnOnce(&SpatialEntityIndex) -> R) -> Option<R> {
         match self {
             SpatialAcceleration::StoreVerified => None,
-            SpatialAcceleration::CommitSynchronous(index) => Some(index),
-            SpatialAcceleration::Watermark(watermark) => match watermark.catch_up().await {
-                Ok(()) => Some(watermark.index()),
-                Err(error) => {
-                    warn!(%error, "spatial index catch-up failed; the store evaluates the geo query unnarrowed");
-                    None
-                }
-            },
+            SpatialAcceleration::CommitSynchronous(index) => Some(read(index)),
+            SpatialAcceleration::Watermark(watermark) => watermark.narrow(read).await.unwrap_or_else(|error| {
+                warn!(%error, "spatial index catch-up failed; the store evaluates the geo query unnarrowed");
+                None
+            }),
         }
     }
 }

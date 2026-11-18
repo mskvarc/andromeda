@@ -205,15 +205,17 @@ impl IndexChange {
 
 #[cfg(test)]
 mod tests {
-    use crate::{spatial_indexing_committer::SpatialIndexingCommitter, spatial_placement::LocationPlacement};
+    use crate::{
+        recording_ports::{Script, ScriptedCommitter},
+        spatial_indexing_committer::SpatialIndexingCommitter,
+        spatial_placement::LocationPlacement,
+    };
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
-        commit_replay::CommitReplay,
-        committer::{CommitFuture, ContextCommitter},
+        committer::ContextCommitter,
         deleted_entity::DeletedEntity,
         entity_mutation::EntityMutation,
         entity_record::{EntityRecord, SearchProjection},
-        error::CommitError,
         store_instant::StoreInstant,
         write_outcome::WriteOutcome,
     };
@@ -226,14 +228,13 @@ mod tests {
         position::Position,
     };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
-    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_spatial_index::{
         entity::index::{Admitted, SpatialEntityIndex},
         key::SpatialKey,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use chrono::Utc;
-    use futures::{FutureExt, future::pending};
+    use futures::FutureExt;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -242,38 +243,9 @@ mod tests {
         sync::Arc,
     };
 
-    /// What the scripted store does with every commit it is handed.
-    enum Script {
-        /// Every write lands with this outcome.
-        Answer(fn() -> WriteOutcome),
-        /// The commit never completes, as when the request is dropped while
-        /// the store is committing.
-        Hang,
-    }
-
     /// The instant a test commit is accepted at.
     fn accepted() -> SystemInstant {
         SystemInstant::new(Utc::now())
-    }
-
-    /// A store answering every commit by its script.
-    struct ScriptedStore(Script);
-
-    impl ContextCommitter for ScriptedStore {
-        fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-            match self.0 {
-                Script::Answer(outcome) => Box::pin(async move { Ok(writes.iter().map(|_| outcome()).collect()) }),
-                Script::Hang => Box::pin(pending()),
-            }
-        }
-
-        fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-            self.commit(&ContextTarget::Live, accepted_at, writes)
-        }
-
-        fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-            self.commit(target, SystemInstant::new(replay.record.recorded_at()), writes)
-        }
     }
 
     fn vehicle() -> Identifier {
@@ -314,7 +286,7 @@ mod tests {
 
     fn committer(index: &Arc<SpatialEntityIndex>, script: Script) -> SpatialIndexingCommitter {
         SpatialIndexingCommitter::new(
-            Arc::new(ScriptedStore(script)),
+            Arc::new(ScriptedCommitter(script)),
             Arc::clone(index),
             LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name"),
         )
@@ -446,26 +418,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_commit_reports_its_error() {
-        struct FailingStore;
-        impl ContextCommitter for FailingStore {
-            fn commit(&self, _target: &ContextTarget, _accepted_at: SystemInstant, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-                Box::pin(async { Err(CommitError::Persistence(PersistenceFailure::Unavailable)) })
-            }
-
-            fn commit_enqueued(&self, accepted_at: SystemInstant, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-                self.commit(&ContextTarget::Live, accepted_at, writes)
-            }
-
-            fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-                self.commit(target, SystemInstant::new(replay.record.recorded_at()), writes)
-            }
-        }
         let index = seeded_index();
-        let committer = SpatialIndexingCommitter::new(
-            Arc::new(FailingStore),
-            Arc::clone(&index),
-            LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name"),
+        assert!(
+            committer(&index, Script::Fail)
+                .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
+                .await
+                .is_err()
         );
-        assert!(committer.commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))]).await.is_err());
     }
 }

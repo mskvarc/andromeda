@@ -2,15 +2,14 @@
 //! with.
 //!
 //! An `xid8` never wraps around, so ordering two of them is ordering the
-//! transactions that took them: a transaction that finished before a snapshot
-//! was taken holds an identifier below that snapshot's `xmin`, and every
-//! transaction still running when it was taken, or started after, holds one at
-//! or above it. Every transaction whose writes a snapshot sees holds an
-//! identifier below that snapshot's `xmax`, the first one not yet assigned
-//! when it was taken.
+//! transactions that took them. A snapshot sees the writes of every transaction
+//! below its `xmax`, the first identifier not yet assigned when it was taken,
+//! except those still running then, which `pg_snapshot_xip` lists. A transaction
+//! below `xmax` and not on that list had committed or aborted when the snapshot
+//! was taken.
 
-use crate::{cast::cast, pg_type::PostgresType};
-use sea_query::{Func, Iden, SimpleExpr};
+use crate::{cast::cast, pg_array::array_of_subquery, pg_type::PostgresType};
+use sea_query::{Func, Iden, Query, SimpleExpr};
 
 /// The `pg_current_xact_id()` function.
 #[derive(Iden, Clone, Copy)]
@@ -22,35 +21,21 @@ struct PgCurrentXactId;
 #[iden = "pg_current_snapshot"]
 struct PgCurrentSnapshot;
 
-/// The `pg_snapshot_xmin()` function.
-#[derive(Iden, Clone, Copy)]
-#[iden = "pg_snapshot_xmin"]
-struct PgSnapshotXmin;
-
 /// The `pg_snapshot_xmax()` function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "pg_snapshot_xmax"]
 struct PgSnapshotXmax;
+
+/// The `pg_snapshot_xip()` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_snapshot_xip"]
+struct PgSnapshotXip;
 
 /// PostgreSQL: `pg_current_xact_id()` - the `xid8` of the current transaction,
 /// assigning one if it has none yet.
 #[must_use]
 pub fn current_transaction_id() -> SimpleExpr {
     Func::cust(PgCurrentXactId).into()
-}
-
-/// PostgreSQL: `pg_snapshot_xmin(pg_current_snapshot())::text::bigint` - the
-/// oldest transaction still running when the current statement's snapshot was
-/// taken, as a `bigint`.
-///
-/// Read in the same statement as the rows it qualifies, it is the horizon below
-/// which every write the statement could see has already committed or aborted.
-/// `xid8` has no direct cast to `bigint`, so it passes through its text form;
-/// the epoch-extended value stays far inside the signed range.
-#[must_use]
-pub fn snapshot_xmin() -> SimpleExpr {
-    let xmin: SimpleExpr = Func::cust(PgSnapshotXmin).arg(Func::cust(PgCurrentSnapshot)).into();
-    cast(cast(xmin, PostgresType::Text), PostgresType::Bigint)
 }
 
 /// PostgreSQL: `pg_snapshot_xmax(pg_current_snapshot())` - the first `xid8`
@@ -65,16 +50,46 @@ pub fn snapshot_xmax() -> SimpleExpr {
     Func::cust(PgSnapshotXmax).arg(Func::cust(PgCurrentSnapshot)).into()
 }
 
-/// A `bigint` reading of an `xid8`, such as [`snapshot_xmin`] produced, cast
+/// Every transaction still running when the current statement's snapshot was
+/// taken, as the `bigint[]` that
+/// `ARRAY (SELECT pg_snapshot_xip(pg_current_snapshot())::text::bigint)` reads.
+///
+/// Read in the same statement as the rows it qualifies, beside
+/// [`snapshot_xmax`], it names exactly the transactions below `xmax` whose
+/// writes the statement could not see.
+#[must_use]
+pub fn snapshot_in_progress_positions() -> SimpleExpr {
+    let in_progress: SimpleExpr = Func::cust(PgSnapshotXip).arg(Func::cust(PgCurrentSnapshot)).into();
+    array_of_subquery(Query::select().expr(as_position(in_progress)).take())
+}
+
+/// A `bigint` reading of an `xid8`.
+///
+/// `xid8` has no direct cast to `bigint`, so it passes through its text form;
+/// the epoch-extended value stays far inside the signed range.
+#[must_use]
+pub fn as_position(transaction_id: SimpleExpr) -> SimpleExpr {
+    cast(cast(transaction_id, PostgresType::Text), PostgresType::Bigint)
+}
+
+/// A `bigint` reading of an `xid8`, such as [`as_position`] produced, cast
 /// back to `xid8` so it compares against a stored transaction identifier.
 #[must_use]
 pub fn as_transaction_id(position: SimpleExpr) -> SimpleExpr {
     cast(cast(position, PostgresType::Text), PostgresType::Xid8)
 }
 
+/// A `bigint[]` of [`as_position`] readings cast back to `xid8[]`, element by
+/// element, so `= ANY` compares it against a stored transaction identifier
+/// and an index on that identifier serves the comparison.
+#[must_use]
+pub fn as_transaction_ids(positions: SimpleExpr) -> SimpleExpr {
+    cast(cast(positions, PostgresType::TextArray), PostgresType::Xid8Array)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::transaction_id::{as_transaction_id, current_transaction_id, snapshot_xmax, snapshot_xmin};
+    use crate::transaction_id::{as_position, as_transaction_id, as_transaction_ids, current_transaction_id, snapshot_in_progress_positions, snapshot_xmax};
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
@@ -85,15 +100,24 @@ mod tests {
     }
 
     #[test]
-    fn the_snapshot_horizon_reads_the_statement_snapshot_as_a_bigint() {
-        let sql = Query::select().expr(snapshot_xmin()).to_owned().to_string(PostgresQueryBuilder);
-        assert_eq!(sql, "SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint");
-    }
-
-    #[test]
     fn the_snapshot_ceiling_reads_the_statement_snapshot_as_a_transaction_id() {
         let sql = Query::select().expr(snapshot_xmax()).to_owned().to_string(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT pg_snapshot_xmax(pg_current_snapshot())");
+    }
+
+    #[test]
+    fn the_snapshot_ceiling_reads_as_a_bigint_position() {
+        let sql = Query::select().expr(as_position(snapshot_xmax())).to_owned().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT pg_snapshot_xmax(pg_current_snapshot())::text::bigint");
+    }
+
+    #[test]
+    fn the_snapshot_in_progress_transactions_read_as_a_bigint_array() {
+        let sql = Query::select()
+            .expr(snapshot_in_progress_positions())
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT ARRAY (SELECT pg_snapshot_xip(pg_current_snapshot())::text::bigint)");
     }
 
     #[test]
@@ -103,5 +127,14 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT 7::text::xid8");
+    }
+
+    #[test]
+    fn bigint_positions_are_cast_back_to_transaction_ids_element_by_element() {
+        let sql = Query::select()
+            .expr(as_transaction_ids(Expr::val(vec![4_i64, 7])))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT ARRAY [4,7]::text[]::xid8[]");
     }
 }

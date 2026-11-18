@@ -20,15 +20,18 @@ use strum::{Display, EnumString};
 pub enum SpatialConsistency {
     /// The index is caught up from the store before it narrows a query.
     ///
-    /// Before narrowing, the query path reads the location of every entity
-    /// the store changed since the index's recorded position in the store's
-    /// commit history, then advances the position. Exact in every deployment,
-    /// including replicas sharing the store, at the cost of one indexed read
-    /// per geo query; the default because a broker cannot know whether another
-    /// process writes its database.
+    /// Before narrowing, a geo query reads the location of every entity the
+    /// store changed since the index's recorded position in the store's commit
+    /// history and takes them in itself, when at most 10,000 entities changed.
+    /// When more did, the store answers the query in full while a background
+    /// catch-up takes them in, and this process's own writes wake that
+    /// catch-up as they commit. Exact in every deployment, including replicas
+    /// sharing the store, at the cost of one indexed read per geo query. The
+    /// default, because a broker cannot know whether another process writes
+    /// its database.
     #[default]
     #[schemars(
-        description = "Before narrowing a geo query, catch the index up with every location the database changed since its last recorded position. Exact in every deployment, including replicas sharing the database, at the cost of one indexed read per geo query."
+        description = "Before narrowing a geo query, take in every location the database changed since the index's last recorded position, when at most 10,000 entities changed. When more did, the database answers the query in full while a background catch-up takes them in, which this process's own writes also start. Exact in every deployment, including replicas sharing the database, at the cost of one indexed read per geo query."
     )]
     Watermark,
     /// Every committed write updates the index before the write returns.
@@ -67,12 +70,14 @@ pub struct SpatialIndexConfig {
     /// Interval between full index rebuilds from the store, in human-readable
     /// form (`"30m"`).
     ///
-    /// The first rebuild runs when the tenant runtime starts; until it
+    /// The first rebuild runs when the tenant runtime starts, and until it
     /// completes the store evaluates every geo query. Later rebuilds drop the
     /// entries of entities deleted since, and under `commit-synchronous` they
-    /// are also what brings in a replica's writes.
+    /// are also what brings in a replica's writes. Under `watermark` a geo
+    /// query never waits for a rebuild, and the store answers the queries that
+    /// arrive while it installs what it read.
     #[schemars(
-        description = "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes."
+        description = "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read."
     )]
     pub rebuild_interval: HumanDuration,
 }

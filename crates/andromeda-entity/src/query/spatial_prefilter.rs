@@ -83,12 +83,9 @@ impl EntityQueryService {
         let Some(accelerable) = accelerable(compiled) else {
             return Arc::clone(compiled);
         };
-        let Some(index) = self.spatial.index_for_query().await else {
-            return Arc::clone(compiled);
-        };
         let requested: HashSet<&Identifier> = accelerable.selector.ids.iter().collect();
         let admitted = if requested.is_empty() { Admitted::Every } else { Admitted::Among(&requested) };
-        let Some(candidates) = self.candidates(index, &accelerable, admitted) else {
+        let Some(Some(candidates)) = self.spatial.narrow(|index| self.candidates(index, &accelerable, admitted)).await else {
             return Arc::clone(compiled);
         };
         let Some(candidates) = LocationCandidates::new(candidates.into_iter().collect()) else {
