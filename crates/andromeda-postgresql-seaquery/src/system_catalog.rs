@@ -102,6 +102,10 @@ pub enum PgDatabase {
     Table,
     /// The database's name.
     Datname,
+    /// Whether any role allowed to create databases may copy it.
+    Datistemplate,
+    /// Whether sessions may connect to it.
+    Datallowconn,
 }
 
 /// `pg_stat_activity`: one row per server process.

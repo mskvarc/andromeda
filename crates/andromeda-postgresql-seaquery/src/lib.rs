@@ -99,6 +99,7 @@ pub mod system_catalog;
 pub mod temporary_table;
 pub mod timescale;
 pub mod timescale_job;
+pub mod timescale_scheduler;
 pub mod transaction;
 pub mod transaction_id;
 pub mod trigger_switch;

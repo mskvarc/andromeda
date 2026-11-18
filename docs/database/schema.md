@@ -4,7 +4,7 @@ Andromeda keeps context in a PostgreSQL schema built for NGSI-LD, not in a table
 
 ## Databases
 
-The database in `database.connection` is the platform database. It holds the tenant registry and the broker's own bookkeeping, such as maintenance state, and it's also the default tenant's database. Each named tenant gets a PostgreSQL database of its own, which the broker creates when the tenant first appears. Tenants share nothing, so one tenant's data, indexes and statistics never affect another's.
+The database in `database.connection` is the platform database. It holds the tenant registry and the broker's own bookkeeping, such as maintenance state, and it's also the default tenant's database. Each named tenant gets a PostgreSQL database of its own, which the broker creates when the tenant first appears, as a copy of the tenant template that [Tenant template](#tenant-template) describes. Tenants share nothing, so one tenant's data, indexes and statistics never affect another's.
 
 ## Name dictionaries
 
@@ -168,3 +168,15 @@ A tenant database is at one schema version, in every schema it holds. Every bran
 A Snapshot schema that cannot take a migration stops the walk, and the tenant doesn't open. The error names the Snapshot, its schema, the migration the walk was bringing it through and the migration that failed. The migration that failed leaves nothing behind, and the Snapshot keeps the migrations it took before that one. The walk resumes the next time the tenant opens, once the schema has been repaired or the Snapshot's row in `snapshots` deleted, which leaves its schema to the expiry sweep to drop. A schema no row of `snapshots` names is never migrated. The platform database is migrated when the broker starts, so a Snapshot of the default tenant that cannot take a migration keeps the broker from starting.
 
 A migration that a stable release has sealed never changes, so from then on the schema only grows by new migrations. A migration no release has sealed yet is still edited in place, which means a newer build can refuse a database an older build created. [Migration sealing](migration-sealing.md) describes the contract, and [SQL tooling](sql-tooling.md) the tool that keeps the migrations in shape.
+
+## Tenant template
+
+Migrating an empty database through the tenant set takes about 300 ms of server time, and copying a database that's already migrated takes about 50 ms. So the broker keeps a migrated database marked as a template, and every new named tenant's database is a copy of it.
+
+The broker prepares the template when it starts, before it serves. The template is named after `tenancy.databases.name_prefix`, followed by `-template-` and eight hexadecimal digits. The digits are a fingerprint of the tenant migrations and of the PostGIS, TimescaleDB and pg_repack versions the server ships. A broker built with other migrations, or started on a server image that ships other extension versions, therefore builds a template of its own and drops every other template of its prefix. No tenant database is ever named like a template, because a tenant database joins the prefix to its label with an underscore and the prefix can't hold a hyphen.
+
+The template refuses connections. TimescaleDB keeps a scheduler session connected to every database that holds the extension and admits connections, and a database with a connected session can't be copied. The broker stops the template's scheduler and then closes the template to connections, and from then on TimescaleDB doesn't schedule it again, a server restart included. Fleet maintenance skips the template, and `pg_dumpall` leaves it out of a dump, which costs nothing since the broker builds it again when it next starts.
+
+The template is a cache and never decides a schema. A copy is migrated like any new tenant database, so a copy of a template built against older migrations is brought forward by the newer ones, and every copy gets a schema stamp instant of its own. A tenant database that already exists, whichever release created it, is migrated where it stands and never replaced, and opening an existing tenant never touches the template. A broker started on a fresh platform database and one upgraded from v1.0.0 therefore behave alike, since neither finds a template of its build and both build one.
+
+When the template can't be prepared, for example because the broker's role may not stop the TimescaleDB scheduler, the broker logs `tenant_template_unavailable` and creates every new tenant's database empty and migrates it. A copy that fails because the template has gone missing, or because a session still holds it once the retries are spent, falls back the same way for that one database and logs `tenant_template_not_copied`. To remove a template by hand, stop the broker, run `ALTER DATABASE ... WITH IS_TEMPLATE false` on it, then drop it.

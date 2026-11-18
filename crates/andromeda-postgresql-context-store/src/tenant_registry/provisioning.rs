@@ -1,5 +1,5 @@
 //! Bringing a named tenant into existence: its provisional registry row, then
-//! its database.
+//! its database, copied from the tenant template when the broker holds one.
 //!
 //! The two steps wait on different pools, the platform pool and the
 //! one-connection pool the tenant's migrations open, so a saturated pool is
@@ -8,7 +8,7 @@
 use crate::{
     error::ContextStoreError,
     store_fault::persistence_failure,
-    tenant_database::create_database_if_missing,
+    tenant_database::{DatabaseCreation, DatabaseSource, create_database_if_missing},
     tenant_database_naming::derive_database_name,
     tenant_migration::migrate_single_tenant_db,
     tenant_registry::{
@@ -17,6 +17,7 @@ use crate::{
         statements::{advisory_lock_query, named_tenant_standing_query, provisional_touch, tenant_insert},
         status_code::{StoredStanding, standing_of},
     },
+    tenant_template::copy_stamp::renew_copy_stamp,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_seaquery::statement::Statement;
@@ -90,11 +91,27 @@ impl PostgresTenantRegistry {
 
     /// Create the tenant's database if it is missing and migrate it.
     ///
-    /// `CREATE DATABASE` and the extension update run over a plain connection,
-    /// so the only pool this step waits on is the one its migrations open.
+    /// A missing database is copied from the tenant template when the broker
+    /// holds one, and the copy is stamped with an instant of its own. Every
+    /// database is migrated after, a copy included, so a copy of a template
+    /// behind this binary's migrations is brought forward, and a database an
+    /// earlier provisioning left, whatever release made it, is migrated where
+    /// it stands and never replaced.
+    ///
+    /// `CREATE DATABASE`, the stamp and the extension update run over plain
+    /// connections, so the only pool this step waits on is the one its
+    /// migrations open.
     async fn prepare_database(&self, database_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
-        create_database_if_missing(&self.direct_url, database_name).await?;
+        let source = self
+            .template
+            .as_ref()
+            .map_or(DatabaseSource::ServerDefault, |template| DatabaseSource::Template(template.database()));
+        let creation = create_database_if_missing(&self.direct_url, database_name, source).await?;
         let tenant_url = self.direct_url.with_database_name(database_name);
+        match creation {
+            DatabaseCreation::Copied => renew_copy_stamp(&tenant_url).await?,
+            DatabaseCreation::AlreadyPresent | DatabaseCreation::Created => {}
+        }
         migrate_single_tenant_db(&tenant_url, &self.defaults, self.acquire_timeout).await
     }
 }

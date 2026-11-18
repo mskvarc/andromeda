@@ -25,6 +25,7 @@ use crate::{
         },
         status_code::{StoredStanding, standing_of, stored_status},
     },
+    tenant_template::{TenantTemplate, prepare_tenant_template},
 };
 use andromeda_configuration::schema::tenancy::TenantDatabasesConfig;
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
@@ -83,14 +84,20 @@ pub struct PostgresTenantRegistry {
     /// The session defaults a provisioned tenant database receives before any
     /// request reaches it.
     defaults: DatabaseDefaults,
+    /// The template a new tenant's database is copied from, `None` when it
+    /// could not be prepared and a new database is created empty.
+    template: Option<TenantTemplate>,
 }
 
 impl PostgresTenantRegistry {
     /// Open the platform database, install its session defaults, migrate it,
-    /// open the platform pool, and register the unnamed default tenant.
+    /// prepare the tenant template, open the platform pool, and register the
+    /// unnamed default tenant.
     ///
     /// The platform pool opens after the defaults are installed, so none of its
-    /// sessions starts with the values they replace.
+    /// sessions starts with the values they replace. A template that cannot be
+    /// prepared is logged and leaves the registry creating each new tenant's
+    /// database empty, so it never keeps the broker from starting.
     ///
     /// # Errors
     ///
@@ -127,6 +134,16 @@ impl PostgresTenantRegistry {
         platform_migration_pool.close().await;
         migration_result?;
 
+        let template = prepare_tenant_template(&direct_url, &databases.name_prefix, defaults, acquire_timeout)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    %error,
+                    event = "tenant_template_unavailable",
+                    "the tenant template could not be prepared, so every new tenant database is created empty and migrated"
+                );
+            })
+            .ok();
         let registry = PostgresTenantRegistry {
             main_pool: main_pool_options.connect(platform_url.as_str()).await?,
             direct_url,
@@ -134,6 +151,7 @@ impl PostgresTenantRegistry {
             databases,
             acquire_timeout,
             defaults: *defaults,
+            template,
         };
         registry.register_default_tenant().await?;
         Ok(registry)

@@ -201,6 +201,24 @@ async fn restamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaC
     Ok(())
 }
 
+/// Give the stamp an `applied_at` of now, keeping its version and digest.
+///
+/// A database copied from another carries the other's stamp, its instant
+/// included, and `applied_at` is the marker that tells one generation of a
+/// tenant's schema from the one before it, so every copy takes an instant of
+/// its own.
+///
+/// # Errors
+///
+/// Returns [`SchemaContractError::Database`] when the update fails.
+pub async fn renew_stamp_instant<'e, E>(executor: E) -> Result<(), SchemaContractError>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    renewed_instant_statement().to_query().execute(executor).await?;
+    Ok(())
+}
+
 /// Read the singleton, if the tenant carries one.
 async fn read_stamp<'e, E>(executor: E) -> Result<Option<StampedContract>, SchemaContractError>
 where
@@ -257,6 +275,15 @@ fn restamp_statement(version: i32, digest: String) -> UpdateStatement {
         .to_owned()
 }
 
+/// Set the singleton stamp's instant to the transaction's start.
+fn renewed_instant_statement() -> UpdateStatement {
+    Query::update()
+        .table(SchemaMetadata::Table)
+        .value(SchemaMetadata::AppliedAt, Expr::current_timestamp())
+        .and_where(Expr::col(SchemaMetadata::Singleton).eq(true))
+        .to_owned()
+}
+
 /// Read the singleton stamp's version and digest.
 fn read_stamp_statement() -> SelectStatement {
     Query::select()
@@ -286,7 +313,15 @@ mod tests {
         contract::SchemaContract,
         error::SchemaContractError,
         migrations_digest::MigrationsDigest,
-        schema_metadata::{StampedContract, applied_migrations_digest_statement, read_stamp_statement, refuse_on_mismatch, restamp_statement, stamp_statement},
+        schema_metadata::{
+            StampedContract,
+            applied_migrations_digest_statement,
+            read_stamp_statement,
+            refuse_on_mismatch,
+            renewed_instant_statement,
+            restamp_statement,
+            stamp_statement,
+        },
     };
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
@@ -315,6 +350,12 @@ mod tests {
         let sql = restamp_statement(6, "digest".to_owned()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "schema_metadata""#), "{sql}");
         assert!(sql.contains(r#""singleton" = TRUE"#), "{sql}");
+    }
+
+    #[test]
+    fn a_renewed_stamp_changes_only_its_instant() {
+        let sql = renewed_instant_statement().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"UPDATE "schema_metadata" SET "applied_at" = CURRENT_TIMESTAMP WHERE "singleton" = TRUE"#);
     }
 
     #[test]
