@@ -25,17 +25,21 @@ x-pgbouncer: &pgbouncer
 
 # Fifteen servers share the host. A server sizes its buffers and its work memory from the memory it may use, and
 # without a limit each sizes itself for the whole host, so together they outgrow it and the host kills processes of
-# whichever service is running; with 2 GB each, every server fits beside the others.
+# whichever service is running. Every server is sized for 2 GB, and a server under no scale test may use 2 GB.
 x-postgres-memory: &postgres-memory
   mem_limit: 2g
 
 # A scale test's server admits more sessions than the pooler and the broker's direct pools open together, so a test
-# bounding the backends a broker opens reads the broker's bound, never the server's.
+# bounding the backends a broker opens reads the broker's bound, never the server's. It is sized for 2 GB like every
+# other server, so what a scale test reads is the same, but it may use 4 GB: its backends and page cache reach about
+# 3 GB.
 x-scale-postgres: &scale-postgres
-  <<: *postgres-memory
+  mem_limit: 4g
   extends:
     <<: *template
     service: postgres
+  environment:
+    TS_TUNE_MEMORY: 2GB
   command: ["postgres", "-c", "max_connections=300"]
 
 # The settings every broker of this stack shares beside the template's.
