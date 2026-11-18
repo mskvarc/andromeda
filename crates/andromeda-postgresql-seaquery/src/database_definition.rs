@@ -1,4 +1,5 @@
-//! Creating and dropping a database, and its session defaults.
+//! Creating, copying and dropping a database, marking it a template, and its
+//! session defaults.
 //!
 //! None of these commands can take a bound parameter, and `CREATE DATABASE`
 //! and `DROP DATABASE` cannot run inside a transaction, so they are spelled
@@ -26,8 +27,23 @@ pub enum ConnectedSessions {
 /// One database definition command.
 #[derive(Clone, Debug)]
 pub enum DatabaseDefinition {
-    /// `CREATE DATABASE <database>`.
-    Create(DynIden),
+    /// `CREATE DATABASE <database> [TEMPLATE <template>]`.
+    Create {
+        /// The database created.
+        database: DynIden,
+        /// The database copied, `None` for the server's default template.
+        template: Option<DynIden>,
+    },
+    /// `ALTER DATABASE <database> WITH IS_TEMPLATE true ALLOW_CONNECTIONS
+    /// false`: a database any role allowed to create databases may copy and
+    /// no session may connect to. `TimescaleDB` restarts the scheduler of a
+    /// template that still admits connections whenever the template is copied,
+    /// and that scheduler's session then fails the copy, so a template it
+    /// serves must refuse connections.
+    MarkTemplate(DynIden),
+    /// `ALTER DATABASE <database> WITH IS_TEMPLATE false`, which `DROP
+    /// DATABASE` requires of a template.
+    UnmarkTemplate(DynIden),
     /// `DROP DATABASE IF EXISTS <database> [WITH (FORCE)]`.
     Drop {
         /// The database dropped.
@@ -53,9 +69,31 @@ pub enum DatabaseDefinition {
 }
 
 impl DatabaseDefinition {
-    /// `CREATE DATABASE <database>`.
+    /// `CREATE DATABASE <database>`, a copy of the server's default template.
     pub fn create(database: impl IntoIden) -> DatabaseDefinition {
-        DatabaseDefinition::Create(database.into_iden())
+        DatabaseDefinition::Create {
+            database: database.into_iden(),
+            template: None,
+        }
+    }
+
+    /// `CREATE DATABASE <database> TEMPLATE <template>`.
+    pub fn create_from_template(database: impl IntoIden, template: impl IntoIden) -> DatabaseDefinition {
+        DatabaseDefinition::Create {
+            database: database.into_iden(),
+            template: Some(template.into_iden()),
+        }
+    }
+
+    /// `ALTER DATABASE <database> WITH IS_TEMPLATE true ALLOW_CONNECTIONS
+    /// false`.
+    pub fn mark_template(database: impl IntoIden) -> DatabaseDefinition {
+        DatabaseDefinition::MarkTemplate(database.into_iden())
+    }
+
+    /// `ALTER DATABASE <database> WITH IS_TEMPLATE false`.
+    pub fn unmark_template(database: impl IntoIden) -> DatabaseDefinition {
+        DatabaseDefinition::UnmarkTemplate(database.into_iden())
     }
 
     /// `DROP DATABASE IF EXISTS <database>`, `sessions` deciding what happens
@@ -85,7 +123,15 @@ impl DatabaseDefinition {
 impl RenderedCommand for DatabaseDefinition {
     fn rendered(&self) -> String {
         match self {
-            DatabaseDefinition::Create(database) => format!("CREATE DATABASE {}", quoted_iden(database)),
+            DatabaseDefinition::Create { database, template: None } => format!("CREATE DATABASE {}", quoted_iden(database)),
+            DatabaseDefinition::Create {
+                database,
+                template: Some(template),
+            } => format!("CREATE DATABASE {} TEMPLATE {}", quoted_iden(database), quoted_iden(template)),
+            DatabaseDefinition::MarkTemplate(database) => {
+                format!("ALTER DATABASE {} WITH IS_TEMPLATE true ALLOW_CONNECTIONS false", quoted_iden(database))
+            }
+            DatabaseDefinition::UnmarkTemplate(database) => format!("ALTER DATABASE {} WITH IS_TEMPLATE false", quoted_iden(database)),
             DatabaseDefinition::Drop { database, sessions } => {
                 let force = match sessions {
                     ConnectedSessions::Refuse => "",
@@ -122,6 +168,26 @@ mod tests {
         assert_eq!(
             DatabaseDefinition::create(Alias::new("evil\"; DROP")).rendered(),
             r#"CREATE DATABASE "evil""; DROP""#
+        );
+    }
+
+    #[test]
+    fn a_copy_names_its_template_as_a_quoted_identifier() {
+        assert_eq!(
+            DatabaseDefinition::create_from_template(Alias::new("andromeda_tenant_a"), Alias::new("andromeda_tenant-template-0badc0de")).rendered(),
+            r#"CREATE DATABASE "andromeda_tenant_a" TEMPLATE "andromeda_tenant-template-0badc0de""#
+        );
+    }
+
+    #[test]
+    fn marking_a_template_refuses_connections_and_unmarking_it_clears_only_the_template_flag() {
+        assert_eq!(
+            DatabaseDefinition::mark_template(Alias::new("t")).rendered(),
+            r#"ALTER DATABASE "t" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false"#
+        );
+        assert_eq!(
+            DatabaseDefinition::unmark_template(Alias::new("t")).rendered(),
+            r#"ALTER DATABASE "t" WITH IS_TEMPLATE false"#
         );
     }
 

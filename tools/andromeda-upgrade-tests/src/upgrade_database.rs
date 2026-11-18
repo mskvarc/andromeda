@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_branch::{snapshot_schema_name, snapshot_search_path};
 use andromeda_postgresql_context_store::{
     migration_set::{branch::branch_migrator, migration_version::MigrationVersion, platform::platform_migrator, tenant::tenant_migrator},
-    tenant_database::create_database_if_missing,
+    tenant_database::{DatabaseSource, create_database_if_missing},
     tenant_migration::{migrate_platform_db, migrate_tenant_db, open_schema_change_pool},
 };
 use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options, schema_change_lock::schema_change_connect_options};
@@ -43,8 +43,18 @@ impl UpgradeDatabase {
     /// Returns [`UpgradeDatabaseError`] when the database cannot be created or
     /// reached.
     pub async fn create(server: &UpgradeServer) -> Result<UpgradeDatabase, UpgradeDatabaseError> {
-        let name = fresh_name();
-        create_database_if_missing(server.url(), &name).await?;
+        UpgradeDatabase::create_named(server, fresh_name()).await
+    }
+
+    /// Creates an empty database named `name` on `server`, for a rehearsal
+    /// that needs a database the broker derives the name of.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpgradeDatabaseError`] when the database cannot be created or
+    /// reached.
+    pub async fn create_named(server: &UpgradeServer, name: TenantDatabaseName) -> Result<UpgradeDatabase, UpgradeDatabaseError> {
+        create_database_if_missing(server.url(), &name, DatabaseSource::ServerDefault).await?;
         let url = server.url().with_database_name(&name);
         let pool = open_schema_change_pool(&url, ACQUIRE_TIMEOUT).await?;
         Ok(UpgradeDatabase {
@@ -168,6 +178,19 @@ impl UpgradeDatabase {
     #[must_use]
     pub fn database_url(&self) -> DatabaseUrl {
         DatabaseUrl::new(self.url.clone())
+    }
+
+    /// The database's name, for a registry row the test writes.
+    #[must_use]
+    pub const fn database_name(&self) -> &TenantDatabaseName {
+        &self.name
+    }
+
+    /// Closes the connection and keeps the database, for a rehearsal that hands
+    /// it to the broker, and returns its name.
+    pub async fn close(self) -> TenantDatabaseName {
+        self.pool.close().await;
+        self.name
     }
 
     /// Closes the connection and drops the database.

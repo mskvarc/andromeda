@@ -68,4 +68,7 @@ pub(crate) enum UpgradeTestError {
         /// What the test looked for.
         what: &'static str,
     },
+    /// A session still holds the tenant template the test drops.
+    #[error("a session still holds the tenant template")]
+    TemplateHeld,
 }

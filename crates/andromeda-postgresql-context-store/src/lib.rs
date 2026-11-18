@@ -99,6 +99,8 @@ pub mod tenant_extension_versions;
 pub mod tenant_migration;
 /// The `tenants` table, behind the tenancy crate's registry port.
 pub mod tenant_registry;
+/// The database a new tenant's database is copied from.
+pub mod tenant_template;
 /// Per-tenant operational usage, behind the tenancy crate's usage-probe port.
 pub mod tenant_usage;
 /// The `tenant_wake_schedule` table, behind the tenancy crate's wake-schedule port.
