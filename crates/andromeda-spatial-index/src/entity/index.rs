@@ -3,7 +3,7 @@
 use crate::{
     entity::entry::SpatialEntry,
     key::SpatialKey,
-    partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
+    partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking, packed_rtree::PackedRTree},
 };
 use andromeda_ngsi_ld_geometry::{
     form::GeometryForm,
@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_geometry::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_spelling::IdentifierSpelling};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
-use rstar::{AABB, RTree};
+use rstar::AABB;
 use std::collections::{HashMap, HashSet};
 
 /// The set of partitions one rebuild covers: every entity type of one tenant
@@ -278,7 +278,7 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
 /// admits, at most `at_most` entities of them that `admitted` admits, or
 /// `None` once one more meets it.
 fn evaluate(
-    tree: &RTree<SpatialEntry>,
+    tree: &PackedRTree<SpatialEntry>,
     georel: &GeoRel,
     reference: &PlanarGeometry,
     candidates: &Candidates,
@@ -291,7 +291,7 @@ fn evaluate(
             envelope
                 .rects()
                 .iter()
-                .flat_map(|rect| tree.locate_in_envelope_intersecting(AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]))),
+                .flat_map(|rect| tree.intersecting(AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]))),
             georel,
             reference,
             admitted,

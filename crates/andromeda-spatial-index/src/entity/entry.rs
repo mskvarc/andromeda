@@ -13,10 +13,10 @@ use std::borrow::Cow;
 /// A single entity's geometry, indexed under one
 /// [`SpatialKey`](crate::key::SpatialKey).
 ///
-/// The tree holds its entries inline in its leaves, and most located entities
-/// are a single `Point`, so a point entry is its identifier and its two
-/// coordinates, 24 bytes. Any other geometry keeps its projection and envelope
-/// behind one box, so its entry is no larger.
+/// The tree packs its entries into leaves at their own size, and most located
+/// entities are a single `Point`, so a point entry is its identifier and its
+/// two coordinates, 24 bytes. Any other geometry keeps its projection and
+/// envelope behind one box, so its entry is no larger.
 ///
 /// The envelope is the geometry's great-circle bounds rather than its planar
 /// bounding rectangle. `near` measures along great-circle edges, which bow past

@@ -3,12 +3,12 @@
 
 use crate::{
     key::SpatialKey,
-    partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
+    partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking, packed_rtree::PackedRTree},
     subscription::entry::SubEntry,
 };
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, great_circle::great_circle_bounds, planar::PlanarGeometry, relation::matches};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use rstar::{AABB, Envelope, RTree};
+use rstar::{AABB, Envelope};
 
 /// Thread-safe R-tree cache of subscription reference geometries.
 ///
@@ -88,9 +88,9 @@ impl SpatialSubscriptionIndex {
 
 /// Every subscription in one partition's tree whose geo filter the entity
 /// geometry, projected onto the horizontal plane, satisfies.
-fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &PlanarGeometry, envelope: &AABB<[f64; 2]>) -> Vec<Identifier> {
+fn candidates_in(tree: &PackedRTree<SubEntry>, entity_geometry: &PlanarGeometry, envelope: &AABB<[f64; 2]>) -> Vec<Identifier> {
     let mut matched = Vec::new();
-    for entry in tree.locate_in_envelope_intersecting(*envelope) {
+    for entry in tree.intersecting(*envelope) {
         if matches(&entry.georel, entity_geometry, &entry.ref_geometry) {
             matched.push(entry.subscription_id.clone()); // clone: the answer outlives the tree borrow
         }
@@ -103,7 +103,7 @@ fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &PlanarGeometry, envel
     // `maxDistance` does not: its envelope covers every point within that
     // distance. The scan only touches entries the envelope pass missed, so no
     // entry is considered twice.
-    for entry in tree {
+    for entry in tree.iter() {
         if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { max_distance: None, .. })
             && !entry.envelope.intersects(envelope)
             && matches(&entry.georel, entity_geometry, &entry.ref_geometry)
