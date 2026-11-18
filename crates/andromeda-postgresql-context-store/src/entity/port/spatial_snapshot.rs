@@ -47,8 +47,9 @@ use andromeda_postgresql_seaquery::{
     cast::{cast, typed_null},
     pg_array::any,
     pg_type::PostgresType,
-    setting::lift_statement_timeout,
+    setting::Setting,
     statement::Statement,
+    transaction::{Isolation, TransactionStart},
     transaction_id::{as_position, as_transaction_id, as_transaction_ids, snapshot_in_progress_positions, snapshot_xmax},
 };
 use andromeda_postgresql_stored_form::names_in_key_order::type_names_of;
@@ -163,22 +164,32 @@ fn changed_above(horizon: &BoundHorizon) -> Condition {
     }
 }
 
+/// How the transaction a location read runs in begins.
+///
+/// A read of every location seeds or rebuilds a tenant's index, and an
+/// unbounded change read takes in a backlog. Both take as long as what they
+/// read is large and no request waits for either, so they lift the statement
+/// timeout for their own transaction, and the planner may give them parallel
+/// workers.
+///
+/// A bounded change read runs before a geo query, keeps the statement timeout
+/// and runs without parallel workers. It returns at most a few thousand rows,
+/// and none once the index has caught up. Until a tenant's tables are analysed,
+/// the planner takes the range above the horizon for a fixed share of the
+/// table, enough rows to plan a worker whose start costs many times the read.
+fn read_transaction(filter: LocationFilter<'_>) -> TransactionStart {
+    let start = TransactionStart::at(Isolation::ReadCommitted);
+    match filter {
+        LocationFilter::Located | LocationFilter::ChangedSince(_, ChangeBound::Every) => start.with_local(Setting::StatementTimeout, "0"),
+        LocationFilter::ChangedSince(_, ChangeBound::AtMost(_)) => start.with_local(Setting::MaxParallelWorkersPerGather, "0"),
+    }
+}
+
 impl EntityRepository {
-    /// Run one location read, in a transaction of its own.
-    ///
-    /// A read of every location seeds or rebuilds a tenant's index, and an
-    /// unbounded change read takes in a backlog. Both take as long as what
-    /// they read is large and no request waits for either, so they lift the
-    /// statement timeout for their own transaction. A bounded change read
-    /// keeps it.
+    /// Run one location read, in a transaction of its own begun as
+    /// [`read_transaction`] sets out.
     async fn location_rows(&self, filter: LocationFilter<'_>) -> Result<Vec<LocationRow>, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
-        match filter {
-            LocationFilter::Located | LocationFilter::ChangedSince(_, ChangeBound::Every) => {
-                Query::select().expr(lift_statement_timeout()).to_query().execute(&mut *transaction).await?;
-            }
-            LocationFilter::ChangedSince(_, ChangeBound::AtMost(_)) => {}
-        }
+        let mut transaction = read_transaction(filter).begin_in(&self.pool).await?;
         let rows = locations_statement(filter).to_query_as::<LocationRow>().fetch_all(&mut *transaction).await?;
         transaction.commit().await?;
         Ok(rows)
@@ -298,7 +309,16 @@ impl EntitySpatialSnapshotSource for EntityRepository {
 #[cfg(test)]
 mod tests {
     use crate::entity::{
-        port::spatial_snapshot::{BoundHorizon, ChangeBound, LocationFilter, LocationRow, decode_bounded_rows, decode_rows, locations_statement},
+        port::spatial_snapshot::{
+            BoundHorizon,
+            ChangeBound,
+            LocationFilter,
+            LocationRow,
+            decode_bounded_rows,
+            decode_rows,
+            locations_statement,
+            read_transaction,
+        },
         repo::EntityRepository,
     };
     use andromeda_entity::{
@@ -307,6 +327,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use andromeda_postgresql_seaquery::{
+        setting::Setting,
+        transaction::{Isolation, TransactionStart},
+    };
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use std::num::NonZeroUsize;
@@ -386,6 +410,30 @@ mod tests {
             "{sql}"
         );
         assert_eq!(values.0.len(), 1, "the unbounded read binds its ceiling alone: {sql}");
+    }
+
+    #[test]
+    fn a_bounded_change_read_keeps_the_statement_timeout_and_runs_without_parallel_workers() {
+        let horizon = BoundHorizon {
+            ceiling: 42,
+            unseen: Vec::new(),
+        };
+        let bound = NonZeroUsize::new(10_000).expect("a positive bound");
+        assert_eq!(
+            read_transaction(LocationFilter::ChangedSince(&horizon, ChangeBound::AtMost(bound))),
+            TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::MaxParallelWorkersPerGather, "0")
+        );
+    }
+
+    #[test]
+    fn a_full_read_and_an_unbounded_change_read_lift_the_statement_timeout_and_leave_parallel_workers_to_the_planner() {
+        let horizon = BoundHorizon {
+            ceiling: 42,
+            unseen: Vec::new(),
+        };
+        let unbounded = TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::StatementTimeout, "0");
+        assert_eq!(read_transaction(LocationFilter::Located), unbounded);
+        assert_eq!(read_transaction(LocationFilter::ChangedSince(&horizon, ChangeBound::Every)), unbounded);
     }
 
     #[test]

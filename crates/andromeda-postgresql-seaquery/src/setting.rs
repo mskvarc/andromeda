@@ -184,8 +184,7 @@ pub fn set_config_to(setting: Setting, value: SimpleExpr, scope: SettingScope) -
 /// The broker installs a `statement_timeout` on each database just past the
 /// request deadline, so a statement no request waits for any more stops. Work
 /// no request bounds (copying a Snapshot, converting or dropping history
-/// chunks, reading every location when a tenant opens) lifts it for its own
-/// transaction.
+/// chunks) lifts it for its own transaction.
 #[must_use]
 pub fn lift_statement_timeout() -> SimpleExpr {
     set_config(Setting::StatementTimeout, "0", SettingScope::Transaction)
