@@ -35,7 +35,7 @@ use winnow::{Parser, stream::LocatingSlice, token::take_while};
 /// does not admit at its position, and [`TypeSelectionError::InvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
 pub(super) fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
-    let trimmed = input.trim_matches(|character| Whitespace::Unicode.contains(character));
+    let trimmed = Whitespace::Unicode.trim(input);
     if trimmed.is_empty() {
         return Err(TypeSelectionError::Empty);
     }

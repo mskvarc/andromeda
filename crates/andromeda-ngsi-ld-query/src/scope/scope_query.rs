@@ -1,6 +1,6 @@
 //! The `scopeQ` query parameter value (clause 4.19).
 
-use crate::scope::{scope_pattern::ScopePattern, scope_query_error::ScopeQueryError};
+use crate::scope::{parser, scope_pattern::ScopePattern, scope_query_error::ScopeQueryError};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write},
@@ -11,21 +11,6 @@ use std::{
 const ALTERNATIVE_SEPARATOR: char = ',';
 /// The separator rendered between requirements of one alternative: `;` is AND.
 const REQUIREMENT_SEPARATOR: char = ';';
-
-/// One lexical token of a `scopeQ` expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ScopeToken {
-    /// A scope path pattern such as `/A/#`.
-    Pattern(String),
-    /// An OR operator (`,` or `|`, clause 4.19 `orOp = %x7C / %x2C`).
-    Or,
-    /// An AND operator (`;`).
-    And,
-    /// `(`, opening a grouped sub-expression.
-    Open,
-    /// `)`, closing a grouped sub-expression.
-    Close,
-}
 
 /// NGSI-LD scope query expression, parsed.
 ///
@@ -58,125 +43,6 @@ impl ScopeQuery {
     }
 }
 
-/// Split a `scopeQ` string into tokens.
-///
-/// A scope path contains only `/`, level labels, `+` and `#`, none of which is
-/// an operator, so the operators `, | ; ( )` cleanly delimit the patterns
-/// between them. Surrounding whitespace is trimmed from each pattern.
-fn tokenize_scope_query(raw: &str) -> Vec<ScopeToken> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let flush = |current: &mut String, tokens: &mut Vec<ScopeToken>| {
-        let trimmed = current.trim();
-        if !trimmed.is_empty() {
-            tokens.push(ScopeToken::Pattern(trimmed.to_string()));
-        }
-        current.clear();
-    };
-    for character in raw.chars() {
-        match character {
-            ',' | '|' => {
-                flush(&mut current, &mut tokens);
-                tokens.push(ScopeToken::Or);
-            }
-            ';' => {
-                flush(&mut current, &mut tokens);
-                tokens.push(ScopeToken::And);
-            }
-            '(' => {
-                flush(&mut current, &mut tokens);
-                tokens.push(ScopeToken::Open);
-            }
-            ')' => {
-                flush(&mut current, &mut tokens);
-                tokens.push(ScopeToken::Close);
-            }
-            other => current.push(other),
-        }
-    }
-    flush(&mut current, &mut tokens);
-    tokens
-}
-
-/// A parser over a tokenised `scopeQ`, following the clause 4.19 grammar.
-struct ScopeQueryParser<'a> {
-    /// The tokens to consume.
-    tokens: &'a [ScopeToken],
-    /// The next token to read.
-    position: usize,
-}
-
-impl ScopeQueryParser<'_> {
-    /// The next token without consuming it.
-    fn peek(&self) -> Option<&ScopeToken> {
-        self.tokens.get(self.position)
-    }
-
-    /// Whether every token has been consumed.
-    const fn is_exhausted(&self) -> bool {
-        self.position >= self.tokens.len()
-    }
-
-    /// Parse `OrScopeQ *(orOp OrScopeQ)`.
-    fn parse_or(&mut self) -> Result<Vec<Vec<ScopePattern>>, ScopeQueryError> {
-        let mut alternatives = vec![self.parse_alternative()?];
-        while matches!(self.peek(), Some(ScopeToken::Or)) {
-            self.position += 1;
-            alternatives.push(self.parse_alternative()?);
-        }
-        Ok(alternatives)
-    }
-
-    /// Parse one `OrScopeQ`: a parenthesised conjunction or a single pattern.
-    /// A `;` after either is a conjunction outside parentheses.
-    fn parse_alternative(&mut self) -> Result<Vec<ScopePattern>, ScopeQueryError> {
-        let alternative = match self.peek() {
-            Some(ScopeToken::Open) => {
-                self.position += 1;
-                self.parse_group()?
-            }
-            Some(ScopeToken::Pattern(_) | ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => vec![self.parse_pattern()?],
-        };
-        match self.peek() {
-            Some(ScopeToken::And) => Err(ScopeQueryError::UngroupedConjunction),
-            Some(ScopeToken::Pattern(_) | ScopeToken::Or | ScopeToken::Open | ScopeToken::Close) | None => Ok(alternative),
-        }
-    }
-
-    /// Parse `ScopeQ *(andOp ScopeQ) ")"` after its opening parenthesis.
-    fn parse_group(&mut self) -> Result<Vec<ScopePattern>, ScopeQueryError> {
-        let mut conjunction = vec![self.parse_pattern()?];
-        loop {
-            match self.peek() {
-                Some(ScopeToken::And) => {
-                    self.position += 1;
-                    conjunction.push(self.parse_pattern()?);
-                }
-                Some(ScopeToken::Close) => {
-                    self.position += 1;
-                    return Ok(conjunction);
-                }
-                Some(ScopeToken::Or | ScopeToken::Open) => return Err(ScopeQueryError::NestedGroup),
-                Some(ScopeToken::Pattern(_)) | None => return Err(ScopeQueryError::UnclosedGroup),
-            }
-        }
-    }
-
-    /// Parse one `ScopeQ` pattern.
-    fn parse_pattern(&mut self) -> Result<ScopePattern, ScopeQueryError> {
-        match self.peek() {
-            Some(ScopeToken::Pattern(pattern)) => {
-                let pattern = pattern.parse::<ScopePattern>()?;
-                self.position += 1;
-                Ok(pattern)
-            }
-            Some(ScopeToken::Open) => Err(ScopeQueryError::NestedGroup),
-            // An operator, a `)`, or the end of input where a pattern was expected.
-            Some(ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => Err(ScopeQueryError::MissingPattern),
-        }
-    }
-}
-
 impl FromStr for ScopeQuery {
     type Err = ScopeQueryError;
 
@@ -189,14 +55,7 @@ impl FromStr for ScopeQuery {
     /// group or a disjunction inside one, or contains a pattern outside the
     /// clause 4.19 grammar.
     fn from_str(raw: &str) -> Result<ScopeQuery, ScopeQueryError> {
-        let tokens = tokenize_scope_query(raw);
-        let mut parser = ScopeQueryParser { tokens: &tokens, position: 0 };
-        let alternatives = parser.parse_or()?;
-        if !parser.is_exhausted() {
-            // A dangling `)` or trailing operator: the whole input is malformed.
-            return Err(ScopeQueryError::TrailingInput);
-        }
-        Ok(ScopeQuery { alternatives })
+        parser::parse(raw).map(|alternatives| ScopeQuery { alternatives })
     }
 }
 

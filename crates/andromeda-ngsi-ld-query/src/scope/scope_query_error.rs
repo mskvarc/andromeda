@@ -1,5 +1,6 @@
 //! Why a `scopeQ` expression or one of its patterns is outside clause 4.19.
 
+use crate::query_text::disjunctive_form::DisjunctiveFormErrors;
 use andromeda_ngsi_ld_lexicon::scope::level::LEVEL_CHARACTER_LIMIT;
 use thiserror::Error;
 
@@ -36,10 +37,36 @@ pub enum ScopeQueryError {
     /// required.
     #[error("invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input")]
     MissingPattern,
-    /// Input continues after a complete expression: a dangling `)` or a
-    /// trailing operator.
+    /// Input continues after a complete expression: a `)` with no group open,
+    /// or a `(` or a pattern after a complete alternative.
     #[error("invalid scopeQ pattern: the expression continues after it is complete")]
     TrailingInput,
+}
+
+impl DisjunctiveFormErrors for ScopeQueryError {
+    fn missing_item(_found: Option<char>, _position: usize) -> Self {
+        ScopeQueryError::MissingPattern
+    }
+
+    fn group_in_group(_position: usize) -> Self {
+        ScopeQueryError::NestedGroup
+    }
+
+    fn nested_group(_position: usize) -> Self {
+        ScopeQueryError::NestedGroup
+    }
+
+    fn unclosed_group(_position: usize) -> Self {
+        ScopeQueryError::UnclosedGroup
+    }
+
+    fn ungrouped_conjunction(_position: usize) -> Self {
+        ScopeQueryError::UngroupedConjunction
+    }
+
+    fn trailing_input(_found: char, _position: usize) -> Self {
+        ScopeQueryError::TrailingInput
+    }
 }
 
 #[cfg(test)]
