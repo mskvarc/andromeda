@@ -20,6 +20,12 @@
 //! that seeds the index holds such a row already, and without the bound every
 //! change read would return it again until the counter passed it. A later
 //! write restamps the row with this cluster's identifier.
+//!
+//! A full read and an unbounded change read return a row per located entity
+//! they cover, millions for a large tenant, and are decoded on the blocking
+//! pool, so the decode holds no async worker the tenant's requests run on. A
+//! bounded change read returns at most a few thousand rows and is decoded
+//! inline, where a thread hand-off would cost more than the decode.
 
 use crate::{
     entity::{
@@ -29,6 +35,7 @@ use crate::{
     store_fault::{contract_broken, persistence_failure, undecodable},
 };
 use andromeda_entity::{
+    entity_invariant::EntityInvariant,
     error::EntityError,
     port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
 };
@@ -48,7 +55,8 @@ use andromeda_postgresql_stored_form::names_in_key_order::type_names_of;
 use async_trait::async_trait;
 use sea_query::{Condition, Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 use std::num::NonZeroUsize;
-use tracing::warn;
+use tokio::task::spawn_blocking;
+use tracing::{error, warn};
 
 /// A [`ChangeHorizon`] in the `bigint` form the statement binds it as.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,13 +184,17 @@ impl EntityRepository {
         Ok(rows)
     }
 
-    /// Run one location read and decode its rows.
+    /// Run one location read of every row it covers, and decode the rows on
+    /// the blocking pool.
     async fn read_locations(&self, filter: LocationFilter<'_>) -> Result<LocationRead, EntityError> {
         let rows = self
             .location_rows(filter)
             .await
             .map_err(|error| EntityError::from(persistence_failure(&error)))?;
-        decode_rows(rows)
+        spawn_blocking(move || decode_rows(rows)).await.unwrap_or_else(|failure| {
+            error!(%failure, "decoding a spatial location read did not complete");
+            Err(EntityInvariant::BlockingTaskFailed.into())
+        })
     }
 }
 

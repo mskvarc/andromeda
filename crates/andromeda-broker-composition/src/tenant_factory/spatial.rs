@@ -13,26 +13,26 @@ use andromeda_entity::{
     spatial_catch_up_committer::SpatialCatchUpCommitter,
     spatial_indexing_committer::SpatialIndexingCommitter,
     spatial_placement::LocationPlacement,
-    spatial_reconciliation::rebuild_location_index,
     spatial_watermark::SpatialWatermark,
 };
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 
-/// Build the tenant's spatial acceleration and seed its index from the store.
+/// Build the tenant's spatial acceleration for `consistency` over an index no
+/// rebuild has seeded yet.
 ///
-/// A seed that cannot read the store leaves the index unseeded rather than
-/// failing the tenant. An unseeded index narrows no query, so the store
-/// evaluates every geo query until the periodic rebuild seeds it. Under
-/// `watermark`, `catch_up` is what the watermark wakes its background
-/// catch-up through.
+/// Composing reads no location, so the tenant serves requests as soon as its
+/// storage is assembled. An unseeded index narrows no query, so the store
+/// evaluates every geo query until the rebuild task's first pass seeds the
+/// index beside the tenant's requests. Under `watermark`, `catch_up` is what
+/// the watermark wakes its background catch-up through.
 ///
 /// # Errors
 ///
 /// Returns [`TenantAssemblyError::Invariant`] when the core `location` term is
 /// not a well-formed attribute name.
-pub(super) async fn initialize_spatial(
+pub(super) fn compose_spatial(
     consistency: SpatialConsistency,
     source: &Arc<dyn EntitySpatialSnapshotSource>,
     tenant: &TenantRef,
@@ -40,26 +40,14 @@ pub(super) async fn initialize_spatial(
 ) -> Result<SpatialAcceleration, TenantAssemblyError> {
     Ok(match consistency {
         SpatialConsistency::StoreVerified => SpatialAcceleration::StoreVerified,
-        SpatialConsistency::CommitSynchronous => {
-            let index = Arc::new(SpatialEntityIndex::new());
-            if let Err(error) = rebuild_location_index(&index, source.as_ref(), &location_placement(tenant)?, &TokioBlockingExecutor).await {
-                tracing::warn!(%error, "spatial index seed failed; geo queries go to the store until the next rebuild");
-            }
-            SpatialAcceleration::CommitSynchronous(index)
-        }
-        SpatialConsistency::Watermark => {
-            let watermark = Arc::new(SpatialWatermark::new(
-                Arc::new(SpatialEntityIndex::new()),
-                Arc::clone(source),
-                location_placement(tenant)?,
-                Arc::new(TokioBlockingExecutor) as Arc<dyn BlockingExecutor>,
-                catch_up,
-            ));
-            if let Err(error) = watermark.rebuild().await {
-                tracing::warn!(%error, "spatial index seed failed; geo queries go to the store until the next rebuild");
-            }
-            SpatialAcceleration::Watermark(watermark)
-        }
+        SpatialConsistency::CommitSynchronous => SpatialAcceleration::CommitSynchronous(Arc::new(SpatialEntityIndex::new())),
+        SpatialConsistency::Watermark => SpatialAcceleration::Watermark(Arc::new(SpatialWatermark::new(
+            Arc::new(SpatialEntityIndex::new()),
+            Arc::clone(source),
+            location_placement(tenant)?,
+            Arc::new(TokioBlockingExecutor) as Arc<dyn BlockingExecutor>,
+            catch_up,
+        ))),
     })
 }
 
@@ -93,7 +81,7 @@ pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement
 #[cfg(test)]
 mod tests {
     use crate::tenant_factory::{
-        spatial::{indexed_commits, initialize_spatial},
+        spatial::{compose_spatial, indexed_commits},
         tasks::spatial_maintenance::spatial_catch_up_signal,
     };
     use andromeda_configuration::schema::entity::spatial_index::{SpatialConsistency, SpatialIndexConfig};
@@ -114,25 +102,16 @@ mod tests {
     use futures::future::BoxFuture;
     use std::{num::NonZeroUsize, sync::Arc};
 
-    /// A store holding no located entity.
-    struct EmptyStore;
+    /// A store every read of which fails the test: composing reads nothing.
+    struct Unread;
 
-    impl EmptyStore {
-        fn read() -> LocationRead {
-            LocationRead {
-                locations: Vec::new(),
-                horizon: ChangeHorizon::new(1, Vec::new()),
-            }
-        }
-    }
-
-    impl EntitySpatialSnapshotSource for EmptyStore {
+    impl EntitySpatialSnapshotSource for Unread {
         fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
         where
             'life0: 'async_trait,
             Self: 'async_trait,
         {
-            Box::pin(async { Ok(EmptyStore::read()) })
+            Box::pin(async { panic!("composing reads no location") })
         }
 
         fn locations_changed_since<'life0, 'life1, 'async_trait>(
@@ -144,7 +123,7 @@ mod tests {
             'life1: 'async_trait,
             Self: 'async_trait,
         {
-            Box::pin(async { Ok(EmptyStore::read()) })
+            Box::pin(async { panic!("composing reads no change") })
         }
 
         fn locations_changed_within<'life0, 'life1, 'async_trait>(
@@ -157,7 +136,7 @@ mod tests {
             'life1: 'async_trait,
             Self: 'async_trait,
         {
-            Box::pin(async { Ok(BoundedChangeRead::Within(EmptyStore::read())) })
+            Box::pin(async { panic!("composing reads no change") })
         }
     }
 
@@ -178,20 +157,18 @@ mod tests {
         }
     }
 
-    async fn composed(consistency: SpatialConsistency) -> SpatialAcceleration {
-        let source: Arc<dyn EntitySpatialSnapshotSource> = Arc::new(EmptyStore);
+    fn composed(consistency: SpatialConsistency) -> SpatialAcceleration {
+        let source: Arc<dyn EntitySpatialSnapshotSource> = Arc::new(Unread);
         let (wake, _receiver) = wake_channel();
-        initialize_spatial(consistency, &source, &TenantRef::UnnamedDefault, spatial_catch_up_signal(wake))
-            .await
-            .expect("the configuration composes")
+        compose_spatial(consistency, &source, &TenantRef::UnnamedDefault, spatial_catch_up_signal(wake)).expect("the configuration composes")
     }
 
     /// The default composition catches the index up from the store, which
     /// stays exact when replicas share the database, and counts this
     /// process's writes toward the background catch-up.
-    #[tokio::test]
-    async fn the_default_configuration_composes_a_watermarked_index_and_catch_up_counting_commits() {
-        let spatial = composed(SpatialIndexConfig::default().consistency).await;
+    #[test]
+    fn the_default_configuration_composes_a_watermarked_index_and_catch_up_counting_commits() {
+        let spatial = composed(SpatialIndexConfig::default().consistency);
         assert!(matches!(spatial, SpatialAcceleration::Watermark(_)), "the default is the watermark mode");
 
         let writes: Arc<dyn ContextCommitter> = Arc::new(UnusedCommitter);
@@ -199,20 +176,31 @@ mod tests {
         assert!(!Arc::ptr_eq(&composed, &writes), "a watermarked index counts every commit");
     }
 
-    #[tokio::test]
-    async fn a_store_verified_configuration_leaves_the_commit_path_undecorated() {
-        let spatial = composed(SpatialConsistency::StoreVerified).await;
+    #[test]
+    fn a_store_verified_configuration_leaves_the_commit_path_undecorated() {
+        let spatial = composed(SpatialConsistency::StoreVerified);
         let writes: Arc<dyn ContextCommitter> = Arc::new(UnusedCommitter);
         let composed = indexed_commits(Arc::clone(&writes), &spatial, &TenantRef::UnnamedDefault).expect("composes");
         assert!(Arc::ptr_eq(&composed, &writes), "no index needs no commit-path maintenance");
     }
 
-    #[tokio::test]
-    async fn a_commit_synchronous_configuration_indexes_every_commit() {
-        let spatial = composed(SpatialConsistency::CommitSynchronous).await;
+    #[test]
+    fn a_commit_synchronous_configuration_indexes_every_commit() {
+        let spatial = composed(SpatialConsistency::CommitSynchronous);
         assert!(matches!(spatial, SpatialAcceleration::CommitSynchronous(_)));
         let writes: Arc<dyn ContextCommitter> = Arc::new(UnusedCommitter);
         let composed = indexed_commits(Arc::clone(&writes), &spatial, &TenantRef::UnnamedDefault).expect("composes");
         assert!(!Arc::ptr_eq(&composed, &writes), "a commit-synchronous index is updated by every commit");
+    }
+
+    #[test]
+    fn composing_reads_no_location_in_any_mode() {
+        for consistency in [
+            SpatialConsistency::Watermark,
+            SpatialConsistency::CommitSynchronous,
+            SpatialConsistency::StoreVerified,
+        ] {
+            composed(consistency);
+        }
     }
 }
