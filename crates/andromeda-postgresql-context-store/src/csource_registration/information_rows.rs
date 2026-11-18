@@ -246,7 +246,7 @@ fn entity_info(selector: &SelectorColumns<'_>, row: &InformationRow<'_>) -> Resu
         .map_err(StoredInformationError::EntityId)?;
     let id_pattern = selector
         .pattern
-        .map(Pattern::parse)
+        .map(str::parse::<Pattern>)
         .transpose()
         .map_err(|error| StoredInformationError::IdPattern(Box::new(error)))?;
     Ok(EntityInfo {

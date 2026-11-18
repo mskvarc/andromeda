@@ -422,7 +422,7 @@ mod tests {
                 Representation::builder()
                     .format(TemporalFormat::AggregatedValues)
                     .aggr_methods(methods)
-                    .aggr_period_duration(period.and_then(|raw| AggregationPeriod::parse(raw).expect("valid period")))
+                    .aggr_period_duration(period.and_then(|raw| AggregationPeriod::of_parameter(raw).expect("valid period")))
                     .sys_attrs(SysAttrsInclusion::Strip)
                     .build(),
             )
@@ -439,8 +439,8 @@ mod tests {
                 Representation::builder()
                     .format(TemporalFormat::GroupedValues)
                     .aggr_methods(methods)
-                    .aggr_period_duration(period.and_then(|raw| AggregationPeriod::parse(raw).expect("valid period")))
-                    .grouping(Some(AggregationGrouping::parse(aggr_group_by).expect("a well-formed grouping")))
+                    .aggr_period_duration(period.and_then(|raw| AggregationPeriod::of_parameter(raw).expect("valid period")))
+                    .grouping(Some(aggr_group_by.parse::<AggregationGrouping>().expect("a well-formed grouping")))
                     .sys_attrs(SysAttrsInclusion::Strip)
                     .build(),
             )

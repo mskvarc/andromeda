@@ -220,7 +220,10 @@ mod tests {
     fn an_unscoped_registration_admits_no_scope_query() {
         let unscoped = scoped(None);
         for query in ["/Madrid", "/Madrid/#", "/#"] {
-            assert!(!unscoped.admits_scope_query(&ScopeQuery::parse(query).expect("a valid scope query")), "{query}");
+            assert!(
+                !unscoped.admits_scope_query(&query.parse::<ScopeQuery>().expect("a valid scope query")),
+                "{query}"
+            );
         }
     }
 
@@ -229,9 +232,9 @@ mod tests {
     #[test]
     fn a_scoped_registration_admits_a_matching_scope_query() {
         let gardens = scoped(Some(&["/Madrid/Gardens"]));
-        assert!(gardens.admits_scope_query(&ScopeQuery::parse("/Madrid/#").expect("a valid scope query")));
-        assert!(gardens.admits_scope_query(&ScopeQuery::parse("/Madrid/Gardens").expect("a valid scope query")));
-        assert!(!gardens.admits_scope_query(&ScopeQuery::parse("/Berlin/#").expect("a valid scope query")));
+        assert!(gardens.admits_scope_query(&"/Madrid/#".parse::<ScopeQuery>().expect("a valid scope query")));
+        assert!(gardens.admits_scope_query(&"/Madrid/Gardens".parse::<ScopeQuery>().expect("a valid scope query")));
+        assert!(!gardens.admits_scope_query(&"/Berlin/#".parse::<ScopeQuery>().expect("a valid scope query")));
     }
 
     /// Clauses 5.10.2.4 and 5.11.2.4: without a temporal query only a

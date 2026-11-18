@@ -286,7 +286,7 @@ impl ContextSourcePropertyDocument {
 mod tests {
     use crate::registration::{ContextSourceRegistration, context_source_property_document::TABLE_MEMBERS};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
     use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
     use std::collections::BTreeSet;
@@ -341,7 +341,7 @@ mod tests {
     fn holds(q: &str, registration: &ContextSourceRegistration) -> bool {
         let document = registration.property_members().document().expect("the document builds");
         filter_holds(
-            &FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality),
+            &FilterReading::of(&q.parse::<Filter>().expect("the filter parses"), LanguageMatching::TagEquality),
             document.properties(),
             NoLinkedEntities,
         )

@@ -36,7 +36,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{compaction::compact_q_expr, display::serialize, parser},
+        filter::{Filter, compaction::compact_filter},
         term_compactor::TermCompactor,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::classes;
@@ -75,7 +75,7 @@ mod tests {
     #[tokio::test]
     async fn a_default_context_filter_reads_back_in_its_terms() {
         let compactor = names(&ContextSpec::none()).await;
-        let stored = parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/speed\">10").expect("parses");
-        pretty_assertions::assert_eq!(serialize(&compact_q_expr(stored, &compactor).await), "speed>10");
+        let stored = "\"https://uri.etsi.org/ngsi-ld/default-context/speed\">10".parse::<Filter>().expect("parses");
+        pretty_assertions::assert_eq!(compact_filter(stored, &compactor).await.to_string(), "speed>10");
     }
 }

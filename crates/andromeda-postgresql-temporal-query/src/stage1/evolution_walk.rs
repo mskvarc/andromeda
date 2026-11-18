@@ -321,7 +321,7 @@ mod tests {
     fn a_lone_typed_selector_keeps_its_pattern_over_the_walk() {
         let compiled = typed(vec![
             ExpandedEntitySelector::builder()
-                .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
+                .id_pattern(Some(".*:7$".parse::<Pattern>().expect("valid pattern")))
                 .type_selection(Some(vehicle()))
                 .build(),
         ]);
@@ -350,7 +350,7 @@ mod tests {
     fn several_selectors_pairing_types_with_patterns_keep_the_catalogue() {
         let compiled = typed(vec![
             ExpandedEntitySelector::builder()
-                .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
+                .id_pattern(Some(".*:7$".parse::<Pattern>().expect("valid pattern")))
                 .type_selection(Some(vehicle()))
                 .build(),
             vehicle_selector(),
@@ -365,7 +365,7 @@ mod tests {
         let compiled = typed(vec![
             vehicle_selector(),
             ExpandedEntitySelector::builder()
-                .id_pattern(Some(Pattern::parse(".*").expect("valid pattern")))
+                .id_pattern(Some(".*".parse::<Pattern>().expect("valid pattern")))
                 .build(),
         ]);
         let statement = built(&compiled, &vehicle_is_known());
@@ -475,7 +475,7 @@ mod tests {
         let mut compiled = speed_only();
         compiled.entities.selectors = vec![
             ExpandedEntitySelector::builder()
-                .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
+                .id_pattern(Some(".*:7$".parse::<Pattern>().expect("valid pattern")))
                 .build(),
         ];
         let statement = built(&compiled, &speed_and_address());

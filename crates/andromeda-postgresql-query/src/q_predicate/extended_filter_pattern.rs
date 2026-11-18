@@ -104,17 +104,17 @@ mod tests {
 
     #[test]
     fn the_pattern_anchors_the_first_subtag_and_skips_non_singletons_before_each_later_one() {
-        let range = TargetLanguage::parse("de-*-DE").expect("a range");
+        let range = "de-*-DE".parse::<TargetLanguage>().expect("a range");
         assert_eq!(
             extended_filter_pattern(range.selector(), CaseFolding::InTheOperator),
             "^de(-[a-z0-9]{2,8})*-de(-[a-z0-9]{1,8})*$"
         );
-        let leading = TargetLanguage::parse("*-GB").expect("a range");
+        let leading = "*-GB".parse::<TargetLanguage>().expect("a range");
         assert_eq!(
             extended_filter_pattern(leading.selector(), CaseFolding::InTheOperator),
             "^[a-z0-9]{1,8}(-[a-z0-9]{2,8})*-gb(-[a-z0-9]{1,8})*$"
         );
-        let tag = TargetLanguage::parse("en").expect("a tag");
+        let tag = "en".parse::<TargetLanguage>().expect("a tag");
         assert_eq!(extended_filter_pattern(tag.selector(), CaseFolding::InTheOperator), "^en(-[a-z0-9]{1,8})*$");
     }
 
@@ -123,7 +123,7 @@ mod tests {
     /// admits either case of a subtag.
     #[test]
     fn the_pattern_carried_fold_writes_both_cases_of_every_letter() {
-        let range = TargetLanguage::parse("de-*-DE").expect("a range");
+        let range = "de-*-DE".parse::<TargetLanguage>().expect("a range");
         assert_eq!(
             extended_filter_pattern(range.selector(), CaseFolding::InThePattern),
             "^[Dd][Ee](-[a-zA-Z0-9]{2,8})*-[Dd][Ee](-[a-zA-Z0-9]{1,8})*$"
@@ -160,7 +160,7 @@ mod tests {
             "en-US-u-ca-gregory",
         ];
         for range in ranges {
-            let selector_holder = TargetLanguage::parse(range).expect("a range or tag");
+            let selector_holder = range.parse::<TargetLanguage>().expect("a range or tag");
             let selector = selector_holder.selector();
             let folded = RegexBuilder::new(&extended_filter_pattern(selector, CaseFolding::InTheOperator))
                 .case_insensitive(true)
@@ -182,7 +182,7 @@ mod tests {
     /// case and no further subtag, whatever side carries the fold.
     #[test]
     fn the_exact_pattern_admits_the_tag_alone_in_either_case() {
-        let holder = TargetLanguage::parse("en-GB").expect("a tag");
+        let holder = "en-GB".parse::<TargetLanguage>().expect("a tag");
         let folded = RegexBuilder::new(&exact_tag_pattern(holder.selector().as_str(), CaseFolding::InTheOperator))
             .case_insensitive(true)
             .build()

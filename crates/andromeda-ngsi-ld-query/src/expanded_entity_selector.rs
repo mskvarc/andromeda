@@ -53,7 +53,7 @@ mod tests {
     /// alone, whatever `idPattern` it also carries.
     #[test]
     fn a_selector_with_an_id_and_an_id_pattern_constrains_by_id() {
-        let pattern = Pattern::parse("^urn:nomatch").expect("valid pattern");
+        let pattern = "^urn:nomatch".parse::<Pattern>().expect("valid pattern");
         let id: Identifier = "urn:ngsi-ld:A:1".parse().expect("valid id");
         let selector = ExpandedEntitySelector::builder().ids(vec![id]).id_pattern(Some(pattern)).build();
         assert!(matches!(selector.identifier_axis(), IdentifierAxis::Ids(_)));

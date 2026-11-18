@@ -208,7 +208,7 @@ mod tests {
 
     /// `query` filtered by the `scopeQ` `scope`.
     fn scoped(mut query: CompiledEntityQuery, scope: &str) -> CompiledEntityQuery {
-        query.selection.scope_q = Some(ScopeQuery::parse(scope).expect("valid scope query"));
+        query.selection.scope_q = Some(scope.parse::<ScopeQuery>().expect("valid scope query"));
         query
     }
 

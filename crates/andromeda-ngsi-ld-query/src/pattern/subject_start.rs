@@ -47,7 +47,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     fn start(raw: &str) -> SubjectStart {
-        Pattern::parse(raw).expect("valid pattern").subject_start()
+        raw.parse::<Pattern>().expect("valid pattern").subject_start()
     }
 
     #[test]

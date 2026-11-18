@@ -158,7 +158,7 @@ mod tests {
             representation::Representation,
             window::{TemporalWindow, TimeInterval},
         },
-        type_selection::expansion::expand_type_expression,
+        type_selection::expansion::expand_type_selection,
         written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -280,7 +280,7 @@ mod tests {
     async fn retrieve(query: &str) -> Result<RequestFingerprint, EntityMapError> {
         let params = serde_urlencoded::from_str::<GetEntityParams>(query).expect("a valid test fixture");
         let entity_type = match params.entity_type.as_ref() {
-            Some(raw) => Some(expand_type_expression(raw, &EXAMPLE_NAMESPACE).await.expect("the type expands")),
+            Some(raw) => Some(expand_type_selection(raw, &EXAMPLE_NAMESPACE).await.expect("the type expands")),
             None => None,
         };
         let attrs = expand_attrs_admitted(

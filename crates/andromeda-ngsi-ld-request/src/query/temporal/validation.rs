@@ -300,7 +300,7 @@ impl TemporalQueryParameters {
         if !self.parse_format()?.is_grouped() {
             return Err(ParameterError::AggrGroupByWithoutGroupedValues);
         }
-        let grouping = AggregationGrouping::parse(raw).map_err(ParameterError::AggrGroupByInvalid)?;
+        let grouping = raw.parse::<AggregationGrouping>().map_err(ParameterError::AggrGroupByInvalid)?;
         if self.last_n.is_some() {
             return Err(ParameterError::LastNWithGrouping);
         }

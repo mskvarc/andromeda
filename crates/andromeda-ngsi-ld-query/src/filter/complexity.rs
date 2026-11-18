@@ -13,11 +13,24 @@
 //! stored subscription or a forwarded query.
 
 use crate::filter::{Filter, equality_value::EqualityValue, filter_error::FilterError, query_term::QueryTerm};
+use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 use std::num::NonZeroUsize;
 
 /// The deepest a `q` filter may nest its parentheses, and the highest nesting
 /// limit a broker may be configured with.
 pub const WRITTEN_NESTING_CEILING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(63);
+
+/// The most segments an attribute path may nest, counting sub-attributes and
+/// linked-entity hops alike.
+///
+/// Held to the depth a written attribute is admitted to,
+/// [`AttributeNestingLimit::DEFAULT`], so every sub-attribute a write can
+/// store stays addressable by `q` and `orderBy`. The linked-entity hops that
+/// share this budget stay bounded by it: a hop compiles to a correlated
+/// subquery per level, so `a{a{a{…}}}` is as expensive as it is deep. An
+/// `orderBy` path draws on the same budget, for the same reason: each segment
+/// is another hop inside the jsonpath its lateral evaluates.
+pub const MAX_SUB_ATTRIBUTE_DEPTH: usize = AttributeNestingLimit::DEFAULT.get();
 
 /// The most a `q` filter a request writes may ask of the broker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

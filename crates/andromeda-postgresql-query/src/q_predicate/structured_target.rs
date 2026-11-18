@@ -295,11 +295,9 @@ fn member_text(operand: &Operand) -> MemberText {
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::structured_target::carries_operand;
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, date_time::NgsiLdDateTime, time_of_day::NgsiLdTime};
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_ngsi_ld_query::filter::{
-        parser::operand::{parse_date, parse_date_time, parse_time},
-        reading::operand::Operand,
-    };
+    use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
@@ -407,21 +405,21 @@ mod tests {
     /// under a `valueType` naming its form.
     #[test]
     fn a_date_time_operand_is_contained_once_as_a_declared_member() {
-        let instant = parse_date_time("2024-01-01T00:00:00.000Z").expect("valid date-time");
+        let instant = "2024-01-01T00:00:00.000Z".parse::<NgsiLdDateTime>().expect("valid date-time").get();
         let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::DateTime(instant)));
         assert_statement_snapshot!("structured-target-a-date-time-operand-is-contained-once-as-a-declared-member", statement);
     }
 
     #[test]
     fn a_time_operand_is_contained_in_its_served_spelling() {
-        let time = parse_time("12:00:00,5Z").expect("valid time");
+        let time = "12:00:00,5Z".parse::<NgsiLdTime>().expect("valid time").get();
         let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Time(time)));
         assert_statement_snapshot!("structured-target-a-time-operand-is-contained-in-its-served-spelling", statement);
     }
 
     #[test]
     fn a_date_operand_is_contained_as_its_one_text() {
-        let date = parse_date("2024-01-01").expect("valid date");
+        let date = "2024-01-01".parse::<NgsiLdDate>().expect("valid date").get();
         let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Date(date)));
         assert_statement_snapshot!("structured-target-a-date-operand-is-contained-as-its-one-text", statement);
     }

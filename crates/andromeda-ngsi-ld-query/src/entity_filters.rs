@@ -44,7 +44,7 @@ mod tests {
     use crate::{
         entity_filters::EntityFilters,
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         scope::scope_query::ScopeQuery,
     };
 
@@ -59,10 +59,10 @@ mod tests {
     fn the_filters_of_a_selection_are_the_ones_it_carries() {
         let selection = EntitySelection::builder()
             .q(Some(CompiledFilter::new(
-                parse("\"https://example.com/n\"==10").expect("q parses"),
+                "\"https://example.com/n\"==10".parse::<Filter>().expect("q parses"),
                 LanguageMatching::TagEquality,
             )))
-            .scope_q(Some(ScopeQuery::parse("/A/#").expect("scopeQ parses")))
+            .scope_q(Some("/A/#".parse::<ScopeQuery>().expect("scopeQ parses")))
             .build();
         let filters = EntityFilters::of(&selection);
         pretty_assertions::assert_eq!(filters.q, selection.q.as_ref());

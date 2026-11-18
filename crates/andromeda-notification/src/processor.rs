@@ -367,7 +367,7 @@ mod tests {
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         projection::expanded_projection::ExpandedProjection,
         scope::scope_query::ScopeQuery,
     };
@@ -887,7 +887,7 @@ mod tests {
     fn matches_entity_filters_q_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">50").expect("valid q"),
+            "\"https://example.com/speed\">50".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         )));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
@@ -897,7 +897,7 @@ mod tests {
     fn matches_entity_filters_q_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">100").expect("valid q"),
+            "\"https://example.com/speed\">100".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         )));
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
@@ -906,35 +906,35 @@ mod tests {
     #[test]
     fn matches_entity_filters_scope_exact() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(ScopeQuery::parse("/Spain").expect("valid scope query"));
+        sub.compiled_scope_q = Some("/Spain".parse::<ScopeQuery>().expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(ScopeQuery::parse("/France").expect("valid scope query"));
+        sub.compiled_scope_q = Some("/France".parse::<ScopeQuery>().expect("valid scope query"));
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_hash_wildcard() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+        sub.compiled_scope_q = Some("/Madrid/#".parse::<ScopeQuery>().expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_and() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(ScopeQuery::parse("(/Spain;/Madrid/Gardens)").expect("valid scope query"));
+        sub.compiled_scope_q = Some("(/Spain;/Madrid/Gardens)".parse::<ScopeQuery>().expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_or() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(ScopeQuery::parse("/France,/Spain").expect("valid scope query"));
+        sub.compiled_scope_q = Some("/France,/Spain".parse::<ScopeQuery>().expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
@@ -970,7 +970,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">100").expect("valid q"),
+            "\"https://example.com/speed\">100".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         )));
         let subscription_id = sub.id.clone();
@@ -1038,7 +1038,9 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\"").expect("valid q"),
+            "\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\""
+                .parse::<Filter>()
+                .expect("valid q"),
             LanguageMatching::TagEquality,
         )));
         let subscription_id = sub.id.clone();

@@ -151,7 +151,7 @@ mod tests {
             last_n: NonZeroU32::new(5),
             format: TemporalFormat::AggregatedValues,
             aggr_methods: Some(vec![AggrMethod::Avg, AggrMethod::Max]),
-            aggr_period_duration: AggregationPeriod::parse("PT1H").expect("valid duration"),
+            aggr_period_duration: AggregationPeriod::of_parameter("PT1H").expect("valid duration"),
             attrs: None,
         };
         let visited = [uri("urn:ngsi-ld:Building:1")];

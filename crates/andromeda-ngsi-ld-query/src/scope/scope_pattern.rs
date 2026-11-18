@@ -5,7 +5,10 @@ use andromeda_ngsi_ld_lexicon::scope::{
     level::{ScopeLevelBuf, ScopeLevelError, checked_level},
     path::{ScopePath, split_levels},
 };
-use std::fmt::{self, Write};
+use std::{
+    fmt::{self, Write},
+    str::FromStr,
+};
 
 /// The `+` wildcard: exactly one level, whatever it is named.
 const SINGLE_LEVEL_TOKEN: &str = "+";
@@ -34,6 +37,16 @@ pub enum ScopeSegment {
 pub struct ScopeLabel(ScopeLevelBuf);
 
 impl ScopeLabel {
+    /// The label as written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl FromStr for ScopeLabel {
+    type Err = ScopeQueryError;
+
     /// Validate one level name.
     ///
     /// # Errors
@@ -42,17 +55,11 @@ impl ScopeLabel {
     /// clause 4.18 level-name production, or carries more characters than a
     /// label the pattern is answered through can hold, which would otherwise
     /// reach PostgreSQL as an `lquery` cast and fail there.
-    pub fn parse(raw: &str) -> Result<ScopeLabel, ScopeQueryError> {
+    fn from_str(raw: &str) -> Result<ScopeLabel, ScopeQueryError> {
         checked_level(raw).map(|level| ScopeLabel(level.to_owned())).map_err(|error| match error {
             ScopeLevelError::Malformed => ScopeQueryError::InvalidLevel,
             ScopeLevelError::TooLong(characters) => ScopeQueryError::LevelTooLong { characters },
         })
-    }
-
-    /// The label as written.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
     }
 }
 
@@ -61,41 +68,6 @@ impl ScopeLabel {
 pub struct ScopePattern(Vec<ScopeSegment>);
 
 impl ScopePattern {
-    /// Parse one pattern.
-    ///
-    /// The levels are split as a scope path splits them
-    /// ([`split_levels`]), so a pattern written without its leading `/`
-    /// (clause 4.19 EXAMPLE 5 queries a bare `CompanyB`) names the same levels
-    /// as the rooted one. `#` matches one or more remaining levels and
-    /// therefore only makes sense last.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScopeQueryError`] when the pattern is empty,
-    /// carries a level outside the clause 4.18 production, or places `#`
-    /// anywhere but last.
-    pub fn parse(raw: &str) -> Result<ScopePattern, ScopeQueryError> {
-        let trimmed = raw.trim();
-        if split_levels(trimmed).eq([""]) {
-            return Err(ScopeQueryError::EmptyPattern);
-        }
-
-        let mut segments = Vec::new();
-        let mut parts = split_levels(trimmed).peekable();
-        while let Some(part) = parts.next() {
-            let segment = match part {
-                SINGLE_LEVEL_TOKEN => ScopeSegment::SingleLevel,
-                MULTI_LEVEL_TOKEN if parts.peek().is_none() => ScopeSegment::MultiLevel,
-                MULTI_LEVEL_TOKEN => return Err(ScopeQueryError::MultiLevelNotLast),
-                // `&str` is unbounded, so a catch-all is the only way to close
-                // this match; anything that is not a wildcard is a level name.
-                label => ScopeSegment::Label(ScopeLabel::parse(label)?),
-            };
-            segments.push(segment);
-        }
-        Ok(ScopePattern(segments))
-    }
-
     /// The segments of the pattern, in the order they were written.
     ///
     /// Every segment is validated, which is what lets a backend translate the
@@ -146,6 +118,45 @@ impl ScopePattern {
     }
 }
 
+impl FromStr for ScopePattern {
+    type Err = ScopeQueryError;
+
+    /// Parse one pattern.
+    ///
+    /// The levels are split as a scope path splits them
+    /// ([`split_levels`]), so a pattern written without its leading `/`
+    /// (clause 4.19 EXAMPLE 5 queries a bare `CompanyB`) names the same levels
+    /// as the rooted one. `#` matches one or more remaining levels and
+    /// therefore only makes sense last.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScopeQueryError`] when the pattern is empty,
+    /// carries a level outside the clause 4.18 production, or places `#`
+    /// anywhere but last.
+    fn from_str(raw: &str) -> Result<ScopePattern, ScopeQueryError> {
+        let trimmed = raw.trim();
+        if split_levels(trimmed).eq([""]) {
+            return Err(ScopeQueryError::EmptyPattern);
+        }
+
+        let mut segments = Vec::new();
+        let mut parts = split_levels(trimmed).peekable();
+        while let Some(part) = parts.next() {
+            let segment = match part {
+                SINGLE_LEVEL_TOKEN => ScopeSegment::SingleLevel,
+                MULTI_LEVEL_TOKEN if parts.peek().is_none() => ScopeSegment::MultiLevel,
+                MULTI_LEVEL_TOKEN => return Err(ScopeQueryError::MultiLevelNotLast),
+                // `&str` is unbounded, so a catch-all is the only way to close
+                // this match; anything that is not a wildcard is a level name.
+                label => ScopeSegment::Label(label.parse::<ScopeLabel>()?),
+            };
+            segments.push(segment);
+        }
+        Ok(ScopePattern(segments))
+    }
+}
+
 // Hand-written because the rendering walks a variable-length segment list and
 // re-inserts the separator: `derive_more::Display` takes a format string over
 // fields, which cannot express a loop.
@@ -170,7 +181,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::scope::level::LEVEL_CHARACTER_LIMIT;
 
     fn segments(raw: &str) -> Vec<ScopeSegment> {
-        ScopePattern::parse(raw).expect("valid pattern").segments().to_vec()
+        raw.parse::<ScopePattern>().expect("valid pattern").segments().to_vec()
     }
 
     fn path(raw: &str) -> ScopePath {
@@ -183,12 +194,12 @@ mod tests {
     #[test]
     fn a_label_beyond_the_character_bound_is_a_malformed_pattern() {
         let longest = "a".repeat(LEVEL_CHARACTER_LIMIT);
-        assert!(ScopePattern::parse(&format!("/{longest}")).is_ok(), "the bound itself is admitted");
+        assert!(format!("/{longest}").parse::<ScopePattern>().is_ok(), "the bound itself is admitted");
         assert!(matches!(
-            ScopePattern::parse(&format!("/{longest}a")),
+            format!("/{longest}a").parse::<ScopePattern>(),
             Err(ScopeQueryError::LevelTooLong { characters: 1001 })
         ));
-        assert!(ScopePattern::parse(&format!("/A/{longest}a/C")).is_err());
+        assert!(format!("/A/{longest}a/C").parse::<ScopePattern>().is_err());
     }
 
     #[test]
@@ -196,7 +207,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             segments("/A/+/#"),
             vec![
-                ScopeSegment::Label(ScopeLabel::parse("A").expect("label")),
+                ScopeSegment::Label("A".parse::<ScopeLabel>().expect("label")),
                 ScopeSegment::SingleLevel,
                 ScopeSegment::MultiLevel,
             ]
@@ -210,7 +221,7 @@ mod tests {
 
     #[test]
     fn a_literal_pattern_matches_only_the_path_it_names() {
-        let pattern = ScopePattern::parse("/A/B").expect("valid pattern");
+        let pattern = "/A/B".parse::<ScopePattern>().expect("valid pattern");
         assert!(pattern.matches(&path("/A/B")));
         assert!(!pattern.matches(&path("/A")));
         assert!(!pattern.matches(&path("/A/B/C")));
@@ -219,7 +230,7 @@ mod tests {
 
     #[test]
     fn the_single_level_wildcard_consumes_exactly_one_level() {
-        let pattern = ScopePattern::parse("/A/+/C").expect("valid pattern");
+        let pattern = "/A/+/C".parse::<ScopePattern>().expect("valid pattern");
         assert!(pattern.matches(&path("/A/B/C")));
         assert!(!pattern.matches(&path("/A/C")));
         assert!(!pattern.matches(&path("/A/B/D/C")));
@@ -229,7 +240,7 @@ mod tests {
     fn a_prefix_multi_level_wildcard_matches_its_anchor_or_any_descendant() {
         // Clause 4.19 Example 2: `/A/#` matches the anchor `/A` itself as well
         // as every path below it.
-        let pattern = ScopePattern::parse("/A/#").expect("valid pattern");
+        let pattern = "/A/#".parse::<ScopePattern>().expect("valid pattern");
         assert!(pattern.matches(&path("/A")));
         assert!(pattern.matches(&path("/A/B")));
         assert!(pattern.matches(&path("/A/B/C")));
@@ -241,14 +252,14 @@ mod tests {
     fn a_bare_multi_level_wildcard_matches_any_non_empty_scope() {
         // The `ScopesQ =/ "/" "#"` production: `/#` matches any scope with at
         // least one level.
-        let pattern = ScopePattern::parse("/#").expect("valid pattern");
+        let pattern = "/#".parse::<ScopePattern>().expect("valid pattern");
         assert!(pattern.matches(&path("/A")));
         assert!(pattern.matches(&path("/A/B/C")));
     }
 
     #[test]
     fn a_pattern_matches_a_path_written_without_its_leading_slash() {
-        let pattern = ScopePattern::parse("/Madrid").expect("valid pattern");
+        let pattern = "/Madrid".parse::<ScopePattern>().expect("valid pattern");
         assert!(pattern.matches(&path("Madrid")));
         assert!(pattern.matches(&path("/Madrid")));
     }
@@ -257,17 +268,17 @@ mod tests {
     /// clause 4.18 Scope written without its leading `/` by its levels.
     #[test]
     fn a_rooted_pattern_matches_a_bare_scope() {
-        assert!(ScopePattern::parse("/Madrid").expect("valid pattern").matches(&path("Madrid")));
-        assert!(ScopePattern::parse("/Madrid/#").expect("valid pattern").matches(&path("Madrid/Gardens")));
-        assert!(ScopePattern::parse("/+/Gardens").expect("valid pattern").matches(&path("Madrid/Gardens")));
-        assert!(ScopePattern::parse("/#").expect("valid pattern").matches(&path("Madrid")));
-        assert!(!ScopePattern::parse("/Madrid").expect("valid pattern").matches(&path("Madrid/Gardens")));
+        assert!("/Madrid".parse::<ScopePattern>().expect("valid pattern").matches(&path("Madrid")));
+        assert!("/Madrid/#".parse::<ScopePattern>().expect("valid pattern").matches(&path("Madrid/Gardens")));
+        assert!("/+/Gardens".parse::<ScopePattern>().expect("valid pattern").matches(&path("Madrid/Gardens")));
+        assert!("/#".parse::<ScopePattern>().expect("valid pattern").matches(&path("Madrid")));
+        assert!(!"/Madrid".parse::<ScopePattern>().expect("valid pattern").matches(&path("Madrid/Gardens")));
     }
 
     #[test]
     fn a_multi_level_wildcard_is_only_valid_last() {
         // `#` stands for the remainder of the path, so nothing can follow it.
-        let error = ScopePattern::parse("/A/#/C").expect_err("must reject");
+        let error = "/A/#/C".parse::<ScopePattern>().expect_err("must reject");
         assert!(matches!(error, ScopeQueryError::MultiLevelNotLast), "got {error:?}");
     }
 
@@ -276,14 +287,14 @@ mod tests {
         // Clause 4.18: a level starts with a letter and continues with letters,
         // digits or underscores.
         for raw in ["/A B", "/1Floor", "/_hidden", "/A-B", "//B", "/A/"] {
-            assert!(ScopePattern::parse(raw).is_err(), "{raw} must be rejected");
+            assert!(raw.parse::<ScopePattern>().is_err(), "{raw} must be rejected");
         }
     }
 
     #[test]
     fn an_empty_pattern_is_rejected() {
-        assert!(ScopePattern::parse("").is_err());
-        assert!(ScopePattern::parse("/").is_err());
+        assert!("".parse::<ScopePattern>().is_err());
+        assert!("/".parse::<ScopePattern>().is_err());
     }
 
     #[test]
@@ -294,7 +305,7 @@ mod tests {
     #[test]
     fn a_pattern_renders_back_to_the_form_it_was_written_in() {
         for raw in ["/A/B/C", "/A/#", "/A/+/C"] {
-            assert_eq!(ScopePattern::parse(raw).expect("valid").to_string(), raw);
+            assert_eq!(raw.parse::<ScopePattern>().expect("valid").to_string(), raw);
         }
     }
 }

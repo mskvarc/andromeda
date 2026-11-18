@@ -144,7 +144,7 @@ pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextSt
         };
         let rendered = patterns
             .iter()
-            .map(|pattern| Pattern::parse(&pattern.entity_id_pattern).map(|parsed| parsed.portable().as_str().to_owned()))
+            .map(|pattern| pattern.entity_id_pattern.parse::<Pattern>().map(|parsed| parsed.portable().as_str().to_owned()))
             .collect::<Result<Vec<String>, _>>()
             .map_err(|error| StoredRegistrationError::Information(StoredInformationError::IdPattern(Box::new(error))))?;
         let item_ordinals: Vec<i32> = patterns.iter().map(|pattern| pattern.item_ordinal).collect();

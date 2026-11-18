@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{
         compilation::{FilterOptIns, admit_q_filter, compile_q_filter},
-        expansion::{expand_csf_expr, expanded_attribute_name},
+        expansion::{expand_context_source_filter, expanded_attribute_name},
         reading::filter_reading::FilterReading,
         referenced_attributes::referenced_attributes,
     },
@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
     projection::expansion::expand_attrs,
     query_error::QueryError,
     temporal::window::TimeInterval,
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_selection, written_type_selection::WrittenTypeSelection},
 };
 use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
 use iri_rs::IriBuf;
@@ -101,7 +101,7 @@ impl RegistrationService {
         let type_selector = compiled
             .entity_type
             .clone()
-            .map(ExpandedTypeSelection::into_raw)
+            .map(ExpandedTypeSelection::into_written)
             .transpose()
             .map_err(RegistrationInvariant::ExpandedTypeName)?;
         let mut matched = Vec::with_capacity(scanned.len());
@@ -130,7 +130,7 @@ impl RegistrationService {
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
         let expanded_type = match params.entity_type.as_ref() {
-            Some(selection) => Some(expand_type_expression(selection, &expander).await?),
+            Some(selection) => Some(expand_type_selection(selection, &expander).await?),
             None => None,
         };
         let mut attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
@@ -163,7 +163,9 @@ impl RegistrationService {
             }
         }
         let csf = match params.csf.clone() {
-            Some(expression) => Some(FilterReading::of_context_source_filter(&expand_csf_expr(expression, &expander).await?)),
+            Some(expression) => Some(FilterReading::of_context_source_filter(
+                &expand_context_source_filter(expression, &expander).await?,
+            )),
             None => None,
         };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {

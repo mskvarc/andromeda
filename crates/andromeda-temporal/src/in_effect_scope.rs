@@ -177,7 +177,7 @@ mod tests {
     /// The query for the Scope `/Madrid`.
     fn madrid() -> EntitySelection {
         EntitySelection::builder()
-            .scope_q(Some(ScopeQuery::parse("/Madrid").expect("a valid scopeQ")))
+            .scope_q(Some("/Madrid".parse::<ScopeQuery>().expect("a valid scopeQ")))
             .build()
     }
 

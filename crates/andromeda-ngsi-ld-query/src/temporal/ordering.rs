@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn a_collation_without_an_order_by_orders_nothing() {
         let ordering = OrderingParameters::builder()
-            .collation(Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")))
+            .collation(Some("de-u-co-phonebk".parse::<IcuCollation>().expect("valid collation")))
             .build();
         assert_eq!(TemporalEntityOrdering::of_parameters(&ordering).expect("a collation alone is admissible"), None);
     }
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn the_requested_collation_reaches_the_compiled_ordering() {
         let mut ordering = parameters("id");
-        ordering.collation = Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation"));
+        ordering.collation = Some("de-u-co-phonebk".parse::<IcuCollation>().expect("valid collation"));
         let compiled = TemporalEntityOrdering::of_parameters(&ordering)
             .expect("id ordering under a collation is admissible")
             .expect("an orderBy was requested");

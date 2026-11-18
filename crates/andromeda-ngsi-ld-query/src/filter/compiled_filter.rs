@@ -17,26 +17,26 @@ use crate::filter::{Filter, language_matching::LanguageMatching, reading::filter
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledFilter {
     /// The expanded expression.
-    expr: Filter,
-    /// The reading of `expr` in normal form.
+    filter: Filter,
+    /// The reading of `filter` in normal form.
     reading: FilterReading,
 }
 
 impl CompiledFilter {
-    /// The expanded `expr`, its target languages selecting languageMap keys by
+    /// The expanded `filter`, its target languages selecting languageMap keys by
     /// `matching`.
     #[must_use]
-    pub fn new(expr: Filter, matching: LanguageMatching) -> CompiledFilter {
+    pub fn new(filter: Filter, matching: LanguageMatching) -> CompiledFilter {
         CompiledFilter {
-            reading: FilterReading::of(&expr, matching),
-            expr,
+            reading: FilterReading::of(&filter, matching),
+            filter,
         }
     }
 
     /// The expanded expression.
     #[must_use]
-    pub const fn expr(&self) -> &Filter {
-        &self.expr
+    pub const fn filter(&self) -> &Filter {
+        &self.filter
     }
 
     /// The reading every execution runs, in normal form.
@@ -48,27 +48,33 @@ impl CompiledFilter {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use crate::filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 
     /// The reading is the normal form, which reorders and joins the terms
     /// as written.
     #[test]
     fn the_reading_is_the_normal_form_of_the_filter_as_written() {
-        let compiled = CompiledFilter::new(parse("d==1;(c==2|c==3|b~=\"x\");a").expect("the filter parses"), LanguageMatching::TagEquality);
-        pretty_assertions::assert_eq!(compiled.reading(), &FilterReading::of(compiled.expr(), LanguageMatching::TagEquality));
+        let compiled = CompiledFilter::new(
+            "d==1;(c==2|c==3|b~=\"x\");a".parse::<Filter>().expect("the filter parses"),
+            LanguageMatching::TagEquality,
+        );
+        pretty_assertions::assert_eq!(compiled.reading(), &FilterReading::of(compiled.filter(), LanguageMatching::TagEquality));
         pretty_assertions::assert_eq!(compiled.reading().terms().len(), 4, "the normal form joins c==2 and c==3");
     }
 
     /// The reading is the expression's, lowered under the matching given.
     #[test]
     fn the_reading_is_lowered_under_the_matching_given() {
-        let expr = parse("name[en]==\"y\"|name[en]==\"x\"").expect("the filter parses");
+        let expr = "name[en]==\"y\"|name[en]==\"x\"".parse::<Filter>().expect("the filter parses");
         let compiled = CompiledFilter::new(expr.clone(), LanguageMatching::ExtendedFiltering);
         pretty_assertions::assert_eq!(compiled.reading(), &FilterReading::of(&expr, LanguageMatching::ExtendedFiltering));
         pretty_assertions::assert_eq!(
             compiled.reading(),
-            &FilterReading::lowered(&parse("name[en]==\"x\",\"y\"").expect("the filter parses"), LanguageMatching::ExtendedFiltering)
+            &FilterReading::lowered(
+                &"name[en]==\"x\",\"y\"".parse::<Filter>().expect("the filter parses"),
+                LanguageMatching::ExtendedFiltering
+            )
         );
-        pretty_assertions::assert_eq!(compiled.expr(), &expr);
+        pretty_assertions::assert_eq!(compiled.filter(), &expr);
     }
 }

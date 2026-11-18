@@ -148,7 +148,7 @@ mod tests {
         q_predicate::{document::condition::document_condition, instance_scan::InstanceScan, projection::compile},
         query_names::QueryNames,
     };
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, column_reference::ColumnReference, literal::int_literal};
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
@@ -158,7 +158,7 @@ mod tests {
 
     /// The reading a compiled `csf` holds.
     fn reading(q: &str) -> FilterReading {
-        FilterReading::of_context_source_filter(&parse(q).expect("the filter parses"))
+        FilterReading::of_context_source_filter(&q.parse::<Filter>().expect("the filter parses"))
     }
 
     fn document() -> ColumnReference {
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn every_conformance_filter_renders_a_projection_probe_and_a_document_condition() {
         for (index, case) in CONFORMANCE.iter().enumerate() {
-            let expr = parse(case.filter).unwrap_or_else(|error| panic!("{}: {error}", case.filter));
+            let expr = case.filter.parse::<Filter>().unwrap_or_else(|error| panic!("{}: {error}", case.filter));
             let projection = entity_statement(compile(
                 &FilterReading::of(&expr, LanguageMatching::TagEquality),
                 &InstanceScan::Current(&EntityRowRefs::unaliased(None)),

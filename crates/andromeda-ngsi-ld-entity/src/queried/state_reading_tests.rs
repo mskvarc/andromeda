@@ -3,7 +3,7 @@
 use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
+    filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     geo::compiled_geo_query::CompiledGeoQuery,
     scope::scope_query::ScopeQuery,
 };
@@ -321,7 +321,7 @@ fn the_state_reading_answers_every_query_term_as_clause_4_9_does() {
     for (fixture, terms) in cases() {
         let entity = state(&fixture());
         for (q, expected) in terms {
-            let expr = parse(q).expect("the Query Term parses");
+            let expr = q.parse::<Filter>().expect("the Query Term parses");
             pretty_assertions::assert_eq!(
                 filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &entity, NoLinkedEntities),
                 expected,
@@ -346,7 +346,7 @@ fn a_bare_path_holds_for_a_structured_value_and_a_geometry() {
     }]);
     let entity = state(&document);
     for q in ["\"https://example.com/address\"", "\"https://example.com/site\""] {
-        let expr = parse(q).expect("the Query Term parses");
+        let expr = q.parse::<Filter>().expect("the Query Term parses");
         assert!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &entity, NoLinkedEntities),
             "{q}"
@@ -384,11 +384,20 @@ fn a_scope_query_reads_the_scopes_the_state_holds() {
     let mut document = vehicle();
     document[0]["https://uri.etsi.org/ngsi-ld/scope"] = json!([{"@value": "/Madrid/Gardens"}, {"@value": "/Berlin"}]);
     let scoped = state(&document);
-    assert!(scope_query_matches(&ScopeQuery::parse("/Madrid/#").expect("a scope query"), (&scoped).scopes()));
-    assert!(scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), (&scoped).scopes()));
-    assert!(!scope_query_matches(&ScopeQuery::parse("/Paris").expect("a scope query"), (&scoped).scopes()));
+    assert!(scope_query_matches(
+        &"/Madrid/#".parse::<ScopeQuery>().expect("a scope query"),
+        (&scoped).scopes()
+    ));
+    assert!(scope_query_matches(
+        &"/Berlin".parse::<ScopeQuery>().expect("a scope query"),
+        (&scoped).scopes()
+    ));
     assert!(!scope_query_matches(
-        &ScopeQuery::parse("/Madrid/#").expect("a scope query"),
+        &"/Paris".parse::<ScopeQuery>().expect("a scope query"),
+        (&scoped).scopes()
+    ));
+    assert!(!scope_query_matches(
+        &"/Madrid/#".parse::<ScopeQuery>().expect("a scope query"),
         (&state(&vehicle())).scopes()
     ));
 }
@@ -406,7 +415,9 @@ fn a_hop_reads_the_linked_state() {
         }]))
     };
     let hop = FilterReading::of(
-        &parse("\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\"").expect("the Query Term parses"),
+        &"\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\""
+            .parse::<Filter>()
+            .expect("the Query Term parses"),
         LanguageMatching::TagEquality,
     );
     let mut commercial = LinkedStates::new();

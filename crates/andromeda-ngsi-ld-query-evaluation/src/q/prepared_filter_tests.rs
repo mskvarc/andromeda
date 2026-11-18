@@ -16,7 +16,7 @@ use crate::{
     },
     queried_entity::expanded_fixture::{FixtureEntity, FixtureLinked},
 };
-use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 use proptest::{
     prelude::{prop_assert_eq, proptest},
     test_runner::Config,
@@ -59,7 +59,9 @@ fn states(document: &Value) -> Vec<Value> {
 /// The first state of `states` over which `prepared` and `reading` disagree,
 /// or over which the required attributes refuse what `reading` holds for.
 fn disagreement(text: &str, states: &[FixtureEntity], linked: &[FixtureEntity]) -> Option<String> {
-    let expr = parse(text).unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
+    let expr = text
+        .parse::<Filter>()
+        .unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
     [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering]
         .into_iter()
         .find_map(|matching| {

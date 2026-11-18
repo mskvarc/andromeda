@@ -5,10 +5,9 @@ use crate::{
     dataset_selector::DatasetSelector,
     filter::{
         Filter,
-        display::serialize_attr_path,
         generated_filters::{query, written_value_path},
-        parser::value_path::parse_attribute_path,
         target_language::TargetLanguage,
+        value_path::ValuePath,
     },
     ordering::{icu_collation::IcuCollation, written_ordering_term::WrittenOrderingTerm},
     parse_behaviour_tests::{
@@ -118,18 +117,18 @@ impl EntryPoint {
             EntryPoint::Filter => read_and_write_back(text, Filter::from_str, Filter::to_string),
             EntryPoint::TypeSelection => read_and_write_back(text, WrittenTypeSelection::from_str, WrittenTypeSelection::to_string),
             EntryPoint::ScopeQuery => read_and_write_back(text, ScopeQuery::from_str, ScopeQuery::to_string),
-            EntryPoint::ScopePattern => read_and_write_back(text, ScopePattern::parse, ScopePattern::to_string),
-            EntryPoint::ScopeLabel => read(text, ScopeLabel::parse),
+            EntryPoint::ScopePattern => read_and_write_back(text, ScopePattern::from_str, ScopePattern::to_string),
+            EntryPoint::ScopeLabel => read(text, ScopeLabel::from_str),
             EntryPoint::Projection => read_and_write_back(text, WrittenProjectionList::from_str, WrittenProjectionList::to_string),
             EntryPoint::Ordering => read_and_write_back(text, WrittenOrderingTerm::from_str, WrittenOrderingTerm::to_string),
-            EntryPoint::Collation => read_and_write_back(text, IcuCollation::parse, IcuCollation::to_string),
+            EntryPoint::Collation => read_and_write_back(text, IcuCollation::from_str, IcuCollation::to_string),
             EntryPoint::Grouping => read(text, AggregationGrouping::from_str),
-            EntryPoint::GroupKey => read(text, GroupKey::parse),
-            EntryPoint::ValuePath => read_and_write_back(text, parse_attribute_path, serialize_attr_path),
-            EntryPoint::TargetLanguage => read(text, TargetLanguage::parse),
+            EntryPoint::GroupKey => read(text, GroupKey::from_str),
+            EntryPoint::ValuePath => read_and_write_back(text, ValuePath::from_str, ValuePath::to_string),
+            EntryPoint::TargetLanguage => read(text, TargetLanguage::from_str),
             EntryPoint::Pattern => read_and_write_back(text, Pattern::from_str, Pattern::to_string),
             EntryPoint::DatasetSelector => read_and_write_back(text, DatasetSelector::from_str, DatasetSelector::to_string),
-            EntryPoint::AggregationPeriod => read(text, AggregationPeriod::parse),
+            EntryPoint::AggregationPeriod => read(text, AggregationPeriod::of_parameter),
         }
     }
 

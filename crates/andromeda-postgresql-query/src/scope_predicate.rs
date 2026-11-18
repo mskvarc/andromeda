@@ -176,7 +176,7 @@ mod tests {
     use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement};
 
     fn scope(raw: &str) -> ScopeQuery {
-        ScopeQuery::parse(raw).expect("valid scope query")
+        raw.parse::<ScopeQuery>().expect("valid scope query")
     }
 
     fn current() -> ScopeTarget {

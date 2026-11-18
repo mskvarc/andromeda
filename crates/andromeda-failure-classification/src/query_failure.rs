@@ -314,7 +314,7 @@ mod tests {
     /// a range the level does not admit, are request data naming no target.
     #[test]
     fn a_bracket_naming_no_target_language_is_bad_request_data() {
-        let neither = TargetLanguage::parse("en_GB-x").expect_err("neither a tag nor a range");
+        let neither = "en_GB-x".parse::<TargetLanguage>().expect_err("neither a tag nor a range");
         let tagged: Filter = "name[en-GB]==\"x\"".parse().expect("a filter");
         let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
         let ranged: Filter = "name[de-*-DE]==\"x\"".parse().expect("a filter");
@@ -361,8 +361,8 @@ mod tests {
 
     #[test]
     fn every_other_language_refusal_is_bad_request_data() {
-        let period = AggregationPeriod::parse("one hour").expect_err("no ISO 8601 duration");
-        let dataset = DatasetSelector::parse("not a uri").expect_err("no URI");
+        let period = AggregationPeriod::of_parameter("one hour").expect_err("no ISO 8601 duration");
+        let dataset = "not a uri".parse::<DatasetSelector>().expect_err("no URI");
         for error in [
             QueryError::TypeSelection(TypeSelectionError::Empty),
             QueryError::ScopeQuery(ScopeQueryError::NestedGroup),

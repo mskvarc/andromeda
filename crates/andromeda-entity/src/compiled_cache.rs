@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
-    filter::{display::serialize_attr_path, language_targeting::LanguageTargeting},
+    filter::language_targeting::LanguageTargeting,
     geo::{reference_geometry::ReferenceGeometry, written_geo_query::WrittenGeoQuery},
     ordering::{
         icu_collation::IcuCollation,
@@ -199,7 +199,7 @@ fn push_order_terms(buffer: &mut String, terms: &[WrittenOrderingTerm]) {
         // The whole path, not just its head: `a.b`, `a[b]` and `a` are three
         // different orderings, and a key spelling only `a` would serve one
         // compiled query for all of them.
-        push_field(buffer, Some(&serialize_attr_path(&term.path)));
+        push_field(buffer, Some(&term.path.to_string()));
         let direction = match term.direction {
             OrderingDirection::Asc => "asc",
             OrderingDirection::Desc => "desc",

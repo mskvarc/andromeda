@@ -92,10 +92,8 @@ pub fn lift_comparison(operand: &Operand, stored: SimpleExpr, datatype: SimpleEx
 #[cfg(test)]
 mod tests {
     use crate::jsonb::lift_comparison;
-    use andromeda_ngsi_ld_query::filter::{
-        parser::operand::{parse_date, parse_date_time, parse_time},
-        reading::operand::Operand,
-    };
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, date_time::NgsiLdDateTime, time_of_day::NgsiLdTime};
+    use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
@@ -172,7 +170,7 @@ mod tests {
     /// A declared `DateTime` is an instant, which text order does not order.
     #[test]
     fn a_date_time_is_compared_as_a_timestamp_not_as_text() {
-        let instant = parse_date_time("2024-01-01T00:00:00Z").expect("valid date-time");
+        let instant = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid date-time").get();
         let lifted = lift_comparison(&Operand::DateTime(instant), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-date-time-is-compared-as-a-timestamp-not-as-text", render(lifted.stored));
     }
@@ -181,14 +179,14 @@ mod tests {
     /// truncated second that the client's operand excludes.
     #[test]
     fn a_date_time_operand_binds_as_the_instant_it_names() {
-        let instant = parse_date_time("2024-01-01T00:00:00.123456Z").expect("valid date-time");
+        let instant = "2024-01-01T00:00:00.123456Z".parse::<NgsiLdDateTime>().expect("valid date-time").get();
         let lifted = lift_comparison(&Operand::DateTime(instant), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-date-time-operand-binds-as-the-instant-it-names", render(lifted.operand));
     }
 
     #[test]
     fn a_time_is_brought_to_the_fixed_width_encoding_on_both_sides() {
-        let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
+        let time = "12:00:00,5Z".parse::<NgsiLdTime>().expect("the comma compatibility form").get();
         let lifted = lift_comparison(&Operand::Time(time), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-time-is-brought-to-the-fixed-width-encoding-on-both-sides-1", render(lifted.stored));
         assert_statement_snapshot!("jsonb-a-time-is-brought-to-the-fixed-width-encoding-on-both-sides-2", render(lifted.operand));
@@ -196,7 +194,7 @@ mod tests {
 
     #[test]
     fn a_date_is_compared_as_text_because_its_one_spelling_already_sorts_chronologically() {
-        let date = parse_date("2024-01-01").expect("valid full-date");
+        let date = "2024-01-01".parse::<NgsiLdDate>().expect("valid full-date").get();
         let lifted = lift_comparison(&Operand::Date(date), stored(), datatype());
         assert_statement_snapshot!(
             "jsonb-a-date-is-compared-as-text-because-its-one-spelling-already-sorts-chronologically-1",

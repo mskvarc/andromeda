@@ -48,7 +48,7 @@ mod tests {
     /// alternative met by some scope, and no scope at all meeting nothing.
     #[test]
     fn an_entity_is_matched_by_the_scopes_it_carries() {
-        let query = ScopeQuery::parse("(/Madrid/#;/Spain)").expect("parses");
+        let query = "(/Madrid/#;/Spain)".parse::<ScopeQuery>().expect("parses");
         assert!(scope_query_matches(&query, (&scoped(&["/Spain", "/Madrid/Gardens"])).scopes()));
         assert!(!scope_query_matches(&query, (&scoped(&["/Spain"])).scopes()));
         assert!(!scope_query_matches(&query, (&scoped(&[])).scopes()));
@@ -56,14 +56,14 @@ mod tests {
 
     #[test]
     fn a_conjunction_needs_every_requirement_met_by_some_scope() {
-        let query = ScopeQuery::parse("(/Spain;/Madrid/Gardens)").expect("parses");
+        let query = "(/Spain;/Madrid/Gardens)".parse::<ScopeQuery>().expect("parses");
         assert!(scope_query_matches(&query, &paths(&["/Spain", "/Madrid/Gardens"])));
         assert!(!scope_query_matches(&query, &paths(&["/Spain"])));
     }
 
     #[test]
     fn a_disjunction_needs_only_one_alternative_met() {
-        let query = ScopeQuery::parse("/France,/Spain").expect("parses");
+        let query = "/France,/Spain".parse::<ScopeQuery>().expect("parses");
         assert!(scope_query_matches(&query, &paths(&["/Spain"])));
         assert!(scope_query_matches(&query, &paths(&["/France"])));
         assert!(!scope_query_matches(&query, &paths(&["/Italy"])));
@@ -72,7 +72,7 @@ mod tests {
     /// Clause 4.19 EXAMPLE 5: `(/Madrid/Districts;/CompanyA)|/CompanyB`.
     #[test]
     fn a_grouped_conjunction_or_a_pattern_matches_either() {
-        let query = ScopeQuery::parse("(/A;/B)|/C").expect("parses");
+        let query = "(/A;/B)|/C".parse::<ScopeQuery>().expect("parses");
         assert!(scope_query_matches(&query, &paths(&["/A", "/B"])));
         assert!(scope_query_matches(&query, &paths(&["/C"])));
         assert!(!scope_query_matches(&query, &paths(&["/A"])));
@@ -82,7 +82,7 @@ mod tests {
     /// without its leading `/` meets them by its levels.
     #[test]
     fn a_scope_query_matches_bare_and_rooted_scopes_alike() {
-        let query = ScopeQuery::parse("(/A;/B)").expect("parses");
+        let query = "(/A;/B)".parse::<ScopeQuery>().expect("parses");
         assert!(scope_query_matches(&query, &paths(&["A", "/B"])));
     }
 }

@@ -174,7 +174,7 @@ mod tests {
     /// `id` is a candidate.
     #[test]
     fn pattern_coverage_matches_the_registered_id_and_admits_a_row_without_one() {
-        let pattern = Pattern::parse("urn:ngsi-ld:Vehicle:1.*").expect("valid pattern");
+        let pattern = "urn:ngsi-ld:Vehicle:1.*".parse::<Pattern>().expect("valid pattern");
         let vehicle = ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"));
         let select = entities(ExpandedEntitySpecification {
             entity_type: Some(&vehicle),

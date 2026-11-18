@@ -207,10 +207,10 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         dataset_selector::DatasetSelector,
         filter::{
-            expansion::expand_q_expr,
+            Filter,
+            expansion::expand_filter,
             json_key_attributes::JsonKeyAttributes,
             language_matching::LanguageMatching,
-            parser,
             reading::filter_reading::FilterReading,
         },
         geo::compiled_geo_query::CompiledGeoQuery,
@@ -303,8 +303,8 @@ mod tests {
             async move {
                 let prepared = service.engine().prepare_term_context(context);
                 let filter = FilterReading::of(
-                    &expand_q_expr(
-                        parser::parse(q).expect("the filter parses"),
+                    &expand_filter(
+                        q.parse::<Filter>().expect("the filter parses"),
                         &JsonKeyAttributes::default(),
                         &ContextualExpander::new(service.engine(), &prepared),
                     )
@@ -447,7 +447,7 @@ mod tests {
         let berlin = registration_with("urn:ngsi-ld:csr:berlin", json!({"scope": ["/Berlin"]}));
         let unscoped = registration_with("urn:ngsi-ld:csr:unscoped", json!({}));
         let service = offline_service(vec![madrid, berlin, unscoped]);
-        let scope_q = ScopeQuery::parse("/Madrid").expect("a valid scope query");
+        let scope_q = "/Madrid".parse::<ScopeQuery>().expect("a valid scope query");
         let selected = service
             .select_registrations(
                 &ContextSpec::none(),

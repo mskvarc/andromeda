@@ -109,7 +109,7 @@ mod tests {
         let mut local = vec![aggregated("urn:ngsi-ld:Vehicle:1", "2024-01-01T00:00:00Z", "2024-01-01T10:00:00Z")];
         let mut rendered = vec![aggregated("urn:ngsi-ld:Vehicle:2", "2024-01-01T01:00:00Z", "2024-01-01T11:00:00Z")];
         let params = TemporalQueryParameters {
-            aggr_period_duration: AggregationPeriod::parse("PT1H").expect("a period"),
+            aggr_period_duration: AggregationPeriod::of_parameter("PT1H").expect("a period"),
             ..TemporalQueryParameters::default()
         };
         close_hub_aggregates(&params, &mut local, &mut rendered);

@@ -160,7 +160,7 @@ mod tests {
     }
 
     fn language(text: &str) -> TargetLanguage {
-        TargetLanguage::parse(text).expect("a valid target language")
+        text.parse::<TargetLanguage>().expect("a valid target language")
     }
 
     fn equals_door(text: SimpleExpr) -> SimpleExpr {

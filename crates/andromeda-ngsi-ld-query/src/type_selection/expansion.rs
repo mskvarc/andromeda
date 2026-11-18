@@ -14,7 +14,7 @@ use std::{future::Future, pin::Pin};
 ///
 /// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
 /// type name does not expand to an absolute IRI through the active `@context`.
-pub async fn expand_type_expression(raw: &WrittenTypeSelection, expander: &impl TermExpander) -> Result<ExpandedTypeSelection, QueryError> {
+pub async fn expand_type_selection(raw: &WrittenTypeSelection, expander: &impl TermExpander) -> Result<ExpandedTypeSelection, QueryError> {
     match raw {
         WrittenTypeSelection::Wildcard => Ok(ExpandedTypeSelection::Wildcard),
         WrittenTypeSelection::Type(name) => Ok(ExpandedTypeSelection::Type(expander.expand_type(name.as_str()).await?)),
@@ -33,7 +33,7 @@ fn expand_children<'a, E: TermExpander>(
     Box::pin(async move {
         let mut expanded_children = Vec::with_capacity(children.len());
         for child in children {
-            expanded_children.push(expand_type_expression(child, expander).await?);
+            expanded_children.push(expand_type_selection(child, expander).await?);
         }
         Ok(expanded_children)
     })
@@ -59,7 +59,7 @@ mod tests {
             ]),
             WrittenTypeSelection::Type("Motorhome".parse().expect("valid type name")),
         ]);
-        let expanded = expand_type_expression(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
+        let expanded = expand_type_selection(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
             ExpandedTypeSelection::Or(vec![

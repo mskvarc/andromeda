@@ -24,12 +24,12 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     filter::{
         compilation::{AdmittedFilter, compile_q_filter},
-        expansion::{expand_attribute_names, expand_csf_expr},
+        expansion::{expand_attribute_names, expand_context_source_filter},
     },
     geo::geo_query_error::GeoQueryError,
     query_error::QueryError,
     term_expander::TermExpander,
-    type_selection::expansion::expand_type_expression,
+    type_selection::expansion::expand_type_selection,
 };
 use std::mem;
 
@@ -42,9 +42,9 @@ async fn expand_name_list(names: &mut Vec<AttributeName>, expander: &impl TermEx
 /// Expand the type selection of every entity selector in place.
 async fn expand_selector_types(selectors: &mut [EntitySelector], expander: &impl TermExpander) -> Result<(), SubscriptionError> {
     for selector in selectors {
-        selector.type_ = expand_type_expression(&selector.type_, expander)
+        selector.type_ = expand_type_selection(&selector.type_, expander)
             .await
-            .and_then(|selection| selection.into_raw().map_err(QueryError::from))?;
+            .and_then(|selection| selection.into_written().map_err(QueryError::from))?;
     }
     Ok(())
 }
@@ -116,7 +116,7 @@ pub(crate) async fn expand_common_subscription_terms(
     // 5.11.2.4) has to name them by IRI too. Their values are raw JSON, so the
     // compound-value members stay as written (clause 4.9).
     request.csf = match mem::take(&mut request.csf) {
-        Clearable::Set(csf) => Clearable::Set(expand_csf_expr(csf, &term_expander).await?),
+        Clearable::Set(csf) => Clearable::Set(expand_context_source_filter(csf, &term_expander).await?),
         unchanged @ (Clearable::Absent | Clearable::NgsiLdNull) => unchanged,
     };
 
@@ -142,11 +142,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_query::{
-        filter::{display::serialize_written_members, language_targeting::LanguageTargeting},
-        query_error::QueryError,
-        term_expander::TermExpansionError,
-    };
+    use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, query_error::QueryError, term_expander::TermExpansionError};
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
@@ -350,10 +346,7 @@ mod tests {
             written(&request)["q"],
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/name\"[\"https://uri.etsi.org/ngsi-ld/default-context/en\"]==\"Door\"")
         );
-        pretty_assertions::assert_eq!(
-            serialize_written_members(q),
-            "\"https://uri.etsi.org/ngsi-ld/default-context/name\"[en]==\"Door\""
-        );
+        pretty_assertions::assert_eq!(q.written_member_text(), "\"https://uri.etsi.org/ngsi-ld/default-context/name\"[en]==\"Door\"");
     }
 
     /// Clause 4.9: a `csf` targets Context Source Properties, whose values are

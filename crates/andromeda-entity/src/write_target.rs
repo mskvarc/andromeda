@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::type_selection::{
     expanded_type_selection::ExpandedTypeSelection,
-    expansion::expand_type_expression,
+    expansion::expand_type_selection,
     written_type_selection::WrittenTypeSelection,
 };
 
@@ -71,7 +71,7 @@ impl EntityService {
         match selector {
             Some(raw) => {
                 let prepared = self.engine.prepare_term_context(context);
-                Ok(Some(expand_type_expression(raw, &ContextualExpander::new(&self.engine, &prepared)).await?))
+                Ok(Some(expand_type_selection(raw, &ContextualExpander::new(&self.engine, &prepared)).await?))
             }
             None => Ok(None),
         }

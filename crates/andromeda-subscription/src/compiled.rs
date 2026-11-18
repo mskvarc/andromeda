@@ -242,7 +242,7 @@ impl CompiledSubscription {
     pub fn hopping_filters(&self) -> impl Iterator<Item = &Filter> {
         self.compiled_q
             .as_ref()
-            .map(|query| query.compiled().expr())
+            .map(|query| query.compiled().filter())
             .into_iter()
             .filter(|filter| filter.contains_linked_hop())
     }

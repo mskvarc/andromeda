@@ -45,10 +45,10 @@ const fn top_level_attribute(path: &AttributePath) -> &AttributeName {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{parser, referenced_attributes::referenced_attributes};
+    use crate::filter::{Filter, referenced_attributes::referenced_attributes};
 
     fn names(q: &str) -> Vec<String> {
-        let expr = parser::parse(q).expect("valid q");
+        let expr = q.parse::<Filter>().expect("valid q");
         referenced_attributes(&expr).into_iter().map(ToString::to_string).collect()
     }
 

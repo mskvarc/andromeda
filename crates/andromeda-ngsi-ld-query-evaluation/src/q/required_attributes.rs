@@ -72,11 +72,11 @@ fn required_by(term: &TermReading) -> AttributeName {
 #[cfg(test)]
 mod tests {
     use crate::q::required_attributes::RequiredAttributes;
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 
     /// The names `q` requires.
     fn required(q: &str) -> Vec<String> {
-        let reading = FilterReading::of(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
+        let reading = FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
         RequiredAttributes::of(&reading).names().iter().map(|name| name.as_str().to_owned()).collect()
     }
 

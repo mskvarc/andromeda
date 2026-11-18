@@ -149,21 +149,24 @@ impl Operand {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        parser::operand::{parse_date, parse_date_time, parse_time},
-        reading::operand::Operand,
-    };
-    use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
+    use crate::filter::reading::operand::Operand;
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, date_time::NgsiLdDateTime, time_of_day::NgsiLdTime, value::TimeValueForm};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn a_time_operand_names_its_form_and_no_other_operand_names_one() {
         assert_eq!(
-            Operand::DateTime(parse_date_time("2024-01-01T00:00:00Z").expect("a date-time")).time_form(),
+            Operand::DateTime("2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a date-time").get()).time_form(),
             Some(TimeValueForm::DateTime)
         );
-        assert_eq!(Operand::Date(parse_date("2024-01-01").expect("a date")).time_form(), Some(TimeValueForm::Date));
-        assert_eq!(Operand::Time(parse_time("08:00:00Z").expect("a time")).time_form(), Some(TimeValueForm::Time));
+        assert_eq!(
+            Operand::Date("2024-01-01".parse::<NgsiLdDate>().expect("a date").get()).time_form(),
+            Some(TimeValueForm::Date)
+        );
+        assert_eq!(
+            Operand::Time("08:00:00Z".parse::<NgsiLdTime>().expect("a time").get()).time_form(),
+            Some(TimeValueForm::Time)
+        );
         for operand in [Operand::Number(1.into()), Operand::Text("2024-01-01".to_owned()), Operand::Boolean(true)] {
             assert_eq!(operand.time_form(), None, "{operand:?}");
         }

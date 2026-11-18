@@ -7,7 +7,7 @@
 //! member token is that member, and anything carrying a path is a value key.
 
 use crate::{
-    filter::{filter_error::FilterError, parser::value_path::parse_attribute_path, value_path::ValuePath},
+    filter::{filter_error::FilterError, value_path::ValuePath},
     temporal::grouping::entity_member::EntityMember,
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
@@ -25,24 +25,6 @@ pub enum GroupKey {
 }
 
 impl GroupKey {
-    /// Parse and classify one key name.
-    ///
-    /// A path-free name that matches an [`EntityMember`] token classifies as
-    /// that member; every other name (including a member token that carries a
-    /// sub-attribute or bracketed path) is a [`GroupKey::Path`] value key.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`parse_attribute_path`] failures when the name is not a
-    /// well-formed clause 4.9 `ValuePath`.
-    pub fn parse(name: &str) -> Result<GroupKey, FilterError> {
-        let path = parse_attribute_path(name)?;
-        if let Some(member) = path.is_simple().then(|| EntityMember::classify(path.attribute.as_str())).flatten() {
-            return Ok(GroupKey::Member(member));
-        }
-        Ok(GroupKey::Path(path))
-    }
-
     /// The temporal axis this key names, if any.
     ///
     /// A bucket modifier is only meaningful on a temporal key. The clause 4.8
@@ -59,19 +41,41 @@ impl GroupKey {
     }
 }
 
+impl FromStr for GroupKey {
+    type Err = FilterError;
+
+    /// Parse and classify one key name.
+    ///
+    /// A path-free name that matches an [`EntityMember`] token classifies as
+    /// that member; every other name (including a member token that carries a
+    /// sub-attribute or bracketed path) is a [`GroupKey::Path`] value key.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ValuePath`] `FromStr` failures when the name is not a
+    /// well-formed clause 4.9 `ValuePath`.
+    fn from_str(name: &str) -> Result<GroupKey, FilterError> {
+        let path = name.parse::<ValuePath>()?;
+        if let Some(member) = path.is_simple().then(|| EntityMember::classify(path.attribute.as_str())).flatten() {
+            return Ok(GroupKey::Member(member));
+        }
+        Ok(GroupKey::Path(path))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::temporal::grouping::{entity_member::EntityMember, group_key::GroupKey};
 
     #[test]
     fn a_member_token_classifies_as_a_member() {
-        assert_eq!(GroupKey::parse("datasetId").expect("parses"), GroupKey::Member(EntityMember::DatasetId));
-        assert_eq!(GroupKey::parse("unitCode").expect("parses"), GroupKey::Member(EntityMember::UnitCode));
+        assert_eq!("datasetId".parse::<GroupKey>().expect("parses"), GroupKey::Member(EntityMember::DatasetId));
+        assert_eq!("unitCode".parse::<GroupKey>().expect("parses"), GroupKey::Member(EntityMember::UnitCode));
     }
 
     #[test]
     fn a_plain_attribute_name_classifies_as_a_value_path() {
-        let key = GroupKey::parse("speed").expect("parses");
+        let key = "speed".parse::<GroupKey>().expect("parses");
         assert!(matches!(key, GroupKey::Path(path) if path.attribute.as_str() == "speed"));
     }
 
@@ -79,7 +83,7 @@ mod tests {
     #[test]
     fn compound_and_dotted_value_paths_parse_as_paths() {
         for text in ["address[city]", "refDevice.category"] {
-            assert!(matches!(GroupKey::parse(text).expect("parses"), GroupKey::Path(_)), "{text}");
+            assert!(matches!(text.parse::<GroupKey>().expect("parses"), GroupKey::Path(_)), "{text}");
         }
     }
 
@@ -87,13 +91,13 @@ mod tests {
     /// name rather than naming the structural member.
     #[test]
     fn a_member_token_with_a_path_is_a_value_path() {
-        assert!(matches!(GroupKey::parse("datasetId.foo").expect("parses"), GroupKey::Path(_)));
+        assert!(matches!("datasetId.foo".parse::<GroupKey>().expect("parses"), GroupKey::Path(_)));
     }
 
     #[test]
     fn a_malformed_path_is_rejected() {
         for text in ["a[", "a[]", "a.", "rel{attr}"] {
-            assert!(GroupKey::parse(text).is_err(), "{text}");
+            assert!(text.parse::<GroupKey>().is_err(), "{text}");
         }
     }
 }

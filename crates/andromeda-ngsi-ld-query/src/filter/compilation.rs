@@ -16,7 +16,7 @@ use crate::{
     filter::{
         Filter,
         complexity::FilterComplexityLimits,
-        expansion::{apply_expand_values, expand_attribute_names, expand_json_keys, expand_q_expr},
+        expansion::{apply_expand_values, expand_attribute_names, expand_filter, expand_json_keys},
         hop_admission::FilterHopAdmission,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
@@ -126,7 +126,7 @@ where
 /// does not expand.
 pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Filter, QueryError> {
     // clone: expansion consumes its tree, and every compilation of the request reads the admitted filter again
-    let filter = expand_q_expr(filter.0.clone(), &opt_ins.json_keys, expander).await?;
+    let filter = expand_filter(filter.0.clone(), &opt_ins.json_keys, expander).await?;
     apply_expand_values(filter, &opt_ins.expand_values, expander).await
 }
 
@@ -137,11 +137,9 @@ mod tests {
             Filter,
             compilation::{AdmittedFilter, FilterAdmission, FilterOptIns, admit_q_filter, compile_q_filter},
             complexity::FilterComplexityLimits,
-            display::serialize,
             filter_error::FilterError,
             hop_admission::FilterHopAdmission,
             language_targeting::LanguageTargeting,
-            parser::parse,
         },
         namespace_expander::NamespaceExpander,
         query_error::QueryError,
@@ -215,12 +213,12 @@ mod tests {
     }
 
     fn admitted(q: &str, admission: FilterAdmission, hops: &Hops) -> Result<AdmittedFilter, Refused> {
-        admit_q_filter::<Refused, _>(&parse(q).expect("the filter parses"), admission, hops)
+        admit_q_filter::<Refused, _>(&q.parse::<Filter>().expect("the filter parses"), admission, hops)
     }
 
     async fn compiled_text(q: &str, opt_ins: &FilterOptIns) -> String {
         let filter = admitted(q, admission(LanguageTargeting::Specification), &Hops::Admitted).expect("the filter is admitted");
-        serialize(&compile_q_filter(&filter, opt_ins, &EXPANDER).await.expect("the filter compiles"))
+        compile_q_filter(&filter, opt_ins, &EXPANDER).await.expect("the filter compiles").to_string()
     }
 
     /// A term expands to the IRI the context maps it to.
@@ -308,7 +306,7 @@ mod tests {
     /// leaves it as written for the next compilation.
     #[tokio::test]
     async fn an_admitted_filter_keeps_the_filter_as_written() {
-        let written = parse("speed>5").expect("the filter parses");
+        let written = "speed>5".parse::<Filter>().expect("the filter parses");
         let filter = admit_q_filter::<Refused, _>(&written, admission(LanguageTargeting::Specification), &Hops::Admitted).expect("the filter is admitted");
         compile_q_filter(&filter, &FilterOptIns::default(), &EXPANDER)
             .await

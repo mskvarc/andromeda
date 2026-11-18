@@ -9,7 +9,7 @@
 
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_query::{
-    filter::{Filter, expansion::expand_csf_expr, reading::filter_reading::FilterReading},
+    filter::{Filter, expansion::expand_context_source_filter, reading::filter_reading::FilterReading},
     geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, compiled_geo_query::CompiledGeoQuery, written_geo_query::WrittenGeoQuery},
     query_error::QueryError,
 };
@@ -54,7 +54,7 @@ impl ExpandedRegistrationFilters {
         let csf = match csf {
             Some(expression) => Some(FilterReading::of_context_source_filter(
                 // clone: the raw filter stays in the query, which forwards it as the client wrote it
-                &expand_csf_expr(expression.clone(), &expander).await?,
+                &expand_context_source_filter(expression.clone(), &expander).await?,
             )),
             None => None,
         };
@@ -80,7 +80,7 @@ mod tests {
     use crate::{expanded_registration_filters::ExpandedRegistrationFilters, fixed_registration_store::generous_geo_admission};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_query::{filter::parser, geo::written_geo_query::WrittenGeoQuery};
+    use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery};
     use serde_json::json;
 
     fn engine() -> JsonLdEngine {
@@ -102,7 +102,7 @@ mod tests {
     async fn the_context_source_filter_is_expanded_under_the_request_context() {
         let context =
             ContextSpec::from_body(JsonLiteral::admit(&json!({"sourceGroup": "https://example.org/sourceGroup"}).to_string()).expect("an admissible literal"));
-        let csf = parser::parse("sourceGroup==\"alpha\"").expect("the filter parses");
+        let csf = "sourceGroup==\"alpha\"".parse::<Filter>().expect("the filter parses");
         let filters = ExpandedRegistrationFilters::expand(&engine(), &context, Some(&csf), None, generous_geo_admission())
             .await
             .expect("the filter expands");

@@ -25,8 +25,8 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_query::{
     filter::{
         Filter,
-        compaction::{compact_csf_expr, compact_q_expr},
-        expansion::{expand_csf_expr, expand_q_expr},
+        compaction::{compact_context_source_filter, compact_filter},
+        expansion::{expand_context_source_filter, expand_filter},
         json_key_attributes::JsonKeyAttributes,
     },
     projection::written_projection_term::WrittenProjectionTerm,
@@ -190,8 +190,8 @@ impl<'a> ForwardedNames<'a> {
                 }
                 let literal_keys: JsonKeyAttributes = literal_keys.into_iter().collect();
                 let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
-                let expanded = expand_q_expr(expression.clone(), &literal_keys, &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
-                Ok(compact_q_expr(expanded, &self.names).await)
+                let expanded = expand_filter(expression.clone(), &literal_keys, &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
+                Ok(compact_filter(expanded, &self.names).await)
             }
         }
     }
@@ -210,8 +210,8 @@ impl<'a> ForwardedNames<'a> {
             Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => {
                 let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
-                let expanded = expand_csf_expr(expression.clone(), &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
-                Ok(compact_csf_expr(expanded, &self.names).await)
+                let expanded = expand_context_source_filter(expression.clone(), &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
+                Ok(compact_context_source_filter(expanded, &self.names).await)
             }
         }
     }
@@ -280,7 +280,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_ngsi_ld_query::{filter::parser, type_selection::written_type_selection::WrittenTypeSelection};
+    use andromeda_ngsi_ld_query::{filter::Filter, type_selection::written_type_selection::WrittenTypeSelection};
     use serde_json::json;
     use url::form_urlencoded;
 
@@ -339,7 +339,7 @@ mod tests {
         pretty_assertions::assert_eq!(names.entity_type(&vehicle).await.expect("rewords").as_str(), "Car");
         let expression: WrittenTypeSelection = "Vehicle,Other".parse().expect("a type selection");
         pretty_assertions::assert_eq!(names.type_expr(&expression).await.expect("rewords").to_string(), "Car,Other");
-        let query = parser::parse("speed>10;brand==\"x\"").expect("a query");
+        let query = "speed>10;brand==\"x\"".parse::<Filter>().expect("a query");
         pretty_assertions::assert_eq!(
             names.q(&query, None).await.expect("rewords").to_string(),
             "velocity>10;\"https://example.org/brand\"==\"x\""

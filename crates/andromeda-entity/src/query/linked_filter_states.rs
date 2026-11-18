@@ -121,7 +121,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        filter::{language_targeting::LanguageTargeting, parser::parse},
+        filter::{Filter, language_targeting::LanguageTargeting},
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
         page_window::PageWindow,
         projection::returned_attributes::ReturnedAttributes,
@@ -276,7 +276,7 @@ mod tests {
 
     async fn gather(held: &Arc<Held>, q: &str) -> LinkedStates {
         let root = node("urn:r", Some("urn:a"), "west", None);
-        let filter = parse(q).expect("the filter parses");
+        let filter = q.parse::<Filter>().expect("the filter parses");
         service(held)
             .linked_filter_states(&ContextTarget::Live, &[root.as_ref()], &[&filter], instant(2025))
             .await

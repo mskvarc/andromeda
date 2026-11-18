@@ -40,7 +40,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     fn lquery(raw: &str) -> String {
-        pattern_to_lquery(&ScopePattern::parse(raw).expect("valid pattern"))
+        pattern_to_lquery(&raw.parse::<ScopePattern>().expect("valid pattern"))
     }
 
     #[test]
@@ -73,7 +73,7 @@ mod tests {
         ];
 
         for (raw, rendered, verdicts) in cases {
-            let pattern = ScopePattern::parse(raw).expect("valid pattern");
+            let pattern = raw.parse::<ScopePattern>().expect("valid pattern");
             assert_eq!(pattern_to_lquery(&pattern), rendered, "{raw} renders the quantifier its verdicts assume");
             for (written, expected) in paths.iter().zip(verdicts) {
                 assert_eq!(pattern.matches(&path(written)), expected, "{raw} against {written}");

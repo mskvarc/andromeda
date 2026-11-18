@@ -10,7 +10,7 @@ use crate::{
     expanded_entity_selector::ExpandedEntitySelector,
     query_error::QueryError,
     term_expander::TermExpander,
-    type_selection::expansion::expand_type_expression,
+    type_selection::expansion::expand_type_selection,
     written_entity_selector::WrittenEntitySelector,
 };
 
@@ -30,7 +30,7 @@ pub async fn compile_entity_selectors(selectors: &[WrittenEntitySelector], expan
     let mut compiled = Vec::with_capacity(selectors.len());
     for selector in selectors {
         let type_expr = match selector.type_selection.as_ref() {
-            Some(raw) => Some(expand_type_expression(raw, expander).await?),
+            Some(raw) => Some(expand_type_selection(raw, expander).await?),
             None => None,
         };
         compiled.push(

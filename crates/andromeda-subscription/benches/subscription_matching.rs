@@ -28,14 +28,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{SubscriptionStatus, standing::SubscriptionStanding},
 };
 use andromeda_ngsi_ld_query::{
-    filter::{
-        Filter,
-        compiled_filter::CompiledFilter,
-        filter_error::FilterError,
-        language_matching::LanguageMatching,
-        parser::parse,
-        reading::filter_reading::FilterReading,
-    },
+    filter::{Filter, compiled_filter::CompiledFilter, filter_error::FilterError, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     projection::expanded_projection::ExpandedProjection,
     type_selection::type_selection_error::TypeSelectionError,
 };
@@ -142,7 +135,7 @@ fn expanded(filter: &str) -> Result<Filter, FilterError> {
             text.push(character);
         }
     }
-    parse(&text)
+    text.parse::<Filter>()
 }
 
 /// The creation of the Vehicle.

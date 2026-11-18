@@ -15,6 +15,7 @@ use crate::filter::{
     language_range::{LanguageRange, extended_filter},
 };
 use langtag::{LangTag, LangTagBuf};
+use std::str::FromStr;
 
 /// A target language as a `q` bracket carries it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -27,20 +28,6 @@ pub enum TargetLanguage {
 }
 
 impl TargetLanguage {
-    /// Read the text of a bracket as a language tag, or failing that as an
-    /// extended range with a wildcard.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FilterError::InvalidTrailingMember`] when the text is neither.
-    pub fn parse(text: &str) -> Result<TargetLanguage, FilterError> {
-        LangTagBuf::new(text.to_owned()).map(TargetLanguage::Tag).or_else(|tag| {
-            LanguageRange::new(text.to_owned())
-                .map(TargetLanguage::Range)
-                .map_err(|range| FilterError::InvalidTrailingMember { tag, range })
-        })
-    }
-
     /// The selector this target language reads a languageMap with.
     #[must_use]
     pub fn selector(&self) -> LanguageSelector<'_> {
@@ -48,6 +35,24 @@ impl TargetLanguage {
             TargetLanguage::Tag(tag) => LanguageSelector::Tag(tag),
             TargetLanguage::Range(range) => LanguageSelector::Range(range),
         }
+    }
+}
+
+impl FromStr for TargetLanguage {
+    type Err = FilterError;
+
+    /// Read the text of a bracket as a language tag, or failing that as an
+    /// extended range with a wildcard.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterError::InvalidTrailingMember`] when the text is neither.
+    fn from_str(text: &str) -> Result<TargetLanguage, FilterError> {
+        LangTagBuf::new(text.to_owned()).map(TargetLanguage::Tag).or_else(|tag| {
+            LanguageRange::new(text.to_owned())
+                .map(TargetLanguage::Range)
+                .map_err(|range| FilterError::InvalidTrailingMember { tag, range })
+        })
     }
 }
 
@@ -111,7 +116,7 @@ mod tests {
     use langtag::LangTag;
 
     fn parsed(text: &str) -> TargetLanguage {
-        TargetLanguage::parse(text).expect("a target language")
+        text.parse::<TargetLanguage>().expect("a target language")
     }
 
     fn tag(text: &str) -> &LangTag {
@@ -144,7 +149,7 @@ mod tests {
     #[test]
     fn a_text_neither_tag_nor_range_is_refused() {
         for text in ["en--GB", "toolongsubtag9", "-en", "e*", "en_GB-x", "*"] {
-            let error = TargetLanguage::parse(text).expect_err(text);
+            let error = text.parse::<TargetLanguage>().expect_err(text);
             assert!(matches!(error, FilterError::InvalidTrailingMember { .. }), "{text}: {error:?}");
         }
     }

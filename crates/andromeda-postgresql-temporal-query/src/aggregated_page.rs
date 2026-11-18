@@ -226,7 +226,7 @@ mod tests {
                 Representation::builder()
                     .format(TemporalFormat::AggregatedValues)
                     .aggr_methods(vec![AggrMethod::Sum])
-                    .aggr_period_duration(AggregationPeriod::parse(period).expect("a valid period"))
+                    .aggr_period_duration(AggregationPeriod::of_parameter(period).expect("a valid period"))
                     .sys_attrs(SysAttrsInclusion::Strip)
                     .build(),
             )

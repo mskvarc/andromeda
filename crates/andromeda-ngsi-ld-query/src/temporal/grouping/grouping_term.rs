@@ -12,9 +12,11 @@ pub struct GroupingTerm {
     pub bucket: Option<BucketTerm>,
 }
 
-impl GroupingTerm {
+impl FromStr for GroupingTerm {
+    type Err = GroupingError;
+
     /// Parse one comma-delimited grouping term.
-    pub(super) fn parse(text: &str) -> Result<GroupingTerm, GroupingError> {
+    fn from_str(text: &str) -> Result<GroupingTerm, GroupingError> {
         let text = text.trim();
         if text.is_empty() {
             return Err(GroupingError::EmptyTerm);
@@ -26,7 +28,7 @@ impl GroupingTerm {
             }
             None => (text, None),
         };
-        let key = GroupKey::parse(key_text).map_err(GroupingError::Key)?;
+        let key = key_text.parse::<GroupKey>().map_err(GroupingError::Key)?;
         if let Some(bucket) = bucket
             && key.temporal_property().is_none()
         {

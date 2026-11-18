@@ -41,7 +41,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn selectors(raw: &[&str]) -> Vec<DatasetSelector> {
-        raw.iter().map(|entry| DatasetSelector::parse(entry).expect("valid selector")).collect()
+        raw.iter().map(|entry| entry.parse::<DatasetSelector>().expect("valid selector")).collect()
     }
 
     fn point(x: f64) -> Value {

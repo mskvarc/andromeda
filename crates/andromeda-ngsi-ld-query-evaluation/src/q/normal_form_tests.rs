@@ -13,7 +13,7 @@ use crate::{
         expanded_fixture::{FixtureEntity, FixtureLinked},
     },
 };
-use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 use andromeda_q_corpus::{case_filter::expanded_filter, corpus::CORPUS, corpus_vocabulary::CorpusVocabulary};
 use proptest::{
     collection::vec,
@@ -317,14 +317,14 @@ proptest! {
     /// The normal form agrees with the lowered filter over generated Entities.
     #[test]
     fn the_normal_form_holds_for_the_generated_entities_the_filter_holds_for((documents, text) in generated_case()) {
-        let expr = parse(&text).unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
+        let expr = text.parse::<Filter>().unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
         prop_assert_eq!(disagreement(&expr, &decoded(&documents)), None, "{}", text);
     }
 
     /// The normal form agrees with the lowered filter over the corpus Entities.
     #[test]
     fn the_normal_form_holds_for_the_corpus_entities_the_filter_holds_for(text in filter_over(corpus_path())) {
-        let expr = parse(&text).unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
+        let expr = text.parse::<Filter>().unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
         prop_assert_eq!(disagreement(&expr, &CORPUS_ENTITIES), None, "{}", text);
     }
 }
@@ -347,7 +347,7 @@ fn exercise(cases: &BoxedStrategy<(Vec<FixtureEntity>, String)>) -> (u32, u32) {
     let (mut rewritten, mut selective) = (0, 0);
     for _ in 0..1000 {
         let (entities, text) = cases.new_tree(&mut runner).expect("a case").current();
-        let expr = parse(&text).unwrap_or_else(|error| panic!("{text} is refused: {error}"));
+        let expr = text.parse::<Filter>().unwrap_or_else(|error| panic!("{text} is refused: {error}"));
         let normal = FilterReading::of(&expr, LanguageMatching::TagEquality);
         if normal != FilterReading::lowered(&expr, LanguageMatching::TagEquality) {
             rewritten += 1;

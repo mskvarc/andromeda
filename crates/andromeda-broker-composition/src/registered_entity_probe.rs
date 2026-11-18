@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     expanded_entity_selector::ExpandedEntitySelector as CompiledEntitySelector,
     page_window::PageWindow,
-    type_selection::expansion::expand_type_expression,
+    type_selection::expansion::expand_type_selection,
 };
 use andromeda_registration::{
     entity_probe::{EntityPresence, RegisteredEntityProbe},
@@ -56,7 +56,7 @@ impl EntityStoreRegistrationProbe {
     /// expression the store evaluates.
     async fn compile_selector(&self, selector: &EntityInfo) -> Result<CompiledEntitySelector, RegistrationError> {
         let prepared = self.engine.prepare_term_context(&ContextSpec::core_only());
-        let type_expr = expand_type_expression(&selector.type_.as_type_expression(), &ContextualExpander::new(&self.engine, &prepared)).await?;
+        let type_expr = expand_type_selection(&selector.type_.as_type_selection(), &ContextualExpander::new(&self.engine, &prepared)).await?;
         Ok(CompiledEntitySelector::builder()
             .ids(selector.id.iter().cloned().collect())
             .id_pattern(selector.id_pattern.clone())

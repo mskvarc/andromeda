@@ -270,7 +270,7 @@ mod tests {
     use crate::{
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
         geo::compiled_geo_query::CompiledGeoQuery,
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
@@ -299,7 +299,7 @@ mod tests {
     fn selector(ids: &[u32], pattern: Option<&str>, type_expr: Option<ExpandedTypeSelection>) -> ExpandedEntitySelector {
         ExpandedEntitySelector::builder()
             .ids(ids.iter().copied().map(id).collect())
-            .id_pattern(pattern.map(|source| Pattern::parse(source).expect("a valid pattern")))
+            .id_pattern(pattern.map(|source| source.parse::<Pattern>().expect("a valid pattern")))
             .type_selection(type_expr)
             .build()
     }
@@ -310,7 +310,10 @@ mod tests {
 
     fn filtered(q: &str) -> EntitySelection {
         EntitySelection::builder()
-            .q(Some(CompiledFilter::new(parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)))
+            .q(Some(CompiledFilter::new(
+                q.parse::<Filter>().expect("a clause 4.9 filter"),
+                LanguageMatching::TagEquality,
+            )))
             .build()
     }
 
@@ -487,7 +490,7 @@ mod tests {
     fn a_changed_scope_query_changes_the_identity() {
         let scoped = |expression: &str| {
             EntitySelection::builder()
-                .scope_q(Some(ScopeQuery::parse(expression).expect("a scope query")))
+                .scope_q(Some(expression.parse::<ScopeQuery>().expect("a scope query")))
                 .build()
         };
         assert_eq!(kept(&scoped("/Madrid")), kept(&scoped("/Madrid")));
@@ -497,7 +500,7 @@ mod tests {
 
     #[test]
     fn a_changed_context_source_filter_changes_the_identity() {
-        let csf = |text: &str| FilterReading::of_context_source_filter(&parse(text).expect("a clause 4.9 filter"));
+        let csf = |text: &str| FilterReading::of_context_source_filter(&text.parse::<Filter>().expect("a clause 4.9 filter"));
         let selection = EntitySelection::default();
         let identity = |reading: Option<&FilterReading>| {
             QueryIdentity::of(&selection, reading, IdentifierScope::Excepted)
@@ -534,17 +537,19 @@ mod tests {
             ])
             .attrs(vec![iri("speed"), iri("brand")])
             .q(Some(CompiledFilter::new(
-                parse("speed>50;brand==\"x\",\"y\"|seen==2024-01-01T00:00:00Z").expect("a clause 4.9 filter"),
+                "speed>50;brand==\"x\",\"y\"|seen==2024-01-01T00:00:00Z"
+                    .parse::<Filter>()
+                    .expect("a clause 4.9 filter"),
                 LanguageMatching::TagEquality,
             )))
             .geo(Some(within("[[[0,0],[1,0],[1,1],[0,1],[0,0]]]")))
-            .scope_q(Some(ScopeQuery::parse("/Madrid/#").expect("a scope query")))
+            .scope_q(Some("/Madrid/#".parse::<ScopeQuery>().expect("a scope query")))
             .projected_members(ProjectedMembers::AnyOf {
                 attributes: vec![iri("speed")],
                 scope: ScopeRetention::Removed,
             })
             .build();
-        let csf = FilterReading::of_context_source_filter(&parse("tier==\"gold\"").expect("a clause 4.9 filter"));
+        let csf = FilterReading::of_context_source_filter(&"tier==\"gold\"".parse::<Filter>().expect("a clause 4.9 filter"));
         let written = |scope: IdentifierScope| {
             String::from_utf8(QueryIdentity::of(&selection, Some(&csf), scope).record().expect("a writable identity")).expect("a JSON record")
         };

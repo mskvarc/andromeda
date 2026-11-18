@@ -60,7 +60,7 @@ impl RegisteredEntityProbe for FixedProbe {
     {
         let description = selector.map_or_else(
             || "matches:<none>".to_string(),
-            |selector| format!("matches:{}", selector.type_.as_type_expression()),
+            |selector| format!("matches:{}", selector.type_.as_type_selection()),
         );
         self.asked.lock().expect("probe log").push(description);
         Box::pin(async { Ok(self.matches) })

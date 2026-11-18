@@ -164,7 +164,7 @@ mod tests {
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         projection::expanded_projection::ExpandedProjection,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -213,7 +213,7 @@ mod tests {
                 selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             },
             compiled_q: Some(SubscriptionQuery::new(CompiledFilter::new(
-                parse(q).expect("the filter parses"),
+                q.parse::<Filter>().expect("the filter parses"),
                 LanguageMatching::TagEquality,
             ))),
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,

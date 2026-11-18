@@ -28,6 +28,7 @@
 //! with prose naming only the dotted and bracketed paths.
 
 use crate::filter::{
+    complexity::MAX_SUB_ATTRIBUTE_DEPTH,
     filter_error::FilterError,
     parser::{
         lexer::{Token, tokenize},
@@ -37,19 +38,7 @@ use crate::filter::{
     trailing_group::{MemberPath, TrailingGroup},
     value_path::ValuePath,
 };
-use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
-
-/// The most segments an attribute path may nest, counting sub-attributes and
-/// linked-entity hops alike.
-///
-/// Held to the depth a written attribute is admitted to,
-/// [`AttributeNestingLimit::DEFAULT`], so every sub-attribute a write can
-/// store stays addressable by `q` and `orderBy`. The linked-entity hops that
-/// share this budget stay bounded by it: a hop compiles to a correlated
-/// subquery per level, so `a{a{a{…}}}` is as expensive as it is deep. An
-/// `orderBy` path draws on the same budget, for the same reason: each segment
-/// is another hop inside the jsonpath its lateral evaluates.
-pub const MAX_SUB_ATTRIBUTE_DEPTH: usize = AttributeNestingLimit::DEFAULT.get();
+use std::str::FromStr;
 
 /// Reject a path that nests deeper than the budget.
 ///
@@ -57,7 +46,7 @@ pub const MAX_SUB_ATTRIBUTE_DEPTH: usize = AttributeNestingLimit::DEFAULT.get();
 ///
 /// Returns [`FilterError::PathTooDeep`] beyond
 /// [`MAX_SUB_ATTRIBUTE_DEPTH`].
-pub const fn check_depth(depth: usize) -> Result<(), FilterError> {
+pub(super) const fn check_depth(depth: usize) -> Result<(), FilterError> {
     if depth > MAX_SUB_ATTRIBUTE_DEPTH {
         return Err(FilterError::PathTooDeep {
             depth,
@@ -81,7 +70,7 @@ pub const fn check_depth(depth: usize) -> Result<(), FilterError> {
 /// [`FilterError::Expected`] when a separator is not followed by a name or a
 /// bracket is left open, and [`FilterError::PathTooDeep`] beyond
 /// [`MAX_SUB_ATTRIBUTE_DEPTH`].
-pub fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<ValuePath, FilterError> {
+pub(super) fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<ValuePath, FilterError> {
     let attr = attribute_name(leading)?;
     let mut sub_attrs = Vec::new();
 
@@ -123,7 +112,7 @@ fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Tra
     let first = cursor.parse_ident()?;
     let member = match attribute_name(first) {
         Ok(member) => member,
-        Err(_) if cursor.peek() == Some(&Token::RBracket) => return TargetLanguage::parse(first).map(TrailingGroup::Language),
+        Err(_) if cursor.peek() == Some(&Token::RBracket) => return first.parse::<TargetLanguage>().map(TrailingGroup::Language),
         Err(name_error) => return Err(name_error),
     };
     let mut members = vec![member];
@@ -135,48 +124,55 @@ fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Tra
     Ok(TrailingGroup::Members(MemberPath::new(members)))
 }
 
-/// Parse a whole attribute path standing on its own, with no enclosing
-/// expression.
-///
-/// This is the entry clause 4.23.3 uses: an `orderBy` term is one `ValuePath`
-/// and nothing else, so the token stream has to be exhausted by it. A `q`
-/// filter instead reaches [`parse_value_path`] mid-expression, with an operator
-/// and an operand still to come.
-///
-/// # Errors
-///
-/// Returns the tokeniser's [`FilterError::UnterminatedString`] or
-/// [`FilterError::UnexpectedCharacter`], the [`parse_value_path`] failures, and
-/// [`FilterError::UnexpectedToken`] when anything follows the path, which is
-/// what refuses the clause 4.9 `rel{…}` linked-entity axis to a parameter whose
-/// own grammar has no hop.
-pub fn parse_attribute_path(text: &str) -> Result<ValuePath, FilterError> {
-    let tokens = tokenize(text)?;
-    let mut cursor = TokenCursor::new(&tokens);
-    let leading = cursor.parse_ident()?;
-    let path = parse_value_path(&mut cursor, leading, 0)?;
-    if !cursor.is_exhausted() {
-        return Err(FilterError::UnexpectedToken {
-            position: cursor.position(),
-            token: cursor.found(),
-        });
+impl FromStr for ValuePath {
+    type Err = FilterError;
+
+    /// Parses a whole attribute path standing on its own, with no enclosing
+    /// expression.
+    ///
+    /// This is the entry clause 4.23.3 uses: an `orderBy` term is one `ValuePath`
+    /// and nothing else, so the token stream has to be exhausted by it. A `q`
+    /// filter instead reads a path mid-expression, with an operator and an
+    /// operand still to come.
+    ///
+    /// # Errors
+    ///
+    /// Returns the tokeniser's [`FilterError::UnterminatedString`] or
+    /// [`FilterError::UnexpectedCharacter`], [`FilterError::InvalidAttributeName`],
+    /// [`FilterError::InvalidTrailingMember`], [`FilterError::Expected`] and
+    /// [`FilterError::PathTooDeep`] for a path outside the production, and
+    /// [`FilterError::UnexpectedToken`] when anything follows the path, which is
+    /// what refuses the clause 4.9 `rel{…}` linked-entity axis to a parameter whose
+    /// own grammar has no hop.
+    fn from_str(text: &str) -> Result<ValuePath, FilterError> {
+        let tokens = tokenize(text)?;
+        let mut cursor = TokenCursor::new(&tokens);
+        let leading = cursor.parse_ident()?;
+        let path = parse_value_path(&mut cursor, leading, 0)?;
+        if !cursor.is_exhausted() {
+            return Err(FilterError::UnexpectedToken {
+                position: cursor.position(),
+                token: cursor.found(),
+            });
+        }
+        Ok(path)
     }
-    Ok(path)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::filter::{
+        complexity::MAX_SUB_ATTRIBUTE_DEPTH,
         filter_error::FilterError,
-        parser::value_path::{MAX_SUB_ATTRIBUTE_DEPTH, parse_attribute_path},
         target_language::{LanguageSelector, TargetLanguage},
         trailing_group::TrailingGroup,
+        value_path::ValuePath,
     };
     use pretty_assertions::assert_eq;
 
     /// The names of a parsed path, as the client spelled them.
     fn spelled(text: &str) -> (String, Vec<String>, Vec<String>) {
-        let path = parse_attribute_path(text).expect("a clause 4.9 ValuePath");
+        let path = text.parse::<ValuePath>().expect("a clause 4.9 ValuePath");
         (
             path.attribute.as_str().to_owned(),
             path.sub_attributes.iter().map(|name| name.as_str().to_owned()).collect(),
@@ -226,15 +222,15 @@ mod tests {
     /// comes last: nothing may follow the closing bracket.
     #[test]
     fn a_second_bracketed_group_is_outside_the_production() {
-        assert!(parse_attribute_path("a[b][c]").is_err());
-        assert!(parse_attribute_path("a[b].c").is_err());
+        assert!("a[b][c]".parse::<ValuePath>().is_err());
+        assert!("a[b].c".parse::<ValuePath>().is_err());
     }
 
     /// The `%x7B…%x7D` linked-entity axis crosses an entity boundary, which
     /// clause 4.23.3's `AttrName`-based grammar does not reach.
     #[test]
     fn the_linked_entity_axis_is_not_part_of_a_value_path() {
-        let error = parse_attribute_path("rel{attr}").expect_err("a hop is not a ValuePath");
+        let error = "rel{attr}".parse::<ValuePath>().expect_err("a hop is not a ValuePath");
         assert!(matches!(error, FilterError::UnexpectedToken { .. }), "got {error:?}");
     }
 
@@ -264,17 +260,17 @@ mod tests {
     #[test]
     fn a_separator_with_no_name_after_it_is_rejected() {
         for malformed in ["a.", "a[", "a[]", ".a", "a[b", "a.b."] {
-            assert!(parse_attribute_path(malformed).is_err(), "{malformed}");
+            assert!(malformed.parse::<ValuePath>().is_err(), "{malformed}");
         }
     }
 
     #[test]
     fn a_path_at_the_depth_limit_parses_and_one_beyond_it_does_not() {
         let at_limit = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH));
-        assert!(parse_attribute_path(&at_limit).is_ok(), "a path at the limit must parse");
+        assert!(at_limit.parse::<ValuePath>().is_ok(), "a path at the limit must parse");
 
         let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
-        let error = parse_attribute_path(&too_deep).expect_err("beyond the limit");
+        let error = too_deep.parse::<ValuePath>().expect_err("beyond the limit");
         assert!(matches!(error, FilterError::PathTooDeep { .. }), "got {error:?}");
     }
 
@@ -283,7 +279,7 @@ mod tests {
     #[test]
     fn the_depth_limit_counts_compound_members_too() {
         let members = (0..=MAX_SUB_ATTRIBUTE_DEPTH).map(|index| format!("m{index}")).collect::<Vec<_>>().join(".");
-        let error = parse_attribute_path(&format!("a[{members}]")).expect_err("beyond the limit");
+        let error = format!("a[{members}]").parse::<ValuePath>().expect_err("beyond the limit");
         assert!(matches!(error, FilterError::PathTooDeep { .. }), "got {error:?}");
     }
 
@@ -291,7 +287,7 @@ mod tests {
     /// spells.
     #[test]
     fn a_hyphenated_language_tag_is_a_target_language() {
-        let path = parse_attribute_path("label[en-GB]").expect("a target language");
+        let path = "label[en-GB]".parse::<ValuePath>().expect("a target language");
         assert!(matches!(path.trailing, Some(TrailingGroup::Language(TargetLanguage::Tag(_)))), "{path:?}");
         pretty_assertions::assert_eq!(path.target_language().map(LanguageSelector::as_str), Some("en-GB"));
     }
@@ -300,7 +296,7 @@ mod tests {
     /// member reading and offers the language reading beside it.
     #[test]
     fn a_name_that_is_also_a_tag_stays_a_member_path_with_a_target_language() {
-        let path = parse_attribute_path("label[en]").expect("a member path");
+        let path = "label[en]".parse::<ValuePath>().expect("a member path");
         assert!(matches!(path.trailing, Some(TrailingGroup::Members(_))), "{path:?}");
         pretty_assertions::assert_eq!(path.target_language().map(LanguageSelector::as_str), Some("en"));
     }
@@ -308,7 +304,7 @@ mod tests {
     #[test]
     fn a_multi_member_or_non_tag_path_names_no_target_language() {
         for text in ["label[city_name]", "label[airquality.particulate]"] {
-            let path = parse_attribute_path(text).expect("a member path");
+            let path = text.parse::<ValuePath>().expect("a member path");
             assert!(matches!(path.trailing, Some(TrailingGroup::Members(_))), "{text}");
             assert!(path.target_language().is_none(), "{text}");
         }
@@ -316,23 +312,23 @@ mod tests {
 
     #[test]
     fn the_star_marker_selects_every_language() {
-        let path = parse_attribute_path("label[*]").expect("the marker");
+        let path = "label[*]".parse::<ValuePath>().expect("the marker");
         assert_eq!(path.trailing, Some(TrailingGroup::AllLanguages));
         assert!(path.target_language().is_none());
     }
 
     #[test]
     fn a_wildcard_range_is_a_target_language() {
-        let path = parse_attribute_path("label[de-*-DE]").expect("a range");
+        let path = "label[de-*-DE]".parse::<ValuePath>().expect("a range");
         assert!(matches!(path.trailing, Some(TrailingGroup::Language(TargetLanguage::Range(_)))), "{path:?}");
         assert!(path.target_language().is_some_and(LanguageSelector::is_range));
     }
 
     #[test]
     fn a_member_neither_name_nor_tag_is_refused() {
-        let error = parse_attribute_path("label[en_GB-x]").expect_err("neither");
+        let error = "label[en_GB-x]".parse::<ValuePath>().expect_err("neither");
         assert!(matches!(error, FilterError::InvalidTrailingMember { .. }), "got {error:?}");
-        let error = parse_attribute_path("label[en-GB.x]").expect_err("a tag starts no member path");
+        let error = "label[en-GB.x]".parse::<ValuePath>().expect_err("a tag starts no member path");
         assert!(matches!(error, FilterError::InvalidAttributeName(_)), "got {error:?}");
     }
 }

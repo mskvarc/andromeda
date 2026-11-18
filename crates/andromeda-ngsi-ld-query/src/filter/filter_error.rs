@@ -5,7 +5,7 @@ use crate::{
     filter::{
         expectation::{Expectation, Found},
         language_range::{LanguageRange, LanguageRangeError},
-        parser::quoted_string::UnicodeEscapeError,
+        unicode_escape_error::UnicodeEscapeError,
     },
     pattern::pattern_error::PatternError,
 };

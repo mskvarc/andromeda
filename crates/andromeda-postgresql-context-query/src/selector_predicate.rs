@@ -146,7 +146,7 @@ mod tests {
     }
 
     fn pattern(raw: &str) -> Pattern {
-        Pattern::parse(raw).expect("valid pattern")
+        raw.parse::<Pattern>().expect("valid pattern")
     }
 
     fn render(selectors: Vec<ExpandedEntitySelector>, source: &RowSource) -> Option<SelectStatement> {

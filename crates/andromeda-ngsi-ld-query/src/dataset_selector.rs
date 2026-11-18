@@ -28,21 +28,6 @@ pub enum DatasetSelector {
 }
 
 impl DatasetSelector {
-    /// Parse one `datasetId` entry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DatasetSelectorError::InvalidIdentifier`] when `raw` is neither the
-    /// `@none` token of clause 4.5.5 nor a URI.
-    pub fn parse(raw: &str) -> Result<DatasetSelector, DatasetSelectorError> {
-        if raw == keyword::NONE {
-            return Ok(DatasetSelector::Default);
-        }
-        raw.parse::<Identifier>()
-            .map(DatasetSelector::Id)
-            .map_err(DatasetSelectorError::InvalidIdentifier)
-    }
-
     /// The `datasetId` an attribute instance written with this selector
     /// carries: `None` for the default instance, which has none (clause 4.5.5).
     #[must_use]
@@ -74,19 +59,30 @@ impl DatasetSelector {
 impl FromStr for DatasetSelector {
     type Err = DatasetSelectorError;
 
+    /// Parse one `datasetId` entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatasetSelectorError::InvalidIdentifier`] when `raw` is neither the
+    /// `@none` token of clause 4.5.5 nor a URI.
     fn from_str(raw: &str) -> Result<DatasetSelector, DatasetSelectorError> {
-        DatasetSelector::parse(raw)
+        if raw == keyword::NONE {
+            return Ok(DatasetSelector::Default);
+        }
+        raw.parse::<Identifier>()
+            .map(DatasetSelector::Id)
+            .map_err(DatasetSelectorError::InvalidIdentifier)
     }
 }
 
-// Parsing lives in `DatasetSelector::parse` so borrowed call sites do not
+// Parsing lives in `FromStr` so borrowed call sites do not
 // allocate; this adapter exists only because `#[serde(try_from = "String")]`
 // requires it.
 impl TryFrom<String> for DatasetSelector {
     type Error = DatasetSelectorError;
 
     fn try_from(raw: String) -> Result<DatasetSelector, DatasetSelectorError> {
-        DatasetSelector::parse(&raw)
+        raw.parse()
     }
 }
 
@@ -170,43 +166,43 @@ mod tests {
     }
 
     fn selectors(raw: &[&str]) -> Vec<DatasetSelector> {
-        raw.iter().map(|entry| DatasetSelector::parse(entry).expect("valid selector")).collect()
+        raw.iter().map(|entry| entry.parse::<DatasetSelector>().expect("valid selector")).collect()
     }
 
     #[test]
     fn the_none_token_selects_the_default_instance() {
-        assert_eq!(DatasetSelector::parse("@none").unwrap(), DatasetSelector::Default);
+        assert_eq!("@none".parse::<DatasetSelector>().unwrap(), DatasetSelector::Default);
     }
 
     #[test]
     fn a_urn_selects_one_named_dataset() {
-        let selector = DatasetSelector::parse("urn:ngsi-ld:Dataset:one").unwrap();
+        let selector = "urn:ngsi-ld:Dataset:one".parse::<DatasetSelector>().unwrap();
         assert!(matches!(selector, DatasetSelector::Id(_)), "got {selector:?}");
     }
 
     #[test]
     fn an_https_uri_selects_one_named_dataset() {
-        let selector = DatasetSelector::parse("https://example.com/datasets/one").expect("valid dataset URI");
+        let selector = "https://example.com/datasets/one".parse::<DatasetSelector>().expect("valid dataset URI");
         assert!(matches!(selector, DatasetSelector::Id(_)), "got {selector:?}");
         pretty_assertions::assert_eq!(selector.to_string(), "https://example.com/datasets/one");
     }
 
     #[test]
     fn a_dataset_id_that_is_not_a_uri_is_rejected() {
-        let error = DatasetSelector::parse("not a uri").expect_err("must reject");
+        let error = "not a uri".parse::<DatasetSelector>().expect_err("must reject");
         assert!(matches!(error, DatasetSelectorError::InvalidIdentifier(_)), "got {error:?}");
     }
 
     #[test]
     fn the_none_token_selects_the_instance_that_carries_no_dataset_id() {
-        let selector = DatasetSelector::parse("@none").expect("valid selector");
+        let selector = "@none".parse::<DatasetSelector>().expect("valid selector");
         assert!(selector.selects(None));
         assert!(!selector.selects(Some(&dataset_uri("urn:ngsi-ld:Dataset:1"))));
     }
 
     #[test]
     fn a_named_dataset_id_selects_only_the_instance_carrying_it() {
-        let selector = DatasetSelector::parse("urn:ngsi-ld:Dataset:1").expect("valid selector");
+        let selector = "urn:ngsi-ld:Dataset:1".parse::<DatasetSelector>().expect("valid selector");
         assert!(selector.selects(Some(&dataset_uri("urn:ngsi-ld:Dataset:1"))));
         assert!(!selector.selects(Some(&dataset_uri("urn:ngsi-ld:Dataset:2"))));
         assert!(!selector.selects(None));

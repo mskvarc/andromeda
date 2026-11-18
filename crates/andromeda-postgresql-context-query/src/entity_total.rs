@@ -220,7 +220,7 @@ mod tests {
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         page_window::PageWindow,
     };
     use andromeda_postgresql_query::{
@@ -278,7 +278,7 @@ mod tests {
 
     fn after_of(q: &str) -> &'static [GatedStep] {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
+        query.selection.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("valid q"), LanguageMatching::TagEquality));
         let names = QueryNames {
             attributes: ResolvedNames::from_pairs(
                 [("temperature", 12), ("observedOn", 13)]

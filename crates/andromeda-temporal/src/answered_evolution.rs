@@ -118,7 +118,7 @@ mod tests {
     fn selection(q: Option<&str>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
             .q(q.map(|raw| CompiledFilter::new(raw.parse().expect("a valid q"), LanguageMatching::TagEquality)))
-            .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("a valid scopeQ")))
+            .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("a valid scopeQ")))
             .build()
     }
 

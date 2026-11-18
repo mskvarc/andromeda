@@ -213,14 +213,14 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::filter::{parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::filter::{Filter, reading::filter_reading::FilterReading};
     use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
 
     /// Whether the `csf` holds over the properties, read as a compiled `csf`
     /// reads them through the entity traits.
     fn holds(q: &str, properties: &Value) -> bool {
-        let reading = FilterReading::of_context_source_filter(&parse(q).expect("the filter parses"));
+        let reading = FilterReading::of_context_source_filter(&q.parse::<Filter>().expect("the filter parses"));
         let properties = JsonLiteral::admit(&properties.to_string()).expect("a JSON literal");
         ContextSourceProperties::of(properties.piece()).is_some_and(|properties| filter_holds(&reading, properties, NoLinkedEntities))
     }

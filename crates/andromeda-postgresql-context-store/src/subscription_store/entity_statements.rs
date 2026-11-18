@@ -28,7 +28,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-use andromeda_ngsi_ld_query::filter::display::serialize_written_members;
+use andromeda_ngsi_ld_query::filter::Filter;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::clock::now;
@@ -71,7 +71,7 @@ fn written_columns(
         (Subscriptions::LocalOnly, Expr::val(fields.local_only)),
         (Subscriptions::SplitEntities, Expr::val(fields.split_entities)),
         (Subscriptions::NgsildConformance, Expr::val(stored_conformance(fields.ngsild_conformance))),
-        (Subscriptions::QWrittenMembers, Expr::val(fields.q.map(serialize_written_members))),
+        (Subscriptions::QWrittenMembers, Expr::val(fields.q.map(Filter::written_member_text))),
     ])
 }
 

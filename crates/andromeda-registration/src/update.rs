@@ -188,7 +188,7 @@ mod tests {
             .entities
             .iter()
             .flatten()
-            .map(|entity| entity.type_.as_type_expression().to_string())
+            .map(|entity| entity.type_.as_type_selection().to_string())
             .collect();
         pretty_assertions::assert_eq!(types, vec!["https://example.org/Vehicle".to_string()]);
     }
@@ -201,7 +201,7 @@ mod tests {
             .first()
             .and_then(|info| info.entities.as_ref())
             .and_then(|entities| entities.first())
-            .map(|entity| entity.type_.as_type_expression().to_string())
+            .map(|entity| entity.type_.as_type_selection().to_string())
     }
 
     /// Clause 5.11.7 notifies each change as it was made, so the update's

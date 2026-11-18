@@ -47,25 +47,6 @@ pub struct ScopeQuery {
 }
 
 impl ScopeQuery {
-    /// Parse a raw `scopeQ` parameter value (clause 4.19).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ScopeQueryError`] when the expression is
-    /// unbalanced, ends on an operator, conjoins outside parentheses, nests a
-    /// group or a disjunction inside one, or contains a pattern outside the
-    /// clause 4.19 grammar.
-    pub fn parse(raw: &str) -> Result<ScopeQuery, ScopeQueryError> {
-        let tokens = tokenize_scope_query(raw);
-        let mut parser = ScopeQueryParser { tokens: &tokens, position: 0 };
-        let alternatives = parser.parse_or()?;
-        if !parser.is_exhausted() {
-            // A dangling `)` or trailing operator: the whole input is malformed.
-            return Err(ScopeQueryError::TrailingInput);
-        }
-        Ok(ScopeQuery { alternatives })
-    }
-
     /// The expression as a disjunction of conjunctions of scope patterns.
     ///
     /// The outer iterator yields the alternatives; each inner iterator yields
@@ -185,7 +166,7 @@ impl ScopeQueryParser<'_> {
     fn parse_pattern(&mut self) -> Result<ScopePattern, ScopeQueryError> {
         match self.peek() {
             Some(ScopeToken::Pattern(pattern)) => {
-                let pattern = ScopePattern::parse(pattern)?;
+                let pattern = pattern.parse::<ScopePattern>()?;
                 self.position += 1;
                 Ok(pattern)
             }
@@ -199,18 +180,33 @@ impl ScopeQueryParser<'_> {
 impl FromStr for ScopeQuery {
     type Err = ScopeQueryError;
 
+    /// Parse a raw `scopeQ` parameter value (clause 4.19).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScopeQueryError`] when the expression is
+    /// unbalanced, ends on an operator, conjoins outside parentheses, nests a
+    /// group or a disjunction inside one, or contains a pattern outside the
+    /// clause 4.19 grammar.
     fn from_str(raw: &str) -> Result<ScopeQuery, ScopeQueryError> {
-        ScopeQuery::parse(raw)
+        let tokens = tokenize_scope_query(raw);
+        let mut parser = ScopeQueryParser { tokens: &tokens, position: 0 };
+        let alternatives = parser.parse_or()?;
+        if !parser.is_exhausted() {
+            // A dangling `)` or trailing operator: the whole input is malformed.
+            return Err(ScopeQueryError::TrailingInput);
+        }
+        Ok(ScopeQuery { alternatives })
     }
 }
 
-// Parsing lives in `ScopeQuery::parse` so borrowed call sites do not allocate;
+// Parsing lives in `FromStr` so borrowed call sites do not allocate;
 // this adapter exists only because `#[serde(try_from = "String")]` requires it.
 impl TryFrom<String> for ScopeQuery {
     type Error = ScopeQueryError;
 
     fn try_from(raw: String) -> Result<ScopeQuery, ScopeQueryError> {
-        ScopeQuery::parse(&raw)
+        raw.parse()
     }
 }
 
@@ -259,7 +255,7 @@ mod tests {
     use crate::scope::scope_query_error::ScopeQueryError;
 
     fn shape(raw: &str) -> Vec<Vec<String>> {
-        ScopeQuery::parse(raw)
+        raw.parse::<ScopeQuery>()
             .expect("valid scope query")
             .alternatives()
             .map(|alternative| alternative.map(ScopePattern::to_string).collect())
@@ -296,7 +292,7 @@ mod tests {
     #[test]
     fn a_conjunction_outside_parentheses_is_rejected() {
         for raw in ["/A;/B", "/A;/B,/C", "/C,/A;/B", "/A;/B|/C", "(/A;/B);/C", "/A/#;/B"] {
-            assert!(matches!(ScopeQuery::parse(raw), Err(ScopeQueryError::UngroupedConjunction)), "{raw}");
+            assert!(matches!(raw.parse::<ScopeQuery>(), Err(ScopeQueryError::UngroupedConjunction)), "{raw}");
         }
     }
 
@@ -305,26 +301,26 @@ mod tests {
     #[test]
     fn a_disjunction_or_a_group_inside_a_group_is_rejected() {
         for raw in ["(/A,/B)", "(/A|/B);/C", "((/A;/B))", "(/A;(/B;/C))"] {
-            assert!(matches!(ScopeQuery::parse(raw), Err(ScopeQueryError::NestedGroup)), "{raw}");
+            assert!(matches!(raw.parse::<ScopeQuery>(), Err(ScopeQueryError::NestedGroup)), "{raw}");
         }
     }
 
     #[test]
     fn a_malformed_pattern_is_rejected_when_the_scope_query_is_parsed() {
-        let error = ScopeQuery::parse("/A,/1Floor").expect_err("must reject");
+        let error = "/A,/1Floor".parse::<ScopeQuery>().expect_err("must reject");
         assert!(matches!(error, ScopeQueryError::InvalidLevel), "got {error:?}");
     }
 
     #[test]
     fn an_empty_alternative_is_rejected() {
-        assert!(matches!(ScopeQuery::parse("/A,"), Err(ScopeQueryError::MissingPattern)));
-        assert!(ScopeQuery::parse("(/A;;/B)").is_err());
+        assert!(matches!("/A,".parse::<ScopeQuery>(), Err(ScopeQueryError::MissingPattern)));
+        assert!("(/A;;/B)".parse::<ScopeQuery>().is_err());
     }
 
     #[test]
     fn an_unclosed_group_and_a_dangling_parenthesis_are_told_apart() {
-        assert!(matches!(ScopeQuery::parse("(/A;/B"), Err(ScopeQueryError::UnclosedGroup)));
-        assert!(matches!(ScopeQuery::parse("/A)"), Err(ScopeQueryError::TrailingInput)));
+        assert!(matches!("(/A;/B".parse::<ScopeQuery>(), Err(ScopeQueryError::UnclosedGroup)));
+        assert!(matches!("/A)".parse::<ScopeQuery>(), Err(ScopeQueryError::TrailingInput)));
     }
 
     #[test]
@@ -335,8 +331,8 @@ mod tests {
 
     #[test]
     fn an_unbalanced_parenthesis_is_rejected() {
-        assert!(ScopeQuery::parse("(/A;/B").is_err());
-        assert!(ScopeQuery::parse("/A,/B)").is_err());
+        assert!("(/A;/B".parse::<ScopeQuery>().is_err());
+        assert!("/A,/B)".parse::<ScopeQuery>().is_err());
     }
 
     #[test]
@@ -351,17 +347,17 @@ mod tests {
             ("(/A;/B)|/C", "(/A;/B),/C"),
         ];
         for (input, expected) in cases {
-            let rendered = ScopeQuery::parse(input).expect("valid scope query").to_string();
+            let rendered = input.parse::<ScopeQuery>().expect("valid scope query").to_string();
             pretty_assertions::assert_eq!(rendered, expected, "rendering of {input}");
-            let reparsed = ScopeQuery::parse(&rendered).expect("re-parses");
-            pretty_assertions::assert_eq!(reparsed, ScopeQuery::parse(input).expect("valid scope query"), "round trip of {input}");
+            let reparsed = rendered.parse::<ScopeQuery>().expect("re-parses");
+            pretty_assertions::assert_eq!(reparsed, input.parse::<ScopeQuery>().expect("valid scope query"), "round trip of {input}");
         }
     }
 
     #[test]
     fn a_scope_query_round_trips_through_its_clause_4_19_text() {
         let raw = "(/A;/B),/C/#";
-        let query = ScopeQuery::parse(raw).expect("valid scope query");
+        let query = raw.parse::<ScopeQuery>().expect("valid scope query");
         let json = serde_json::to_string(&query).expect("serialises");
         pretty_assertions::assert_eq!(json, "\"(/A;/B),/C/#\"");
         let decoded: ScopeQuery = serde_json::from_str(&json).expect("deserialises");

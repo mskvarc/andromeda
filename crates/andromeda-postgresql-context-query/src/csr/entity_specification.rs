@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn a_queried_pattern_is_matched_against_registered_ids_and_admits_rows_without_one() {
-        let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
+        let pattern = "urn:ngsi-ld:Fleet.*".parse::<Pattern>().expect("valid pattern");
         let select = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &[],
@@ -247,7 +247,7 @@ mod tests {
     /// beside any other, so whatever is added to the row narrows it.
     #[test]
     fn a_pattern_without_a_type_is_a_conjunct_a_further_axis_narrows() {
-        let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
+        let pattern = "urn:ngsi-ld:Fleet.*".parse::<Pattern>().expect("valid pattern");
         let row = row_matches(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &[],

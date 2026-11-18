@@ -4,7 +4,7 @@
 use crate::document::EntityDocument;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
+    filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     geo::compiled_geo_query::CompiledGeoQuery,
     scope::scope_query::ScopeQuery,
 };
@@ -121,7 +121,7 @@ fn the_document_reading_answers_every_written_instance() {
         ),
         ("\"https://example.com/label\".\"https://uri.etsi.org/ngsi-ld/hasLanguageMap\"", false),
     ] {
-        let expr = parse(q).expect("the Query Term parses");
+        let expr = q.parse::<Filter>().expect("the Query Term parses");
         pretty_assertions::assert_eq!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
             expected,
@@ -152,7 +152,7 @@ fn a_deleted_instance_of_any_family_holds_no_value() {
         ("\"https://example.com/title\"", true),
         ("\"https://example.com/label\"[de]!=\"Tower\"", true),
     ] {
-        let expr = parse(q).expect("the Query Term parses");
+        let expr = q.parse::<Filter>().expect("the Query Term parses");
         pretty_assertions::assert_eq!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
             expected,
@@ -174,7 +174,7 @@ fn a_deleted_member_is_absent_and_an_empty_member_is_present() {
         ("\"https://example.com/address\"[\"https://example.com/tags\"]!=\"x\"", true),
         ("\"https://example.com/address\"[\"https://example.com/tags\"]==\"x\"", false),
     ] {
-        let expr = parse(q).expect("the Query Term parses");
+        let expr = q.parse::<Filter>().expect("the Query Term parses");
         pretty_assertions::assert_eq!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
             expected,
@@ -194,8 +194,11 @@ fn a_geo_query_and_a_scope_query_read_what_the_document_writes() {
     };
     assert!(geo_query_matches(&near, &written));
     assert!(scope_query_matches(
-        &ScopeQuery::parse("/Madrid/#").expect("a scope query"),
+        &"/Madrid/#".parse::<ScopeQuery>().expect("a scope query"),
         (&written).scopes()
     ));
-    assert!(!scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), (&written).scopes()));
+    assert!(!scope_query_matches(
+        &"/Berlin".parse::<ScopeQuery>().expect("a scope query"),
+        (&written).scopes()
+    ));
 }

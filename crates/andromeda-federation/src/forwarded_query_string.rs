@@ -14,7 +14,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
-    filter::parser,
+    filter::Filter,
     projection::written_projection_list::WrittenProjectionList,
     query_error::QueryError,
     type_selection::written_type_selection::WrittenTypeSelection,
@@ -84,11 +84,11 @@ impl ForwardedNames<'_> {
                 Ok(self.projection(&terms).await?.iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
             }
             ParameterNames::Query => {
-                let expression = parser::parse(value).map_err(QueryError::from)?;
+                let expression = value.parse::<Filter>().map_err(QueryError::from)?;
                 Ok(self.q(&expression, Some(json_keys)).await?.to_string())
             }
             ParameterNames::SourceFilter => {
-                let expression = parser::parse(value).map_err(QueryError::from)?;
+                let expression = value.parse::<Filter>().map_err(QueryError::from)?;
                 Ok(self.csf(&expression).await?.to_string())
             }
             ParameterNames::Nothing => Ok(value.to_owned()),

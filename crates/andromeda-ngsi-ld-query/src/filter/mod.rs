@@ -28,7 +28,7 @@ pub mod language_targeting;
 pub mod nested_names;
 pub mod operand_coercion;
 pub mod operator_spelling;
-pub mod parser;
+mod parser;
 pub mod query_term;
 pub mod quoting;
 pub mod reading;
@@ -38,12 +38,12 @@ mod round_trip_tests;
 pub mod scalar;
 pub mod target_language;
 pub mod trailing_group;
+pub mod unicode_escape_error;
 pub mod value_path;
 pub mod written_members;
 
 use crate::filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
 
 /// A parsed `q` filter expression tree: `And` and `Or` nodes combine sub-expressions, `Term` leaves hold individual Query Terms.
 ///
@@ -94,9 +94,9 @@ impl Filter {
 
     /// Every Query Term, in pre-order.
     #[must_use]
-    pub fn predicates(&self) -> Vec<&QueryTerm> {
+    pub fn terms(&self) -> Vec<&QueryTerm> {
         match self {
-            Filter::And(terms) | Filter::Or(terms) => terms.iter().flat_map(Filter::predicates).collect(),
+            Filter::And(terms) | Filter::Or(terms) => terms.iter().flat_map(Filter::terms).collect(),
             Filter::Term(pred) => vec![pred],
         }
     }
@@ -129,14 +129,6 @@ impl Filter {
     }
 }
 
-impl FromStr for Filter {
-    type Err = FilterError;
-
-    fn from_str(raw: &str) -> Result<Filter, FilterError> {
-        parser::parse(raw)
-    }
-}
-
 // Parsing lives in `FromStr` so borrowed call sites do not allocate; this
 // adapter exists only because `#[serde(try_from = "String")]` requires it.
 impl TryFrom<String> for Filter {
@@ -144,15 +136,6 @@ impl TryFrom<String> for Filter {
 
     fn try_from(raw: String) -> Result<Filter, FilterError> {
         raw.parse()
-    }
-}
-
-// The rendering walks a recursive tree and re-inserts the clause 4.9
-// separators, which `derive_more::Display`'s per-variant format string cannot
-// express.
-impl fmt::Display for Filter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&display::serialize(self))
     }
 }
 

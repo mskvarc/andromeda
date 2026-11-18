@@ -333,7 +333,6 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
-        filter::display::serialize_attr_path,
         ordering::ordering_error::OrderingError,
         projection::exclusivity::ProjectionConflict,
         query_error::QueryError,
@@ -913,7 +912,7 @@ mod tests {
         );
         assert!(matches!(
             params_from_query(&format!("{window}&local=true&orderBy=speed")).admit(TemporalQueryOperation::Query, TemporalJoin::Extended, PERMISSIVE),
-            Err(ParameterError::Query(QueryError::Ordering(OrderingError::TemporalMember(member)))) if serialize_attr_path(&member) == "speed"
+            Err(ParameterError::Query(QueryError::Ordering(OrderingError::TemporalMember(member)))) if member.to_string() == "speed"
         ));
         assert!(
             params_from_query(&format!("{window}&local=true&orderBy=id"))

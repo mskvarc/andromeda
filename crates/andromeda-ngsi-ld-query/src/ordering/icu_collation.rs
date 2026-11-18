@@ -4,6 +4,7 @@ use crate::ordering::unicode_collation_keyword::{CollationKeyword, UnregisteredK
 use derive_more::Display;
 use langtag::{InvalidLangTag, LangTagBuf};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 
 /// ICU collation identifier for `orderBy` string sorting (clause 4.23).
@@ -18,6 +19,16 @@ impl IcuCollation {
     /// The ICU "root" collation identifier, the default collation order for strings under clause 4.23.1. A query that names no collation sorts under it.
     pub const ROOT: &'static str = "und-x-icu";
 
+    /// The collation identifier (a BCP47 language tag).
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl FromStr for IcuCollation {
+    type Err = IcuCollationError;
+
     /// Parses and validates an ICU collation identifier.
     ///
     /// Clauses 5.7.2.4 and 5.7.4.4 raise `BadRequestData` for a preferred collation setting that does not conform to a valid ICU collation (RFC 6067).
@@ -29,7 +40,7 @@ impl IcuCollation {
     /// # Errors
     ///
     /// Returns [`IcuCollationError::Empty`] when `raw` is blank, [`IcuCollationError::InvalidTag`] when it is not a BCP 47 language tag, [`IcuCollationError::UnknownCollationKeyword`] when its Unicode extension declares a key RFC 6067 does not define for collation, and [`IcuCollationError::UnknownCollationKeywordType`] when a collation key carries an unregistered type.
-    pub fn parse(raw: &str) -> Result<IcuCollation, IcuCollationError> {
+    fn from_str(raw: &str) -> Result<IcuCollation, IcuCollationError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return Err(IcuCollationError::Empty);
@@ -43,19 +54,13 @@ impl IcuCollation {
             None => Ok(IcuCollation(tag)),
         }
     }
-
-    /// The collation identifier (a BCP47 language tag).
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
 }
 
 impl TryFrom<String> for IcuCollation {
     type Error = IcuCollationError;
 
     fn try_from(value: String) -> Result<IcuCollation, IcuCollationError> {
-        IcuCollation::parse(&value)
+        value.parse()
     }
 }
 
@@ -99,30 +104,33 @@ mod tests {
     /// message and a `CREATE COLLATION` both name it by.
     #[test]
     fn a_collation_identifier_displays_as_its_tag() {
-        assert_eq!(IcuCollation::parse("de-u-co-phonebk").expect("valid identifier").to_string(), "de-u-co-phonebk");
+        assert_eq!(
+            "de-u-co-phonebk".parse::<IcuCollation>().expect("valid identifier").to_string(),
+            "de-u-co-phonebk"
+        );
     }
 
     #[test]
     fn a_collation_identifier_keeps_the_tag_it_parsed() {
-        let collation = IcuCollation::parse("und-u-ks-identic").expect("valid identifier");
+        let collation = "und-u-ks-identic".parse::<IcuCollation>().expect("valid identifier");
         assert_eq!(collation.as_str(), "und-u-ks-identic");
     }
 
     #[test]
     fn surrounding_whitespace_is_trimmed() {
-        assert_eq!(IcuCollation::parse("  und-u-ks-identic  ").expect("valid").as_str(), "und-u-ks-identic");
+        assert_eq!("  und-u-ks-identic  ".parse::<IcuCollation>().expect("valid").as_str(), "und-u-ks-identic");
     }
 
     #[test]
     fn an_empty_identifier_is_rejected() {
-        assert!(matches!(IcuCollation::parse("   "), Err(IcuCollationError::Empty)));
+        assert!(matches!("   ".parse::<IcuCollation>(), Err(IcuCollationError::Empty)));
     }
 
     /// Clause 4.23.1 names `und-x-icu` as the default collation order, so the
     /// identifier the specification itself spells has to parse.
     #[test]
     fn the_icu_root_collation_named_by_the_specification_is_accepted() {
-        let root = IcuCollation::parse(IcuCollation::ROOT).expect("the clause 4.23.1 default must parse");
+        let root = IcuCollation::ROOT.parse::<IcuCollation>().expect("the clause 4.23.1 default must parse");
         assert_eq!(root.as_str(), "und-x-icu");
     }
 
@@ -131,7 +139,7 @@ mod tests {
     #[test]
     fn both_collations_the_specification_gives_as_examples_are_accepted() {
         for example in ["und-u-ks-identic", "de-u-co-phonebk"] {
-            assert_eq!(IcuCollation::parse(example).expect("a spec example must parse").as_str(), example);
+            assert_eq!(example.parse::<IcuCollation>().expect("a spec example must parse").as_str(), example);
         }
     }
 
@@ -139,12 +147,12 @@ mod tests {
     /// the locale's own default collation order.
     #[test]
     fn a_bare_language_tag_names_the_locale_default_collation() {
-        assert_eq!(IcuCollation::parse("de-DE").expect("a bare tag names a collation").as_str(), "de-DE");
+        assert_eq!("de-DE".parse::<IcuCollation>().expect("a bare tag names a collation").as_str(), "de-DE");
     }
 
     #[test]
     fn a_value_that_is_not_a_language_tag_is_rejected() {
-        let error = IcuCollation::parse("not a tag").expect_err("must reject");
+        let error = "not a tag".parse::<IcuCollation>().expect_err("must reject");
         assert!(matches!(error, IcuCollationError::InvalidTag(_)), "got {error:?}");
     }
 
@@ -152,7 +160,7 @@ mod tests {
     #[test]
     fn a_unicode_keyword_that_is_not_a_collation_setting_is_rejected() {
         for rejected in ["de-u-nu-latn", "de-u-ca-buddhist", "und-u-zz-nonsense"] {
-            let error = IcuCollation::parse(rejected).expect_err("must reject");
+            let error = rejected.parse::<IcuCollation>().expect_err("must reject");
             assert!(matches!(error, IcuCollationError::UnknownCollationKeyword), "{rejected}: got {error:?}");
         }
     }
@@ -161,7 +169,7 @@ mod tests {
     #[test]
     fn a_collation_keyword_carrying_an_unregistered_type_is_rejected() {
         for rejected in ["de-u-co-nonsense", "de-u-ks-zzz", "de-u-ka-bogus", "de-u-kf-true"] {
-            let error = IcuCollation::parse(rejected).expect_err("must reject");
+            let error = rejected.parse::<IcuCollation>().expect_err("must reject");
             assert!(
                 matches!(error, IcuCollationError::UnknownCollationKeywordType { .. }),
                 "{rejected}: got {error:?}"
@@ -172,14 +180,14 @@ mod tests {
     /// BCP 47 subtags are case-insensitive.
     #[test]
     fn a_collation_keyword_is_recognised_whatever_case_it_is_written_in() {
-        assert!(IcuCollation::parse("de-U-CO-phonebk").is_ok());
+        assert!("de-U-CO-phonebk".parse::<IcuCollation>().is_ok());
     }
 
     /// The refusal names the registered key the unregistered type was written
     /// under, which is what the client has to correct.
     #[test]
     fn an_unregistered_type_is_reported_under_its_collation_key() {
-        let error = IcuCollation::parse("de-u-ks-zzz").expect_err("must reject");
+        let error = "de-u-ks-zzz".parse::<IcuCollation>().expect_err("must reject");
         assert!(
             matches!(error, IcuCollationError::UnknownCollationKeywordType { keyword: CollationKeyword::Ks }),
             "got {error:?}"

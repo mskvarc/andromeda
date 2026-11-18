@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{NotificationParams, Subscription, SubscriptionFilters},
 };
 use andromeda_ngsi_ld_query::{
-    filter::compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
+    filter::compaction::{compact_context_source_filter, compact_filter, revert_expand_values},
     projection::{
         expanded_projection_term::ExpandedProjectionTerm,
         written_projection_list::WrittenProjectionList,
@@ -107,10 +107,10 @@ async fn compacted_filters(compactor: &NameCompaction, mut filters: Subscription
         // clone: the opt-in list stays on the resource while the filter is reverted against its names
         let opted_in: HashSet<AttributeName> = filters.expand_values.iter().flatten().cloned().collect();
         let reverted = revert_expand_values(expr, &opted_in, compactor).await;
-        filters.q = Some(compact_q_expr(reverted, compactor).await);
+        filters.q = Some(compact_filter(reverted, compactor).await);
     }
     if let Some(expr) = filters.csf.take() {
-        filters.csf = Some(compact_csf_expr(expr, compactor).await);
+        filters.csf = Some(compact_context_source_filter(expr, compactor).await);
     }
     filters.expand_values = filters.expand_values.map(|names| compacted_names(compactor, names));
     filters.json_keys = filters.json_keys.map(|names| compacted_names(compactor, names));

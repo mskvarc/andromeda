@@ -130,7 +130,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
         pattern::Pattern,
@@ -159,7 +159,7 @@ mod tests {
     fn selector(ty: Option<&str>, pattern: &str) -> ExpandedEntitySelector {
         ExpandedEntitySelector::builder()
             .type_selection(ty.map(|ty| ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.com/{ty}")).expect("valid IRI"))))
-            .id_pattern(Some(Pattern::parse(pattern).expect("valid pattern")))
+            .id_pattern(Some(pattern.parse::<Pattern>().expect("valid pattern")))
             .build()
     }
 
@@ -223,7 +223,7 @@ mod tests {
     fn an_id_pattern_filtered_further_or_ordered_keeps_the_plain_page() {
         let mut filtered = by_pattern(".*_1196287$");
         filtered.selection.q = Some(CompiledFilter::new(
-            parse("\"https://example.com/headSign\"!=1").expect("valid q"),
+            "\"https://example.com/headSign\"!=1".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let mut by_attrs = by_pattern(".*_1196287$");

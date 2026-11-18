@@ -3,7 +3,7 @@
 //! (clause 4.9, IETF RFC 7946 sections 5 and 6.1).
 
 use crate::{document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 use andromeda_ngsi_ld_query_evaluation::{
     q::filter_run::filter_holds,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::NoLinkedEntities},
@@ -59,7 +59,7 @@ fn answers<'a>(entity: impl QueriedEntity<'a>) -> Vec<(&'static str, bool, bool)
     TERMS
         .iter()
         .map(|(q, expected)| {
-            let expr = parse(q).expect("the Query Term parses");
+            let expr = q.parse::<Filter>().expect("the Query Term parses");
             let held = filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), entity, NoLinkedEntities);
             (*q, held, *expected)
         })

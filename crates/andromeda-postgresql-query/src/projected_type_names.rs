@@ -63,7 +63,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use iri_rs::IriBuf;
@@ -74,7 +74,7 @@ mod tests {
             type_selection: type_expr,
             ..ExpandedEntitySelector::default()
         });
-        selection.q = q.map(|q| CompiledFilter::new(parser::parse(q).expect("parse q"), LanguageMatching::TagEquality));
+        selection.q = q.map(|q| CompiledFilter::new(q.parse::<Filter>().expect("parse q"), LanguageMatching::TagEquality));
         selection
     }
 
