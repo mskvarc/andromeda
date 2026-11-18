@@ -9,10 +9,10 @@
 //! `pick=observation{temperature,humidity}` selects the `observation` relationship's own representation together with the `temperature` and `humidity` attributes of the entity it links to. Braces nest to any depth, following the linked-entity chain across as many relationships as the client names.
 
 use crate::projection::{
+    parser,
     projection_error::ProjectionError,
     written_projection_term::{WrittenProjectionTerm, write_terms},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use derive_more::{Deref, From, Into};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -35,12 +35,7 @@ impl FromStr for WrittenProjectionList {
     type Err = ProjectionError;
 
     fn from_str(raw: &str) -> Result<WrittenProjectionList, ProjectionError> {
-        let mut parser = Parser::new(raw);
-        let terms = parser.parse_term_list()?;
-        match parser.peek() {
-            None => Ok(WrittenProjectionList(terms)),
-            Some(_) => Err(ProjectionError::UnbalancedBrace { position: parser.pos }),
-        }
+        parser::parse(raw).map(WrittenProjectionList)
     }
 }
 
@@ -48,87 +43,6 @@ impl FromStr for WrittenProjectionList {
 impl fmt::Display for WrittenProjectionList {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_terms(formatter, &self.0)
-    }
-}
-
-/// Cursor over a clause 4.21 projection list.
-struct Parser<'a> {
-    /// The list being consumed.
-    input: &'a str,
-    /// Byte offset of the next character to consume.
-    pos: usize,
-}
-
-impl<'a> Parser<'a> {
-    /// Start at the beginning of a projection list.
-    const fn new(input: &'a str) -> Parser<'a> {
-        Parser { input, pos: 0 }
-    }
-
-    /// The next character without consuming it.
-    fn peek(&self) -> Option<char> {
-        self.input[self.pos..].chars().next()
-    }
-
-    /// Consume the next character.
-    fn advance(&mut self) {
-        if let Some(character) = self.peek() {
-            self.pos += character.len_utf8();
-        }
-    }
-
-    /// Parses `ProjectionTerm *(orOp ProjectionTerm)`, stopping at the first character that is neither a separator nor the start of another term.
-    fn parse_term_list(&mut self) -> Result<Vec<WrittenProjectionTerm>, ProjectionError> {
-        let mut terms = Vec::new();
-        loop {
-            terms.push(self.parse_term()?);
-            match self.peek() {
-                Some('|' | ',') => self.advance(),
-                Some(_) | None => break,
-            }
-        }
-        Ok(terms)
-    }
-
-    /// Parses one `AttrName *1(LinkedEntityTerm)`.
-    fn parse_term(&mut self) -> Result<WrittenProjectionTerm, ProjectionError> {
-        let start = self.pos;
-        while let Some(character) = self.peek() {
-            if matches!(character, '{' | '}' | ',' | '|') {
-                break;
-            }
-            self.advance();
-        }
-        let name = self.input[start..self.pos].trim_matches(|character: char| character.is_ascii_whitespace());
-        if name.is_empty() {
-            return Err(ProjectionError::EmptyTerm { position: start });
-        }
-        let name = name.parse::<AttributeName>().map_err(ProjectionError::InvalidAttributeName)?;
-        let linked = if self.peek() == Some('{') {
-            self.parse_linked_entity_term()?
-        } else {
-            Vec::new()
-        };
-        Ok(WrittenProjectionTerm { name, linked })
-    }
-
-    /// Parses `%x7B ProjectionTerm %x7D` once the next character is known to be `{`. An unclosed brace is reported at the `{` that opened it, the character actually missing its counterpart, rather than at the end of input, which names nothing a client wrote.
-    fn parse_linked_entity_term(&mut self) -> Result<Vec<WrittenProjectionTerm>, ProjectionError> {
-        let brace_position = self.pos;
-        self.advance();
-        match self.peek() {
-            None => return Err(ProjectionError::UnbalancedBrace { position: brace_position }),
-            Some('}') => return Err(ProjectionError::EmptyTerm { position: self.pos }),
-            Some(_) => {}
-        }
-        let children = self.parse_term_list()?;
-        match self.peek() {
-            Some('}') => {
-                self.advance();
-                Ok(children)
-            }
-            Some(_) | None => Err(ProjectionError::UnbalancedBrace { position: brace_position }),
-        }
     }
 }
 
