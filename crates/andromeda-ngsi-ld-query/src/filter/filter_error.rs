@@ -22,7 +22,7 @@ use thiserror::Error;
 /// passed.
 #[derive(Debug, Error)]
 pub enum FilterError {
-    /// The q expression was empty.
+    /// The filter text was empty.
     #[error("q expression: empty input")]
     Empty,
     /// A quoted string literal was not closed.
@@ -38,12 +38,12 @@ pub enum FilterError {
         position: usize,
     },
     /// A `\u` escape did not name a Unicode scalar value.
-    #[error("q expression: invalid unicode escape at position {position}: {fault}")]
+    #[error("q expression: invalid unicode escape at position {position}: {error}")]
     InvalidUnicodeEscape {
         /// Zero-based character offset of the backslash in the literal's body.
         position: usize,
         /// The RFC 8259 rule the escape broke.
-        fault: UnicodeEscapeError,
+        error: UnicodeEscapeError,
     },
     /// A quoted string carried a raw control character, which the clause 4.9
     /// `char` production requires to be written as an escape.
@@ -54,7 +54,7 @@ pub enum FilterError {
         /// Zero-based character offset of the character in the literal's body.
         position: usize,
     },
-    /// A token remained after the parser reached the end of the expression.
+    /// A token remained after the parser reached the end of the filter.
     #[error("q expression: unexpected {token} at position {position}")]
     UnexpectedToken {
         /// Zero-based offset into the token stream.
@@ -150,7 +150,7 @@ pub enum FilterError {
     /// A bare literal written in the clause 4.6.3 `Time` form was not one.
     #[error("q expression: invalid time literal: {0}")]
     InvalidTime(#[source] NgsiLdTimeError),
-    /// A name of the filter, of a `csf`, of a path another parameter borrows,
+    /// A name of the filter, of a `csf`, of a value path another parameter borrows,
     /// or of `jsonKeys` or `expandValues`, was not usable as an attribute name
     /// (clause 5.2.4).
     #[error("invalid attribute name: {0}")]

@@ -1,7 +1,7 @@
 //! Which regular expressions the broker admits (clause 4.9 `RegExp`).
 //!
 //! Clause 4.9 states that "`RegExp` shall be a regular expression as mandated by
-//! IEEE 1003.2 [11]", and Table 5.2.8-1 says the same of `idPattern`. IEEE
+//! IEEE 1003.2 \[11\]", and Table 5.2.8-1 says the same of `idPattern`. IEEE
 //! 1003.2 is POSIX.2, whose extended regular expressions both engines the
 //! broker uses largely implement alike. Neither engine stops there: PostgreSQL's
 //! `~` operator is an Advanced Regular Expression and the `regex` crate is a

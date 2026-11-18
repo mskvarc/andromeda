@@ -1,11 +1,11 @@
-//! A position in a tokenised clause 4.9 expression.
+//! A position in a tokenised clause 4.9 filter.
 //!
 //! Every production of the NGSI-LD Query Language is read by advancing over the
 //! same token stream, so the cursor that does the advancing is stated once here
 //! rather than being a private field of one parser. That is what lets the
 //! `ValuePath` production be shared: clause 4.23.3 delegates its `AttrName` to
 //! clause 4.9, and an `orderBy` term is read with the same cursor over the same
-//! tokens as a `q` predicate.
+//! tokens as a `q` query term.
 
 use crate::filter::{
     expectation::{Expectation, Found},
@@ -14,7 +14,7 @@ use crate::filter::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-/// Cursor over a tokenised clause 4.9 expression.
+/// Cursor over a tokenised clause 4.9 filter.
 #[derive(Debug)]
 pub(super) struct TokenCursor<'a> {
     /// The token stream being consumed.

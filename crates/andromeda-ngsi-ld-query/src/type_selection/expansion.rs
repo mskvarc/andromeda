@@ -7,15 +7,17 @@ use crate::{
 };
 use std::{future::Future, pin::Pin};
 
-/// Recursively expand a raw type expression, replacing compact type names
+/// Recursively expand a written type selection, replacing compact type names
 /// with their fully expanded IRIs.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
-/// type name does not expand to an absolute IRI through the active `@context`.
-pub async fn expand_type_selection(raw: &WrittenTypeSelection, expander: &impl TermExpander) -> Result<ExpandedTypeSelection, QueryError> {
-    match raw {
+/// Returns [`QueryError::TermExpansion`] when a type name does not expand
+/// through the active `@context`, carrying
+/// [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
+/// when it expands to something that is not an absolute IRI.
+pub async fn expand_type_selection(type_selection: &WrittenTypeSelection, expander: &impl TermExpander) -> Result<ExpandedTypeSelection, QueryError> {
+    match type_selection {
         WrittenTypeSelection::Wildcard => Ok(ExpandedTypeSelection::Wildcard),
         WrittenTypeSelection::Type(name) => Ok(ExpandedTypeSelection::Type(expander.expand_type(name.as_str()).await?)),
         WrittenTypeSelection::And(children) => Ok(ExpandedTypeSelection::And(expand_children(children, expander).await?)),
@@ -52,14 +54,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_nested_type_selection_expands_at_every_leaf() {
-        let raw = WrittenTypeSelection::Or(vec![
+        let type_selection = WrittenTypeSelection::Or(vec![
             WrittenTypeSelection::And(vec![
                 WrittenTypeSelection::Type("Home".parse().expect("valid type name")),
                 WrittenTypeSelection::Type("Vehicle".parse().expect("valid type name")),
             ]),
             WrittenTypeSelection::Type("Motorhome".parse().expect("valid type name")),
         ]);
-        let expanded = expand_type_selection(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
+        let expanded = expand_type_selection(&type_selection, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
             ExpandedTypeSelection::Or(vec![

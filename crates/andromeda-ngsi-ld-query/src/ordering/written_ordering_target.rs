@@ -3,7 +3,7 @@
 use crate::filter::value_path::ValuePath;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 
-/// A raw `orderBy` path, classified but not yet expanded. Classification is separate from expansion so the clause 4.23 keyword set is stated once, while the caller decides how the expansion (a JSON-LD lookup, needed only for the attribute arm) happens.
+/// A written `orderBy` path, classified but not yet expanded. Classification is separate from expansion so the clause 4.23 keyword set is stated once, while the caller decides how the expansion (a JSON-LD lookup, needed only for the attribute arm) happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WrittenOrderingTarget<'a> {
     /// The `id` keyword.
@@ -16,25 +16,25 @@ pub enum WrittenOrderingTarget<'a> {
     CreatedAt,
     /// The `modifiedAt` keyword.
     ModifiedAt,
-    /// An attribute path, still compact.
+    /// A value path, still compact.
     Attribute(&'a ValuePath),
 }
 
 impl<'a> WrittenOrderingTarget<'a> {
-    /// Classifies a raw `orderBy` path. A keyword is only a keyword when the path names it and nothing else: clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends into an attribute spelled `id`, and `name.createdAt` is an attribute path into a temporal sub-member rather than the entity's own `createdAt` column.
+    /// Classifies a written `orderBy` path. A keyword is only a keyword when the path names it and nothing else: clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends into an attribute spelled `id`, and `name.createdAt` is a value path into a temporal sub-member rather than the entity's own `createdAt` column.
     #[must_use]
-    pub fn classify(raw: &'a ValuePath) -> WrittenOrderingTarget<'a> {
-        if !raw.is_simple() {
-            return WrittenOrderingTarget::Attribute(raw);
+    pub fn classify(path: &'a ValuePath) -> WrittenOrderingTarget<'a> {
+        if !path.is_simple() {
+            return WrittenOrderingTarget::Attribute(path);
         }
-        match raw.attribute.as_str() {
+        match path.attribute.as_str() {
             keyword::ID_ALIAS => WrittenOrderingTarget::Id,
             keyword::TYPE_ALIAS => WrittenOrderingTarget::Type,
             compact_properties::SCOPE => WrittenOrderingTarget::Scope,
             compact_properties::CREATED_AT => WrittenOrderingTarget::CreatedAt,
             compact_properties::MODIFIED_AT => WrittenOrderingTarget::ModifiedAt,
             // `&str` is unbounded; any name that is not a keyword is an attribute name.
-            _other => WrittenOrderingTarget::Attribute(raw),
+            _other => WrittenOrderingTarget::Attribute(path),
         }
     }
 }

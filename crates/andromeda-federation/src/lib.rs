@@ -170,7 +170,7 @@ pub mod request;
 pub mod result_budget;
 /// What a source answers a forwarded Retrieve Entity with.
 mod retrieval_answer;
-/// A query's entity selectors with their type expressions expanded.
+/// A query's entity selectors with their type selections expanded.
 mod selector_expansion;
 /// Clause 6.3.17 single-source failure classification.
 pub mod single_source_failure;

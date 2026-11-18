@@ -68,8 +68,8 @@ impl LanguageTargeting {
         filter.terminal_paths().into_iter().try_for_each(|path| self.admit_path(path))
     }
 
-    /// Admit one attribute path, a `q` Query Term's or an `orderBy` term's,
-    /// under this level.
+    /// Admit one value path, the terminal path of a `q` Query Term or the path of
+    /// an `orderBy` term, under this level.
     ///
     /// # Errors
     ///

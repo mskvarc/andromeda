@@ -1,7 +1,7 @@
 //! The complete ordering definition carried by a clause-5.2.23 `Query` or a clause 6.4.3.2 query string.
 
 use crate::{
-    comma_separated_list::{ListedMemberKind, parse_listed},
+    comma_separated_list::{ListedMemberKind, listed_values},
     defined_token::deserialize_optional_token,
     ordering::{icu_collation::IcuCollation, ordering_error::OrderingError, ordering_geometry::OrderingGeometry, written_ordering_term::WrittenOrderingTerm},
 };
@@ -118,7 +118,7 @@ where
     D: Deserializer<'de>,
 {
     let terms = String::deserialize(deserializer)?;
-    parse_listed(&terms, ListedMemberKind::OrderingTerm).map_err(DeserializeError::custom)
+    listed_values(&terms, ListedMemberKind::OrderingTerm).map_err(DeserializeError::custom)
 }
 
 #[cfg(test)]

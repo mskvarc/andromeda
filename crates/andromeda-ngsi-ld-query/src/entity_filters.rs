@@ -1,6 +1,6 @@
 //! The value, geo and scope filters that select one entity.
 //!
-//! The `q` expression (clause 4.9), the geo-query (clause 4.10) and the scope
+//! The `q` filter (clause 4.9), the geo-query (clause 4.10) and the scope
 //! query (clause 4.19) select an entity together: the entities a query
 //! answers with match all three it carries (clause 5.7.2.4), and a
 //! Subscription notifies of an entity that matches its query, geoquery and

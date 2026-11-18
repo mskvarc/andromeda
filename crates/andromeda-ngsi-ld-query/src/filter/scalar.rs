@@ -1,4 +1,4 @@
-//! Comparison operands of a `q` predicate (clause 4.9).
+//! Comparison operands of a `q` query term (clause 4.9).
 
 use crate::filter::{filter_error::FilterError, quoting::Quoting};
 use andromeda_ngsi_ld_lexicon::time::{
@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use iri_rs::Iri;
 
-/// A scalar value in a `q` expression.
+/// A scalar value in a `q` filter.
 ///
 /// The three temporal variants carry parsed values rather than the client's
 /// text. Clause 4.9's grammar defines `dateTime`, `date` and `time` as values

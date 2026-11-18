@@ -21,7 +21,7 @@ const IDENTIFIER_DEFINITION: &str = "crates/andromeda-ngsi-ld-query/src/";
 pub(crate) enum Rule {
     /// Reading a registered or selected identifier pattern, or matching one.
     RegisteredIdentifier,
-    /// Matching a registered or selected type expression.
+    /// Matching a registered or selected type selection.
     RegisteredType,
     /// Reading a registration's Scope.
     ScopeCoverage,

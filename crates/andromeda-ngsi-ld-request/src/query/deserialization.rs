@@ -8,7 +8,7 @@ use crate::{
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
-    comma_separated_list::{ListedMemberKind, parse_listed},
+    comma_separated_list::{ListedMemberKind, listed_values},
     dataset_selector::DatasetSelector,
     filter::Filter,
     geo::{geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
@@ -117,7 +117,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_listed(&value, ListedMemberKind::EntityIdentifier).map_err(DeserializeError::custom))
+    raw.map(|value| listed_values(&value, ListedMemberKind::EntityIdentifier).map_err(DeserializeError::custom))
         .transpose()
 }
 
@@ -166,11 +166,11 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_listed(&value, ListedMemberKind::AttributeName).map_err(DeserializeError::custom))
+    raw.map(|value| listed_values(&value, ListedMemberKind::AttributeName).map_err(DeserializeError::custom))
         .transpose()
 }
 
-/// Deserialize an optional `pick` / `omit` raw projection list (clause 4.21,
+/// Deserialize an optional `pick` / `omit` written projection list (clause 4.21,
 /// with the projection grammar also defined in clause 4.21).
 ///
 /// The whole wire value is parsed as one [`WrittenProjectionList`] rather than
@@ -206,7 +206,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_listed(&value, ListedMemberKind::DatasetIdentifier).map_err(DeserializeError::custom))
+    raw.map(|value| listed_values(&value, ListedMemberKind::DatasetIdentifier).map_err(DeserializeError::custom))
         .transpose()
 }
 

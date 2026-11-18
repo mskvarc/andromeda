@@ -1,7 +1,7 @@
-//! What a trailing path reaches in the `GeoJSON` geometry object a
+//! What a trailing group reaches in the `GeoJSON` geometry object a
 //! `GeoProperty`'s value is.
 //!
-//! Clause 4.9 evaluates a trailing path as a member expression against the
+//! Clause 4.9 evaluates a trailing group as a member expression against the
 //! target value, and clause 4.7.1 makes a `GeoProperty`'s value a `GeoJSON`
 //! geometry. IETF RFC 7946 describes a geometry's `type`, `coordinates`
 //! (section 3.1), `bbox` (section 5) and `geometries` (section 3.1.8), named as
@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_geometry::geometry_member::GeometryMember;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{BBOX, COORDINATES};
 
-/// What a trailing path reaches in a geometry object.
+/// What a trailing group reaches in a geometry object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeometryPath<'p> {
     /// A member RFC 7946 describes, named alone by its own name.

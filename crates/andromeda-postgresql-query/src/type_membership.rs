@@ -4,7 +4,7 @@
 //! type and then identifier, so the Entities of one type are one key range in
 //! identifier order; a walk keeps the rows of the side it reads, the current
 //! state for a core read and the Temporal Evolution for a temporal one, so
-//! the index carries both flags and the walk never visits the heap. A type expression
+//! the index carries both flags and the walk never visits the heap. A type selection
 //! therefore renders to a stream of `(key, id)` a statement can page in the
 //! clause 5.5.9 `id` order by walking the key, reading only the Entities it
 //! skips and keeps: one range for a type, the merge of the ranges without

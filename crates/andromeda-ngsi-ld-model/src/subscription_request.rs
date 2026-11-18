@@ -110,7 +110,7 @@ pub struct SubscriptionRequest {
     /// Scope query expression (clause 4.19).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
     pub scope_q: Clearable<ScopeQuery>,
-    /// Context source filter expression (clause 4.9).
+    /// Context source filter (clause 4.9).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
     pub csf: Clearable<Filter>,
     /// The `datasetId`s of the Attribute instances each notification carries.

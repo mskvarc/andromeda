@@ -2,13 +2,13 @@
 //!
 //! The grammar this parser implements is reproduced verbatim as ABNF at the root of this crate. Nothing derives from it: the language needs operator precedence and value typing that a pure ABNF recogniser does not express, so it is the reference this parser is checked against, and the two are kept in step by hand.
 //!
-//! This module owns the expression grammar: the boolean structure of a `Query`,
-//! and the `QueryTerm` that combines an attribute axis with an operator and an
+//! This module owns the grammar of a `q` filter: the boolean structure of a `Query`,
+//! and the `QueryTerm` that combines an attribute path with an operator and an
 //! operand. The productions it composes each live with the concept they belong
 //! to, because `q` is not the only parameter that derives from them:
 //! [`value_path`] holds the `ValuePath` axis clause 4.23.3 shares,
 //! [`attribute_path`] the `LinkedEntityRelation` hop, [`operand`] the
-//! right-hand-side literals, and [`token_cursor`] the position all of them
+//! operand literals, and [`token_cursor`] the position all of them
 //! advance.
 
 mod attribute_path;
@@ -36,7 +36,7 @@ use std::str::FromStr;
 impl FromStr for Filter {
     type Err = FilterError;
 
-    /// Parses an NGSI-LD `q` filter expression string into a tree (clause 4.9).
+    /// Parses the text of an NGSI-LD `q` filter into a [`Filter`] (clause 4.9).
     ///
     /// # Errors
     ///
@@ -64,7 +64,7 @@ impl FromStr for Filter {
     }
 }
 
-/// Parse a disjunction: `and_expr ('|' and_expr)*`, inside `depth`
+/// Parse a disjunction: `conjunction ('|' conjunction)*`, inside `depth`
 /// parentheses.
 fn parse_or(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, FilterError> {
     let mut left = parse_and(cursor, depth)?;
@@ -103,7 +103,7 @@ fn parse_and(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, Filte
     }
 }
 
-/// Parse a primary: either a parenthesised group or a single predicate, inside
+/// Parse a primary: either a parenthesised group or a single query term, inside
 /// `depth` parentheses.
 ///
 /// Each group recurses once, so the group that would nest past
@@ -126,7 +126,7 @@ fn parse_primary(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, F
     }
 }
 
-/// Parse one Query Term: its attribute axis (clause 4.9 `Attribute`, a hop's
+/// Parse one Query Term: its attribute path (clause 4.9 `Attribute`, a hop's
 /// braces included), optionally followed by an operator and its operand.
 fn parse_query_term(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, FilterError> {
     let leading = cursor.parse_ident()?;
@@ -134,8 +134,8 @@ fn parse_query_term(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, FilterErr
     parse_operator_and_operand(cursor, path)
 }
 
-/// Read the comparison operator and operand that follow an attribute axis,
-/// or accept the axis on its own as an existence predicate.
+/// Read the comparison operator and operand that follow an attribute path,
+/// or accept the path on its own as an existence query term.
 fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath) -> Result<QueryTerm, FilterError> {
     match cursor.peek() {
         Some(Token::Eq) => {
@@ -170,7 +170,7 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath)
             let value = parse_comparable_value(cursor)?;
             Ok(QueryTerm::Ordering {
                 path,
-                operator: OrderingOperator::GreaterEq,
+                operator: OrderingOperator::GreaterOrEqual,
                 value,
             })
         }
@@ -188,7 +188,7 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath)
             let value = parse_comparable_value(cursor)?;
             Ok(QueryTerm::Ordering {
                 path,
-                operator: OrderingOperator::LessEq,
+                operator: OrderingOperator::LessOrEqual,
                 value,
             })
         }
@@ -202,8 +202,8 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath)
             let pattern = parse_pattern_string(cursor)?;
             Ok(QueryTerm::NotMatchPattern { path, pattern })
         }
-        // A path with no operator is a bare existence predicate; every other
-        // token belongs to the enclosing expression and is left for it.
+        // A path with no operator is a bare existence query term; every other
+        // token belongs to the enclosing filter and is left for it.
         Some(
             Token::Ident(_)
             | Token::QuotedStr(_)
@@ -538,7 +538,7 @@ mod tests {
                     path.terminal().sub_attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
                     vec!["observedAt"]
                 );
-                pretty_assertions::assert_eq!(operator, OrderingOperator::GreaterEq);
+                pretty_assertions::assert_eq!(operator, OrderingOperator::GreaterOrEqual);
                 match value {
                     Scalar::DateTime(dt) => {
                         pretty_assertions::assert_eq!(instant_text(dt), "2017-12-24T12:00:00Z");
@@ -603,7 +603,7 @@ mod tests {
         let filter = "capacity<=10".parse::<Filter>().unwrap();
         match filter {
             Filter::Term(QueryTerm::Ordering { operator, .. }) => {
-                pretty_assertions::assert_eq!(operator, OrderingOperator::LessEq);
+                pretty_assertions::assert_eq!(operator, OrderingOperator::LessOrEqual);
             }
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected Ordering, got {other:?}"),
         }
@@ -705,9 +705,9 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// The hop this axis descends: its Relationship, its type guard, and the
-    /// inner axis, so a test states the shape it expects without matching a
-    /// nested enum by hand.
+    /// The hop this attribute path descends: its Relationship, its type guard, and
+    /// the inner attribute path, so a test states the shape it expects without
+    /// matching a nested enum by hand.
     fn hop_of(path: &AttributePath) -> (&str, Vec<&str>, &AttributePath) {
         match path {
             AttributePath::Linked {
@@ -733,7 +733,7 @@ mod tests {
     fn term_of(filter: &Filter) -> &QueryTerm {
         match filter {
             Filter::Term(term) => term,
-            other @ (Filter::And(_) | Filter::Or(_)) => panic!("expected a single predicate, got {other:?}"),
+            other @ (Filter::And(_) | Filter::Or(_)) => panic!("expected a single query term, got {other:?}"),
         }
     }
 
@@ -753,7 +753,7 @@ mod tests {
                 pretty_assertions::assert_eq!(*value, EqualityValue::Scalar(Scalar::Str("commercial".to_string())));
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an equality predicate, got {other:?}")
+                panic!("expected an equality query term, got {other:?}")
             }
         }
     }
@@ -771,7 +771,7 @@ mod tests {
                 pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "category");
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an equality predicate, got {other:?}")
+                panic!("expected an equality query term, got {other:?}")
             }
         }
     }
@@ -791,7 +791,7 @@ mod tests {
                 pretty_assertions::assert_eq!(*value, EqualityValue::Scalar(Scalar::Number(5.into())));
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an equality predicate, got {other:?}")
+                panic!("expected an equality query term, got {other:?}")
             }
         }
     }
@@ -807,7 +807,7 @@ mod tests {
                 pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "b");
             }
             other @ (QueryTerm::Equality { .. } | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an existence predicate, got {other:?}")
+                panic!("expected an existence query term, got {other:?}")
             }
         }
     }
@@ -880,7 +880,7 @@ mod tests {
                 match term_of(&filters[0]) {
                     QueryTerm::Ordering { path, .. } => pretty_assertions::assert_eq!(local_of(path).attribute.as_str(), "speed"),
                     other @ (QueryTerm::Exists(_) | QueryTerm::Equality { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                        panic!("expected an ordering predicate, got {other:?}")
+                        panic!("expected an ordering query term, got {other:?}")
                     }
                 }
                 let (relationship, _, _) = hop_of(term_of(&filters[1]).path());
@@ -904,7 +904,7 @@ mod tests {
                 pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "category");
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an equality predicate, got {other:?}")
+                panic!("expected an equality query term, got {other:?}")
             }
         }
     }
@@ -929,7 +929,7 @@ mod tests {
                 pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "category");
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an equality predicate, got {other:?}")
+                panic!("expected an equality query term, got {other:?}")
             }
         }
     }
@@ -985,10 +985,10 @@ mod tests {
                         .collect::<Vec<_>>(),
                     vec!["c", "d"]
                 );
-                pretty_assertions::assert_eq!(*operator, OrderingOperator::GreaterEq);
+                pretty_assertions::assert_eq!(*operator, OrderingOperator::GreaterOrEqual);
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Equality { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
-                panic!("expected an ordering predicate, got {other:?}")
+                panic!("expected an ordering query term, got {other:?}")
             }
         }
     }

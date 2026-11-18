@@ -28,21 +28,21 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
-/// Recursively compact every attribute term of a `q` expression.
+/// Recursively compact every attribute term of a `q` filter.
 ///
 /// The boolean structure, the operators and the literal operands survive
 /// unchanged, and the operands a path ending on `valueType` or `objectType`
 /// expanded compact by the inverse rule (see [`OperandCoercion::Vocabulary`]),
 /// so `expand_filter` applied to the result under the same `@context` yields
-/// the expression this was given.
+/// the filter this was given.
 pub async fn compact_filter(filter: Filter, compactor: &impl TermCompactor) -> Filter {
     let json_keys = JsonKeyAttributes::default();
     let members = NestedNames::Terms(&json_keys);
     map_terms(filter, &|term| compact_query_term(term, members, compactor)).await
 }
 
-/// Compact the operands of one `q` predicate whose path ends on a member
-/// holding a vocabulary term, then its attribute axis.
+/// Compact the operands of one `q` query term whose path ends on a member
+/// holding a vocabulary term, then its attribute path.
 ///
 /// The operands go first: the member is recognised by its expanded name.
 async fn compact_query_term(term: QueryTerm, members: NestedNames<'_>, compactor: &impl TermCompactor) -> QueryTerm {
@@ -53,7 +53,7 @@ async fn compact_query_term(term: QueryTerm, members: NestedNames<'_>, compactor
     compact_query_term_paths(term, members, compactor).await
 }
 
-/// Recursively compact every property term of a `csf` expression, leaving its
+/// Recursively compact every property term of a `csf` filter, leaving its
 /// compound-value members as written.
 ///
 /// The inverse of [`crate::filter::expansion::expand_context_source_filter`]: the members
@@ -63,7 +63,7 @@ pub async fn compact_context_source_filter(filter: Filter, compactor: &impl Term
     map_terms(filter, &|term| compact_query_term_paths(term, NestedNames::Verbatim, compactor)).await
 }
 
-/// Rewrite every leaf predicate of an expression with `handler`, leaving its
+/// Rewrite every query term of a filter with `handler`, leaving its
 /// boolean structure intact.
 async fn map_terms<F, Fut>(filter: Filter, handler: &F) -> Filter
 where
@@ -135,7 +135,7 @@ async fn revert_equality_values<S: BuildHasher + Sync>(
     term
 }
 
-/// Compact the attribute axis of a single predicate, keeping its operator and
+/// Compact the attribute path of a single query term, keeping its operator and
 /// operand.
 async fn compact_query_term_paths(term: QueryTerm, members: NestedNames<'_>, compactor: &impl TermCompactor) -> QueryTerm {
     match term {
@@ -161,8 +161,9 @@ async fn compact_query_term_paths(term: QueryTerm, members: NestedNames<'_>, com
     }
 }
 
-/// Compact an attribute axis: every local segment as a term, and for each
-/// linked-entity hop the Relationship as a term and its guard as entity types.
+/// Compact an attribute path: every segment of its value path as a term, and for
+/// each linked-entity hop the Relationship as a term and its guard as entity
+/// types.
 /// This is the same split [`crate::filter::expansion::expand_attribute_path`] makes
 /// in the other direction.
 pub async fn compact_attribute_path(path: AttributePath, members: NestedNames<'_>, compactor: &impl TermCompactor) -> AttributePath {
@@ -188,7 +189,7 @@ pub async fn compact_attribute_path(path: AttributePath, members: NestedNames<'_
     }
 }
 
-/// Box-pinned wrapper: the axis walker recurses through hops, and an
+/// Box-pinned wrapper: the attribute path walker recurses through hops, and an
 /// `async fn` cannot name its own future type.
 fn compact_attribute_path_boxed<'a, C: TermCompactor>(
     path: AttributePath,
@@ -198,12 +199,12 @@ fn compact_attribute_path_boxed<'a, C: TermCompactor>(
     Box::pin(compact_attribute_path(path, members, compactor))
 }
 
-/// Compact an attribute path (main attribute, sub-attributes and, when
+/// Compact a value path (attribute, sub-attributes and, when
 /// `members` makes them terms, compound-value member names) to terms.
 ///
 /// The member names become the path's written spelling as well: a freshly
 /// parsed path carries what the client wrote in both spellings of its
-/// [`MemberPath`], and a compacted path is meant to read as one. A target
+/// [`MemberPath`](crate::filter::trailing_group::MemberPath), and a compacted path is meant to read as one. A target
 /// language is no term and stays as written.
 pub async fn compact_value_path(mut path: ValuePath, members: NestedNames<'_>, compactor: &impl TermCompactor) -> ValuePath {
     if let Some(TrailingGroup::Members(member_path)) = &mut path.trailing {

@@ -11,8 +11,7 @@
 //! temporal instance rather than the entity: `datasetId` (clause 4.5.6, the
 //! per-instance dataset the instance belongs to) and `unitCode` (clause 4.5.2,
 //! the per-instance unit that makes a Property carry mixed units). Grouping by
-//! `unitCode` is the correctness fix the study is built around: it turns the
-//! mixed-unit refusal into separate groups.
+//! `unitCode` turns the mixed-unit refusal into separate groups.
 
 use strum::{Display, EnumString};
 

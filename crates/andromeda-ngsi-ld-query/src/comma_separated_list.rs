@@ -57,47 +57,47 @@ pub enum ListedMemberError<E: StdError + 'static> {
     Invalid(E),
 }
 
-/// The members of the comma-separated list `raw` enumerating `list`, each
+/// The members of the comma-separated list `raw` enumerating `kind`, each
 /// trimmed of the whitespace around it.
 ///
 /// # Errors
 ///
 /// Yields [`CommaSeparatedListError::EmptyMember`] in place of every empty
 /// member.
-pub fn listed_members(raw: &str, list: ListedMemberKind) -> impl Iterator<Item = Result<&str, CommaSeparatedListError>> {
+pub fn listed_members(raw: &str, kind: ListedMemberKind) -> impl Iterator<Item = Result<&str, CommaSeparatedListError>> {
     raw.split(',').map(str::trim).map(move |member| match member {
-        "" => Err(CommaSeparatedListError::EmptyMember { kind: list }),
+        "" => Err(CommaSeparatedListError::EmptyMember { kind }),
         member => Ok(member),
     })
 }
 
-/// The members of the comma-separated list `raw` enumerating `list`, each
+/// The members of the comma-separated list `raw` enumerating `kind`, each
 /// read as a `T`.
 ///
 /// # Errors
 ///
 /// Returns [`ListedMemberError::Empty`] for the first empty member and
 /// [`ListedMemberError::Invalid`] for the first member `T` refuses.
-pub fn parse_listed<T>(raw: &str, list: ListedMemberKind) -> Result<Vec<T>, ListedMemberError<T::Err>>
+pub fn listed_values<T>(raw: &str, kind: ListedMemberKind) -> Result<Vec<T>, ListedMemberError<T::Err>>
 where
     T: FromStr,
     T::Err: StdError + 'static,
 {
-    listed_members(raw, list)
+    listed_members(raw, kind)
         .map(|member| member?.parse().map_err(ListedMemberError::Invalid))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::comma_separated_list::{CommaSeparatedListError, ListedMemberError, ListedMemberKind, listed_members, parse_listed};
+    use crate::comma_separated_list::{CommaSeparatedListError, ListedMemberError, ListedMemberKind, listed_members, listed_values};
 
     #[test]
     fn every_member_is_read_trimmed_in_written_order() {
         let members = listed_members(" a ,b,  c", ListedMemberKind::AttributeName).collect::<Result<Vec<_>, _>>();
         pretty_assertions::assert_eq!(members, Ok(vec!["a", "b", "c"]));
         pretty_assertions::assert_eq!(
-            parse_listed::<u8>("1, 2", ListedMemberKind::AggregationMethod).expect("two numbers"),
+            listed_values::<u8>("1, 2", ListedMemberKind::AggregationMethod).expect("two numbers"),
             vec![1, 2]
         );
     }
@@ -109,7 +109,7 @@ mod tests {
         for raw in ["a,,b", ",a", "a,", "a, ,b", ""] {
             assert!(
                 matches!(
-                    parse_listed::<String>(raw, ListedMemberKind::DatasetIdentifier),
+                    listed_values::<String>(raw, ListedMemberKind::DatasetIdentifier),
                     Err(ListedMemberError::Empty(CommaSeparatedListError::EmptyMember {
                         kind: ListedMemberKind::DatasetIdentifier
                     }))
@@ -121,13 +121,13 @@ mod tests {
 
     #[test]
     fn a_member_the_element_refuses_is_refused_with_its_reason() {
-        let refused = parse_listed::<u8>("1,x", ListedMemberKind::OrderingTerm);
+        let refused = listed_values::<u8>("1,x", ListedMemberKind::OrderingTerm);
         assert!(matches!(refused, Err(ListedMemberError::Invalid(_))), "{refused:?}");
     }
 
     #[test]
     fn an_empty_member_names_what_the_list_enumerates() {
-        for (list, text) in [
+        for (kind, text) in [
             (ListedMemberKind::EntityIdentifier, "entity identifier list contains an empty member"),
             (ListedMemberKind::AttributeName, "attribute name list contains an empty member"),
             (ListedMemberKind::DatasetIdentifier, "dataset identifier list contains an empty member"),
@@ -135,7 +135,7 @@ mod tests {
             (ListedMemberKind::OrderingTerm, "ordering term list contains an empty member"),
             (ListedMemberKind::OptionsToken, "options token list contains an empty member"),
         ] {
-            pretty_assertions::assert_eq!(CommaSeparatedListError::EmptyMember { kind: list }.to_string(), text);
+            pretty_assertions::assert_eq!(CommaSeparatedListError::EmptyMember { kind }.to_string(), text);
         }
     }
 }

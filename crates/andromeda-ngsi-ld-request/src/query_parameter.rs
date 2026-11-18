@@ -21,7 +21,7 @@ pub enum QueryParameter {
     IdPattern,
     /// Attribute projection (`attrs`).
     Attrs,
-    /// Filter expression (`q`).
+    /// Filter (`q`).
     Q,
     /// Context source filter (`csf`).
     Csf,

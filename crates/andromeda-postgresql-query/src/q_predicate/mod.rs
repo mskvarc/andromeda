@@ -1,4 +1,4 @@
-//! Compiler from NGSI-LD `q` filter expressions (ETSI GS CIM 009 v1.9.1
+//! Compiler from NGSI-LD `q` filters (ETSI GS CIM 009 v1.9.1
 //! clause 4.9) to SQL predicates, shared by the entity and temporal builders.
 //!
 //! # Probes

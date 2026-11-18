@@ -1,4 +1,4 @@
-//! What an `orderBy` term sorts on once its attribute path is expanded (clause 4.23).
+//! What an `orderBy` term sorts on once its value path is expanded (clause 4.23).
 
 use crate::filter::value_path::ValuePath;
 

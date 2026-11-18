@@ -1,4 +1,4 @@
-//! The right-hand side of a clause 4.9 Query Term.
+//! The operand of a clause 4.9 Query Term.
 //!
 //! ```text
 //! ComparableValue   = Number / quotedStr / dateTime / date / time
@@ -7,7 +7,7 @@
 //! CompEqualityValue = OtherValue / ValueList / Range / URI
 //! ```
 //!
-//! What separates these productions from the attribute axis is that they are
+//! What separates these productions from the attribute path is that they are
 //! read entirely from literals: the operand's own lexical form decides which
 //! domain it belongs to, because the grammar gives it no type tag.
 
@@ -24,7 +24,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 
-/// Parse the right-hand side of a comparison: a scalar, a range, or a list.
+/// Parse the equality value of a comparison: a scalar, a range, or a list.
 ///
 /// # Errors
 ///
@@ -142,10 +142,10 @@ mod tests {
     use crate::filter::{Filter, equality_value::EqualityValue, query_term::QueryTerm, scalar::Scalar};
     use pretty_assertions::assert_eq;
 
-    /// The equality operand of a filter holding one predicate.
+    /// The equality operand of a filter holding one query term.
     fn equality_operand(q: &str) -> EqualityValue {
         let Filter::Term(QueryTerm::Equality { value, .. }) = q.parse::<Filter>().expect("parse q") else {
-            panic!("a single equality predicate");
+            panic!("a single equality query term");
         };
         value
     }

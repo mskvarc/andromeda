@@ -162,7 +162,7 @@ fn any_instance_along<'a, I: QueriedInstance<'a>>(instance: I, sub_attributes: &
 ///
 /// All instances are visited, not just the first. Clause 4.9 (p. 86) defines
 /// the comparison target for a multi-instance attribute as "any Value of such
-/// instances", so a predicate holds when it holds for at least one of them,
+/// instances", so a query term holds when it holds for at least one of them,
 /// whichever instance a `datasetId`-partitioned attribute writes first.
 fn local_target<'a, E: QueriedEntity<'a>>(entity: E, term: &TermReading, accepts: &mut impl FnMut(ResolvedTarget<'a>) -> bool) -> bool {
     entity.attribute_instances(term.attribute()).any(|instance| {

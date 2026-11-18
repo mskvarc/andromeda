@@ -30,7 +30,7 @@ impl SpatialKey {
     }
 
     /// The wildcard partition for a geo subscription that names no concrete
-    /// type (an empty selector list, or a boolean type expression the per-type
+    /// type (an empty selector list, or a boolean type selection the per-type
     /// partitioning cannot enumerate).
     ///
     /// The subscription cache indexes such subscriptions here, and the

@@ -18,25 +18,26 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::{Iri, IriBuf};
 
-/// Which rule makes the operands of a term terms.
+/// Which rule makes the operands of a query term JSON-LD terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperandCoercion {
-    /// The term's attribute is named by `expandValues`: an operand expands as
-    /// an attribute term.
+    /// The query term's attribute is named by `expandValues`: an operand
+    /// expands as an attribute term.
     ExpandValues,
-    /// The term's path ends on `valueType` or `objectType`: an operand expands
+    /// The query term's path ends on `valueType` or `objectType`: an operand expands
     /// as a vocabulary-relative IRI, the way an entity type does.
     Vocabulary,
 }
 
 impl OperandCoercion {
-    /// `term` with the operands of an equality or an ordering expanded; a
-    /// pattern is no term and existence has no operand.
+    /// `term` with the operands of an equality or an ordering expanded; the
+    /// operand of a pattern is never a term to expand and existence has no operand.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`]
-    /// when an operand does not expand.
+    /// Returns [`QueryError::TermExpansion`] when an operand does not expand,
+    /// carrying [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
+    /// when it expands to something that is not an absolute IRI.
     pub async fn expand_operands(self, term: QueryTerm, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
         Ok(match term {
             QueryTerm::Equality { path, membership, value } => QueryTerm::Equality {

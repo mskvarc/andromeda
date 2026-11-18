@@ -56,7 +56,7 @@ const MATCHED_RESOURCES: [&str; 3] = ["registration", "subscription", "entity_in
 /// crate's selector type has a name of its own.
 const SELECTOR_MODULE: &str = "entity_selector";
 
-/// The methods that match a type expression.
+/// The methods that match a type selection.
 const TYPE_MATCHES: [&str; 2] = ["admits", "matches"];
 
 /// One decision found in a source.

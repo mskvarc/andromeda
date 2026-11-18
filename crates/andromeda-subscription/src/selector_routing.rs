@@ -1,6 +1,6 @@
 //! How one entity selector of a subscription is placed into the candidate index.
 //!
-//! A selector (clause 5.2.33) names a type expression and, optionally, an
+//! A selector (clause 5.2.33) names a type selection and, optionally, an
 //! entity id or an id pattern. Only a single concrete type and an exact id are
 //! indexable; everything else falls back to a broader bucket, and the
 //! authoritative matcher re-checks the full selector on every candidate.
@@ -37,7 +37,7 @@ pub struct SelectorRef {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SelectorRouting {
     /// The subscription must be routed for every event: it has no selectors,
-    /// or at least one selector whose type expression cannot be reduced to a
+    /// or at least one selector whose type selection cannot be reduced to a
     /// single name and which names no exact id.
     pub wildcard: bool,
     /// Type-bucket placements.
@@ -52,7 +52,7 @@ impl SelectorRouting {
     /// An id pattern is not indexable, so a selector carrying one is placed by
     /// its type alone (or in the wildcard when the type is not a single name);
     /// the matcher applies the pattern afterwards. A selector with a boolean
-    /// type expression and exact ids is placed by its ids alone, since they are
+    /// type selection and exact ids is placed by its ids alone, since they are
     /// the more selective half and the matcher re-checks the type.
     #[must_use]
     pub fn of(compiled: &CompiledSubscription) -> SelectorRouting {

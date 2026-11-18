@@ -82,7 +82,7 @@ pub(super) fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(Strin
 /// `au00e9`.
 ///
 /// Positions in the returned errors are offsets into `body`, which is the text
-/// between the quotation marks rather than the whole `q` expression.
+/// between the quotation marks rather than the whole `q` filter.
 ///
 /// # Errors
 ///
@@ -167,7 +167,7 @@ fn resolve_unicode_escape(chars: &[char], escape_at: usize) -> Result<(char, usi
     } else {
         Err(FilterError::InvalidUnicodeEscape {
             position: escape_at,
-            fault: UnicodeEscapeError::UnpairedLowSurrogate,
+            error: UnicodeEscapeError::UnpairedLowSurrogate,
         })
     }
 }
@@ -177,7 +177,7 @@ fn resolve_unicode_escape(chars: &[char], escape_at: usize) -> Result<(char, usi
 fn resolve_surrogate_pair(chars: &[char], high: u16, high_escape_at: usize) -> Result<(char, usize), FilterError> {
     let unpaired = || FilterError::InvalidUnicodeEscape {
         position: high_escape_at,
-        fault: UnicodeEscapeError::UnpairedHighSurrogate,
+        error: UnicodeEscapeError::UnpairedHighSurrogate,
     };
     let low_escape_at = high_escape_at + UNICODE_ESCAPE_PREFIX + UNICODE_ESCAPE_DIGITS;
     if chars.get(low_escape_at) != Some(&'\\') || chars.get(low_escape_at + 1) != Some(&'u') {
@@ -195,7 +195,7 @@ fn resolve_surrogate_pair(chars: &[char], high: u16, high_escape_at: usize) -> R
 fn read_code_unit(chars: &[char], escape_at: usize) -> Result<u16, FilterError> {
     let not_four_hex_digits = || FilterError::InvalidUnicodeEscape {
         position: escape_at,
-        fault: UnicodeEscapeError::NotFourHexDigits,
+        error: UnicodeEscapeError::NotFourHexDigits,
     };
     let first_digit = escape_at + UNICODE_ESCAPE_PREFIX;
     let digits = chars.get(first_digit..first_digit + UNICODE_ESCAPE_DIGITS).ok_or_else(not_four_hex_digits)?;
@@ -261,7 +261,7 @@ mod tests {
                 matches!(
                     error,
                     FilterError::InvalidUnicodeEscape {
-                        fault: UnicodeEscapeError::NotFourHexDigits,
+                        error: UnicodeEscapeError::NotFourHexDigits,
                         ..
                     }
                 ),
@@ -277,7 +277,7 @@ mod tests {
             matches!(
                 high,
                 FilterError::InvalidUnicodeEscape {
-                    fault: UnicodeEscapeError::UnpairedHighSurrogate,
+                    error: UnicodeEscapeError::UnpairedHighSurrogate,
                     ..
                 }
             ),
@@ -288,7 +288,7 @@ mod tests {
             matches!(
                 low,
                 FilterError::InvalidUnicodeEscape {
-                    fault: UnicodeEscapeError::UnpairedLowSurrogate,
+                    error: UnicodeEscapeError::UnpairedLowSurrogate,
                     ..
                 }
             ),
@@ -299,7 +299,7 @@ mod tests {
             matches!(
                 mismatched,
                 FilterError::InvalidUnicodeEscape {
-                    fault: UnicodeEscapeError::UnpairedHighSurrogate,
+                    error: UnicodeEscapeError::UnpairedHighSurrogate,
                     ..
                 }
             ),

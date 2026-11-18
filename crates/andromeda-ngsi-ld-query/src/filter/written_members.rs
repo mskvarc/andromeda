@@ -11,14 +11,14 @@
 use crate::filter::{Filter, trailing_group::TrailingGroup};
 
 impl Filter {
-    /// This expression, each trailing member's written spelling read from
+    /// This filter, each trailing member's written spelling read from
     /// `written`: the same filter rendered by
     /// [`Filter::written_member_text`]
     /// and parsed back.
     ///
     /// The two are one filter in two spellings, so their Query Terms pair up in
     /// order. A pair whose members do not line up keeps its own spelling, as
-    /// does every term of an expression whose term count `written` does not
+    /// does every term of a filter whose term count `written` does not
     /// share.
     #[must_use]
     pub fn with_written_members(mut self, written: &Filter) -> Filter {
@@ -56,7 +56,7 @@ mod tests {
     }
 
     /// The compound reading still addresses the expanded member, and every term
-    /// of a boolean expression gets its own members back.
+    /// of a boolean filter gets its own members back.
     #[tokio::test]
     async fn every_term_keeps_its_members_in_both_spellings() {
         let filter = persisted_round_trip("speed>1;(address[city]==\"Berlin\"|name[en]==\"Door\")").await;
@@ -70,7 +70,7 @@ mod tests {
         );
     }
 
-    /// A written text naming other terms leaves the expression as it is.
+    /// A written text naming other terms leaves the filter as it is.
     #[test]
     fn a_written_text_of_another_shape_changes_nothing() {
         let expanded = "\"https://example.com/name\"[\"https://example.com/en\"]==\"Door\""

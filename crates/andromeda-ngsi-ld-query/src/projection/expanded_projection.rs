@@ -1,4 +1,4 @@
-//! The compiled `pick` / `omit` projection of a query (clause 4.21).
+//! The expanded `pick` / `omit` projection of a query (clause 4.21).
 
 use crate::projection::expanded_projection_term::ExpandedProjectionTerm;
 use typed_builder::TypedBuilder;

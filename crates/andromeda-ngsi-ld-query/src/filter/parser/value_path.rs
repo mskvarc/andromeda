@@ -59,7 +59,7 @@ pub(super) const fn check_depth(depth: usize) -> Result<(), FilterError> {
 /// Parse a `ValuePath` whose leading name has already been read:
 /// `('.' ident)* ('[' trailing ']')?`.
 ///
-/// `depth` counts the segments already consumed by an enclosing axis, so a
+/// `depth` counts the segments already consumed by an enclosing attribute path, so a
 /// path reached through linked-entity hops shares one budget with them.
 ///
 /// # Errors
@@ -127,13 +127,13 @@ fn parse_trailing_group(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Tr
 impl FromStr for ValuePath {
     type Err = FilterError;
 
-    /// Parses a whole attribute path standing on its own, with no enclosing
-    /// expression.
+    /// Parses a whole value path standing on its own, with no enclosing
+    /// filter.
     ///
     /// This is the entry clause 4.23.3 uses: an `orderBy` term is one `ValuePath`
     /// and nothing else, so the token stream has to be exhausted by it. A `q`
-    /// filter instead reads a path mid-expression, with an operator and an
-    /// operand still to come.
+    /// filter instead reads a path with an operator and an operand still to
+    /// come.
     ///
     /// # Errors
     ///

@@ -108,7 +108,7 @@ pub enum ValueKeys {
     Languages,
 }
 
-/// Where a trailing path reads the members of a family's value.
+/// Where a trailing group reads the members of a family's value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberSource {
     /// The value's own members: an expanded structured value's by expanded
@@ -135,7 +135,7 @@ pub struct FamilyReading {
     pub reading: MultiValueReading,
     /// What the keys of the family's value name.
     pub keys: ValueKeys,
-    /// Where a trailing path reads the members of the value.
+    /// Where a trailing group reads the members of the value.
     pub members: MemberSource,
 }
 
@@ -266,7 +266,7 @@ mod tests {
         );
     }
 
-    /// Clause 4.9 reads a trailing path against the seed target value, and a
+    /// Clause 4.9 reads a trailing group against the seed target value, and a
     /// `GeoProperty`'s is the `GeoJSON` geometry it holds as positions.
     #[test]
     fn only_a_geo_property_reads_its_members_from_its_geometry() {

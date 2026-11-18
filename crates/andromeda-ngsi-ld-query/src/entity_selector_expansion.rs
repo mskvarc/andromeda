@@ -24,13 +24,13 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Reports [`QueryError`] when a selector's type expression has a term that
+/// Reports [`QueryError`] when a selector's type selection has a term that
 /// cannot be expanded through `expander`.
-pub async fn compile_entity_selectors(selectors: &[WrittenEntitySelector], expander: &impl TermExpander) -> Result<Vec<ExpandedEntitySelector>, QueryError> {
+pub async fn expand_entity_selectors(selectors: &[WrittenEntitySelector], expander: &impl TermExpander) -> Result<Vec<ExpandedEntitySelector>, QueryError> {
     let mut compiled = Vec::with_capacity(selectors.len());
     for selector in selectors {
         let type_selection = match selector.type_selection.as_ref() {
-            Some(raw) => Some(expand_type_selection(raw, expander).await?),
+            Some(type_selection) => Some(expand_type_selection(type_selection, expander).await?),
             None => None,
         };
         compiled.push(
@@ -47,9 +47,9 @@ pub async fn compile_entity_selectors(selectors: &[WrittenEntitySelector], expan
 #[cfg(test)]
 mod tests {
     use crate::{
+        entity_selector_expansion::expand_entity_selectors,
         namespace_expander::NamespaceExpander,
         pattern::Pattern,
-        selector_compilation::compile_entity_selectors,
         type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection},
         written_entity_selector::WrittenEntitySelector,
     };
@@ -83,7 +83,7 @@ mod tests {
                 ..WrittenEntitySelector::default()
             },
         ];
-        let compiled = compile_entity_selectors(&selectors, &EXPANDER).await.expect("the selectors compile");
+        let compiled = expand_entity_selectors(&selectors, &EXPANDER).await.expect("the selectors compile");
 
         pretty_assertions::assert_eq!(compiled.len(), 2);
         pretty_assertions::assert_eq!(compiled[0].ids, vec![identifier("urn:ngsi-ld:A:1")]);
@@ -98,7 +98,7 @@ mod tests {
     /// without one constrains no type.
     #[tokio::test]
     async fn a_selector_without_a_type_constrains_none() {
-        let compiled = compile_entity_selectors(&[WrittenEntitySelector::default()], &EXPANDER)
+        let compiled = expand_entity_selectors(&[WrittenEntitySelector::default()], &EXPANDER)
             .await
             .expect("the selector compiles");
         pretty_assertions::assert_eq!(compiled.len(), 1);

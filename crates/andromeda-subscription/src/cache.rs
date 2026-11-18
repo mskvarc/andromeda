@@ -337,7 +337,7 @@ impl SubscriptionCache {
 
     /// Index the geoQ of a live-branch subscription under every type its
     /// selectors name, and under the wildcard partition when a selector names
-    /// none or a boolean type expression; a Snapshot branch, no geoQ or a
+    /// none or a boolean type selection; a Snapshot branch, no geoQ or a
     /// geometry without a bounding rectangle indexes nothing.
     fn spatial_insert(&self, target: &ContextTarget, compiled: &CompiledSubscription) {
         if target.snapshot().is_some() {

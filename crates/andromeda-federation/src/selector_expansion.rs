@@ -1,9 +1,9 @@
-//! A query's entity selectors with their type expressions expanded, as the
+//! A query's entity selectors with their type selections expanded, as the
 //! registration preselect reads them (clause 5.12).
 //!
 //! Registrations hold the types they cover expanded, so each selector of the
 //! union a client asked for (clause 5.2.33) is matched with its clause 4.17
-//! type expression expanded under the request context, whatever its shape.
+//! type selection expanded under the request context, whatever its shape.
 
 use crate::error::FederationError;
 use andromeda_jsonld::{
@@ -12,12 +12,12 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
+    entity_selector_expansion::expand_entity_selectors,
     expanded_entity_selector::ExpandedEntitySelector,
-    selector_compilation::compile_entity_selectors,
     written_entity_selector::WrittenEntitySelector,
 };
 
-/// The selectors of one read, each compiled with its type expression expanded.
+/// The selectors of one read, each compiled with its type selection expanded.
 pub(crate) struct ExpandedSelectors {
     /// The compiled selectors, in the order the client wrote them.
     selectors: Vec<ExpandedEntitySelector>,
@@ -28,14 +28,14 @@ impl ExpandedSelectors {
     ///
     /// # Errors
     ///
-    /// Returns [`FederationError::Query`] when a type expression has a term
+    /// Returns [`FederationError::Query`] when a type selection has a term
     /// that cannot be expanded against the request context.
     pub(crate) async fn expand(
         engine: &JsonLdEngine,
         context: &PreparedTermContext,
         selectors: &[WrittenEntitySelector],
     ) -> Result<ExpandedSelectors, FederationError> {
-        let selectors = compile_entity_selectors(selectors, &ContextualExpander::new(engine, context)).await?;
+        let selectors = expand_entity_selectors(selectors, &ContextualExpander::new(engine, context)).await?;
         Ok(ExpandedSelectors { selectors })
     }
 

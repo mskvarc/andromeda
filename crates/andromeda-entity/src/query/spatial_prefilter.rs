@@ -35,9 +35,9 @@ struct Accelerable<'a> {
 ///
 /// The index holds the default instance of `location` alone, keyed by a single
 /// `(type, geoproperty)` pair, so it accelerates a `location` geo-query with
-/// exactly one selector whose type expression is a type or a union of types. A
+/// exactly one selector whose type selection is a type or a union of types. A
 /// query on any other `GeoProperty`, a union of selectors (clause 5.2.33), a
-/// conjunctive type expression or an untyped selector is handed to the store to
+/// conjunctive type selection or an untyped selector is handed to the store to
 /// evaluate in full.
 fn accelerable(compiled: &CompiledEntityQuery) -> Option<Accelerable<'_>> {
     let geo = compiled.selection.geo.as_ref().filter(|geo| geo.geoproperty.as_str() == LOCATION.as_str())?;

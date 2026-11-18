@@ -4,7 +4,8 @@
 //! makes of it, is the reading's to say: [`ValueTest::verdict`] and
 //! [`ValueTest::array_rule`] derive both from the test and its polarity. What
 //! is left here is to compare a value with an operand where the verdict asks
-//! for it, through the order primitives and [`Pattern::is_match`].
+//! for it, through the order primitives and
+//! [`Pattern::is_match`](andromeda_ngsi_ld_query::pattern::Pattern::is_match).
 
 use crate::q::target_value::{ResolvedTarget, TargetValue, ValueShape};
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;

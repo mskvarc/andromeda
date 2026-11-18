@@ -8,21 +8,22 @@ use crate::filter::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use langtag::LangTag;
 
-/// An attribute path within a `q` expression, potentially including sub-attributes
-/// and a trailing `[…]` group.
+/// A value path within a `q` filter: an attribute, its sub-attributes and a
+/// trailing `[…]` group.
 ///
-/// Example: `address[city].streetName` would have `attr = "address"`,
-/// `sub_attrs = ["city"]`, and a trailing member path `["streetName"]`.
+/// Example: `address.city[streetName]` has `attribute = "address"`,
+/// `sub_attributes = ["city"]`, and a trailing group holding the member
+/// `streetName`.
 ///
-/// `attr` and `sub_attrs` are [`AttributeName`]s, which accept a compact short
-/// name, a prefixed name or an expanded IRI. That is exactly the range this AST
-/// spans: a freshly parsed filter carries whatever the client wrote, and an
-/// expanded one carries IRIs.
+/// `attribute` and `sub_attributes` are [`AttributeName`]s, which accept a
+/// compact short name, a prefixed name or an expanded IRI. That is exactly the
+/// range this type spans: a freshly parsed filter carries whatever the client
+/// wrote, and an expanded one carries IRIs.
 ///
 /// This type models the two *local* traversal axes: `.` sub-attributes and the
 /// `[]` group. The third clause 4.9 axis, the `{}` linked-entity traversal,
 /// crosses an entity boundary and is modelled one level up by
-/// [`AttributePath::Linked`], whose terminal segment is an `ValuePath` again.
+/// [`AttributePath::Linked`](crate::filter::attribute_path::AttributePath::Linked), whose terminal path is a `ValuePath` again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValuePath {
     /// The top-level attribute name (compact or expanded IRI).
@@ -39,8 +40,8 @@ impl ValuePath {
     /// The clause 4.23 keywords `id`, `type` and `scope` name structural
     /// members of the entity representation, and the grammar spells each as a
     /// bare `AttrName`. A path that descends into one of them is therefore an
-    /// attribute path that happens to start with the keyword's spelling, not
-    /// the keyword.
+    /// value path that happens to start with the keyword's spelling, not the
+    /// keyword.
     #[must_use]
     pub const fn is_simple(&self) -> bool {
         self.sub_attributes.is_empty() && self.trailing.is_none()
@@ -93,7 +94,7 @@ impl ValuePath {
     /// The target language the trailing group names when the attribute is a
     /// `LanguageProperty`.
     ///
-    /// Clause 4.9 gives `attr[member]` two readings, and the target element
+    /// Clause 4.9 gives `attribute[member]` two readings, and the target element
     /// decides which applies: a `LanguageProperty`'s value is a language map,
     /// whose one-member group is the target language (`color[en]=="red"`);
     /// every other family's is a compound member. The language is the member as
@@ -117,7 +118,7 @@ mod tests {
     use crate::filter::{Filter, instance_metadata::InstanceMetadata, value_path::ValuePath};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
-    /// The local path the one Query Term of `q` ends on.
+    /// The value path the one Query Term of `q` ends on.
     fn terminal(q: &str) -> ValuePath {
         match q.parse::<Filter>().expect("a clause 4.9 filter") {
             Filter::Term(term) => term.path().terminal().clone(),

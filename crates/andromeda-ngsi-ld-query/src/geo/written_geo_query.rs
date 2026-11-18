@@ -1,4 +1,4 @@
-//! Decoded NGSI-LD geo-query input before JSON-LD context expansion.
+//! An NGSI-LD geo-query as the client wrote it, decoded and before JSON-LD context expansion.
 
 use crate::geo::{geo_query_error::GeoQueryError, reference_geometry::ReferenceGeometry};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, geometry_type::GeometryType, query_coordinates::QueryCoordinates};
@@ -111,14 +111,14 @@ impl<'de> Deserialize<'de> for WrittenGeoQuery {
     where
         D: Deserializer<'de>,
     {
-        GeoQueryMembers::deserialize(deserializer)?.into_input().map_err(DeserializeError::custom)
+        GeoQueryMembers::deserialize(deserializer)?.into_written().map_err(DeserializeError::custom)
     }
 }
 
 impl GeoQueryMembers {
     /// The geo-query the members make, once every member Table 5.2.13-1 gives
     /// cardinality 1 is present.
-    fn into_input(self) -> Result<WrittenGeoQuery, GeoQueryError> {
+    fn into_written(self) -> Result<WrittenGeoQuery, GeoQueryError> {
         let georel = self.georel.ok_or(GeoQueryError::MissingMember(RequiredMember::Georel))?;
         let geometry = self.geometry.ok_or(GeoQueryError::MissingMember(RequiredMember::Geometry))?;
         let coordinates = self.coordinates.ok_or(GeoQueryError::MissingMember(RequiredMember::Coordinates))?;

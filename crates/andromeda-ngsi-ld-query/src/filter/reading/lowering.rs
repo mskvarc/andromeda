@@ -142,7 +142,7 @@ impl TermReading {
     }
 }
 
-/// The hops of an attribute axis, outermost first, and the local path it ends
+/// The hops of an attribute path, outermost first, and the value path it ends
 /// on.
 fn hops_to_local(path: &AttributePath) -> (Vec<Hop>, &ValuePath) {
     let mut hops = Vec::new();
@@ -165,7 +165,7 @@ fn hops_to_local(path: &AttributePath) -> (Vec<Hop>, &ValuePath) {
     }
 }
 
-/// The sub-attributes a local path walks and what it ends on.
+/// The sub-attributes a value path walks and what it ends on.
 fn local_reading(path: &ValuePath, matching: LanguageMatching) -> (Vec<AttributeName>, Terminal) {
     match path.ending_member() {
         Some((member, above)) => (above.to_vec(), Terminal::InstanceMember(member)),
