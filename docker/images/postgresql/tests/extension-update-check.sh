@@ -26,7 +26,7 @@ failures=0
 response="$(mktemp)"
 
 cleanup() {
-	docker rm -f "$broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$database" > /dev/null 2>&1 || :
 	docker volume rm -f "$volume" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 	rm -f "$response"
@@ -72,7 +72,7 @@ start_database() {
 
 stop_database() {
 	docker stop "$database" > /dev/null
-	docker rm "$database" > /dev/null
+	docker rm -v "$database" > /dev/null
 }
 
 # usage: sql DATABASE QUERY

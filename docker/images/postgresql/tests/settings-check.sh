@@ -16,7 +16,7 @@ chmod 755 "$mounts"
 
 cleanup() {
 	if [ "${#containers[@]}" -gt 0 ]; then
-		docker rm -f "${containers[@]}" > /dev/null 2>&1 || :
+		docker rm -f -v "${containers[@]}" > /dev/null 2>&1 || :
 	fi
 	docker volume rm -f "$volume" > /dev/null 2>&1 || :
 	rm -rf "$mounts"

@@ -25,7 +25,7 @@ role=steward
 failures=0
 
 cleanup() {
-	docker rm -f "$setup" "$broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$setup" "$broker" "$database" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 }
 trap cleanup EXIT
@@ -134,7 +134,7 @@ sql "$db" "ALTER TABLE entities SET (autovacuum_enabled = false); ALTER TABLE at
 for first in 1 501 1001 1501; do
 	expect "create entities $first to $((first + 499))" 201 "$(create_batch "$first" "$((first + 499))")"
 done
-docker rm -f "$setup" > /dev/null
+docker rm -f -v "$setup" > /dev/null
 
 # Two rewrites of every entity leave twice its row count dead and modified;
 # the census rows cancel out, so the counts the broker serves stay right.
