@@ -1,10 +1,10 @@
-//! The literal operator and conjunction tokens of the clause 4.9 `q` grammar.
+//! The literal operators and conjunction marks of the clause 4.9 `q` grammar.
 //!
 //! One owner for how each comparison and conjunction operator is spelled, so
-//! the tokeniser, the serialiser and any restricted subset of the language,
+//! the parser, the serialiser and any restricted subset of the language,
 //! such as the snapshot purge filter (clause 5.16.7), cannot drift on the
-//! token strings. The [`query_term`](crate::filter::query_term) operator types
-//! render their clause 4.9 tokens from here.
+//! spellings. The [`query_term`](crate::filter::query_term) operator types
+//! render their clause 4.9 operators from here.
 
 /// `==`, the equality operator.
 pub const EQUAL: &str = "==";
@@ -18,6 +18,12 @@ pub const GREATER_OR_EQUAL: &str = ">=";
 pub const LESS: &str = "<";
 /// `<=`, the less-than-or-equal operator.
 pub const LESS_OR_EQUAL: &str = "<=";
+/// `~=`, the pattern-match operator.
+pub const MATCH: &str = "~=";
+/// `!~=`, the negated pattern-match operator.
+pub const NOT_MATCH: &str = "!~=";
+/// `..`, the range separator.
+pub const RANGE: &str = "..";
 /// `;`, the conjunction (logical AND) operator.
 pub const AND: &str = ";";
 /// `|`, the disjunction (logical OR) operator.

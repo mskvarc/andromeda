@@ -1,6 +1,5 @@
 //! What a position in a `q` filter requires, and what it held instead.
 
-use crate::filter::parser::lexer::{Token, TokenKind};
 use strum::Display;
 
 /// What the clause 4.9 grammar required where a parse failed.
@@ -9,9 +8,12 @@ use strum::Display;
 /// `BadRequestData` detail says which production the grammar was reading.
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 pub enum Expectation {
-    /// One particular token.
+    /// The name of an attribute, quoted or bare.
+    #[strum(serialize = "attribute name")]
+    AttributeName,
+    /// One closing punctuation mark.
     #[strum(to_string = "{0}")]
-    Token(TokenKind),
+    Punctuation(Punctuation),
     /// A comparison operand: a number, a quoted string, a boolean or a bare
     /// temporal literal.
     #[strum(serialize = "value")]
@@ -31,48 +33,66 @@ pub enum Expectation {
     GuardTerminator,
 }
 
+/// A punctuation mark that closes a construct the filter opened.
+///
+/// No comma is listed: the type guard reads a comma only after seeing one, so
+/// no refusal expects it.
+#[derive(Clone, Copy, Debug, derive_more::Display, Eq, PartialEq)]
+pub enum Punctuation {
+    /// `)`, closing a parenthesised group.
+    #[display(")")]
+    CloseParen,
+    /// `]`, closing a trailing group.
+    #[display("]")]
+    CloseBracket,
+    /// `}`, closing a linked-entity hop.
+    #[display("}}")]
+    CloseBrace,
+}
+
 /// What stood where a parse of a `q` filter failed.
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
 pub enum Found {
-    /// A token of this kind.
-    #[strum(to_string = "{0}")]
-    Token(TokenKind),
+    /// This character.
+    #[strum(to_string = "'{0}'")]
+    Character(char),
     /// Nothing: the input ended.
     #[strum(serialize = "end of input")]
     EndOfInput,
 }
 
 impl Found {
-    /// What a cursor position holds: the kind of its token, or the end of the
-    /// input.
+    /// What a position holds: its character, or the end of the input.
     #[must_use]
-    pub fn of(token: Option<&Token>) -> Found {
-        token.map_or(Found::EndOfInput, |token| Found::Token(TokenKind::from(token)))
+    pub const fn of(character: Option<char>) -> Found {
+        match character {
+            Some(character) => Found::Character(character),
+            None => Found::EndOfInput,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        expectation::{Expectation, Found},
-        parser::lexer::{Token, TokenKind},
-    };
+    use crate::filter::expectation::{Expectation, Found, Punctuation};
 
     #[test]
-    fn a_found_token_is_named_by_kind_and_the_end_of_input_by_name() {
-        pretty_assertions::assert_eq!(Found::of(Some(&Token::Ident("speed".to_owned()))).to_string(), "identifier");
-        pretty_assertions::assert_eq!(Found::of(Some(&Token::LBrace)).to_string(), "{");
+    fn a_found_character_is_quoted_and_the_end_of_input_is_named() {
+        pretty_assertions::assert_eq!(Found::of(Some('s')).to_string(), "'s'");
+        pretty_assertions::assert_eq!(Found::of(Some('{')).to_string(), "'{'");
         pretty_assertions::assert_eq!(Found::of(None).to_string(), "end of input");
     }
 
     #[test]
-    fn a_token_expectation_is_spelled_as_the_grammar_spells_the_token() {
-        pretty_assertions::assert_eq!(Expectation::Token(TokenKind::RBrace).to_string(), "}");
-        pretty_assertions::assert_eq!(Expectation::Token(TokenKind::Ident).to_string(), "identifier");
+    fn a_punctuation_expectation_is_spelled_as_its_character() {
+        pretty_assertions::assert_eq!(Expectation::Punctuation(Punctuation::CloseParen).to_string(), ")");
+        pretty_assertions::assert_eq!(Expectation::Punctuation(Punctuation::CloseBracket).to_string(), "]");
+        pretty_assertions::assert_eq!(Expectation::Punctuation(Punctuation::CloseBrace).to_string(), "}");
     }
 
     #[test]
     fn a_production_expectation_is_spelled_as_its_name() {
+        pretty_assertions::assert_eq!(Expectation::AttributeName.to_string(), "attribute name");
         pretty_assertions::assert_eq!(Expectation::Value.to_string(), "value");
         pretty_assertions::assert_eq!(Expectation::ComparableValue.to_string(), "comparable value");
         pretty_assertions::assert_eq!(Expectation::PatternString.to_string(), "pattern string");

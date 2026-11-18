@@ -8,6 +8,8 @@ use winnow::{Parser, stream::LocatingSlice, token::take_while};
 pub(crate) enum Whitespace {
     /// Every character `char::is_whitespace` admits (the Unicode `White_Space` property). The disjunctive form skips it around every item, parenthesis and operator, and type selection trims its text with it.
     Unicode,
+    /// Space, tab, line feed and carriage return, the RFC 8259 section 2 `ws` set. The `q` filter skips it between any two of its words, operators and punctuation marks.
+    Json,
 }
 
 impl Whitespace {
@@ -15,6 +17,7 @@ impl Whitespace {
     pub(crate) const fn contains(self, character: char) -> bool {
         match self {
             Whitespace::Unicode => character.is_whitespace(),
+            Whitespace::Json => matches!(character, ' ' | '\t' | '\n' | '\r'),
         }
     }
 
@@ -41,6 +44,16 @@ mod tests {
             assert!(Whitespace::Unicode.contains(space), "{space:?}");
         }
         assert!(!Whitespace::Unicode.contains('a'));
+    }
+
+    #[test]
+    fn the_json_set_is_the_four_rfc_8259_characters() {
+        for space in [' ', '\t', '\n', '\r'] {
+            assert!(Whitespace::Json.contains(space), "{space:?}");
+        }
+        for other in ['\u{0C}', '\u{A0}'] {
+            assert!(!Whitespace::Json.contains(other), "{other:?}");
+        }
     }
 
     #[test]

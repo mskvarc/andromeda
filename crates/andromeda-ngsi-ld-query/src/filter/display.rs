@@ -5,7 +5,8 @@ use crate::{
         Filter,
         attribute_path::AttributePath,
         equality_value::EqualityValue,
-        parser::lexer::is_bare_uri,
+        operator_spelling::{MATCH, NOT_MATCH, RANGE},
+        parser::operand::uri_extent,
         query_term::QueryTerm,
         scalar::Scalar,
         trailing_group::TrailingGroup,
@@ -32,7 +33,7 @@ impl fmt::Display for Filter {
     /// Renders a parsed filter back into clause 4.9 syntax.
     ///
     /// The result parses back to an equal filter; identifiers that would
-    /// confuse the tokeniser are re-quoted.
+    /// read as query syntax are re-quoted.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
         write_filter(&mut text, self, MemberSpelling::Addressed);
@@ -121,11 +122,11 @@ fn write_query_term(buffer: &mut String, term: &QueryTerm, spelling: MemberSpell
             write_scalar(buffer, value);
         }
         QueryTerm::MatchPattern { pattern, .. } => {
-            buffer.push_str("~=");
+            buffer.push_str(MATCH);
             write_pattern(buffer, pattern);
         }
         QueryTerm::NotMatchPattern { pattern, .. } => {
-            buffer.push_str("!~=");
+            buffer.push_str(NOT_MATCH);
             write_pattern(buffer, pattern);
         }
     }
@@ -175,7 +176,7 @@ fn write_leading_name(buffer: &mut String, name: &str, head: PathHead) {
     }
 }
 
-// The rendering quotes each name the tokeniser would otherwise split and
+// The rendering quotes each name the parser would otherwise split and
 // writes the optional trailing group, which `derive_more::Display`'s format
 // string cannot express.
 impl fmt::Display for ValuePath {
@@ -243,7 +244,7 @@ fn write_hop_head_name(buffer: &mut String, text: &str) {
     }
 }
 
-/// Write an identifier, quoting it when the tokeniser would otherwise split it.
+/// Write an identifier, quoting it when the parser would otherwise split it.
 fn write_identifier(buffer: &mut String, text: &str) {
     if needs_quoting(text) {
         write_quoted(buffer, text);
@@ -252,7 +253,7 @@ fn write_identifier(buffer: &mut String, text: &str) {
     }
 }
 
-/// Whether an identifier carries characters the tokeniser treats as structure.
+/// Whether an identifier carries characters the parser reads as structure.
 fn needs_quoting(text: &str) -> bool {
     text.contains('.') || text.contains(' ') || text.contains('"')
 }
@@ -263,7 +264,7 @@ fn write_equality_value(buffer: &mut String, value: &EqualityValue) {
         EqualityValue::Scalar(scalar) => write_scalar(buffer, scalar),
         EqualityValue::Range { min, max } => {
             write_scalar(buffer, min);
-            buffer.push_str("..");
+            buffer.push_str(RANGE);
             write_scalar(buffer, max);
         }
         EqualityValue::ValueList(values) => {
@@ -284,7 +285,7 @@ fn write_scalar(buffer: &mut String, scalar: &Scalar) {
         // `date` and `time` are its unquoted alternatives, and a quoted one
         // would read back as a String.
         Scalar::Str(_) => write_quoted(buffer, &scalar.literal_text()),
-        // A `URI` an expansion produced can hold characters the tokeniser reads
+        // A `URI` an expansion produced can hold characters the parser reads
         // as query syntax; quoted, it reads back as the same text and compares
         // the same.
         Scalar::Uri(uri) if is_bare_uri(uri) => buffer.push_str(uri),
@@ -298,13 +299,20 @@ fn write_scalar(buffer: &mut String, scalar: &Scalar) {
 /// Clause 4.9 makes `RegExp` its own terminal rather than a `quotedStr`, and
 /// the parser reads the body verbatim, so
 /// escaping it here would change the pattern: `^\w+$` would become `^\\w+$`, a literal backslash followed by `w`s. The verbatim body is always safe to quote
-/// again: the lexer ends a quoted token only at a `"` no backslash escapes, so
+/// again: a quoted literal ends only at a `"` no backslash escapes, so
 /// every `"` the body holds is still escaped, and a body ending in an odd run of
 /// backslashes is no regular expression either engine compiles.
 fn write_pattern(buffer: &mut String, pattern: &Pattern) {
     buffer.push('"');
     buffer.push_str(pattern.as_str());
     buffer.push('"');
+}
+
+/// Whether `text` reads back, after `==`, as the one bare `URI` operand it is.
+///
+/// A bare word opens at an alphabetic character, runs through the `URI` extent and is neither of the keywords `true` and `false`.
+fn is_bare_uri(text: &str) -> bool {
+    text.chars().next().is_some_and(char::is_alphabetic) && uri_extent(text) == text.len() && text.parse::<bool>().is_err()
 }
 
 /// Write a double-quoted string literal, escaped as IETF RFC 8259 section 7
