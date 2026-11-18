@@ -52,6 +52,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     setting::Setting,
     statement::Statement,
+    statement_planning::planned_with_bound_values,
     transaction::{Isolation, TransactionStart},
     transaction_id::{as_position, as_transaction_id, as_transaction_ids, snapshot_in_progress_positions, snapshot_xmax},
 };
@@ -182,16 +183,24 @@ fn changed_above(horizon: &BoundHorizon) -> Condition {
 /// timeout for their own transaction, and the planner may give them parallel
 /// workers.
 ///
-/// A bounded change read runs before a geo query, keeps the statement timeout
-/// and runs without parallel workers. It returns at most a few thousand rows,
-/// and none once the index has caught up. Until a tenant's tables are analysed,
-/// the planner takes the range above the horizon for a fixed share of the
-/// table, enough rows to plan a worker whose start costs many times the read.
+/// A bounded change read runs before a geo query and keeps the statement
+/// timeout. It returns at most a few thousand rows, and none once the index has
+/// caught up, so it runs without parallel workers. Until a tenant's tables are
+/// analysed, the planner takes the range above the horizon for a fixed share of
+/// the table, enough rows to plan a worker whose start costs many times the
+/// read.
+///
+/// It is also planned with its bound values. A generic plan cannot estimate the
+/// horizon and takes a third of the table to lie above it, so under the row
+/// limit it walks both primary keys from their start, while the changed rows
+/// are the newest and sit at their end. Planned with the horizon, the read
+/// takes the range from the index on `written_xid`.
 fn read_transaction(filter: LocationFilter<'_>) -> TransactionStart {
-    let start = TransactionStart::at(Isolation::ReadCommitted);
     match filter {
-        LocationFilter::Located | LocationFilter::ChangedSince(_, ChangeBound::Every) => start.with_local(Setting::StatementTimeout, "0"),
-        LocationFilter::ChangedSince(_, ChangeBound::AtMost(_)) => start.with_local(Setting::MaxParallelWorkersPerGather, "0"),
+        LocationFilter::Located | LocationFilter::ChangedSince(_, ChangeBound::Every) => {
+            TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::StatementTimeout, "0")
+        }
+        LocationFilter::ChangedSince(_, ChangeBound::AtMost(_)) => planned_with_bound_values().with_local(Setting::MaxParallelWorkersPerGather, "0"),
     }
 }
 
@@ -488,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bounded_change_read_keeps_the_statement_timeout_and_runs_without_parallel_workers() {
+    fn a_bounded_change_read_keeps_the_statement_timeout_is_planned_with_its_horizon_and_runs_without_parallel_workers() {
         let horizon = BoundHorizon {
             ceiling: 42,
             unseen: Vec::new(),
@@ -496,7 +505,9 @@ mod tests {
         let bound = NonZeroUsize::new(10_000).expect("a positive bound");
         assert_eq!(
             read_transaction(LocationFilter::ChangedSince(&horizon, ChangeBound::AtMost(bound))),
-            TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::MaxParallelWorkersPerGather, "0")
+            TransactionStart::at(Isolation::ReadCommitted)
+                .with_local(Setting::PlanCacheMode, "force_custom_plan")
+                .with_local(Setting::MaxParallelWorkersPerGather, "0")
         );
     }
 
