@@ -483,38 +483,43 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidTrailingMember { tag: LangTag("b+"), range: FirstSubtag }
   variant InvalidTrailingMember
   detail "q expression: 'b+' is neither a member name nor an RFC 5646 language tag (the first subtag of a language range is 1 to 8 letters or '*')"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None }
-  written "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a.a.a.a.a.a9a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a9a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None }
-  written "a.a.a.a.a.a9a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.].a.a.a.a.a"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
-  variant Expected
-  detail "q expression: expected identifier, found ]"
-"a.a.a.a.a..a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused UnexpectedToken { position: 9, token: Token(Dots) }
-  variant UnexpectedToken
-  detail "q expression: unexpected .. at position 9"
 "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None }
   written "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a.a.aa.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("aa"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None }
-  written "a.a.aa.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a..a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+"a.a.a.a.a.a.a.a.a...a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused UnexpectedToken { position: 17, token: Token(Dots) }
+  variant UnexpectedToken
+  detail "q expression: unexpected .. at position 17"
+"a.a.a.a.a.a9a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a9a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None }
+  written "a.a.a.a.a.a9a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a]a.a.a.a.a.a"
+  refused UnexpectedToken { position: 53, token: Token(RBracket) }
+  variant UnexpectedToken
+  detail "q expression: unexpected ] at position 53"
+"a.a.a.a.a..a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused UnexpectedToken { position: 9, token: Token(Dots) }
+  variant UnexpectedToken
+  detail "q expression: unexpected .. at position 9"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
+"a.a.aa.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("aa"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None }
+  written "a.a.aa.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
+"a..a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
   refused UnexpectedToken { position: 1, token: Token(Dots) }
   variant UnexpectedToken
   detail "q expression: unexpected .. at position 1"
-"a.a.a.a.a.a.a>a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused UnexpectedToken { position: 13, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 13"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a;a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused UnexpectedToken { position: 31, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 31"
+"a.a.a.a.a.a.a.>.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused Expected { expected: Token(Ident), found: Token(Gt) }
+  variant Expected
+  detail "q expression: expected identifier, found >"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.;.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused Expected { expected: Token(Ident), found: Token(Semi) }
+  variant Expected
+  detail "q expression: expected identifier, found ;"
 "observedAt.\"ex:q\"[city]"
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }
   written "observedAt.ex:q[city]", read back to the same tree
