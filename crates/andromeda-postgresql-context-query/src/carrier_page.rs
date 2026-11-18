@@ -26,6 +26,7 @@ use crate::{
     entity::{EntityConditions, GeoFilter, QFilter, build_entity_conditions},
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
+    filter_reads::search_keys,
     gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
     page_walk::{PageWalk, Walked},
 };
@@ -82,14 +83,7 @@ pub(crate) fn carriers(query: &CompiledEntityQuery, names: &QueryNames, schema: 
     if !(alone && recorded) {
         return None;
     }
-    let rows = EntityRowRefs::unaliased(schema.cloned()).standing_at(selection.standing);
-    let carried = attrs_carriers(selection, names, &rows)?;
-    let mut carriers = Query::select();
-    carriers
-        .expr(rows.search_column(EntitySearch::EntityKey))
-        .from(rows.table(EntitySearch::Table))
-        .cond_where(carried);
-    Some(carriers.take())
+    search_keys(schema, |rows| attrs_carriers(selection, names, rows))
 }
 
 /// The projected page of `source`, a selection by `attrs` alone, cut from its

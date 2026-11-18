@@ -40,11 +40,18 @@
 //! A `q` with a keyed term is cut by the keyed page, which reads the
 //! geo-query the same way ahead of its keyed terms: its walks are a
 //! [`GeoWalk`] probed by [`geo_probe`], and its first read is [`geo_read`].
+//!
+//! After the matches the page reads the filters its walks test on each Entity
+//! ([`filter_reads`](crate::filter_reads)): the carriers of an `attrs` the
+//! census bounds, else the matches of a `scopeQ`. Within all of 500 000
+//! scoped Entities beside a scope none of them holds, the page answers in
+//! 4.5 ms where the walk takes 629 ms.
 
 use crate::{
     entity::{GeoFilter, QFilter},
     entity_page::ProjectedPage,
     entity_relations::EntityRelations,
+    filter_reads::filter_read_before,
     gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
     page_shape::carried_on_rows,
     page_walk::{PageWalk, walked_rows},
@@ -63,10 +70,11 @@ use andromeda_postgresql_query::{
     error::RenderError,
     geo_predicate as geo_sql,
     one_time_gate::CandidateBound,
-    q_predicate::{instance_scan::InstanceScan, projection::compile},
+    q_predicate::{instance_scan::InstanceScan, keyed_term::CensusCount, projection::compile},
     query_names::QueryNames,
 };
 use sea_query::{Condition, SelectStatement};
+use std::iter::once;
 
 /// How many Entities the short walk probes before the spatial index is read.
 ///
@@ -119,14 +127,28 @@ pub(crate) fn geo_matches<'q>(
     count: CountPolicy,
     rows: &EntityRowRefs,
 ) -> Result<Option<GeoMatches<'q>>, RenderError> {
+    match geo_page_query(query, window, count) {
+        Some(_) => matches_of(query, names, rows),
+        None => Ok(None),
+    }
+}
+
+/// The geo-query of `query` when a page over `window` whose total `count`
+/// asks for can be a geo page: the selection holds a geo-query and considers
+/// some Entity, and the page has no `orderBy` and carries no total on its
+/// rows. Whether the geo-query has matches to read is left to
+/// [`matches_of`].
+pub(crate) fn geo_page_query<'q>(query: &'q CompiledEntityQuery, window: &PageWindow, count: CountPolicy) -> Option<&'q GeoQuery> {
+    let selection = &query.selection;
+    let considered = match selection.considered {
+        ConsideredEntities::Selected => true,
+        ConsideredEntities::NoEntity => false,
+    };
     let uncounted = match carried_on_rows(count, window) {
         CountPolicy::Emit => false,
         CountPolicy::Omit => true,
     };
-    if !(uncounted && query.ordering.terms.is_empty()) {
-        return Ok(None);
-    }
-    matches_of(query, names, rows)
+    selection.geo.as_ref().filter(|_| considered && uncounted && query.ordering.terms.is_empty())
 }
 
 /// The matches of the query's geo-query, read in the branch and at the
@@ -227,8 +249,10 @@ pub(crate) fn geo_page(source: &PageSource<'_>, matches: GeoMatches<'_>, columns
         probe: geo_probe(source, matches.geo, source.query.selection.q.as_ref())?,
         short: GEO_SHORT_WALK,
     };
-    let read = geo_read(source, matches)?;
-    gated_page(source, walk, vec![read], columns)
+    let reads = once(geo_read(source, matches)?)
+        .chain(filter_read_before(source, GeoFilter::Probed, Vec::new(), CensusCount::Unbounded)?)
+        .collect();
+    gated_page(source, walk, reads, columns)
 }
 
 #[cfg(test)]

@@ -25,13 +25,13 @@ use andromeda_postgresql_context_query::{
     entity as entity_sql,
     entity_page::{GATED_STEP_COLUMN, GatedStep, TOTAL_COUNT_COLUMN},
     entity_total::EntityTotal,
+    filter_reads::counted_attributes,
 };
 use andromeda_postgresql_pool::pool_share::PoolLane;
 use andromeda_postgresql_query::{
     attribute_carriers::{AttributeCarriers, CountedInstances, carriers_query},
     projected_attribute_names::projected_attribute_names,
     projected_type_names::projected_type_names,
-    q_predicate::keyed_term::contended_carriers,
     query_names::QueryNames,
 };
 use andromeda_postgresql_schema::census::AttributeCensus;
@@ -70,7 +70,8 @@ impl EntityRepository {
         count: CountPolicy,
     ) -> Result<QueryOutcome, ContextStoreError> {
         self.ensure_collations(&compiled.ordering).await?;
-        let names = self.resolve_names(target, compiled).await?;
+        let names = self.resolve_names(compiled).await?;
+        let names = self.with_census_counts(target, compiled, window, count, names).await?;
         let built = entity_sql::build_query(target, compiled, window, count, &names)?;
 
         let head_rows = self.reads.acquire().await?.fetch_planned(&built.select, built.planning).await?;
@@ -127,7 +128,7 @@ impl EntityRepository {
     /// identifier does not read back as a URI.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<Vec<Identifier>, ContextStoreError> {
         self.ensure_collations(&compiled.ordering).await?;
-        let names = self.resolve_names(target, compiled).await?;
+        let names = self.resolve_names(compiled).await?;
         let statement = entity_sql::build_ids_query(target, compiled, window, &names)?;
 
         let rows = self.fetch_on(PoolLane::Reads, &statement.select).await?;
@@ -160,7 +161,7 @@ impl EntityRepository {
     /// rows keyed on them are written in the entity's own transaction, so a
     /// name that resolves to nothing is a name nothing has ever written, not
     /// one written moments ago.
-    async fn resolve_names(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
+    async fn resolve_names(&self, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
         let returned = match ReturnedAttributes::of(&compiled.projection, &compiled.selection.attrs) {
             ReturnedAttributes::Every => Vec::new(),
             ReturnedAttributes::Named(iris) | ReturnedAttributes::AllBut(iris) => iris,
@@ -189,33 +190,33 @@ impl EntityRepository {
         } else {
             self.entity_type_names.lookup(&type_names).await?
         };
-        let names = QueryNames {
+        Ok(QueryNames {
             attributes,
             types,
             ..QueryNames::default()
-        };
-        self.with_contended_carriers(target, compiled, names).await
+        })
     }
 
-    /// `names` with the census counts of the attributes the keyed conjuncts
-    /// of the query's `q` are read through, read from the branch `target`
-    /// names when two or more of them contend for the page's index, and left
-    /// without counts otherwise.
+    /// `names` with the census counts of the attributes the page of
+    /// `compiled` over `window`, its total as `count` asks, reads them for
+    /// ([`counted_attributes`]), read from the branch `target` names: the
+    /// keyed conjuncts of `q` when two or more of them contend for the page's
+    /// index, and the attributes `attrs` names beside a keyed term or on a
+    /// geo page. Left without counts when the page reads none.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when no connection is free within the
     /// acquire deadline or the census read fails.
-    async fn with_contended_carriers(
+    async fn with_census_counts(
         &self,
         target: &ContextTarget,
         compiled: &CompiledEntityQuery,
+        window: &PageWindow,
+        count: CountPolicy,
         mut names: QueryNames,
     ) -> Result<QueryNames, ContextStoreError> {
-        let Some(q) = compiled.selection.q.as_ref() else {
-            return Ok(names);
-        };
-        let keys = contended_carriers(q.reading(), &names);
+        let keys = counted_attributes(compiled, &names, window, count);
         if keys.is_empty() {
             return Ok(names);
         }
