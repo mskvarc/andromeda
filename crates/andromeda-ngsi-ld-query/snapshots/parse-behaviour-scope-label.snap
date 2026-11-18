@@ -1,0 +1,257 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+---
+"A"
+  accepted ScopeLabel("A")
+")"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"{A"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+""
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"AZ"
+  accepted ScopeLabel("AZ")
+"Madrid"
+  accepted ScopeLabel("Madrid")
+"Madri|"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"Madri\t"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"Ma{rid"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"Madri+d"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a_b-1"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"_b-1"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a_b-1!"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"ab-1"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a0_b-1"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"*"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"|"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"@"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A/B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A%/B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"AB"
+  accepted ScopeLabel("AB")
+"A;B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"+"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+" "
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"="
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"#"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"#+"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"."
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"#-"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+" A"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+" <"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"\t A"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+" A{"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"( A"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A "
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A }"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A~"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"ZA "
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A +"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"é"
+  accepted ScopeLabel("é")
+" é"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"[é"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"*é"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"- B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"A~B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"< B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+">A B"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"/"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"/#"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+")/"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a.b"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a}b"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a.9b"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+".b"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"a>.b"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"1"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"{"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"1{"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"<1"
+  refused ScopePatternInvalid(InvalidLevel)
+  variant ScopePatternInvalid/InvalidLevel
+  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  accepted ScopeLabel("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA{AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  refused ScopePatternInvalid(LevelTooLong { characters: 1001 })
+  variant ScopePatternInvalid/LevelTooLong
+  detail "invalid scopeQ pattern: a scope level carries 1001 characters, more than the 1000 a level may hold"
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  accepted ScopeLabel("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA~AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  refused ScopePatternInvalid(LevelTooLong { characters: 1001 })
+  variant ScopePatternInvalid/LevelTooLong
+  detail "invalid scopeQ pattern: a scope level carries 1001 characters, more than the 1000 a level may hold"
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  refused ScopePatternInvalid(LevelTooLong { characters: 1001 })
+  variant ScopePatternInvalid/LevelTooLong
+  detail "invalid scopeQ pattern: a scope level carries 1001 characters, more than the 1000 a level may hold"
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  refused ScopePatternInvalid(LevelTooLong { characters: 1002 })
+  variant ScopePatternInvalid/LevelTooLong
+  detail "invalid scopeQ pattern: a scope level carries 1002 characters, more than the 1000 a level may hold"
+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  refused ScopePatternInvalid(LevelTooLong { characters: 1002 })
+  variant ScopePatternInvalid/LevelTooLong
+  detail "invalid scopeQ pattern: a scope level carries 1002 characters, more than the 1000 a level may hold"

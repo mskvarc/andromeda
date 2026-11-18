@@ -14,6 +14,8 @@ pub mod complexity;
 pub mod expansion;
 pub mod expectation;
 pub mod expression;
+#[cfg(test)]
+pub(crate) mod generated_filters;
 pub mod hop_admission;
 pub mod instance_metadata;
 pub mod json_key_attributes;
