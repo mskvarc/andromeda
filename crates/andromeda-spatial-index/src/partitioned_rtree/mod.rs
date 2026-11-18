@@ -383,13 +383,13 @@ mod tests {
         partitioned_rtree::{PartitionedRTree, WriteTracking},
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, ptr};
 
-    fn uri(raw: &str) -> Arc<Identifier> {
-        Arc::new(raw.parse().expect("a well-formed URI"))
+    fn uri(raw: &str) -> IdentifierSpelling {
+        IdentifierSpelling::from(&raw.parse::<Identifier>().expect("a well-formed URI"))
     }
 
     fn entry(id: &str, x: f64, y: f64) -> SpatialEntry {
@@ -558,7 +558,7 @@ mod tests {
         let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
         let id = uri("urn:ngsi-ld:X:1");
         index.replace(
-            Arc::clone(&id),
+            id.clone(),
             vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 2.0, 2.0), entry("urn:ngsi-ld:X:1", 2.0, 2.0)])],
         );
         index.replace(id, vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 5.0, 5.0)])]);
@@ -594,9 +594,12 @@ mod tests {
             snapshot_generation,
         );
         let held = index
-            .read_partition(&key_a(), |tree| tree.iter().map(|entry| Arc::clone(&entry.entity_id)).collect::<Vec<_>>())
+            .read_partition(&key_a(), |tree| tree.iter().map(|entry| entry.entity_id.clone()).collect::<Vec<_>>())
             .expect("the partition exists");
         let record = index.placements.get(&uri("urn:ngsi-ld:X:1")).expect("the object is indexed");
-        assert!(held.iter().all(|id| Arc::ptr_eq(id, record.key())), "one allocation names the object");
+        assert!(
+            held.iter().all(|id| ptr::eq(id.as_str(), record.key().as_str())),
+            "one allocation names the object"
+        );
     }
 }

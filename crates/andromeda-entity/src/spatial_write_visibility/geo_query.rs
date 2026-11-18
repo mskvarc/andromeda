@@ -11,7 +11,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position, positive_distance::PositiveDistance};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_constraint::EntityConstraint,
@@ -57,7 +57,7 @@ pub(crate) fn uri(raw: &str) -> Identifier {
 /// far from the origin, so the scope is warm before any test writes.
 pub(super) fn warm_index() -> Arc<SpatialEntityIndex> {
     let index = Arc::new(SpatialEntityIndex::new());
-    let parked = SpatialEntry::new(Arc::new(uri("urn:ngsi-ld:Vehicle:parked")), point(90.0).form()).expect("a point has a bounding rectangle");
+    let parked = SpatialEntry::new(IdentifierSpelling::from(&uri("urn:ngsi-ld:Vehicle:parked")), point(90.0).form()).expect("a point has a bounding rectangle");
     let placement = placement();
     index.rebuild(
         placement.tenant(),

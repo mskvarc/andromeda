@@ -35,7 +35,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling, time::system_instant::SystemInstant};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -128,6 +128,9 @@ enum IndexChange {
     Restate {
         /// The entity written, sharing the write's identifier.
         entity_id: Arc<Identifier>,
+        /// The entity's identifier as the index holds it, spelled once for both
+        /// the entries anticipated and the entries settled.
+        spelling: IdentifierSpelling,
         /// The state the write commits, shared with it: the partitions its
         /// location occupies are read off it, borrowing its geometry.
         state: Arc<EntityState>,
@@ -148,6 +151,7 @@ impl IndexChange {
         match &write.entity {
             EntityMutation::Insert(record) | EntityMutation::Update(record) => IndexChange::Restate {
                 entity_id: entity_id(),
+                spelling: IdentifierSpelling::from(&*write.entity_id),
                 state: Arc::clone(&record.state),
             },
             EntityMutation::Delete => IndexChange::Remove { entity_id: entity_id() },
@@ -167,8 +171,8 @@ impl IndexChange {
     /// write commits.
     fn anticipate(&self, index: &SpatialEntityIndex, placement: &LocationPlacement) {
         match self {
-            IndexChange::Restate { entity_id, state } => {
-                index.anticipate_entity(Arc::clone(entity_id), placement.of(state.types().as_slice(), state.location_geometry()));
+            IndexChange::Restate { spelling, state, .. } => {
+                index.anticipate_entity(spelling.clone(), placement.of(state.types().as_slice(), state.location_geometry()));
             }
             // Keeping the entity's current entries until the deletion lands is
             // what keeps it reachable if the deletion does not.
@@ -179,8 +183,8 @@ impl IndexChange {
     /// Settle the index to what the write actually did.
     fn settle(self, index: &SpatialEntityIndex, placement: &LocationPlacement, outcome: &WriteOutcome) {
         match (self, outcome) {
-            (IndexChange::Restate { entity_id, state }, WriteOutcome::Created(_) | WriteOutcome::Updated(_)) => {
-                index.replace_entity(entity_id, placement.of(state.types().as_slice(), state.location_geometry()));
+            (IndexChange::Restate { spelling, state, .. }, WriteOutcome::Created(_) | WriteOutcome::Updated(_)) => {
+                index.replace_entity(spelling, placement.of(state.types().as_slice(), state.location_geometry()));
             }
             (IndexChange::Remove { entity_id }, WriteOutcome::Deleted(..)) => index.remove(&entity_id),
             // A write that did not land leaves the store as it was; whatever it
@@ -227,7 +231,7 @@ mod tests {
         linear_ring::LinearRing,
         position::Position,
     };
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling, time::system_instant::SystemInstant};
     use andromeda_spatial_index::{
         entity::index::{Admitted, SpatialEntityIndex},
         key::SpatialKey,
@@ -250,6 +254,11 @@ mod tests {
 
     fn vehicle() -> Identifier {
         "urn:ngsi-ld:Vehicle:A".parse().expect("a well-formed URI")
+    }
+
+    /// The vehicle as the index names it.
+    fn indexed_vehicle() -> IdentifierSpelling {
+        IdentifierSpelling::from(&vehicle())
     }
 
     /// A vehicle whose default `location` is the Point `(x, 0)`.
@@ -293,7 +302,7 @@ mod tests {
     }
 
     /// The vehicles the index holds within one degree of `(x, 0)`.
-    fn around(index: &SpatialEntityIndex, x: f64) -> Option<HashSet<Identifier>> {
+    fn around(index: &SpatialEntityIndex, x: f64) -> Option<HashSet<IdentifierSpelling>> {
         let key = SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
@@ -332,7 +341,7 @@ mod tests {
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))])
             .await
             .expect("the write lands");
-        assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
+        assert_eq!(around(&index, 0.0), Some(HashSet::from([indexed_vehicle()])));
     }
 
     #[tokio::test]
@@ -348,7 +357,7 @@ mod tests {
             .await
             .expect("the move lands");
         assert_eq!(around(&index, 0.0), Some(HashSet::new()));
-        assert_eq!(around(&index, 20.0), Some(HashSet::from([vehicle()])));
+        assert_eq!(around(&index, 20.0), Some(HashSet::from([indexed_vehicle()])));
     }
 
     #[tokio::test]
@@ -362,7 +371,7 @@ mod tests {
             .commit(&ContextTarget::Live, accepted(), vec![write(located_at(20.0))])
             .await
             .expect("the commit answers");
-        assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
+        assert_eq!(around(&index, 0.0), Some(HashSet::from([indexed_vehicle()])));
     }
 
     #[tokio::test]
@@ -379,8 +388,8 @@ mod tests {
                 .now_or_never()
                 .is_none()
         );
-        assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
-        assert_eq!(around(&index, 20.0), Some(HashSet::from([vehicle()])));
+        assert_eq!(around(&index, 0.0), Some(HashSet::from([indexed_vehicle()])));
+        assert_eq!(around(&index, 20.0), Some(HashSet::from([indexed_vehicle()])));
     }
 
     #[tokio::test]
@@ -394,7 +403,7 @@ mod tests {
             .commit(&ContextTarget::Live, accepted(), vec![write(EntityMutation::Delete)])
             .await
             .expect("the commit answers");
-        assert_eq!(around(&index, 0.0), Some(HashSet::from([vehicle()])));
+        assert_eq!(around(&index, 0.0), Some(HashSet::from([indexed_vehicle()])));
         committer(&index, Script::Answer(deleted))
             .commit(&ContextTarget::Live, accepted(), vec![write(EntityMutation::Delete)])
             .await

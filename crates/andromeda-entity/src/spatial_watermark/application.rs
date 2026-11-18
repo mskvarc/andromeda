@@ -16,6 +16,7 @@ use crate::{
     spatial_watermark::standing::WatermarkState,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::identifier_spelling::IdentifierSpelling;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use async_lock::{Mutex, MutexGuardArc, RwLockReadGuardArc};
 use std::sync::Arc;
@@ -91,6 +92,6 @@ impl BlockingTask for BacklogApplication {
 fn take_in(index: &SpatialEntityIndex, placement: &LocationPlacement, locations: Vec<EntityLocation>) {
     for location in locations {
         let placements = placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form));
-        index.replace_entity(Arc::new(location.entity_id), placements);
+        index.replace_entity(IdentifierSpelling::from(&location.entity_id), placements);
     }
 }

@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_geometry::{
     linear_ring::LinearRing,
     position::Position,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::identifier_spelling::IdentifierSpelling;
 use andromeda_spatial_index::entity::index::{Admitted, SpatialEntityIndex};
 use futures::{channel::oneshot, future::BoxFuture, poll};
 use pretty_assertions::assert_eq;
@@ -67,7 +67,7 @@ fn square(longitude: f64) -> GeometryForm {
 
 /// The vehicles the index holds within a degree of `(longitude, 0)`, read
 /// without catching up.
-fn held_near(watermark: &SpatialWatermark, longitude: f64) -> Option<HashSet<Identifier>> {
+fn held_near(watermark: &SpatialWatermark, longitude: f64) -> Option<HashSet<IdentifierSpelling>> {
     watermark
         .index
         .query(&vehicle_key(), &GeoRel::Within, &square(longitude), Admitted::Every, usize::MAX)
@@ -75,7 +75,7 @@ fn held_near(watermark: &SpatialWatermark, longitude: f64) -> Option<HashSet<Ide
 
 /// The vehicles a geo query within a degree of `(longitude, 0)` is narrowed
 /// to, or `None` when the store must answer it in full.
-async fn near(watermark: &SpatialWatermark, longitude: f64) -> Option<HashSet<Identifier>> {
+async fn near(watermark: &SpatialWatermark, longitude: f64) -> Option<HashSet<IdentifierSpelling>> {
     watermark
         .narrow(|index| index.query(&vehicle_key(), &GeoRel::Within, &square(longitude), Admitted::Every, usize::MAX))
         .await
@@ -83,8 +83,8 @@ async fn near(watermark: &SpatialWatermark, longitude: f64) -> Option<HashSet<Id
         .map(|found| found.expect("a seeded scope answers"))
 }
 
-fn ids(raw: &[&str]) -> HashSet<Identifier> {
-    raw.iter().map(|id| uri(id)).collect()
+fn ids(raw: &[&str]) -> HashSet<IdentifierSpelling> {
+    raw.iter().map(|id| IdentifierSpelling::from(&uri(id))).collect()
 }
 
 /// More vehicles than a query takes in itself.

@@ -18,6 +18,7 @@ use crate::{
     spatial_placement::LocationPlacement,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::identifier_spelling::IdentifierSpelling;
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
     key::SpatialKey,
@@ -75,13 +76,13 @@ impl LocationSink for PartitionFill {
         let mut partitions = self.partitions.lock().unwrap_or_else(PoisonError::into_inner);
         partitions.located_entities = partitions.located_entities.saturating_add(locations.len());
         for location in locations {
-            let entity_id = Arc::new(location.entity_id);
+            let entity_id = IdentifierSpelling::from(&location.entity_id);
             for (key, geometry) in self.placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form)) {
                 partitions
                     .entries
                     .entry(key)
                     .or_default()
-                    .extend(SpatialEntry::new(Arc::clone(&entity_id), geometry));
+                    .extend(SpatialEntry::new(entity_id.clone(), geometry));
             }
         }
     }
@@ -232,7 +233,7 @@ mod tests {
         linear_ring::LinearRing,
         position::Position,
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_spatial_index::{
         entity::{
@@ -347,6 +348,10 @@ mod tests {
         raw.parse().expect("a well-formed URI")
     }
 
+    fn spelled(raw: &str) -> IdentifierSpelling {
+        IdentifierSpelling::from(&id(raw))
+    }
+
     fn located(raw_id: &str, types: &[&str], location: GeometryForm) -> EntityLocation {
         EntityLocation {
             entity_id: id(raw_id),
@@ -387,7 +392,7 @@ mod tests {
     }
 
     /// The vehicles the index holds within a degree of `(longitude, 0)`.
-    fn vehicles_near(index: &SpatialEntityIndex, longitude: f64) -> Option<HashSet<Identifier>> {
+    fn vehicles_near(index: &SpatialEntityIndex, longitude: f64) -> Option<HashSet<IdentifierSpelling>> {
         index.query(
             &key("https://example.org/Vehicle"),
             &GeoRel::Within,
@@ -407,7 +412,7 @@ mod tests {
             .expect("the store is readable");
 
         assert_eq!((outcome.located_entities, outcome.horizon), (1, ChangeHorizon::new(7, vec![5])));
-        assert_eq!(vehicles_near(&index, 0.0), Some(HashSet::from([id("urn:ngsi-ld:Vehicle:stored")])));
+        assert_eq!(vehicles_near(&index, 0.0), Some(HashSet::from([spelled("urn:ngsi-ld:Vehicle:stored")])));
     }
 
     #[tokio::test]
@@ -416,16 +421,16 @@ mod tests {
         let collected = read_location_snapshot(&index, &Stored::handing(fleet, usize::MAX), &placement())
             .await
             .expect("the store is readable");
-        let ids_in = |entries: &Vec<SpatialEntry>| entries.iter().map(|entry| Identifier::clone(&entry.entity_id)).collect::<Vec<_>>();
+        let ids_in = |entries: &Vec<SpatialEntry>| entries.iter().map(|entry| entry.entity_id.clone()).collect::<Vec<_>>();
         assert_eq!(collected.partitions.located_entities, 3);
         assert_eq!(collected.partitions.entries.len(), 2, "the unexpanded type names no partition");
         assert_eq!(
             collected.partitions.entries.get(&key("https://example.org/Vehicle")).map(ids_in),
-            Some(vec![id("urn:ngsi-ld:Vehicle:a"), id("urn:ngsi-ld:Vehicle:b")])
+            Some(vec![spelled("urn:ngsi-ld:Vehicle:a"), spelled("urn:ngsi-ld:Vehicle:b")])
         );
         assert_eq!(
             collected.partitions.entries.get(&key("https://example.org/Asset")).map(ids_in),
-            Some(vec![id("urn:ngsi-ld:Vehicle:b"), id("urn:ngsi-ld:Asset:c")])
+            Some(vec![spelled("urn:ngsi-ld:Vehicle:b"), spelled("urn:ngsi-ld:Asset:c")])
         );
 
         for batch in [1, 2] {
@@ -456,7 +461,7 @@ mod tests {
         let failed = rebuild_location_index(&index, &failing, &placement(), &InlineBlockingExecutor).await;
 
         assert!(matches!(failed, Err(EntityError::StoreUnavailable)), "{failed:?}");
-        assert_eq!(vehicles_near(&index, 0.0), Some(HashSet::from([id("urn:ngsi-ld:Vehicle:stored")])));
+        assert_eq!(vehicles_near(&index, 0.0), Some(HashSet::from([spelled("urn:ngsi-ld:Vehicle:stored")])));
         assert_eq!(
             vehicles_near(&index, 10.0),
             Some(HashSet::new()),

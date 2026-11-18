@@ -2,9 +2,8 @@
 
 use crate::partitioned_rtree::Indexed;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, great_circle::great_circle_bounds, planar::PlanarGeometry};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::identifier_spelling::IdentifierSpelling;
 use rstar::{AABB, RTreeObject};
-use std::sync::Arc;
 
 /// A single entity's geometry, indexed under one
 /// [`SpatialKey`](crate::key::SpatialKey).
@@ -20,13 +19,14 @@ use std::sync::Arc;
 /// still contains the planar rectangle, so the planar relations lose nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatialEntry {
-    /// Identifier of the entity whose geoproperty this entry represents.
+    /// Identifier of the entity whose geoproperty this entry represents, as
+    /// the spelling the store tells entities apart by.
     ///
     /// Any clause 4.5.1 entity identifier, not only a URN: an entity the tree
     /// could not hold would be missing from a partition the query path reads
     /// as complete. Shared: the back-index and the write records name the
     /// entity by this one allocation.
-    pub entity_id: Arc<Identifier>,
+    pub entity_id: IdentifierSpelling,
     /// The horizontal projection of the entity geometry, the form every
     /// clause 4.10 relation is evaluated over.
     ///
@@ -45,7 +45,7 @@ impl SpatialEntry {
     /// prefiltered; refusing to index it is what keeps the tree's answer and
     /// the exact predicate's answer the same.
     #[must_use]
-    pub fn new(entity_id: Arc<Identifier>, geometry: &GeometryForm) -> Option<SpatialEntry> {
+    pub fn new(entity_id: IdentifierSpelling, geometry: &GeometryForm) -> Option<SpatialEntry> {
         let planar = PlanarGeometry::project(geometry);
         let rect = great_circle_bounds(&planar)?;
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
@@ -54,9 +54,9 @@ impl SpatialEntry {
 }
 
 impl Indexed for SpatialEntry {
-    type Id = Arc<Identifier>;
+    type Id = IdentifierSpelling;
 
-    fn id(&self) -> &Arc<Identifier> {
+    fn id(&self) -> &IdentifierSpelling {
         &self.entity_id
     }
 }

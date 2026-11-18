@@ -1343,6 +1343,7 @@ dependencies = [
  "andromeda-configuration",
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-vocabulary",
+ "arcstr",
  "cefact-units",
  "chrono",
  "compact_str",
@@ -2644,6 +2645,12 @@ checksum = "33ca55ee147b1926dbea904f50fe4902494e97bc742205abbbf10c709e43815f"
 dependencies = [
  "triomphe",
 ]
+
+[[package]]
+name = "arcstr"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
 
 [[package]]
 name = "as-slice"
