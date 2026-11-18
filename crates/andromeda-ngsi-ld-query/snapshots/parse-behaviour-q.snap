@@ -3419,80 +3419,83 @@ error: repetition operator missing expression
   refused UnexpectedToken { position: 129, token: Token(RParen) }
   variant UnexpectedToken
   detail "q expression: unexpected ) at position 129"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  accepted Term(Exists(Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None })))
-  written "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a.a.a.a.a.9.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
-  variant Expected
-  detail "q expression: expected identifier, found number"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.(.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused Expected { expected: Token(Ident), found: Token(LParen) }
-  variant Expected
-  detail "q expression: expected identifier, found ("
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.0.a.a.a.a.a.a.a.a.a"
-  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
-  variant Expected
-  detail "q expression: expected identifier, found number"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.,a.a.a.a"
-  refused Expected { expected: Token(Ident), found: Token(Comma) }
-  variant Expected
-  detail "q expression: expected identifier, found ,"
 "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
   accepted Term(Exists(Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None })))
   written "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a0a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  accepted Term(Exists(Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a0a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None })))
-  written "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a0a.a.a.a.a.a.a.a.a.a.a.a.a.a.a", read back to the same tree
-"a.a.a.a.a.a[a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+"a.a.a.a.a.9.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
   variant Expected
-  detail "q expression: expected ], found end of input"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.+a.a.a.a.a.a.a.a.a.a"
-  refused UnexpectedCharacter { character: '+', position: 46 }
+  detail "q expression: expected identifier, found number"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a(a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused UnexpectedToken { position: 37, token: Token(LParen) }
+  variant UnexpectedToken
+  detail "q expression: unexpected ( at position 37"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a0a.a.a.a.a.a.a.a.a.a"
+  accepted Term(Exists(Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a0a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a"), AttributeName("a")], trailing: None })))
+  written "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a0a.a.a.a.a.a.a.a.a.a", read back to the same tree
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.,a.a.a.a"
+  refused Expected { expected: Token(Ident), found: Token(Comma) }
+  variant Expected
+  detail "q expression: expected identifier, found ,"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.0.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
+  variant Expected
+  detail "q expression: expected identifier, found number"
+"a.a.a.a.a.a[a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a+.a.a.a.a.a.a.a.a.a.a"
+  refused UnexpectedCharacter { character: '+', position: 47 }
   variant UnexpectedCharacter
-  detail "q expression: unexpected character '+' at position 46"
-"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.;a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
-  refused Expected { expected: Token(Ident), found: Token(Semi) }
+  detail "q expression: unexpected character '+' at position 47"
+"a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a;.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a"
+  refused Expected { expected: Token(Ident), found: Token(Dot) }
   variant Expected
-  detail "q expression: expected identifier, found ;"
-"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
-  accepted Term(Exists(Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }) } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }))
-  written "r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}", read back to the same tree
-"rr{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
-  refused UnexpectedToken { position: 91, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 91"
-"r{[{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
-  refused Expected { expected: Token(Ident), found: Token(LBracket) }
-  variant Expected
-  detail "q expression: expected identifier, found ["
-"r{r{r{r{r{r{r{r{r{r{r{r{r{r{rr{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
-  refused UnexpectedToken { position: 91, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 91"
-"r{r{r{r{r{r{r{r{r{>r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
-  refused Expected { expected: Token(Ident), found: Token(Gt) }
-  variant Expected
-  detail "q expression: expected identifier, found >"
+  detail "q expression: expected identifier, found ."
 "r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
   accepted Term(Exists(Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }) } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }))
   written "r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}", read back to the same tree
-"r{r{r{r{r{r{r{r{r{r{r{{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+"rr{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+  refused UnexpectedToken { position: 94, token: Token(RBrace) }
+  variant UnexpectedToken
+  detail "q expression: unexpected } at position 94"
+"r{[{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+  refused Expected { expected: Token(Ident), found: Token(LBracket) }
+  variant Expected
+  detail "q expression: expected identifier, found ["
+"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
   refused Expected { expected: Token(Ident), found: Token(LBrace) }
   variant Expected
   detail "q expression: expected identifier, found {"
-"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}[}}}}}}}}}}}}}}}}}}}"
-  refused Expected { expected: Token(RBrace), found: Token(LBracket) }
+"r{r{r{r{r{r{r{r{r{>r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+  refused Expected { expected: Token(Ident), found: Token(Gt) }
   variant Expected
-  detail "q expression: expected }, found ["
-"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{aé}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
-  accepted Term(Exists(Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("aé"), sub_attributes: [], trailing: None }) } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }))
-  written "r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{aé}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}", read back to the same tree
-"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}>}}}}}}}}}}}}}}}}}}}}"
-  refused Expected { expected: Token(RBrace), found: Token(Gt) }
-  variant Expected
-  detail "q expression: expected }, found >"
+  detail "q expression: expected identifier, found >"
+"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
+"r{r{r{r{r{r{r{r{r{r{r{rr{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+  refused UnexpectedToken { position: 97, token: Token(RBrace) }
+  variant UnexpectedToken
+  detail "q expression: unexpected } at position 97"
+"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}}}[}}}}}}}}}}}}}}}}}}}"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
+"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{aé}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
+"r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{r{a}}}}}}}}}}}}>}}}}}}}}}}}}}}}}}}}}}"
+  refused PathTooDeep { depth: 33, limit: 32 }
+  variant PathTooDeep
+  detail "q expression: attribute path too deep (33 nested segments, limit 32)"
 "(r{Building,T1:isParked{\"https://example.com/q\".x_1[*]}}|(link{Building,T1,T1:link{Vehicle,T1:link{\"ex:q\".a}}}!=\"abc\"..\"\";link{ex:name[en.city]}<=09:30:00.5Z;r{Building,Vehicle,Vehicle:x_1.brandName.\"https://example.com/q\"[*]}!~=\"\\\\d\"))"
   accepted Or([Term(Exists(Linked { relationship: AttributeName("r"), guard_types: [AttributeName("Building"), AttributeName("T1")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(AllLanguages) }) } })), And([Term(Equality { path: Linked { relationship: AttributeName("link"), guard_types: [AttributeName("Building"), AttributeName("T1"), AttributeName("T1")], inner: Linked { relationship: AttributeName("link"), guard_types: [AttributeName("Vehicle"), AttributeName("T1")], inner: Linked { relationship: AttributeName("link"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: None }) } } }, membership: Outside, value: Range { min: Str("abc"), max: Str("") } }), Term(Ordering { path: Linked { relationship: AttributeName("link"), guard_types: [AttributeName("ex")], inner: Local(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }) }, operator: LessOrEqual, value: Time(09:30:00.500) }), Term(NotMatchPattern { path: Linked { relationship: AttributeName("r"), guard_types: [AttributeName("Building"), AttributeName("Vehicle"), AttributeName("Vehicle")], inner: Local(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }) }, pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } })])])
   written "r{Building,T1:isParked{\"https://example.com/q\".x_1[*]}}|link{Building,T1,T1:link{Vehicle,T1:link{\"ex:q\".a}}}!=\"abc\"..\"\";link{ex:name[en.city]}<=09:30:00.500Z;r{Building,Vehicle,Vehicle:x_1.brandName.\"https://example.com/q\"[*]}!~=\"\\\\d\"", read back to the same tree

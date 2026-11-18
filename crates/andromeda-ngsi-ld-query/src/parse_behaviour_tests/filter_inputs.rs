@@ -294,13 +294,14 @@ pub(super) fn nested_groups() -> [String; 2] {
     [ceiling, ceiling + 1].map(|depth| format!("{}a{}", "(".repeat(depth), ")".repeat(depth)))
 }
 
-/// A dotted path of as many segments as a path may hold, and one more.
+/// A dotted path of as many segments as a path may hold, and one more. A path
+/// holds its leading name and up to [`MAX_SUB_ATTRIBUTE_DEPTH`] nested segments.
 pub(super) fn deep_dotted_paths() -> [String; 2] {
-    [MAX_SUB_ATTRIBUTE_DEPTH, MAX_SUB_ATTRIBUTE_DEPTH + 1].map(|segments| vec!["a"; segments].join("."))
+    [MAX_SUB_ATTRIBUTE_DEPTH + 1, MAX_SUB_ATTRIBUTE_DEPTH + 2].map(|segments| vec!["a"; segments].join("."))
 }
 
 /// A chain of hops whose segments, the attribute it ends on included, number
-/// as many as a path may hold, and one more.
+/// as many as a path may hold, and one more: each hop nests one segment.
 pub(super) fn deep_hops() -> [String; 2] {
-    [MAX_SUB_ATTRIBUTE_DEPTH - 1, MAX_SUB_ATTRIBUTE_DEPTH].map(|hops| format!("{}a{}", "r{".repeat(hops), "}".repeat(hops)))
+    [MAX_SUB_ATTRIBUTE_DEPTH, MAX_SUB_ATTRIBUTE_DEPTH + 1].map(|hops| format!("{}a{}", "r{".repeat(hops), "}".repeat(hops)))
 }
