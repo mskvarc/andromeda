@@ -27,10 +27,11 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 
 /// The `TimescaleDB` version the tenant schema requires.
 ///
-/// The floor is the release the PostgreSQL image ships, patch included, so a
-/// tenant runs the version the broker was built and tested against and the
-/// broker carries no path conditional on an older one. A tenant created on an
-/// earlier image is brought up to the shipped version by
+/// The floor is 2.31.0, the release the first stable PostgreSQL image shipped
+/// and the oldest whose behaviour chunk skipping and the history conversion are
+/// written against, so the broker carries no path conditional on an older one.
+/// A later image may ship a newer release. A tenant created on an earlier image
+/// is brought up to the shipped version by
 /// [`update_extensions`](crate::extension_update::update_extensions) before
 /// this floor is checked. Both editions ship the same package version, so one
 /// floor covers both.
@@ -374,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn the_timescaledb_floor_is_the_release_the_image_ships() {
+    fn the_timescaledb_floor_is_the_release_the_first_stable_image_shipped() {
         pretty_assertions::assert_eq!(REQUIRED_TIMESCALEDB_VERSION, ExtensionVersion::new(2, 31, 0));
     }
 
