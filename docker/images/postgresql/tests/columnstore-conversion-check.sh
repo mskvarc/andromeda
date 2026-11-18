@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # usage: columnstore-conversion-check.sh IMAGE BROKER_IMAGE
 # Asserts that history conversion depends on no TimescaleDB background worker:
-# on a server allowed one background worker, which its launcher takes, two
-# tenants each convert a history chunk past the horizon on the broker's own
-# sweep, truncating its rowstore, keep a chunk holding too few rows per stream
-# in the rowstore, install no TimescaleDB job, and keep every row readable.
+# on a server running none, as the image configures it, two tenants each
+# convert a history chunk past the horizon on the broker's own sweep,
+# truncating its rowstore, keep a chunk holding too few rows per stream in the
+# rowstore, install no TimescaleDB job, and keep every row readable.
 # IMAGE is the TSL edition, which has a columnstore.
 set -Eeuo pipefail
 
@@ -57,16 +57,14 @@ aged_chunks="SELECT count(*) FILTER (WHERE is_compressed) || ' ' || count(*) FIL
 converted_rowstore_bytes="SELECT coalesce(sum(pg_relation_size(format('%I.%I', chunk_schema, chunk_name)::regclass, 'main')), -1) FROM timescaledb_information.chunks WHERE hypertable_name = 'attribute_history' AND is_compressed"
 
 docker network create "$network" > /dev/null
-# timescaledb-tune refuses fewer than 16 background workers, so the limit is
-# given to the server directly.
-docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$image" -c timescaledb.max_background_workers=1 > /dev/null
+docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$image" > /dev/null
 for _ in $(seq 1 120); do
 	if docker exec "$database" pg_isready -q -h 127.0.0.1 2> /dev/null; then
 		break
 	fi
 	sleep 0.5
 done
-expect "timescaledb.max_background_workers" 1 "$(sql andromeda 'SHOW timescaledb.max_background_workers')"
+expect "timescaledb.max_background_workers" 0 "$(sql andromeda 'SHOW timescaledb.max_background_workers')"
 
 docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \

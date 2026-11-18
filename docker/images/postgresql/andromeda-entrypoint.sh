@@ -12,6 +12,10 @@ source /usr/local/bin/docker-entrypoint.sh
 # Directory of the image's fixed policy files, included after the tuner's values.
 ANDROMEDA_POLICY_DIR=/etc/postgresql/andromeda.conf.d
 
+# The TimescaleDB background workers timescaledb-tune sizes for when told none,
+# and the fewest it accepts.
+ANDROMEDA_TUNER_BG_WORKERS=16
+
 # usage: andromeda_main [command [args...]]
 # The base image's start flow, with the tuning added and the initial database
 # renamed. The base image's own flow cannot be reused: its re-exec as the
@@ -130,14 +134,17 @@ andromeda_tune() {
 	max_conns="$(andromeda_command_line_max_connections "$@")"
 	# The broker's default pools need about 150 connections.
 	: "${max_conns:=${TS_TUNE_MAX_CONNS:-200}}"
-	bg_workers="${TS_TUNE_MAX_BG_WORKERS:-64}"
+	bg_workers="$(andromeda_background_workers)"
 
+	# The tuner refuses fewer than its own default of background workers, and
+	# the derived file overrides what it writes for them and for
+	# max_worker_processes, so a smaller count reaches it raised.
 	timescaledb-tune \
 		--conf-path="$conf" \
 		--memory="${tune_mb}MB" \
 		--cpus="$cpus" \
 		--max-conns="$max_conns" \
-		--max-bg-workers="$bg_workers" \
+		--max-bg-workers="$(( bg_workers > ANDROMEDA_TUNER_BG_WORKERS ? bg_workers : ANDROMEDA_TUNER_BG_WORKERS ))" \
 		--wal-disk-size="${TS_TUNE_WAL_DISK_SIZE:-${wal_disk_mb}MB}" \
 		--color=false \
 		--yes
@@ -149,9 +156,31 @@ andromeda_tune() {
 	andromeda_check_shared_memory
 }
 
+# usage: andromeda_background_workers
+# Prints the TimescaleDB background workers TS_TUNE_MAX_BG_WORKERS asks for:
+# none when it is unset, off or 0, the tuner's default when it is tune, and the
+# number it names otherwise. The broker converts history to the columnstore
+# and ages it out itself and creates no TimescaleDB job, so it needs none. Each
+# worker the server allows lets one more database holding the extension keep a
+# scheduler process, one per tenant database.
+andromeda_background_workers() {
+	case "${TS_TUNE_MAX_BG_WORKERS:-off}" in
+		off) printf '0\n' ;;
+		tune) printf '%s\n' "$ANDROMEDA_TUNER_BG_WORKERS" ;;
+		*)
+			if [[ ! "$TS_TUNE_MAX_BG_WORKERS" =~ ^[0-9]+$ ]]; then
+				printf >&2 'error: TS_TUNE_MAX_BG_WORKERS must be off, tune or a number of workers, got %s\n' "$TS_TUNE_MAX_BG_WORKERS"
+				exit 1
+			fi
+			printf '%s\n' "$(( 10#$TS_TUNE_MAX_BG_WORKERS ))"
+			;;
+	esac
+}
+
 # usage: andromeda_write_derived TUNE_MB CPUS BG_WORKERS [server-args...]
 # Writes $PGDATA/andromeda-derived.conf with the hardware-dependent values the
-# tuner does not compute. Rewritten on every start.
+# tuner does not compute, and the TimescaleDB background workers with the
+# worker processes they need. Rewritten on every start.
 andromeda_write_derived() {
 	local tune_mb="$1" cpus="$2" bg_workers="$3"
 	shift 3
@@ -215,15 +244,14 @@ andromeda_write_derived() {
 		max_wal_size = ${max_wal_mb}MB
 		min_wal_size = ${min_wal_mb}MB
 		work_mem = ${work_mem_kb}kB
+		timescaledb.max_background_workers = ${bg_workers}
+		max_worker_processes = $(( bg_workers + cpus + 3 ))
 	EOF
-	# At one CPU the tuner writes no worker settings, which leaves PostgreSQL's
-	# 8 worker processes and TimescaleDB's 16 background workers. From two CPUs
-	# up it sizes max_worker_processes as the background workers plus the CPUs
-	# plus 3, which one CPU continues.
+	# The tuner sizes max_worker_processes as the background workers plus the
+	# CPUs plus 3 from two CPUs up and writes no worker settings at one, so the
+	# same sizing is written here for every count, whatever the tuner was told.
 	if [ "$cpus" -eq 1 ]; then
 		cat >> "$derived" <<-EOF
-			max_worker_processes = $(( bg_workers + 4 ))
-			timescaledb.max_background_workers = ${bg_workers}
 			max_parallel_workers = 1
 			max_parallel_workers_per_gather = 0
 		EOF
