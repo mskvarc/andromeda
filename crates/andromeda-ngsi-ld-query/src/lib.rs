@@ -42,6 +42,8 @@ pub mod non_posix_construct;
 pub mod ordering;
 pub mod page_reach;
 pub mod page_window;
+#[cfg(test)]
+mod parse_behaviour_tests;
 pub mod pattern;
 pub mod portable_pattern;
 pub mod posix_dialect;

@@ -1,0 +1,342 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+---
+"de"
+  accepted IcuCollation(de)
+  written "de", read back to the same tree
+")e"
+  refused InvalidTag(LangTag(")e"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"{de"
+  refused InvalidTag(LangTag("{de"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"e"
+  refused InvalidTag(LangTag("e"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"deZ"
+  accepted IcuCollation(deZ)
+  written "deZ", read back to the same tree
+"en-GB"
+  accepted IcuCollation(en-GB)
+  written "en-GB", read back to the same tree
+"en-G|"
+  refused InvalidTag(LangTag("en-G|"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en-G\t"
+  refused InvalidTag(LangTag("en-G"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en{GB"
+  refused InvalidTag(LangTag("en{GB"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en-GB+"
+  refused InvalidTag(LangTag("en-GB+"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-co-phonebk"
+  accepted IcuCollation(de-u-co-phonebk)
+  written "de-u-co-phonebk", read back to the same tree
+"deu-co-phonebk"
+  accepted IcuCollation(deu-co-phonebk)
+  written "deu-co-phonebk", read back to the same tree
+"de-u-co-phone!bk"
+  refused InvalidTag(LangTag("de-u-co-phone!bk"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-uco-phonebk"
+  accepted IcuCollation(de-uco-phonebk)
+  written "de-uco-phonebk", read back to the same tree
+"de-u0-co-phonebk"
+  refused InvalidTag(LangTag("de-u0-co-phonebk"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en-u-kn-true"
+  accepted IcuCollation(en-u-kn-true)
+  written "en-u-kn-true", read back to the same tree
+"en*-u-kn-true"
+  refused InvalidTag(LangTag("en*-u-kn-true"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en-u-n-true"
+  refused InvalidTag(LangTag("en-u-n-true"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en|-u-kn-true"
+  refused InvalidTag(LangTag("en|-u-kn-true"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en-u-@n-true"
+  refused InvalidTag(LangTag("en-u-@n-true"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-xx-yy"
+  refused UnknownCollationKeyword
+  variant UnknownCollationKeyword
+  detail "collation identifier declares a Unicode keyword that is not an ICU collation setting"
+"de-%u-xx-yy"
+  refused InvalidTag(LangTag("de-%u-xx-yy"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-x-yy"
+  refused InvalidTag(LangTag("de-u-x-yy"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-;x-yy"
+  refused InvalidTag(LangTag("de-u-;x-yy"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-uxx-yy"
+  accepted IcuCollation(de-uxx-yy)
+  written "de-uxx-yy", read back to the same tree
+"de-u-co-bogus"
+  refused UnknownCollationKeywordType { keyword: Co }
+  variant UnknownCollationKeywordType
+  detail "collation identifier sets 'co' to a type IETF RFC 6067 does not register for it"
+"de-u-c -bogus"
+  refused InvalidTag(LangTag("de-u-c -bogus"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-c-bogus"
+  refused InvalidTag(LangTag("de-u-c-bogus"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"=e-u-co-bogus"
+  refused InvalidTag(LangTag("=e-u-co-bogus"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de--co-bogus"
+  refused InvalidTag(LangTag("de--co-bogus"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+""
+  refused Empty
+  variant Empty
+  detail "collation identifier must not be empty"
+"+"
+  refused InvalidTag(LangTag("+"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"."
+  refused InvalidTag(LangTag("."))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"#"
+  refused InvalidTag(LangTag("#"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"-"
+  refused InvalidTag(LangTag("-"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"  "
+  refused Empty
+  variant Empty
+  detail "collation identifier must not be empty"
+" <"
+  refused InvalidTag(LangTag("<"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"\t  "
+  refused Empty
+  variant Empty
+  detail "collation identifier must not be empty"
+"  {"
+  refused InvalidTag(LangTag("{"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"(  "
+  refused InvalidTag(LangTag("("))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+" de "
+  accepted IcuCollation(de)
+  written "de", read back to the same tree
+" de }"
+  refused InvalidTag(LangTag("de }"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+" d~ "
+  refused InvalidTag(LangTag("d~"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"Z de "
+  refused InvalidTag(LangTag("Z de"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+" de+ "
+  refused InvalidTag(LangTag("de+"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"x"
+  refused InvalidTag(LangTag("x"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+" x"
+  refused InvalidTag(LangTag("x"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"[x"
+  refused InvalidTag(LangTag("[x"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"*x"
+  refused InvalidTag(LangTag("*x"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"en_GB"
+  refused InvalidTag(LangTag("en_GB"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"-n_GB"
+  refused InvalidTag(LangTag("-n_GB"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"e~_GB"
+  refused InvalidTag(LangTag("e~_GB"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"<n_GB"
+  refused InvalidTag(LangTag("<n_GB"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+">en_GB"
+  refused InvalidTag(LangTag(">en_GB"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"und"
+  accepted IcuCollation(und)
+  written "und", read back to the same tree
+"ud"
+  accepted IcuCollation(ud)
+  written "ud", read back to the same tree
+"und#"
+  refused InvalidTag(LangTag("und#"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"un="
+  refused InvalidTag(LangTag("un="))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"u)nd"
+  refused InvalidTag(LangTag("u)nd"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-ks-level2"
+  accepted IcuCollation(de-u-ks-level2)
+  written "de-u-ks-level2", read back to the same tree
+"de-u-ks-}evel2"
+  refused InvalidTag(LangTag("de-u-ks-}evel2"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-u-ks-le9vel2"
+  refused UnknownCollationKeywordType { keyword: Ks }
+  variant UnknownCollationKeywordType
+  detail "collation identifier sets 'ks' to a type IETF RFC 6067 does not register for it"
+"deu-ks-level2"
+  accepted IcuCollation(deu-ks-level2)
+  written "deu-ks-level2", read back to the same tree
+"de-u-ks>-level2"
+  refused InvalidTag(LangTag("de-u-ks>-level2"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"zh-u-co-pinyin"
+  accepted IcuCollation(zh-u-co-pinyin)
+  written "zh-u-co-pinyin", read back to the same tree
+"zh-u-co-pin{in"
+  refused InvalidTag(LangTag("zh-u-co-pin{in"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"zh-u-co-piny{in"
+  refused InvalidTag(LangTag("zh-u-co-piny{in"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"zh-u-co-inyin"
+  refused UnknownCollationKeywordType { keyword: Co }
+  variant UnknownCollationKeywordType
+  detail "collation identifier sets 'co' to a type IETF RFC 6067 does not register for it"
+"z<h-u-co-pinyin"
+  refused InvalidTag(LangTag("z<h-u-co-pinyin"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"not a tag"
+  refused InvalidTag(LangTag("not a tag"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"not a{ tag"
+  refused InvalidTag(LangTag("not a{ tag"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"not a ta"
+  refused InvalidTag(LangTag("not a ta"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"no a tag"
+  refused InvalidTag(LangTag("no a tag"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"not a ~tag"
+  refused InvalidTag(LangTag("not a ~tag"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-DE-u-co-phonebk-kn"
+  accepted IcuCollation(de-DE-u-co-phonebk-kn)
+  written "de-DE-u-co-phonebk-kn", read back to the same tree
+"de-DE-u -co-phonebk-kn"
+  refused InvalidTag(LangTag("de-DE-u -co-phonebk-kn"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-DEu-co-phonebk-kn"
+  refused InvalidTag(LangTag("de-DEu-co-phonebk-kn"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-E-u-co-phonebk-kn"
+  refused InvalidTag(LangTag("de-E-u-co-phonebk-kn"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"de-DE-u-co-phonebk-k9n"
+  refused UnknownCollationKeywordType { keyword: Co }
+  variant UnknownCollationKeywordType
+  detail "collation identifier sets 'co' to a type IETF RFC 6067 does not register for it"
+"i-klingon"
+  accepted IcuCollation(i-klingon)
+  written "i-klingon", read back to the same tree
+"i-klinon"
+  refused InvalidTag(LangTag("i-klinon"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"i-kingon"
+  refused InvalidTag(LangTag("i-kingon"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"i-klingo"
+  refused InvalidTag(LangTag("i-klingo"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"i-klingo;"
+  refused InvalidTag(LangTag("i-klingo;"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"x-private"
+  accepted IcuCollation(x-private)
+  written "x-private", read back to the same tree
+"x-priva[te"
+  refused InvalidTag(LangTag("x-priva[te"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"x-p#ivate"
+  refused InvalidTag(LangTag("x-p#ivate"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"x-privat]"
+  refused InvalidTag(LangTag("x-privat]"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"
+"-private"
+  refused InvalidTag(LangTag("-private"))
+  variant InvalidTag/LangTag
+  detail "invalid BCP47 collation identifier"

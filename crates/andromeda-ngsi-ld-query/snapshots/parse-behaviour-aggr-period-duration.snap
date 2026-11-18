@@ -1,0 +1,355 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+---
+"PT1H"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 0.0, hour: 1.0, minute: 0.0, second: 0.0 })))
+"P)1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P{T1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"PT1HZ"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 4 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 4"
+"P1D"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 1.0, hour: 0.0, minute: 0.0, second: 0.0 })))
+"P1|"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"P1\t"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P{D"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P1D+"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 3 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 3"
+"P1M"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 1.0, day: 0.0, hour: 0.0, minute: 0.0, second: 0.0 })))
+"1M"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P1M!"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 3 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 3"
+"P01M"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 1.0, day: 0.0, hour: 0.0, minute: 0.0, second: 0.0 })))
+"P1Y"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 1.0, month: 0.0, day: 0.0, hour: 0.0, minute: 0.0, second: 0.0 })))
+"*P1Y"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"PY"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"|P1Y"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P@Y"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P1W"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 7.0, hour: 0.0, minute: 0.0, second: 0.0 })))
+"P%1W"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"PW"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P;W"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"PT0S"
+  accepted None
+"PT S"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"PTS"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"=T0S"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P0S"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P0D"
+  accepted None
+"P0D+"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 3 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 3"
+".0D"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P0"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P0-D"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+""
+  accepted None
+"<"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"\t"
+  accepted None
+"{"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"("
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+" "
+  accepted None
+" }"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"~"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"Z "
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+" +"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"PT1.5H"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 0.0, hour: 1.5, minute: 0.0, second: 0.0 })))
+"PT 1.5H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"[PT1.5H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"*PT1.5H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"PT.5H"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 0.0, hour: 0.5, minute: 0.0, second: 0.0 })))
+"P1DT12H"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 1.0, hour: 12.0, minute: 0.0, second: 0.0 })))
+"-1DT12H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P1~T12H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"P<DT12H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P>1DT12H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"1H#"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"1="
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+")1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"}"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P9"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+">P"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"PT"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"P{"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"PT{"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"<PT"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"-PT1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"-PT{1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"-PT1"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"-T1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"-PT1~H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P 1H"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P1H9"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"PT1M"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 0.0, hour: 0.0, minute: 1.0, second: 0.0 })))
+"PTM"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"PT1"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+"PT1;"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 3 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 3"
+"p1d"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"p1[d"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"p#d"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"p1]"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"1d"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P0.5D"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 0.5, hour: 0.0, minute: 0.0, second: 0.0 })))
+"P0.5D#"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 5 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 5"
+"0.5D"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 0 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 0"
+"P0,5D"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+"P0.{D"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 3 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 3"
+"P1Y2M3DT4H5M6S"
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 1.0, month: 2.0, day: 3.0, hour: 4.0, minute: 5.0, second: 6.0 })))
+"P1Y2:3DT4H5M6S"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 4 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 4"
+"P1Y2M3DT4H5M6S:"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 14 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 14"
+"P1Y2M~3DT4H5M6S"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 5 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 5"
+"P:Y2M3DT4H5M6S"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+" P1D "
+  accepted Some(AggregationPeriod(Iso8601Duration(Duration { year: 0.0, month: 0.0, day: 1.0, hour: 0.0, minute: 0.0, second: 0.0 })))
+" P<1D "
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 1 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 1"
+" P1D é"
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 3 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 3"
+" P1ZD "
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"
+" P1]D "
+  refused ParamAggrPeriodDurationInvalid(Malformed { position: 2 })
+  variant ParamAggrPeriodDurationInvalid/Malformed
+  detail "invalid aggrPeriodDuration value: not an ISO 8601 duration at position 2"

@@ -1,0 +1,1513 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+---
+"datasetId"
+  accepted Member(DatasetId)
+"dat)setId"
+  refused QUnexpectedToken { position: 1, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 1"
+"dat{asetId"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"daasetId"
+  accepted Path(AttrPath { attr: AttributeName("daasetId"), sub_attrs: [], trailing: None })
+"datasetIdZ"
+  accepted Path(AttrPath { attr: AttributeName("datasetIdZ"), sub_attrs: [], trailing: None })
+"unitCode"
+  accepted Member(UnitCode)
+"unitCod|"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"unitCod\t"
+  accepted Path(AttrPath { attr: AttributeName("unitCod"), sub_attrs: [], trailing: None })
+"uni{Code"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"unitCod+e"
+  refused QUnexpectedChar { ch: '+', position: 7 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 7"
+"speed"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: None })
+"peed"
+  accepted Path(AttrPath { attr: AttributeName("peed"), sub_attrs: [], trailing: None })
+"speed!"
+  refused QUnexpectedChar { ch: '!', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '!' at position 5"
+"seed"
+  accepted Path(AttrPath { attr: AttributeName("seed"), sub_attrs: [], trailing: None })
+"s0peed"
+  accepted Path(AttrPath { attr: AttributeName("s0peed"), sub_attrs: [], trailing: None })
+"address[city]"
+  accepted Path(AttrPath { attr: AttributeName("address"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+"ad*dress[city]"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"addres[city]"
+  accepted Path(AttrPath { attr: AttributeName("addres"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+"ad|dress[city]"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"addre@s[city]"
+  refused QUnexpectedChar { ch: '@', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '@' at position 5"
+"refDevice.category"
+  accepted Path(AttrPath { attr: AttributeName("refDevice"), sub_attrs: [AttributeName("category")], trailing: None })
+"refDe%vice.category"
+  refused QUnexpectedChar { ch: '%', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 5"
+"refDevice.ategory"
+  accepted Path(AttrPath { attr: AttributeName("refDevice"), sub_attrs: [AttributeName("ategory")], trailing: None })
+"refDevice.;ategory"
+  refused QExpected { expected: Token(Ident), found: Token(Semi) }
+  variant QExpected
+  detail "q expression: expected identifier, found ;"
+"refDevic.category"
+  accepted Path(AttrPath { attr: AttributeName("refDevic"), sub_attrs: [AttributeName("category")], trailing: None })
+"datasetId.foo"
+  accepted Path(AttrPath { attr: AttributeName("datasetId"), sub_attrs: [AttributeName("foo")], trailing: None })
+"datase Id.foo"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"dataseId.foo"
+  accepted Path(AttrPath { attr: AttributeName("dataseId"), sub_attrs: [AttributeName("foo")], trailing: None })
+"=atasetId.foo"
+  refused QUnexpectedChar { ch: '=', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 0"
+"datsetId.foo"
+  accepted Path(AttrPath { attr: AttributeName("datsetId"), sub_attrs: [AttributeName("foo")], trailing: None })
+"a["
+  refused QExpected { expected: Token(Ident), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected identifier, found end of input"
+"a[+"
+  refused QUnexpectedChar { ch: '+', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 2"
+".["
+  refused QExpected { expected: Token(Ident), found: Token(Dot) }
+  variant QExpected
+  detail "q expression: expected identifier, found ."
+"a"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [], trailing: None })
+"a[-"
+  refused QUnexpectedChar { ch: '-', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '-' at position 2"
+"a[]"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"a[<"
+  refused QExpected { expected: Token(Ident), found: Token(Lt) }
+  variant QExpected
+  detail "q expression: expected identifier, found <"
+"a\t[]"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"a[]{"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"a([]"
+  refused QUnexpectedToken { position: 1, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 1"
+"a."
+  refused QExpected { expected: Token(Ident), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected identifier, found end of input"
+"a.}"
+  refused QExpected { expected: Token(Ident), found: Token(RBrace) }
+  variant QExpected
+  detail "q expression: expected identifier, found }"
+"a~"
+  refused QUnexpectedChar { ch: '~', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 1"
+"Za."
+  refused QExpected { expected: Token(Ident), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected identifier, found end of input"
+"a.+"
+  refused QUnexpectedChar { ch: '+', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 2"
+"rel{attr}"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"rel {attr}"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"[rel{attr}"
+  refused QExpected { expected: Token(Ident), found: Token(LBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ["
+"r*el{attr}"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"rel{ttr}"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+""
+  refused QExpected { expected: Token(Ident), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected identifier, found end of input"
+"-"
+  refused QUnexpectedChar { ch: '-', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '-' at position 0"
+"~"
+  refused QUnexpectedChar { ch: '~', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 0"
+"<"
+  refused QExpected { expected: Token(Ident), found: Token(Lt) }
+  variant QExpected
+  detail "q expression: expected identifier, found <"
+">"
+  refused QExpected { expected: Token(Ident), found: Token(Gt) }
+  variant QExpected
+  detail "q expression: expected identifier, found >"
+" speed "
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: None })
+" sped "
+  accepted Path(AttrPath { attr: AttributeName("sped"), sub_attrs: [], trailing: None })
+" speed# "
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+" spee= "
+  refused QUnexpectedChar { ch: '=', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 5"
+" s)peed "
+  refused QUnexpectedToken { position: 1, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 1"
+"id"
+  accepted Member(Id)
+"i}"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+"id9"
+  accepted Path(AttrPath { attr: AttributeName("id9"), sub_attrs: [], trailing: None })
+"d"
+  accepted Path(AttrPath { attr: AttributeName("d"), sub_attrs: [], trailing: None })
+"i>d"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+"type"
+  accepted Member(Type)
+"typ{"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"type{"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"tye"
+  accepted Path(AttrPath { attr: AttributeName("tye"), sub_attrs: [], trailing: None })
+"<type"
+  refused QExpected { expected: Token(Ident), found: Token(Lt) }
+  variant QExpected
+  detail "q expression: expected identifier, found <"
+"scope"
+  accepted Member(Scope)
+"sco{pe"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"scop"
+  accepted Path(AttrPath { attr: AttributeName("scop"), sub_attrs: [], trailing: None })
+"sope"
+  accepted Path(AttrPath { attr: AttributeName("sope"), sub_attrs: [], trailing: None })
+"scop~e"
+  refused QUnexpectedChar { ch: '~', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 4"
+"observedAt"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: None })
+"obs ervedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"obervedAt"
+  accepted Path(AttrPath { attr: AttributeName("obervedAt"), sub_attrs: [], trailing: None })
+"oservedAt"
+  accepted Path(AttrPath { attr: AttributeName("oservedAt"), sub_attrs: [], trailing: None })
+"observedAt9"
+  accepted Path(AttrPath { attr: AttributeName("observedAt9"), sub_attrs: [], trailing: None })
+"name[*]"
+  accepted Path(AttrPath { attr: AttributeName("name"), sub_attrs: [], trailing: Some(AllLanguages) })
+"name[]"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"nae[*]"
+  accepted Path(AttrPath { attr: AttributeName("nae"), sub_attrs: [], trailing: Some(AllLanguages) })
+"name[*"
+  refused QExpected { expected: Token(RBracket), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected ], found end of input"
+"name[*;"
+  refused QExpected { expected: Token(RBracket), found: Token(Semi) }
+  variant QExpected
+  detail "q expression: expected ], found ;"
+"name[en-GB]"
+  accepted Path(AttrPath { attr: AttributeName("name"), sub_attrs: [], trailing: Some(Language(Tag(en-GB))) })
+"name[en-[GB]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"name#en-GB]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"ame[en-GB]"
+  accepted Path(AttrPath { attr: AttributeName("ame"), sub_attrs: [], trailing: Some(Language(Tag(en-GB))) })
+"\"ex:q\""
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [], trailing: None })
+"\"ex:q#\""
+  accepted Path(AttrPath { attr: AttributeName("ex:q#"), sub_attrs: [], trailing: None })
+"ex:q\""
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"\"ex,q\""
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"\"ex{q\""
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"DatasetId"
+  accepted Path(AttrPath { attr: AttributeName("DatasetId"), sub_attrs: [], trailing: None })
+"Da:asetId"
+  accepted Path(AttrPath { attr: AttributeName("Da:asetId"), sub_attrs: [], trailing: None })
+"DatasetId:"
+  accepted Path(AttrPath { attr: AttributeName("DatasetId:"), sub_attrs: [], trailing: None })
+"Dat~asetId"
+  refused QUnexpectedChar { ch: '~', position: 3 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 3"
+"D:tasetId"
+  accepted Path(AttrPath { attr: AttributeName("D:tasetId"), sub_attrs: [], trailing: None })
+"modifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("modifiedAt"), sub_attrs: [], trailing: None })
+"mdifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("mdifiedAt"), sub_attrs: [], trailing: None })
+"m#odifiedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"mod#ifiedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"maodifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("maodifiedAt"), sub_attrs: [], trailing: None })
+"ty>pe"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+"createdAt"
+  accepted Path(AttrPath { attr: AttributeName("createdAt"), sub_attrs: [], trailing: None })
+"createdA9"
+  accepted Path(AttrPath { attr: AttributeName("createdA9"), sub_attrs: [], trailing: None })
+"éreatedAt"
+  accepted Path(AttrPath { attr: AttributeName("éreatedAt"), sub_attrs: [], trailing: None })
+"brandName[*]"
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [], trailing: Some(AllLanguages) })
+"brandame[*]"
+  accepted Path(AttrPath { attr: AttributeName("brandame"), sub_attrs: [], trailing: Some(AllLanguages) })
+"brand@Name[*]"
+  refused QUnexpectedChar { ch: '@', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '@' at position 5"
+"observedAt}"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+",bservedAt"
+  refused QExpected { expected: Token(Ident), found: Token(Comma) }
+  variant QExpected
+  detail "q expression: expected identifier, found ,"
+"mo<difiedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Lt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected < at position 1"
+"moifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("moifiedAt"), sub_attrs: [], trailing: None })
+"i"
+  accepted Path(AttrPath { attr: AttributeName("i"), sub_attrs: [], trailing: None })
+"c:eatedAt"
+  accepted Path(AttrPath { attr: AttributeName("c:eatedAt"), sub_attrs: [], trailing: None })
+"ceatedAt"
+  accepted Path(AttrPath { attr: AttributeName("ceatedAt"), sub_attrs: [], trailing: None })
+"\"https://example.com/q\".a.\"https://example.com/q\""
+  accepted Path(AttrPath { attr: AttributeName("https://example.com/q"), sub_attrs: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: None })
+"\"https://example.com/q\".a.\"https\"://example.com/q\""
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"\"https://example.com/q\".a.\"h-tps://example.com/q\""
+  accepted Path(AttrPath { attr: AttributeName("https://example.com/q"), sub_attrs: [AttributeName("a"), AttributeName("h-tps://example.com/q")], trailing: None })
+"\tex:q\""
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"\"ex:q{"
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"speed.observedAt[*]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("observedAt")], trailing: Some(AllLanguages) })
+"speed.observedAt*]"
+  refused QUnexpectedToken { position: 3, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 3"
+"speed.observedA[*]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("observedA")], trailing: Some(AllLanguages) })
+"craeatedAt"
+  accepted Path(AttrPath { attr: AttributeName("craeatedAt"), sub_attrs: [], trailing: None })
+"crea;tedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Semi) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ; at position 1"
+"unitCo#e"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"unitCod:"
+  accepted Path(AttrPath { attr: AttributeName("unitCod:"), sub_attrs: [], trailing: None })
+"i@"
+  refused QUnexpectedChar { ch: '@', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '@' at position 1"
+"0d"
+  refused QExpected { expected: Token(Ident), found: Token(NumberLit) }
+  variant QExpected
+  detail "q expression: expected identifier, found number"
+"modfiedAt"
+  accepted Path(AttrPath { attr: AttributeName("modfiedAt"), sub_attrs: [], trailing: None })
+"modifiedt"
+  accepted Path(AttrPath { attr: AttributeName("modifiedt"), sub_attrs: [], trailing: None })
+"obs|rvedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"obsevedAt"
+  accepted Path(AttrPath { attr: AttributeName("obsevedAt"), sub_attrs: [], trailing: None })
+"deletedAt"
+  accepted Path(AttrPath { attr: AttributeName("deletedAt"), sub_attrs: [], trailing: None })
+"deletedA"
+  accepted Path(AttrPath { attr: AttributeName("deletedA"), sub_attrs: [], trailing: None })
+"de)etedAt"
+  refused QUnexpectedToken { position: 1, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 1"
+"\"observedAt"
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"observedét"
+  accepted Path(AttrPath { attr: AttributeName("observedét"), sub_attrs: [], trailing: None })
+"\"ex:q\".observedAt"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("observedAt")], trailing: None })
+"\"ex:q\".bservedAt"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("bservedAt")], trailing: None })
+"\"ex:q\".obs<ervedAt"
+  refused QUnexpectedToken { position: 3, token: Token(Lt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected < at position 3"
+"deletedA;"
+  refused QUnexpectedToken { position: 1, token: Token(Semi) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ; at position 1"
+"]eletedAt"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"brandName.observedAt.\"https://example.com/q\""
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("observedAt"), AttributeName("https://example.com/q")], trailing: None })
+"brandName.observedAt.\"https:#/example.com/q\""
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("observedAt"), AttributeName("https:#/example.com/q")], trailing: None })
+"brandName.observedAt.\"https://exampéle.com/q\""
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("observedAt"), AttributeName("https://exampéle.com/q")], trailing: None })
+"%modifiedAt"
+  refused QUnexpectedChar { ch: '%', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 0"
+"ZmodifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("ZmodifiedAt"), sub_attrs: [], trailing: None })
+"x_1[*]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [], trailing: Some(AllLanguages) })
+"x_[*]"
+  accepted Path(AttrPath { attr: AttributeName("x_"), sub_attrs: [], trailing: Some(AllLanguages) })
+"x_1[*~"
+  refused QUnexpectedChar { ch: '~', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 5"
+"\"ex:q\".\"ex:q\".speed[*]"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(AllLanguages) })
+"\"ex:q\".\"ex:q\".spe;d[*]"
+  refused QUnexpectedToken { position: 5, token: Token(Semi) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ; at position 5"
+"\"ex/:q\".\"ex:q\".speed[*]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"speed.speed.ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("speed"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"speed.spee<.ex:name[*]"
+  refused QUnexpectedToken { position: 3, token: Token(Lt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected < at position 3"
+"sp\\eed.speed.ex:name[*]"
+  refused QUnexpectedChar { ch: '\\', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 2"
+"speed[*]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(AllLanguages) })
+"speed*]"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"sped[*]"
+  accepted Path(AttrPath { attr: AttributeName("sped"), sub_attrs: [], trailing: Some(AllLanguages) })
+"scoape"
+  accepted Path(AttrPath { attr: AttributeName("scoape"), sub_attrs: [], trailing: None })
+"scpe"
+  accepted Path(AttrPath { attr: AttributeName("scpe"), sub_attrs: [], trailing: None })
+"observedA"
+  accepted Path(AttrPath { attr: AttributeName("observedA"), sub_attrs: [], trailing: None })
+"speed[en]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+"speed[en"
+  refused QExpected { expected: Token(RBracket), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected ], found end of input"
+"speed[e]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
+"a.brandName[city.city]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) })
+"a.brandName city.city]"
+  refused QUnexpectedToken { position: 3, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 3"
+"a.brandName[city.ity]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("ity")], written: [AttributeName("city"), AttributeName("ity")] })) })
+"cratedAt"
+  accepted Path(AttrPath { attr: AttributeName("cratedAt"), sub_attrs: [], trailing: None })
+"reatedAt"
+  accepted Path(AttrPath { attr: AttributeName("reatedAt"), sub_attrs: [], trailing: None })
+"a.a[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("a")], trailing: Some(AllLanguages) })
+"a=a[*]"
+  refused QUnexpectedChar { ch: '=', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 1"
+"a.a[]]"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"deleted;At"
+  refused QUnexpectedToken { position: 1, token: Token(Semi) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ; at position 1"
+"de~letedAt"
+  refused QUnexpectedChar { ch: '~', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 2"
+"deZetedAt"
+  accepted Path(AttrPath { attr: AttributeName("deZetedAt"), sub_attrs: [], trailing: None })
+"deletedA-t"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"deletedét"
+  accepted Path(AttrPath { attr: AttributeName("deletedét"), sub_attrs: [], trailing: None })
+"de<letedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Lt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected < at position 1"
+"observedAt[*]"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: Some(AllLanguages) })
+"ob]servedAt[*]"
+  refused QUnexpectedToken { position: 1, token: Token(RBracket) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ] at position 1"
+"obse}rvedAt[*]"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+"(atasetId"
+  refused QExpected { expected: Token(Ident), found: Token(LParen) }
+  variant QExpected
+  detail "q expression: expected identifier, found ("
+"datasetI\""
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"id\t"
+  accepted Member(Id)
+"i-"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"ex:name"
+  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: None })
+"ex:nae"
+  accepted Path(AttrPath { attr: AttributeName("ex:nae"), sub_attrs: [], trailing: None })
+"~ex:name"
+  refused QUnexpectedChar { ch: '~', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 0"
+"a.observedAt.observedAt"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: None })
+"a.observedAt.ob)ervedAt"
+  refused QUnexpectedToken { position: 5, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 5"
+"a.observedAt.observedA("
+  refused QUnexpectedToken { position: 5, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 5"
+"a[b.b]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) })
+"a[b.;]"
+  refused QExpected { expected: Token(Ident), found: Token(Semi) }
+  variant QExpected
+  detail "q expression: expected identifier, found ;"
+"a[b.]"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: Some(AllLanguages) })
+"ex:na*e[*]"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"ex:}name[*]"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+"m.difiedAt"
+  accepted Path(AttrPath { attr: AttributeName("m"), sub_attrs: [AttributeName("difiedAt")], trailing: None })
+"modified~At"
+  refused QUnexpectedChar { ch: '~', position: 8 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 8"
+"modifi=dAt"
+  refused QUnexpectedChar { ch: '=', position: 6 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 6"
+"m(difiedAt"
+  refused QUnexpectedToken { position: 1, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 1"
+"x_1[b]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"xZ1[b]"
+  accepted Path(AttrPath { attr: AttributeName("xZ1"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"x_9[b]"
+  accepted Path(AttrPath { attr: AttributeName("x_9"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"unitCod"
+  accepted Path(AttrPath { attr: AttributeName("unitCod"), sub_attrs: [], trailing: None })
+"uniCode"
+  accepted Path(AttrPath { attr: AttributeName("uniCode"), sub_attrs: [], trailing: None })
+"dataseId"
+  accepted Path(AttrPath { attr: AttributeName("dataseId"), sub_attrs: [], trailing: None })
+"datasetd"
+  accepted Path(AttrPath { attr: AttributeName("datasetd"), sub_attrs: [], trailing: None })
+":atasetId"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"obseévedAt"
+  accepted Path(AttrPath { attr: AttributeName("obseévedAt"), sub_attrs: [], trailing: None })
+"observedAt.x_1"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("x_1")], trailing: None })
+"observedA.t.x_1"
+  accepted Path(AttrPath { attr: AttributeName("observedA"), sub_attrs: [AttributeName("t"), AttributeName("x_1")], trailing: None })
+"ob[servedAt.x_1"
+  refused QExpected { expected: Token(RBracket), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected ], found end of input"
+"i."
+  refused QExpected { expected: Token(Ident), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected identifier, found end of input"
+"scop\\e"
+  refused QUnexpectedChar { ch: '\\', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 4"
+"scoZe"
+  accepted Path(AttrPath { attr: AttributeName("scoZe"), sub_attrs: [], trailing: None })
+"observ(edAt"
+  refused QUnexpectedToken { position: 1, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 1"
+"obse+rvedAt"
+  refused QUnexpectedChar { ch: '+', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 4"
+"x_1"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [], trailing: None })
+"x_1\""
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"a_1"
+  accepted Path(AttrPath { attr: AttributeName("a_1"), sub_attrs: [], trailing: None })
+"mod\\fiedAt"
+  refused QUnexpectedChar { ch: '\\', position: 3 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 3"
+">modifiedAt"
+  refused QExpected { expected: Token(Ident), found: Token(Gt) }
+  variant QExpected
+  detail "q expression: expected identifier, found >"
+"ype"
+  accepted Path(AttrPath { attr: AttributeName("ype"), sub_attrs: [], trailing: None })
+"scop:"
+  accepted Path(AttrPath { attr: AttributeName("scop:"), sub_attrs: [], trailing: None })
+"data!setId"
+  refused QUnexpectedChar { ch: '!', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '!' at position 4"
+"datasetId-"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"#id"
+  refused QUnexpectedChar { ch: '#', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '#' at position 0"
+"id|"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"ty!e"
+  refused QUnexpectedChar { ch: '!', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '!' at position 2"
+"étype"
+  accepted Path(AttrPath { attr: AttributeName("étype"), sub_attrs: [], trailing: None })
+"speed.a.ex:name[city]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("a"), AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+"speed}.a.ex:name[city]"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+"speed.a.ex:ame[city]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("a"), AttributeName("ex:ame")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
+"scope\\"
+  refused QUnexpectedChar { ch: '\\', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 5"
+"sc@pe"
+  refused QUnexpectedChar { ch: '@', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '@' at position 2"
+"datas\ttId"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"dat|setId"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"oabservedAt"
+  accepted Path(AttrPath { attr: AttributeName("oabservedAt"), sub_attrs: [], trailing: None })
+"obser+vedAt"
+  refused QUnexpectedChar { ch: '+', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 5"
+"a.x_1"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_1")], trailing: None })
+"a.x_:1"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_:1")], trailing: None })
+"a.x_("
+  refused QUnexpectedToken { position: 3, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 3"
+"observedAt.ex:name[en.b]"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
+"observedt.ex:name[en.b]"
+  accepted Path(AttrPath { attr: AttributeName("observedt"), sub_attrs: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
+"observedAt.ex:name[en.,b]"
+  refused QExpected { expected: Token(Ident), found: Token(Comma) }
+  variant QExpected
+  detail "q expression: expected identifier, found ,"
+"dletedAt"
+  accepted Path(AttrPath { attr: AttributeName("dletedAt"), sub_attrs: [], trailing: None })
+"deetedAt"
+  accepted Path(AttrPath { attr: AttributeName("deetedAt"), sub_attrs: [], trailing: None })
+"delete)dAt"
+  refused QUnexpectedToken { position: 1, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 1"
+"delet]dAt"
+  refused QUnexpectedToken { position: 1, token: Token(RBracket) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ] at position 1"
+"un;itCode"
+  refused QUnexpectedToken { position: 1, token: Token(Semi) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ; at position 1"
+"unitCZode"
+  accepted Path(AttrPath { attr: AttributeName("unitCZode"), sub_attrs: [], trailing: None })
+"\"ex:q\".ex:name"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("ex:name")], trailing: None })
+"\"ex:q\".ex:nam,e"
+  refused QUnexpectedToken { position: 3, token: Token(Comma) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected , at position 3"
+"\"ex:q\".ex:n)ame"
+  refused QUnexpectedToken { position: 3, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 3"
+"e=x:name"
+  refused QUnexpectedChar { ch: '=', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 1"
+"ex:nam"
+  accepted Path(AttrPath { attr: AttributeName("ex:nam"), sub_attrs: [], trailing: None })
+"(bservedAt"
+  refused QExpected { expected: Token(Ident), found: Token(LParen) }
+  variant QExpected
+  detail "q expression: expected identifier, found ("
+"dele\\edAt"
+  refused QUnexpectedChar { ch: '\\', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 4"
+"deleted~At"
+  refused QUnexpectedChar { ch: '~', position: 7 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 7"
+"speed.x_1[b]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"speed.x_1[b"
+  refused QExpected { expected: Token(RBracket), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected ], found end of input"
+"speed.é_1[b]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("é_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"unitCod9"
+  accepted Path(AttrPath { attr: AttributeName("unitCod9"), sub_attrs: [], trailing: None })
+"nitCode"
+  accepted Path(AttrPath { attr: AttributeName("nitCode"), sub_attrs: [], trailing: None })
+"unitC.ode"
+  accepted Path(AttrPath { attr: AttributeName("unitC"), sub_attrs: [AttributeName("ode")], trailing: None })
+"unitCodeZ"
+  accepted Path(AttrPath { attr: AttributeName("unitCodeZ"), sub_attrs: [], trailing: None })
+"brandName.x_1.x_1"
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("x_1"), AttributeName("x_1")], trailing: None })
+"brandName.x_1.x_1*"
+  refused QUnexpectedToken { position: 5, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 5"
+"brandName.x_1.9x_1"
+  refused QExpected { expected: Token(Ident), found: Token(NumberLit) }
+  variant QExpected
+  detail "q expression: expected identifier, found number"
+"sc%pe"
+  refused QUnexpectedChar { ch: '%', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 2"
+"s+cope"
+  refused QUnexpectedChar { ch: '+', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 1"
+"x_1.\"ex:q\"[*]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
+"x_1Z.\"ex:q\"[*]"
+  accepted Path(AttrPath { attr: AttributeName("x_1Z"), sub_attrs: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
+"x_1<.\"ex:q\"[*]"
+  refused QUnexpectedToken { position: 1, token: Token(Lt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected < at position 1"
+"cope"
+  accepted Path(AttrPath { attr: AttributeName("cope"), sub_attrs: [], trailing: None })
+"observe<At"
+  refused QUnexpectedToken { position: 1, token: Token(Lt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected < at position 1"
+"+reatedAt"
+  refused QUnexpectedChar { ch: '+', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 0"
+"created\tAt"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"datastId"
+  accepted Path(AttrPath { attr: AttributeName("datastId"), sub_attrs: [], trailing: None })
+"datasetI/"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"s\\eed"
+  refused QUnexpectedChar { ch: '\\', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 1"
+"}speed"
+  refused QExpected { expected: Token(Ident), found: Token(RBrace) }
+  variant QExpected
+  detail "q expression: expected identifier, found }"
+"modifie#At"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"m*odifiedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"\"ex:q\".brandName.x_1"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
+"\"exq\".brandName.x_1"
+  accepted Path(AttrPath { attr: AttributeName("exq"), sub_attrs: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
+"\"ex:q\".brandNme.x_1"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("brandNme"), AttributeName("x_1")], trailing: None })
+"observedAt.a"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("a")], trailing: None })
+"observedAt9a"
+  accepted Path(AttrPath { attr: AttributeName("observedAt9a"), sub_attrs: [], trailing: None })
+"observedt.a"
+  accepted Path(AttrPath { attr: AttributeName("observedt"), sub_attrs: [AttributeName("a")], trailing: None })
+"ex:name.brandName.ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [AttributeName("brandName"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"ex:name.brandName.ex:na+e[*]"
+  refused QUnexpectedChar { ch: '+', position: 23 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 23"
+"e%x:name.brandName.ex:name[*]"
+  refused QUnexpectedChar { ch: '%', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 1"
+"deleted#t"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"dele}tedAt"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+"i*"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"id#"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"*datasetId"
+  refused QExpected { expected: Token(Ident), found: Token(Star) }
+  variant QExpected
+  detail "q expression: expected identifier, found *"
+"datase,Id"
+  refused QUnexpectedToken { position: 1, token: Token(Comma) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected , at position 1"
+"i0d"
+  accepted Path(AttrPath { attr: AttributeName("i0d"), sub_attrs: [], trailing: None })
+"-type"
+  refused QUnexpectedChar { ch: '-', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '-' at position 0"
+"id0"
+  accepted Path(AttrPath { attr: AttributeName("id0"), sub_attrs: [], trailing: None })
+"i0"
+  accepted Path(AttrPath { attr: AttributeName("i0"), sub_attrs: [], trailing: None })
+"id."
+  refused QExpected { expected: Token(Ident), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected identifier, found end of input"
+"s{ope"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"scoe"
+  accepted Path(AttrPath { attr: AttributeName("scoe"), sub_attrs: [], trailing: None })
+"ex:name.a.speed"
+  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [AttributeName("a"), AttributeName("speed")], trailing: None })
+"e+:name.a.speed"
+  refused QUnexpectedChar { ch: '+', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 1"
+"ex:name.a>speed"
+  refused QUnexpectedToken { position: 3, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 3"
+"u(itCode"
+  refused QUnexpectedToken { position: 1, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 1"
+"un:tCode"
+  accepted Path(AttrPath { attr: AttributeName("un:tCode"), sub_attrs: [], trailing: None })
+"delete)At"
+  refused QUnexpectedToken { position: 1, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 1"
+"sc(pe"
+  refused QUnexpectedToken { position: 1, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 1"
+"-cope"
+  refused QUnexpectedChar { ch: '-', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '-' at position 0"
+"delete>At"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+":deletedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"speed.brandName[en.city]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
+"speed.brandNae[en.city]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("brandNae")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
+"speed.brandName}[en.city]"
+  refused QUnexpectedToken { position: 3, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 3"
+"#eletedAt"
+  refused QUnexpectedChar { ch: '#', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '#' at position 0"
+"exname[*]"
+  accepted Path(AttrPath { attr: AttributeName("exname"), sub_attrs: [], trailing: Some(AllLanguages) })
+"ex:name[*#"
+  refused QUnexpectedChar { ch: '#', position: 9 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '#' at position 9"
+"9modifiedAt"
+  refused QExpected { expected: Token(Ident), found: Token(NumberLit) }
+  variant QExpected
+  detail "q expression: expected identifier, found number"
+"modifiedA%"
+  refused QUnexpectedChar { ch: '%', position: 9 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 9"
+"brandName.a.x_1"
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("a"), AttributeName("x_1")], trailing: None })
+"br\tandName.a.x_1"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"b~andName.a.x_1"
+  refused QUnexpectedChar { ch: '~', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 1"
+"sc\\pe"
+  refused QUnexpectedChar { ch: '\\', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 2"
+"scop>e"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+"/eletedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"x_1.brandName[en]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+"x_1.brandName[e]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
+"x1.brandName[en]"
+  accepted Path(AttrPath { attr: AttributeName("x1"), sub_attrs: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+"observedAt.observedAt.observedAt[en]"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+"(bservedAt.observedAt.observedAt[en]"
+  refused QExpected { expected: Token(Ident), found: Token(LParen) }
+  variant QExpected
+  detail "q expression: expected identifier, found ("
+"obs-ervedAt.observedAt.observedAt[en]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"del:tedAt"
+  accepted Path(AttrPath { attr: AttributeName("del:tedAt"), sub_attrs: [], trailing: None })
+"unitCoe"
+  accepted Path(AttrPath { attr: AttributeName("unitCoe"), sub_attrs: [], trailing: None })
+"uniétCode"
+  accepted Path(AttrPath { attr: AttributeName("uniétCode"), sub_attrs: [], trailing: None })
+"crea!edAt"
+  refused QUnexpectedChar { ch: '!', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '!' at position 4"
+"creat\tedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"deltedAt"
+  accepted Path(AttrPath { attr: AttributeName("deltedAt"), sub_attrs: [], trailing: None })
+"a.\"https://example.com/q\".ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("https://example.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"a.\"https://exampe.com/q\".ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("https://exampe.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"a\"https://example.com/q\".ex:name[*]"
+  refused QUnexpectedToken { position: 1, token: Token(QuotedStr) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected quoted string at position 1"
+"modifiedA"
+  accepted Path(AttrPath { attr: AttributeName("modifiedA"), sub_attrs: [], trailing: None })
+"mo,ifiedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Comma) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected , at position 1"
+"createdA>"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+"created~At"
+  refused QUnexpectedChar { ch: '~', position: 7 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 7"
+"dtasetId"
+  accepted Path(AttrPath { attr: AttributeName("dtasetId"), sub_attrs: [], trailing: None })
+"dat}setId"
+  refused QUnexpectedToken { position: 1, token: Token(RBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected } at position 1"
+"typ"
+  accepted Path(AttrPath { attr: AttributeName("typ"), sub_attrs: [], trailing: None })
+"type%"
+  refused QUnexpectedChar { ch: '%', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 4"
+"a.speed[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("speed")], trailing: Some(AllLanguages) })
+"a.sp\\eed[*]"
+  refused QUnexpectedChar { ch: '\\', position: 4 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 4"
+"a.speed[*,"
+  refused QExpected { expected: Token(RBracket), found: Token(Comma) }
+  variant QExpected
+  detail "q expression: expected ], found ,"
+"\"ex:q\".\"https://example.com/q\".\"https://example.com/q\"[*]"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) })
+"\"ex:q\".\"https://example.com/q\".\"https://exam ple.com/q\"[*]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"\"ex:q\".\"https://example.com/q\".\"https://example.co/q\"[*]"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [AttributeName("https://example.com/q"), AttributeName("https://example.co/q")], trailing: Some(AllLanguages) })
+":observedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"de%letedAt"
+  refused QUnexpectedChar { ch: '%', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 2"
+"~eletedAt"
+  refused QUnexpectedChar { ch: '~', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 0"
+"scop9"
+  accepted Path(AttrPath { attr: AttributeName("scop9"), sub_attrs: [], trailing: None })
+"scape"
+  accepted Path(AttrPath { attr: AttributeName("scape"), sub_attrs: [], trailing: None })
+"a[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [], trailing: Some(AllLanguages) })
+"a*]"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"[*]"
+  refused QExpected { expected: Token(Ident), found: Token(LBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ["
+"unitéCode"
+  accepted Path(AttrPath { attr: AttributeName("unitéCode"), sub_attrs: [], trailing: None })
+"un{tCode"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"\tmodifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("modifiedAt"), sub_attrs: [], trailing: None })
+"modifiaedAt"
+  accepted Path(AttrPath { attr: AttributeName("modifiaedAt"), sub_attrs: [], trailing: None })
+"*nitCode"
+  refused QExpected { expected: Token(Ident), found: Token(Star) }
+  variant QExpected
+  detail "q expression: expected identifier, found *"
+"unitCodea"
+  accepted Path(AttrPath { attr: AttributeName("unitCodea"), sub_attrs: [], trailing: None })
+"\"ex:q\"[*]"
+  accepted Path(AttrPath { attr: AttributeName("ex:q"), sub_attrs: [], trailing: Some(AllLanguages) })
+"\"ex\":q\"[*]"
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"\"ex:q\"%*]"
+  refused QUnexpectedChar { ch: '%', position: 6 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 6"
+"scop[e"
+  refused QExpected { expected: Token(RBracket), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected ], found end of input"
+"{a.speed[*]"
+  refused QExpected { expected: Token(Ident), found: Token(LBrace) }
+  variant QExpected
+  detail "q expression: expected identifier, found {"
+"a.sped[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("sped")], trailing: Some(AllLanguages) })
+"i|"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"\td"
+  accepted Path(AttrPath { attr: AttributeName("d"), sub_attrs: [], trailing: None })
+"deleted[t"
+  refused QExpected { expected: Token(RBracket), found: EndOfInput }
+  variant QExpected
+  detail "q expression: expected ], found end of input"
+"deleteAt"
+  accepted Path(AttrPath { attr: AttributeName("deleteAt"), sub_attrs: [], trailing: None })
+"o*servedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Star) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected * at position 1"
+"@datasetId"
+  refused QUnexpectedChar { ch: '@', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '@' at position 0"
+"iéd"
+  accepted Path(AttrPath { attr: AttributeName("iéd"), sub_attrs: [], trailing: None })
+"i/"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"tyépe"
+  accepted Path(AttrPath { attr: AttributeName("tyépe"), sub_attrs: [], trailing: None })
+"9type"
+  refused QExpected { expected: Token(Ident), found: Token(NumberLit) }
+  variant QExpected
+  detail "q expression: expected identifier, found number"
+"dat,setId"
+  refused QUnexpectedToken { position: 1, token: Token(Comma) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected , at position 1"
+"datasetI\td"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"datase0Id"
+  accepted Path(AttrPath { attr: AttributeName("datase0Id"), sub_attrs: [], trailing: None })
+"da\\asetId"
+  refused QUnexpectedChar { ch: '\\', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 2"
+"da/asetId"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"t9ype"
+  accepted Path(AttrPath { attr: AttributeName("t9ype"), sub_attrs: [], trailing: None })
+"typ]e"
+  refused QUnexpectedToken { position: 1, token: Token(RBracket) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ] at position 1"
+"a[*]["
+  refused QUnexpectedToken { position: 4, token: Token(LBracket) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected [ at position 4"
+"sc~ope"
+  refused QUnexpectedChar { ch: '~', position: 2 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 2"
+"modifiedAt]"
+  refused QUnexpectedToken { position: 1, token: Token(RBracket) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ] at position 1"
+"mod>fiedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+"aid"
+  accepted Path(AttrPath { attr: AttributeName("aid"), sub_attrs: [], trailing: None })
+"dataetId"
+  accepted Path(AttrPath { attr: AttributeName("dataetId"), sub_attrs: [], trailing: None })
+"sco9e"
+  accepted Path(AttrPath { attr: AttributeName("sco9e"), sub_attrs: [], trailing: None })
+"obse.vedAt"
+  accepted Path(AttrPath { attr: AttributeName("obse"), sub_attrs: [AttributeName("vedAt")], trailing: None })
+"obs{rvedAt"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"modiiedAt"
+  accepted Path(AttrPath { attr: AttributeName("modiiedAt"), sub_attrs: [], trailing: None })
+"odifiedAt"
+  accepted Path(AttrPath { attr: AttributeName("odifiedAt"), sub_attrs: [], trailing: None })
+",type"
+  refused QExpected { expected: Token(Ident), found: Token(Comma) }
+  variant QExpected
+  detail "q expression: expected identifier, found ,"
+"ty pe"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"a.x_1.ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_1"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"a._1.ex:name[*]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"a.x_.ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("x_"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"observe.At"
+  accepted Path(AttrPath { attr: AttributeName("observe"), sub_attrs: [AttributeName("At")], trailing: None })
+"observe>dAt"
+  refused QUnexpectedToken { position: 1, token: Token(Gt) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected > at position 1"
+"obse-vedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"obsrvedAt"
+  accepted Path(AttrPath { attr: AttributeName("obsrvedAt"), sub_attrs: [], trailing: None })
+"brandName.\"ex:q\""
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("ex:q")], trailing: None })
+"brandName.ex:q\""
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"brandName\"ex:q\""
+  refused QUnexpectedToken { position: 1, token: Token(QuotedStr) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected quoted string at position 1"
+"dat=asetId"
+  refused QUnexpectedChar { ch: '=', position: 3 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 3"
+"éscope"
+  accepted Path(AttrPath { attr: AttributeName("éscope"), sub_attrs: [], trailing: None })
+"{cope"
+  refused QExpected { expected: Token(Ident), found: Token(LBrace) }
+  variant QExpected
+  detail "q expression: expected identifier, found {"
+"t+ype"
+  refused QUnexpectedChar { ch: '+', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '+' at position 1"
+"%ype"
+  refused QUnexpectedChar { ch: '%', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '%' at position 0"
+"datasetéId"
+  accepted Path(AttrPath { attr: AttributeName("datasetéId"), sub_attrs: [], trailing: None })
+"/modifiedAt"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"<d"
+  refused QExpected { expected: Token(Ident), found: Token(Lt) }
+  variant QExpected
+  detail "q expression: expected identifier, found <"
+"i~d"
+  refused QUnexpectedChar { ch: '~', position: 1 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 1"
+"\"e(:q\"[*]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"\".x:q\"[*]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"tpe"
+  accepted Path(AttrPath { attr: AttributeName("tpe"), sub_attrs: [], trailing: None })
+"t ype"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"typa"
+  accepted Path(AttrPath { attr: AttributeName("typa"), sub_attrs: [], trailing: None })
+"*ype"
+  refused QExpected { expected: Token(Ident), found: Token(Star) }
+  variant QExpected
+  detail "q expression: expected identifier, found *"
+"a.brandName.\"https://example.com/q\"[zip.city]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) })
+"a.bran\"Name.\"https://example.com/q\"[zip.city]"
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"a.brandName.\"https://example.com/q\"[zip.ci:y]"
+  accepted Path(AttrPath { attr: AttributeName("a"), sub_attrs: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("ci:y")], written: [AttributeName("zip"), AttributeName("ci:y")] })) })
+"brandName.brandName[*]"
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("brandName")], trailing: Some(AllLanguages) })
+"*randName.brandName[*]"
+  refused QExpected { expected: Token(Ident), found: Token(Star) }
+  variant QExpected
+  detail "q expression: expected identifier, found *"
+"bandName.brandName[*]"
+  accepted Path(AttrPath { attr: AttributeName("bandName"), sub_attrs: [AttributeName("brandName")], trailing: Some(AllLanguages) })
+"cr|atedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Pipe) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected | at position 1"
+"unitCod~e"
+  refused QUnexpectedChar { ch: '~', position: 7 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '~' at position 7"
+"unit;ode"
+  refused QUnexpectedToken { position: 1, token: Token(Semi) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ; at position 1"
+"speed[en.b]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
+"speed[en..b]"
+  refused QExpected { expected: Token(RBracket), found: Token(Dots) }
+  variant QExpected
+  detail "q expression: expected ], found .."
+"speed[en>.b]"
+  refused QExpected { expected: Token(RBracket), found: Token(Gt) }
+  variant QExpected
+  detail "q expression: expected ], found >"
+"brandName.speed[*]"
+  accepted Path(AttrPath { attr: AttributeName("brandName"), sub_attrs: [AttributeName("speed")], trailing: Some(AllLanguages) })
+"bra dName.speed[*]"
+  refused QUnexpectedToken { position: 1, token: Token(Ident) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected identifier at position 1"
+"brandNme.speed[*]"
+  accepted Path(AttrPath { attr: AttributeName("brandNme"), sub_attrs: [AttributeName("speed")], trailing: Some(AllLanguages) })
+"deleedAt"
+  accepted Path(AttrPath { attr: AttributeName("deleedAt"), sub_attrs: [], trailing: None })
+"eletedAt"
+  accepted Path(AttrPath { attr: AttributeName("eletedAt"), sub_attrs: [], trailing: None })
+"observedAt.a[en]"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+"obs\"rvedAt.a[en]"
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"obsevedAt.a[en]"
+  accepted Path(AttrPath { attr: AttributeName("obsevedAt"), sub_attrs: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
+"oservedAt[*]"
+  accepted Path(AttrPath { attr: AttributeName("oservedAt"), sub_attrs: [], trailing: Some(AllLanguages) })
+"observedA=[*]"
+  refused QUnexpectedChar { ch: '=', position: 9 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 9"
+"]cope"
+  refused QExpected { expected: Token(Ident), found: Token(RBracket) }
+  variant QExpected
+  detail "q expression: expected identifier, found ]"
+"sc(ope"
+  refused QUnexpectedToken { position: 1, token: Token(LParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ( at position 1"
+"unZitCode"
+  accepted Path(AttrPath { attr: AttributeName("unZitCode"), sub_attrs: [], trailing: None })
+"/nitCode"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"i#d"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"x_1.speed.brandName[b.city]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
+"x0_1.speed.brandName[b.city]"
+  accepted Path(AttrPath { attr: AttributeName("x0_1"), sub_attrs: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
+"x_1.sped.brandName[b.city]"
+  accepted Path(AttrPath { attr: AttributeName("x_1"), sub_attrs: [AttributeName("sped"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) })
+"speed.ex:name.ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("ex:name"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"speed.ex:n:ame.ex:name[*]"
+  accepted Path(AttrPath { attr: AttributeName("speed"), sub_attrs: [AttributeName("ex:n:ame"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
+"speed.ex.:name.ex:name[*]"
+  refused AttributeNameInvalid(Invalid)
+  variant AttributeNameInvalid/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"dele)edAt"
+  refused QUnexpectedToken { position: 1, token: Token(RParen) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected ) at position 1"
+"\"https://example.com/q\".x_1[b]"
+  accepted Path(AttrPath { attr: AttributeName("https://example.com/q"), sub_attrs: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"\"https://example.com/q\".x_\"1[b]"
+  refused QUnterminatedString
+  variant QUnterminatedString
+  detail "q expression: unterminated string literal"
+"\"ttps://example.com/q\".x_1[b]"
+  accepted Path(AttrPath { attr: AttributeName("ttps://example.com/q"), sub_attrs: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
+"observedAt[zip]"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) })
+"obsZrvedAt[zip]"
+  accepted Path(AttrPath { attr: AttributeName("obsZrvedAt"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) })
+"observedAt[ip]"
+  accepted Path(AttrPath { attr: AttributeName("observedAt"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("ip")], written: [AttributeName("ip")] })) })
+"data{etId"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"dataset=Id"
+  refused QUnexpectedChar { ch: '=', position: 7 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '=' at position 7"
+"\\cope"
+  refused QUnexpectedChar { ch: '\\', position: 0 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '\\' at position 0"
+"delete{dAt"
+  refused QUnexpectedToken { position: 1, token: Token(LBrace) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected { at position 1"
+"datas@etId"
+  refused QUnexpectedChar { ch: '@', position: 5 }
+  variant QUnexpectedChar
+  detail "q expression: unexpected character '@' at position 5"
+"delet9dAt"
+  accepted Path(AttrPath { attr: AttributeName("delet9dAt"), sub_attrs: [], trailing: None })
+"deleted:t"
+  accepted Path(AttrPath { attr: AttributeName("deleted:t"), sub_attrs: [], trailing: None })
+"obser,vedAt"
+  refused QUnexpectedToken { position: 1, token: Token(Comma) }
+  variant QUnexpectedToken
+  detail "q expression: unexpected , at position 1"
+"ex:name[zip.zip]"
+  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zip")], written: [AttributeName("zip"), AttributeName("zip")] })) })
+"ex:name[}ip.zip]"
+  refused QExpected { expected: Token(Ident), found: Token(RBrace) }
+  variant QExpected
+  detail "q expression: expected identifier, found }"
+"ex:name[zip.zp]"
+  accepted Path(AttrPath { attr: AttributeName("ex:name"), sub_attrs: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zp")], written: [AttributeName("zip"), AttributeName("zp")] })) })
