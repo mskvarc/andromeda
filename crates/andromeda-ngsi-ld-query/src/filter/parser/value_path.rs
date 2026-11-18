@@ -27,18 +27,30 @@
 //! crosses an entity boundary, and clause 4.23.3's grammar is `AttrName`-based
 //! with prose naming only the dotted and bracketed paths.
 
-use crate::filter::{
-    complexity::MAX_SUB_ATTRIBUTE_DEPTH,
-    filter_error::FilterError,
-    parser::{
-        lexer::{Token, tokenize},
-        token_cursor::{TokenCursor, attribute_name},
+use crate::{
+    filter::{
+        complexity::MAX_SUB_ATTRIBUTE_DEPTH,
+        expectation::{Expectation, Punctuation},
+        filter_error::FilterError,
+        operator_spelling::RANGE,
+        parser::{
+            complete,
+            entry_refusal,
+            expected,
+            word::{opens_bare_word, word},
+        },
+        target_language::TargetLanguage,
+        trailing_group::{MemberPath, TrailingGroup},
+        value_path::ValuePath,
     },
-    target_language::TargetLanguage,
-    trailing_group::{MemberPath, TrailingGroup},
-    value_path::ValuePath,
+    query_text::{grammar_fault::GrammarFault, whitespace::Whitespace},
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::str::FromStr;
+use winnow::{
+    Parser,
+    stream::{LocatingSlice, Stream},
+};
 
 /// Reject a path that nests deeper than the budget.
 ///
@@ -56,71 +68,98 @@ pub(super) const fn check_depth(depth: usize) -> Result<(), FilterError> {
     Ok(())
 }
 
-/// Parse a `ValuePath` whose leading name has already been read:
-/// `('.' ident)* ('[' trailing ']')?`.
+/// Read a name as an attribute name.
 ///
-/// `depth` counts the segments already consumed by an enclosing attribute path, so a
-/// path reached through linked-entity hops shares one budget with them.
+/// The clause 4.6.2 name grammar accepts a short name, a prefixed name and an
+/// expanded IRI, which is the whole range a filter can carry before and after
+/// expansion, so validating here rejects nothing a client may write.
 ///
 /// # Errors
 ///
-/// Returns [`FilterError::InvalidAttributeName`] when a segment is outside the
-/// clause 4.6.2 name grammar, [`FilterError::InvalidTrailingMember`] when a
-/// one-member group is neither a name nor a language tag or range,
-/// [`FilterError::Expected`] when a separator is not followed by a name or a
-/// bracket is left open, and [`FilterError::PathTooDeep`] beyond
-/// [`MAX_SUB_ATTRIBUTE_DEPTH`].
-pub(super) fn parse_value_path(cursor: &mut TokenCursor<'_>, leading: &str, depth: usize) -> Result<ValuePath, FilterError> {
-    let attribute = attribute_name(leading)?;
+/// Returns [`FilterError::InvalidAttributeName`] when the name is outside that
+/// grammar.
+pub(super) fn attribute_name(raw: &str) -> Result<AttributeName, FilterError> {
+    raw.parse().map_err(FilterError::InvalidAttributeName)
+}
+
+/// Reads a `ValuePath` whose leading name has already been read: `('.' name)* ('[' trailing ']')?`.
+///
+/// `depth` counts the segments already consumed by an enclosing attribute path, so a path reached through linked-entity hops shares one budget with them. The JSON whitespace between any two of its marks is skipped.
+///
+/// # Errors
+///
+/// Refuses with [`FilterError::InvalidAttributeName`] when a segment is outside the clause 4.6.2 name grammar, [`FilterError::InvalidTrailingMember`] when a one-member group is neither a name nor a language tag or range, [`FilterError::Expected`] when a separator is not followed by a name or a bracket is left open, and [`FilterError::PathTooDeep`] beyond [`MAX_SUB_ATTRIBUTE_DEPTH`].
+pub(super) fn value_path(input: &mut LocatingSlice<&str>, leading: &str, depth: usize) -> Result<ValuePath, GrammarFault<FilterError>> {
+    let attribute = attribute_name(leading).map_err(GrammarFault::Refused)?;
     let mut sub_attributes = Vec::new();
-
-    while cursor.peek() == Some(&Token::Dot) {
-        cursor.advance();
-        sub_attributes.push(cursor.parse_attribute_name()?);
-        check_depth(depth + sub_attributes.len())?;
+    while let Some(name) = dotted_name(input)? {
+        sub_attributes.push(name);
+        check_depth(depth + sub_attributes.len()).map_err(GrammarFault::Refused)?;
     }
-
-    let trailing_group = if cursor.peek() == Some(&Token::LBracket) {
-        cursor.advance();
-        let group = parse_trailing_group(cursor, depth + sub_attributes.len())?;
-        cursor.expect(&Token::RBracket)?;
+    Whitespace::Json.skip::<FilterError>().parse_next(input)?;
+    let trailing = if input.peek_token() == Some('[') {
+        let _opening = input.next_token();
+        let group = trailing_group(input, depth + sub_attributes.len())?;
+        expected(Expectation::Punctuation(Punctuation::CloseBracket), ']').parse_next(input)?;
         Some(group)
     } else {
         None
     };
-
     Ok(ValuePath {
         attribute,
         sub_attributes,
-        trailing: trailing_group,
+        trailing,
     })
 }
 
-/// Parse the inside of a trailing `[…]` group.
+/// Reads a whole value path standing on its own: the path, then the end of the text.
+fn standalone_path(input: &mut LocatingSlice<&str>) -> Result<ValuePath, GrammarFault<FilterError>> {
+    let leading = expected(Expectation::AttributeName, word).parse_next(input)?;
+    let path = value_path(input, leading.text, 0)?;
+    complete(input)?;
+    Ok(path)
+}
+
+/// Reads the next `'.' name` of a dotted list, or `None` when no sub-attribute separator stands.
 ///
-/// `[*]` is the every-language marker. Otherwise the group is the clause 4.9
-/// `DottedPath` of members, unless its one name is outside the clause 4.6.2
-/// name grammar: Annex C.5.13.2 writes a target language there
-/// (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell.
-/// Every reading parses; which ones a request may carry is the
-/// `q_target_languages` level's to say.
-fn parse_trailing_group(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<TrailingGroup, FilterError> {
-    if cursor.peek() == Some(&Token::Star) {
-        cursor.advance();
+/// A `.` that a second `.` follows is the range separator and ends the list.
+fn dotted_name(input: &mut LocatingSlice<&str>) -> Result<Option<AttributeName>, GrammarFault<FilterError>> {
+    Whitespace::Json.skip::<FilterError>().parse_next(input)?;
+    let text = input.peek_finish();
+    if !text.starts_with('.') || text.starts_with(RANGE) {
+        return Ok(None);
+    }
+    let _separator = input.next_token();
+    let name = expected(Expectation::AttributeName, word).parse_next(input)?;
+    attribute_name(name.text).map(Some).map_err(GrammarFault::Refused)
+}
+
+/// Reads the inside of a trailing `[...]` group.
+///
+/// `[*]` is the every-language marker. Otherwise the group is the clause 4.9 `DottedPath` of members, unless its one name is outside the clause 4.6.2 name grammar: Annex C.5.13.2 writes a target language there (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell. Every reading parses; which ones a request may carry is the `q_target_languages` level's to say.
+fn trailing_group(input: &mut LocatingSlice<&str>, depth: usize) -> Result<TrailingGroup, GrammarFault<FilterError>> {
+    Whitespace::Json.skip::<FilterError>().parse_next(input)?;
+    let text = input.peek_finish();
+    if text.starts_with('*') && !opens_bare_word(text) {
+        let _marker = input.next_token();
         return Ok(TrailingGroup::AllLanguages);
     }
-    let first = cursor.parse_ident()?;
-    let member = match attribute_name(first) {
+    let first = expected(Expectation::AttributeName, word).parse_next(input)?;
+    let member = match attribute_name(first.text) {
         Ok(member) => member,
-        Err(_) if cursor.peek() == Some(&Token::RBracket) => return first.parse::<TargetLanguage>().map(TrailingGroup::Language),
-        Err(name_error) => return Err(name_error),
+        Err(name_error) => {
+            Whitespace::Json.skip::<FilterError>().parse_next(input)?;
+            if input.peek_token() == Some(']') {
+                return first.text.parse::<TargetLanguage>().map(TrailingGroup::Language).map_err(GrammarFault::Refused);
+            }
+            return Err(GrammarFault::Refused(name_error));
+        }
     };
     let mut members = vec![member];
-    while cursor.peek() == Some(&Token::Dot) {
-        cursor.advance();
-        members.push(cursor.parse_attribute_name()?);
+    while let Some(name) = dotted_name(input)? {
+        members.push(name);
     }
-    check_depth(depth + members.len())?;
+    check_depth(depth + members.len()).map_err(GrammarFault::Refused)?;
     Ok(TrailingGroup::Members(MemberPath::new(members)))
 }
 
@@ -131,31 +170,20 @@ impl FromStr for ValuePath {
     /// filter.
     ///
     /// This is the entry clause 4.23.3 uses: an `orderBy` term is one `ValuePath`
-    /// and nothing else, so the token stream has to be exhausted by it. A `q`
-    /// filter instead reads a path with an operator and an operand still to
-    /// come.
+    /// and nothing else, so the text has to end with it. A `q` filter instead
+    /// reads a path with an operator and an operand still to come.
     ///
     /// # Errors
     ///
-    /// Returns the tokeniser's [`FilterError::UnterminatedString`] or
-    /// [`FilterError::UnexpectedCharacter`], [`FilterError::InvalidAttributeName`],
-    /// [`FilterError::InvalidTrailingMember`], [`FilterError::Expected`] and
-    /// [`FilterError::PathTooDeep`] for a path outside the production, and
-    /// [`FilterError::UnexpectedToken`] when anything follows the path, which is
-    /// what refuses the clause 4.9 `rel{…}` linked-entity axis to a parameter whose
-    /// own grammar has no hop.
+    /// Returns [`FilterError::InvalidAttributeName`],
+    /// [`FilterError::InvalidTrailingMember`], [`FilterError::Expected`],
+    /// [`FilterError::UnterminatedString`] and [`FilterError::PathTooDeep`] for a
+    /// path outside the production, and [`FilterError::UnexpectedCharacter`] when
+    /// anything follows the path, which is what refuses the clause 4.9
+    /// `rel{...}` linked-entity axis to a parameter whose own grammar has no hop.
     fn from_str(text: &str) -> Result<ValuePath, FilterError> {
-        let tokens = tokenize(text)?;
-        let mut cursor = TokenCursor::new(&tokens);
-        let leading = cursor.parse_ident()?;
-        let path = parse_value_path(&mut cursor, leading, 0)?;
-        if !cursor.is_exhausted() {
-            return Err(FilterError::UnexpectedToken {
-                position: cursor.position(),
-                token: cursor.found(),
-            });
-        }
-        Ok(path)
+        let mut input = LocatingSlice::new(text);
+        standalone_path(&mut input).map_err(|fault| entry_refusal(text, fault))
     }
 }
 
@@ -163,11 +191,13 @@ impl FromStr for ValuePath {
 mod tests {
     use crate::filter::{
         complexity::MAX_SUB_ATTRIBUTE_DEPTH,
+        expectation::{Expectation, Found, Punctuation},
         filter_error::FilterError,
         target_language::{LanguageSelector, TargetLanguage},
         trailing_group::TrailingGroup,
         value_path::ValuePath,
     };
+    use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
     use pretty_assertions::assert_eq;
 
     /// The names of a parsed path, as the client spelled them.
@@ -231,7 +261,185 @@ mod tests {
     #[test]
     fn the_linked_entity_axis_is_not_part_of_a_value_path() {
         let error = "rel{attr}".parse::<ValuePath>().expect_err("a hop is not a ValuePath");
-        assert!(matches!(error, FilterError::UnexpectedToken { .. }), "got {error:?}");
+        assert!(
+            matches!(error, FilterError::UnexpectedCharacter { character: '{', position: 3 }),
+            "got {error:?}"
+        );
+    }
+
+    /// The refusal of a text that is no value path.
+    fn refusal(text: &str) -> FilterError {
+        text.parse::<ValuePath>().expect_err("outside the ValuePath production")
+    }
+
+    /// The name is read and validated where it stands, so it is refused before a later quotation mark that is never closed.
+    #[test]
+    fn an_invalid_name_is_refused_before_a_later_unterminated_quotation_mark() {
+        let error = refusal("a-\"");
+        assert!(
+            matches!(error, FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid)),
+            "got {error:?}"
+        );
+        for text in ["\"\"-", "\"\"\""] {
+            let error = refusal(text);
+            assert!(
+                matches!(error, FilterError::InvalidAttributeName(NgsiLdReferenceError::Empty)),
+                "{text}: got {error:?}"
+            );
+        }
+    }
+
+    /// A character that opens no name is expected as a name where it stands, not reported after a later fault.
+    #[test]
+    fn a_character_no_name_opens_with_is_expected_as_a_name_where_it_stands() {
+        for (text, character) in [("<==1", '<'), (".-", '.')] {
+            let error = refusal(text);
+            assert!(
+                matches!(error, FilterError::Expected { expected: Expectation::AttributeName, found: Found::Character(found), position: 0 } if found == character),
+                "{text}: got {error:?}"
+            );
+        }
+    }
+
+    /// Inside a trailing group, a character that continues no member is refused where the group required a closing bracket or a name.
+    #[test]
+    fn a_character_inside_a_trailing_group_is_refused_where_the_group_required_something_else() {
+        let error = refusal("name[*+]");
+        assert!(
+            matches!(
+                error,
+                FilterError::Expected {
+                    expected: Expectation::Punctuation(Punctuation::CloseBracket),
+                    found: Found::Character('+'),
+                    position: 6
+                }
+            ),
+            "got {error:?}"
+        );
+        let error = refusal("name[-*]");
+        assert!(
+            matches!(
+                error,
+                FilterError::Expected {
+                    expected: Expectation::AttributeName,
+                    found: Found::Character('-'),
+                    position: 5
+                }
+            ),
+            "got {error:?}"
+        );
+        let error = refusal("name[en-G+B]");
+        assert!(
+            matches!(error, FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid)),
+            "got {error:?}"
+        );
+    }
+
+    /// Input after a complete path is refused at its first character, before any later lexical fault.
+    #[test]
+    fn input_after_a_complete_path_is_refused_at_its_first_character_before_a_later_lexical_fault() {
+        for (text, character, position) in [("ex:q\"", '"', 4), ("a]-", ']', 1), ("a..b@", '.', 1)] {
+            let error = refusal(text);
+            assert!(
+                matches!(error, FilterError::UnexpectedCharacter { character: found, position: at } if found == character && at == position),
+                "{text}: got {error:?}"
+            );
+        }
+    }
+
+    /// A path standing alone reads its names, sub-attributes and trailing group from the text, and refuses what follows.
+    #[test]
+    fn a_standalone_value_path_parses_from_its_text() {
+        let path = "address[city]".parse::<ValuePath>().expect("a path with a trailing group");
+        assert_eq!(path.attribute.as_str(), "address");
+        assert_eq!(path.sub_attributes.len(), 0);
+        assert_eq!(
+            path.members()
+                .map(|members| members.addressed.iter().map(|name| name.as_str().to_owned()).collect::<Vec<_>>()),
+            Some(vec!["city".to_owned()])
+        );
+
+        let path = "a.b.c".parse::<ValuePath>().expect("a dotted path");
+        assert_eq!(path.attribute.as_str(), "a");
+        assert_eq!(
+            path.sub_attributes.iter().map(|name| name.as_str().to_owned()).collect::<Vec<_>>(),
+            vec!["b".to_owned(), "c".to_owned()]
+        );
+        assert!(path.trailing.is_none());
+
+        let error = "a[b].c".parse::<ValuePath>().expect_err("nothing follows the trailing group");
+        assert!(
+            matches!(error, FilterError::UnexpectedCharacter { character: '.', position: 4 }),
+            "got {error:?}"
+        );
+    }
+
+    /// JSON whitespace stands between any two marks of the path and before its end.
+    #[test]
+    fn json_whitespace_separates_the_marks_of_a_path() {
+        let path = " a . b [ c . d ] \t\n".parse::<ValuePath>().expect("whitespace is skipped");
+        assert_eq!(path.attribute.as_str(), "a");
+        assert_eq!(path.sub_attributes.len(), 1);
+        assert_eq!(path.members().map(|members| members.addressed.len()), Some(2));
+    }
+
+    /// A name that no word opens, or a separator with nothing after it, is refused where the name was required.
+    #[test]
+    fn a_missing_name_is_refused_where_it_was_required() {
+        for (text, found, position) in [
+            ("", Found::EndOfInput, 0),
+            ("@a", Found::Character('@'), 0),
+            ("a.", Found::EndOfInput, 2),
+            ("a. 1", Found::Character('1'), 3),
+            ("a[", Found::EndOfInput, 2),
+            ("a[]", Found::Character(']'), 2),
+            ("true", Found::Character('t'), 0),
+        ] {
+            let error = text.parse::<ValuePath>().expect_err("a name is required");
+            assert!(
+                matches!(error, FilterError::Expected { expected: Expectation::AttributeName, found: refused, position: at } if refused == found && at == position),
+                "{text}: got {error:?}"
+            );
+        }
+        let error = "a[b".parse::<ValuePath>().expect_err("the bracket is left open");
+        assert!(
+            matches!(
+                error,
+                FilterError::Expected {
+                    expected: Expectation::Punctuation(Punctuation::CloseBracket),
+                    found: Found::EndOfInput,
+                    position: 3
+                }
+            ),
+            "got {error:?}"
+        );
+    }
+
+    /// A `*` that touches a hyphen belongs to a language range; a lone one is the every-language marker, and a range separator ends the path.
+    #[test]
+    fn the_star_and_the_range_separator_are_read_by_what_touches_them() {
+        assert_eq!("a[ * ]".parse::<ValuePath>().expect("the marker").trailing, Some(TrailingGroup::AllLanguages));
+        assert!(matches!(
+            "a[*-GB]".parse::<ValuePath>().expect("a range").trailing,
+            Some(TrailingGroup::Language(_))
+        ));
+        let error = "a..b".parse::<ValuePath>().expect_err("a range separator is no sub-attribute separator");
+        assert!(
+            matches!(error, FilterError::UnexpectedCharacter { character: '.', position: 1 }),
+            "got {error:?}"
+        );
+        let error = "a[*x]".parse::<ValuePath>().expect_err("the marker stands alone");
+        assert!(
+            matches!(
+                error,
+                FilterError::Expected {
+                    expected: Expectation::Punctuation(Punctuation::CloseBracket),
+                    found: Found::Character('x'),
+                    position: 3
+                }
+            ),
+            "got {error:?}"
+        );
     }
 
     /// A prefixed name is one `AttrName`, so the dot after it still separates
@@ -248,7 +456,7 @@ mod tests {
         assert_eq!(sub_attributes, vec!["b".to_owned()]);
     }
 
-    /// An expanded path round-trips through the tokeniser because its IRIs are
+    /// An expanded path round-trips through the parser because its IRIs are
     /// quoted; unquoted, a dot inside an IRI would separate segments.
     #[test]
     fn a_quoted_iri_segment_is_one_name() {

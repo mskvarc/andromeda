@@ -51,7 +51,6 @@ const fn filter_error_type(error: &FilterError) -> NgsiLdErrorType {
         | FilterError::InvalidStringEscape { .. }
         | FilterError::InvalidUnicodeEscape { .. }
         | FilterError::UnescapedControlCharacter { .. }
-        | FilterError::UnexpectedToken { .. }
         | FilterError::Expected { .. }
         | FilterError::AmbiguousTypeGuard
         | FilterError::UnexpectedCharacter { .. }

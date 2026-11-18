@@ -71,9 +71,10 @@ impl From<WrittenOrderingTerm> for String {
 #[cfg(test)]
 mod tests {
     use crate::{
-        filter::target_language::LanguageSelector,
+        filter::{filter_error::FilterError, target_language::LanguageSelector},
         ordering::{ordering_direction::OrderingDirection, ordering_error::OrderingError, written_ordering_term::WrittenOrderingTerm},
     };
+    use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
     use pretty_assertions::assert_eq;
 
     /// The path of a term that parses.
@@ -135,6 +136,23 @@ mod tests {
         let parsed = term("name[en-GB]");
         assert_eq!(parsed.path.target_language().map(LanguageSelector::as_str), Some("en-GB"));
         assert_eq!(parsed.to_string(), "name[en-GB]");
+    }
+
+    /// The path is read where the direction has been split off, so a name outside the grammar is refused as that name, not as a later lexical fault.
+    #[test]
+    fn an_invalid_name_in_a_member_is_refused_as_that_name() {
+        let error = "name[en-~B];desc".parse::<WrittenOrderingTerm>().expect_err("`en-` is no name");
+        assert!(
+            matches!(error, OrderingError::Path(FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid))),
+            "got {error:?}"
+        );
+    }
+
+    /// The direction is split at the first `;` before the path is read, so a `;` inside a quoted name ends the path there.
+    #[test]
+    fn a_semicolon_inside_a_quoted_name_still_splits_the_direction() {
+        let error = "\"x;y\";desc".parse::<WrittenOrderingTerm>().expect_err("`y\";desc` is no direction");
+        assert!(matches!(error, OrderingError::InvalidDirection(_)), "got {error:?}");
     }
 
     /// A term is carried in the request text, so it has to spell itself back.

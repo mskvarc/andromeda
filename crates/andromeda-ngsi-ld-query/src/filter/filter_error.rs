@@ -34,13 +34,13 @@ pub enum FilterError {
     InvalidStringEscape {
         /// The character that followed the backslash.
         escape: char,
-        /// Zero-based character offset of the backslash in the literal's body.
+        /// Zero-based byte offset of the backslash in the text the parser read.
         position: usize,
     },
     /// A `\u` escape did not name a Unicode scalar value.
     #[error("q expression: invalid unicode escape at position {position}: {error}")]
     InvalidUnicodeEscape {
-        /// Zero-based character offset of the backslash in the literal's body.
+        /// Zero-based byte offset of the backslash in the text the parser read.
         position: usize,
         /// The RFC 8259 rule the escape broke.
         error: UnicodeEscapeError,
@@ -51,38 +51,33 @@ pub enum FilterError {
     UnescapedControlCharacter {
         /// The code point that had to be escaped.
         code_point: u32,
-        /// Zero-based character offset of the character in the literal's body.
+        /// Zero-based byte offset of the character in the text the parser read.
         position: usize,
     },
-    /// A token remained after the parser reached the end of the filter.
-    #[error("q expression: unexpected {token} at position {position}")]
-    UnexpectedToken {
-        /// Zero-based offset into the token stream.
-        position: usize,
-        /// What remained.
-        token: Found,
-    },
-    /// The parser expected a specific token but found something else.
-    #[error("q expression: expected {expected}, found {found}")]
+    /// The grammar required something and found something else.
+    #[error("q expression: expected {expected}, found {found} at position {position}")]
     Expected {
         /// What the grammar required at this position.
         expected: Expectation,
         /// What stood there instead.
         found: Found,
+        /// Zero-based byte offset in the text the parser read where the grammar required it.
+        position: usize,
     },
     /// The last type of a linked-entity type guard is written bare and holds
     /// two colons, so which one ends the guard cannot be told.
     #[error("q expression: quote the entity type, so the colon ending the type guard is unambiguous")]
     AmbiguousTypeGuard,
-    /// A character starts no token of the language.
+    /// Input continues where the filter, or a value path read on its own, is
+    /// complete.
     #[error("q expression: unexpected character '{character}' at position {position}")]
     UnexpectedCharacter {
-        /// The character that starts no token.
+        /// The first character of what remains.
         character: char,
-        /// Zero-based character offset in the input.
+        /// Zero-based byte offset in the text the parser read.
         position: usize,
     },
-    /// A numeric literal was lexed but failed to parse.
+    /// A number operand is outside the RFC 8259 `number` production.
     #[error("q expression: invalid number literal: {0}")]
     InvalidNumber(#[source] JsonNumberError),
     /// An attribute path nests more segments under its leading name than the
@@ -167,32 +162,30 @@ pub enum FilterError {
 #[cfg(test)]
 mod tests {
     use crate::filter::{
-        expectation::{Expectation, Found},
+        expectation::{Expectation, Found, Punctuation},
         filter_error::FilterError,
-        parser::lexer::TokenKind,
     };
 
     #[test]
-    fn a_missing_token_is_reported_by_kind_or_as_the_end_of_input() {
+    fn a_missing_punctuation_is_reported_with_what_stood_there() {
         let found = FilterError::Expected {
-            expected: Expectation::Token(TokenKind::RParen),
-            found: Found::Token(TokenKind::Semi),
+            expected: Expectation::Punctuation(Punctuation::CloseParen),
+            found: Found::Character(';'),
+            position: 4,
         };
-        pretty_assertions::assert_eq!(found.to_string(), "q expression: expected ), found ;");
+        pretty_assertions::assert_eq!(found.to_string(), "q expression: expected ), found ';' at position 4");
         let ended = FilterError::Expected {
             expected: Expectation::Value,
             found: Found::EndOfInput,
+            position: 3,
         };
-        pretty_assertions::assert_eq!(ended.to_string(), "q expression: expected value, found end of input");
+        pretty_assertions::assert_eq!(ended.to_string(), "q expression: expected value, found end of input at position 3");
     }
 
     #[test]
-    fn a_trailing_token_is_reported_by_kind_and_position() {
-        let error = FilterError::UnexpectedToken {
-            position: 3,
-            token: Found::Token(TokenKind::Ident),
-        };
-        pretty_assertions::assert_eq!(error.to_string(), "q expression: unexpected identifier at position 3");
+    fn trailing_input_is_reported_by_character_and_position() {
+        let error = FilterError::UnexpectedCharacter { character: 'b', position: 5 };
+        pretty_assertions::assert_eq!(error.to_string(), "q expression: unexpected character 'b' at position 5");
     }
 
     #[test]

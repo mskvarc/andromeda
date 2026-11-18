@@ -4,13 +4,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "datasetId"
   accepted Member(DatasetId)
 "dat)setId"
-  refused UnexpectedToken { position: 1, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 1"
+  refused UnexpectedCharacter { character: ')', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 3"
 "dat{asetId"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "daasetId"
   accepted Path(ValuePath { attribute: AttributeName("daasetId"), sub_attributes: [], trailing: None })
 "datasetIdZ"
@@ -18,15 +18,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "unitCode"
   accepted Member(UnitCode)
 "unitCod|"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 7 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 7"
 "unitCod\t"
   accepted Path(ValuePath { attribute: AttributeName("unitCod"), sub_attributes: [], trailing: None })
 "uni{Code"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "unitCod+e"
   refused UnexpectedCharacter { character: '+', position: 7 }
   variant UnexpectedCharacter
@@ -46,15 +46,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "address[city]"
   accepted Path(ValuePath { attribute: AttributeName("address"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "ad*dress[city]"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 2"
 "addres[city]"
   accepted Path(ValuePath { attribute: AttributeName("addres"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "ad|dress[city]"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 2"
 "addre@s[city]"
   refused UnexpectedCharacter { character: '@', position: 5 }
   variant UnexpectedCharacter
@@ -68,123 +68,123 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "refDevice.ategory"
   accepted Path(ValuePath { attribute: AttributeName("refDevice"), sub_attributes: [AttributeName("ategory")], trailing: None })
 "refDevice.;ategory"
-  refused Expected { expected: Token(Ident), found: Token(Semi) }
+  refused Expected { expected: AttributeName, found: Character(';'), position: 10 }
   variant Expected
-  detail "q expression: expected identifier, found ;"
+  detail "q expression: expected attribute name, found ';' at position 10"
 "refDevic.category"
   accepted Path(ValuePath { attribute: AttributeName("refDevic"), sub_attributes: [AttributeName("category")], trailing: None })
 "datasetId.foo"
   accepted Path(ValuePath { attribute: AttributeName("datasetId"), sub_attributes: [AttributeName("foo")], trailing: None })
 "datase Id.foo"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'I', position: 7 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'I' at position 7"
 "dataseId.foo"
   accepted Path(ValuePath { attribute: AttributeName("dataseId"), sub_attributes: [AttributeName("foo")], trailing: None })
 "=atasetId.foo"
-  refused UnexpectedCharacter { character: '=', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '=' at position 0"
+  refused Expected { expected: AttributeName, found: Character('='), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '=' at position 0"
 "datsetId.foo"
   accepted Path(ValuePath { attribute: AttributeName("datsetId"), sub_attributes: [AttributeName("foo")], trailing: None })
 "a["
-  refused Expected { expected: Token(Ident), found: EndOfInput }
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found end of input"
+  detail "q expression: expected attribute name, found end of input at position 2"
 "a[+"
-  refused UnexpectedCharacter { character: '+', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '+' at position 2"
-".["
-  refused Expected { expected: Token(Ident), found: Token(Dot) }
+  refused Expected { expected: AttributeName, found: Character('+'), position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found ."
+  detail "q expression: expected attribute name, found '+' at position 2"
+".["
+  refused Expected { expected: AttributeName, found: Character('.'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '.' at position 0"
 "a"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None })
 "a[-"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused Expected { expected: AttributeName, found: Character('-'), position: 2 }
+  variant Expected
+  detail "q expression: expected attribute name, found '-' at position 2"
 "a[]"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 2"
 "a[<"
-  refused Expected { expected: Token(Ident), found: Token(Lt) }
+  refused Expected { expected: AttributeName, found: Character('<'), position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found <"
+  detail "q expression: expected attribute name, found '<' at position 2"
 "a\t[]"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 3 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 3"
 "a[]{"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 2"
 "a([]"
-  refused UnexpectedToken { position: 1, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 1"
+  refused UnexpectedCharacter { character: '(', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 1"
 "a."
-  refused Expected { expected: Token(Ident), found: EndOfInput }
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found end of input"
+  detail "q expression: expected attribute name, found end of input at position 2"
 "a.}"
-  refused Expected { expected: Token(Ident), found: Token(RBrace) }
+  refused Expected { expected: AttributeName, found: Character('}'), position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found }"
+  detail "q expression: expected attribute name, found '}' at position 2"
 "a~"
   refused UnexpectedCharacter { character: '~', position: 1 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character '~' at position 1"
 "Za."
-  refused Expected { expected: Token(Ident), found: EndOfInput }
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 3 }
   variant Expected
-  detail "q expression: expected identifier, found end of input"
+  detail "q expression: expected attribute name, found end of input at position 3"
 "a.+"
-  refused UnexpectedCharacter { character: '+', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '+' at position 2"
+  refused Expected { expected: AttributeName, found: Character('+'), position: 2 }
+  variant Expected
+  detail "q expression: expected attribute name, found '+' at position 2"
 "rel{attr}"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "rel {attr}"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 4"
 "[rel{attr}"
-  refused Expected { expected: Token(Ident), found: Token(LBracket) }
+  refused Expected { expected: AttributeName, found: Character('['), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ["
+  detail "q expression: expected attribute name, found '[' at position 0"
 "r*el{attr}"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 1"
 "rel{ttr}"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 ""
-  refused Expected { expected: Token(Ident), found: EndOfInput }
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found end of input"
+  detail "q expression: expected attribute name, found end of input at position 0"
 "-"
-  refused UnexpectedCharacter { character: '-', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 0"
+  refused Expected { expected: AttributeName, found: Character('-'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '-' at position 0"
 "~"
-  refused UnexpectedCharacter { character: '~', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '~' at position 0"
+  refused Expected { expected: AttributeName, found: Character('~'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '~' at position 0"
 "<"
-  refused Expected { expected: Token(Ident), found: Token(Lt) }
+  refused Expected { expected: AttributeName, found: Character('<'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found <"
+  detail "q expression: expected attribute name, found '<' at position 0"
 ">"
-  refused Expected { expected: Token(Ident), found: Token(Gt) }
+  refused Expected { expected: AttributeName, found: Character('>'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found >"
+  detail "q expression: expected attribute name, found '>' at position 0"
 " speed "
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None })
 " sped "
@@ -198,45 +198,45 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '=' at position 5"
 " s)peed "
-  refused UnexpectedToken { position: 1, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 1"
+  refused UnexpectedCharacter { character: ')', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 2"
 "id"
   accepted Member(Id)
 "i}"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 1"
 "id9"
   accepted Path(ValuePath { attribute: AttributeName("id9"), sub_attributes: [], trailing: None })
 "d"
   accepted Path(ValuePath { attribute: AttributeName("d"), sub_attributes: [], trailing: None })
 "i>d"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 1"
 "type"
   accepted Member(Type)
 "typ{"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "type{"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 4"
 "tye"
   accepted Path(ValuePath { attribute: AttributeName("tye"), sub_attributes: [], trailing: None })
 "<type"
-  refused Expected { expected: Token(Ident), found: Token(Lt) }
+  refused Expected { expected: AttributeName, found: Character('<'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found <"
+  detail "q expression: expected attribute name, found '<' at position 0"
 "scope"
   accepted Member(Scope)
 "sco{pe"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "scop"
   accepted Path(ValuePath { attribute: AttributeName("scop"), sub_attributes: [], trailing: None })
 "sope"
@@ -248,9 +248,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "observedAt"
   accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None })
 "obs ervedAt"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'e', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'e' at position 4"
 "obervedAt"
   accepted Path(ValuePath { attribute: AttributeName("obervedAt"), sub_attributes: [], trailing: None })
 "oservedAt"
@@ -260,19 +260,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "name[*]"
   accepted Path(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(AllLanguages) })
 "name[]"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 5 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 5"
 "nae[*]"
   accepted Path(ValuePath { attribute: AttributeName("nae"), sub_attributes: [], trailing: Some(AllLanguages) })
 "name[*"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+  refused Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 6 }
   variant Expected
-  detail "q expression: expected ], found end of input"
+  detail "q expression: expected ], found end of input at position 6"
 "name[*;"
-  refused Expected { expected: Token(RBracket), found: Token(Semi) }
+  refused Expected { expected: Punctuation(CloseBracket), found: Character(';'), position: 6 }
   variant Expected
-  detail "q expression: expected ], found ;"
+  detail "q expression: expected ], found ';' at position 6"
 "name[en-GB]"
   accepted Path(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(Language(Tag(en-GB))) })
 "name[en-[GB]"
@@ -290,9 +290,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\"ex:q#\""
   accepted Path(ValuePath { attribute: AttributeName("ex:q#"), sub_attributes: [], trailing: None })
 "ex:q\""
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 4"
 "\"ex,q\""
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -328,9 +328,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "maodifiedAt"
   accepted Path(ValuePath { attribute: AttributeName("maodifiedAt"), sub_attributes: [], trailing: None })
 "ty>pe"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 2"
 "createdAt"
   accepted Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None })
 "createdA9"
@@ -346,17 +346,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '@' at position 5"
 "observedAt}"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 10 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 10"
 ",bservedAt"
-  refused Expected { expected: Token(Ident), found: Token(Comma) }
+  refused Expected { expected: AttributeName, found: Character(','), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ,"
+  detail "q expression: expected attribute name, found ',' at position 0"
 "mo<difiedAt"
-  refused UnexpectedToken { position: 1, token: Token(Lt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected < at position 1"
+  refused UnexpectedCharacter { character: '<', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '<' at position 2"
 "moifiedAt"
   accepted Path(ValuePath { attribute: AttributeName("moifiedAt"), sub_attributes: [], trailing: None })
 "i"
@@ -368,15 +368,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\"https://example.com/q\".a.\"https://example.com/q\""
   accepted Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: None })
 "\"https://example.com/q\".a.\"https\"://example.com/q\""
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: ':', position: 33 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ':' at position 33"
 "\"https://example.com/q\".a.\"h-tps://example.com/q\""
   accepted Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("h-tps://example.com/q")], trailing: None })
 "\tex:q\""
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 5 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 5"
 "\"ex:q{"
   refused UnterminatedString
   variant UnterminatedString
@@ -384,17 +384,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed.observedAt[*]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedAt")], trailing: Some(AllLanguages) })
 "speed.observedAt*]"
-  refused UnexpectedToken { position: 3, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 3"
+  refused UnexpectedCharacter { character: '*', position: 16 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 16"
 "speed.observedA[*]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedA")], trailing: Some(AllLanguages) })
 "craeatedAt"
   accepted Path(ValuePath { attribute: AttributeName("craeatedAt"), sub_attributes: [], trailing: None })
 "crea;tedAt"
-  refused UnexpectedToken { position: 1, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 1"
+  refused UnexpectedCharacter { character: ';', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 4"
 "unitCo#e"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -406,17 +406,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '@' at position 1"
 "0d"
-  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
+  refused Expected { expected: AttributeName, found: Character('0'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found number"
+  detail "q expression: expected attribute name, found '0' at position 0"
 "modfiedAt"
   accepted Path(ValuePath { attribute: AttributeName("modfiedAt"), sub_attributes: [], trailing: None })
 "modifiedt"
   accepted Path(ValuePath { attribute: AttributeName("modifiedt"), sub_attributes: [], trailing: None })
 "obs|rvedAt"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 3"
 "obsevedAt"
   accepted Path(ValuePath { attribute: AttributeName("obsevedAt"), sub_attributes: [], trailing: None })
 "deletedAt"
@@ -424,9 +424,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "deletedA"
   accepted Path(ValuePath { attribute: AttributeName("deletedA"), sub_attributes: [], trailing: None })
 "de)etedAt"
-  refused UnexpectedToken { position: 1, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 1"
+  refused UnexpectedCharacter { character: ')', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 2"
 "\"observedAt"
   refused UnterminatedString
   variant UnterminatedString
@@ -438,17 +438,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\"ex:q\".bservedAt"
   accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("bservedAt")], trailing: None })
 "\"ex:q\".obs<ervedAt"
-  refused UnexpectedToken { position: 3, token: Token(Lt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected < at position 3"
+  refused UnexpectedCharacter { character: '<', position: 10 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '<' at position 10"
 "deletedA;"
-  refused UnexpectedToken { position: 1, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 1"
+  refused UnexpectedCharacter { character: ';', position: 8 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 8"
 "]eletedAt"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 0"
 "brandName.observedAt.\"https://example.com/q\""
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("observedAt"), AttributeName("https://example.com/q")], trailing: None })
 "brandName.observedAt.\"https:#/example.com/q\""
@@ -456,9 +456,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "brandName.observedAt.\"https://exampéle.com/q\""
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("observedAt"), AttributeName("https://exampéle.com/q")], trailing: None })
 "%modifiedAt"
-  refused UnexpectedCharacter { character: '%', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '%' at position 0"
+  refused Expected { expected: AttributeName, found: Character('%'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '%' at position 0"
 "ZmodifiedAt"
   accepted Path(ValuePath { attribute: AttributeName("ZmodifiedAt"), sub_attributes: [], trailing: None })
 "x_1[*]"
@@ -466,15 +466,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "x_[*]"
   accepted Path(ValuePath { attribute: AttributeName("x_"), sub_attributes: [], trailing: Some(AllLanguages) })
 "x_1[*~"
-  refused UnexpectedCharacter { character: '~', position: 5 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '~' at position 5"
+  refused Expected { expected: Punctuation(CloseBracket), found: Character('~'), position: 5 }
+  variant Expected
+  detail "q expression: expected ], found '~' at position 5"
 "\"ex:q\".\"ex:q\".speed[*]"
   accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(AllLanguages) })
 "\"ex:q\".\"ex:q\".spe;d[*]"
-  refused UnexpectedToken { position: 5, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 5"
+  refused UnexpectedCharacter { character: ';', position: 17 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 17"
 "\"ex/:q\".\"ex:q\".speed[*]"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -482,9 +482,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed.speed.ex:name[*]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("speed"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "speed.spee<.ex:name[*]"
-  refused UnexpectedToken { position: 3, token: Token(Lt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected < at position 3"
+  refused UnexpectedCharacter { character: '<', position: 10 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '<' at position 10"
 "sp\\eed.speed.ex:name[*]"
   refused UnexpectedCharacter { character: '\\', position: 2 }
   variant UnexpectedCharacter
@@ -492,9 +492,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed[*]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(AllLanguages) })
 "speed*]"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 5 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 5"
 "sped[*]"
   accepted Path(ValuePath { attribute: AttributeName("sped"), sub_attributes: [], trailing: Some(AllLanguages) })
 "scoape"
@@ -506,17 +506,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed[en]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "speed[en"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+  refused Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 8 }
   variant Expected
-  detail "q expression: expected ], found end of input"
+  detail "q expression: expected ], found end of input at position 8"
 "speed[e]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("e")], written: [AttributeName("e")] })) })
 "a.brandName[city.city]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) })
 "a.brandName city.city]"
-  refused UnexpectedToken { position: 3, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 3"
+  refused UnexpectedCharacter { character: 'c', position: 12 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'c' at position 12"
 "a.brandName[city.ity]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("ity")], written: [AttributeName("city"), AttributeName("ity")] })) })
 "cratedAt"
@@ -530,13 +530,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '=' at position 1"
 "a.a[]]"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 4 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 4"
 "deleted;At"
-  refused UnexpectedToken { position: 1, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 1"
+  refused UnexpectedCharacter { character: ';', position: 7 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 7"
 "de~letedAt"
   refused UnexpectedCharacter { character: '~', position: 2 }
   variant UnexpectedCharacter
@@ -550,27 +550,27 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "deletedét"
   accepted Path(ValuePath { attribute: AttributeName("deletedét"), sub_attributes: [], trailing: None })
 "de<letedAt"
-  refused UnexpectedToken { position: 1, token: Token(Lt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected < at position 1"
+  refused UnexpectedCharacter { character: '<', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '<' at position 2"
 "observedAt[*]"
   accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(AllLanguages) })
 "ob]servedAt[*]"
-  refused UnexpectedToken { position: 1, token: Token(RBracket) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ] at position 1"
+  refused UnexpectedCharacter { character: ']', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ']' at position 2"
 "obse}rvedAt[*]"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 4"
 "(atasetId"
-  refused Expected { expected: Token(Ident), found: Token(LParen) }
+  refused Expected { expected: AttributeName, found: Character('('), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ("
+  detail "q expression: expected attribute name, found '(' at position 0"
 "datasetI\""
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 8 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 8"
 "id\t"
   accepted Member(Id)
 "i-"
@@ -582,39 +582,39 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "ex:nae"
   accepted Path(ValuePath { attribute: AttributeName("ex:nae"), sub_attributes: [], trailing: None })
 "~ex:name"
-  refused UnexpectedCharacter { character: '~', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '~' at position 0"
+  refused Expected { expected: AttributeName, found: Character('~'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '~' at position 0"
 "a.observedAt.observedAt"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: None })
 "a.observedAt.ob)ervedAt"
-  refused UnexpectedToken { position: 5, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 5"
+  refused UnexpectedCharacter { character: ')', position: 15 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 15"
 "a.observedAt.observedA("
-  refused UnexpectedToken { position: 5, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 5"
+  refused UnexpectedCharacter { character: '(', position: 22 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 22"
 "a[b.b]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) })
 "a[b.;]"
-  refused Expected { expected: Token(Ident), found: Token(Semi) }
+  refused Expected { expected: AttributeName, found: Character(';'), position: 4 }
   variant Expected
-  detail "q expression: expected identifier, found ;"
+  detail "q expression: expected attribute name, found ';' at position 4"
 "a[b.]"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 4 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 4"
 "ex:name[*]"
   accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(AllLanguages) })
 "ex:na*e[*]"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 5 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 5"
 "ex:}name[*]"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 3"
 "m.difiedAt"
   accepted Path(ValuePath { attribute: AttributeName("m"), sub_attributes: [AttributeName("difiedAt")], trailing: None })
 "modified~At"
@@ -626,9 +626,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '=' at position 6"
 "m(difiedAt"
-  refused UnexpectedToken { position: 1, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 1"
+  refused UnexpectedCharacter { character: '(', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 1"
 "x_1[b]"
   accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "xZ1[b]"
@@ -654,13 +654,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "observedA.t.x_1"
   accepted Path(ValuePath { attribute: AttributeName("observedA"), sub_attributes: [AttributeName("t"), AttributeName("x_1")], trailing: None })
 "ob[servedAt.x_1"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+  refused Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 15 }
   variant Expected
-  detail "q expression: expected ], found end of input"
+  detail "q expression: expected ], found end of input at position 15"
 "i."
-  refused Expected { expected: Token(Ident), found: EndOfInput }
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 2 }
   variant Expected
-  detail "q expression: expected identifier, found end of input"
+  detail "q expression: expected attribute name, found end of input at position 2"
 "scop\\e"
   refused UnexpectedCharacter { character: '\\', position: 4 }
   variant UnexpectedCharacter
@@ -668,9 +668,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "scoZe"
   accepted Path(ValuePath { attribute: AttributeName("scoZe"), sub_attributes: [], trailing: None })
 "observ(edAt"
-  refused UnexpectedToken { position: 1, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 1"
+  refused UnexpectedCharacter { character: '(', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 6"
 "obse+rvedAt"
   refused UnexpectedCharacter { character: '+', position: 4 }
   variant UnexpectedCharacter
@@ -678,9 +678,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "x_1"
   accepted Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: None })
 "x_1\""
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 3"
 "a_1"
   accepted Path(ValuePath { attribute: AttributeName("a_1"), sub_attributes: [], trailing: None })
 "mod\\fiedAt"
@@ -688,9 +688,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '\\' at position 3"
 ">modifiedAt"
-  refused Expected { expected: Token(Ident), found: Token(Gt) }
+  refused Expected { expected: AttributeName, found: Character('>'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found >"
+  detail "q expression: expected attribute name, found '>' at position 0"
 "ype"
   accepted Path(ValuePath { attribute: AttributeName("ype"), sub_attributes: [], trailing: None })
 "scop:"
@@ -704,13 +704,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "#id"
-  refused UnexpectedCharacter { character: '#', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 0"
+  refused Expected { expected: AttributeName, found: Character('#'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '#' at position 0"
 "id|"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 2"
 "ty!e"
   refused UnexpectedCharacter { character: '!', position: 2 }
   variant UnexpectedCharacter
@@ -720,9 +720,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed.a.ex:name[city]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a"), AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "speed}.a.ex:name[city]"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 5 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 5"
 "speed.a.ex:ame[city]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a"), AttributeName("ex:ame")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) })
 "scope\\"
@@ -734,13 +734,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '@' at position 2"
 "datas\ttId"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 't', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 't' at position 6"
 "dat|setId"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 3"
 "oabservedAt"
   accepted Path(ValuePath { attribute: AttributeName("oabservedAt"), sub_attributes: [], trailing: None })
 "obser+vedAt"
@@ -752,45 +752,45 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "a.x_:1"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_:1")], trailing: None })
 "a.x_("
-  refused UnexpectedToken { position: 3, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 3"
+  refused UnexpectedCharacter { character: '(', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 4"
 "observedAt.ex:name[en.b]"
   accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
 "observedt.ex:name[en.b]"
   accepted Path(ValuePath { attribute: AttributeName("observedt"), sub_attributes: [AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
 "observedAt.ex:name[en.,b]"
-  refused Expected { expected: Token(Ident), found: Token(Comma) }
+  refused Expected { expected: AttributeName, found: Character(','), position: 22 }
   variant Expected
-  detail "q expression: expected identifier, found ,"
+  detail "q expression: expected attribute name, found ',' at position 22"
 "dletedAt"
   accepted Path(ValuePath { attribute: AttributeName("dletedAt"), sub_attributes: [], trailing: None })
 "deetedAt"
   accepted Path(ValuePath { attribute: AttributeName("deetedAt"), sub_attributes: [], trailing: None })
 "delete)dAt"
-  refused UnexpectedToken { position: 1, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 1"
+  refused UnexpectedCharacter { character: ')', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 6"
 "delet]dAt"
-  refused UnexpectedToken { position: 1, token: Token(RBracket) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ] at position 1"
+  refused UnexpectedCharacter { character: ']', position: 5 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ']' at position 5"
 "un;itCode"
-  refused UnexpectedToken { position: 1, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 1"
+  refused UnexpectedCharacter { character: ';', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 2"
 "unitCZode"
   accepted Path(ValuePath { attribute: AttributeName("unitCZode"), sub_attributes: [], trailing: None })
 "\"ex:q\".ex:name"
   accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:name")], trailing: None })
 "\"ex:q\".ex:nam,e"
-  refused UnexpectedToken { position: 3, token: Token(Comma) }
-  variant UnexpectedToken
-  detail "q expression: unexpected , at position 3"
+  refused UnexpectedCharacter { character: ',', position: 13 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ',' at position 13"
 "\"ex:q\".ex:n)ame"
-  refused UnexpectedToken { position: 3, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 3"
+  refused UnexpectedCharacter { character: ')', position: 11 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 11"
 "e=x:name"
   refused UnexpectedCharacter { character: '=', position: 1 }
   variant UnexpectedCharacter
@@ -798,9 +798,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "ex:nam"
   accepted Path(ValuePath { attribute: AttributeName("ex:nam"), sub_attributes: [], trailing: None })
 "(bservedAt"
-  refused Expected { expected: Token(Ident), found: Token(LParen) }
+  refused Expected { expected: AttributeName, found: Character('('), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ("
+  detail "q expression: expected attribute name, found '(' at position 0"
 "dele\\edAt"
   refused UnexpectedCharacter { character: '\\', position: 4 }
   variant UnexpectedCharacter
@@ -812,9 +812,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed.x_1[b]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "speed.x_1[b"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+  refused Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 11 }
   variant Expected
-  detail "q expression: expected ], found end of input"
+  detail "q expression: expected ], found end of input at position 11"
 "speed.é_1[b]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("é_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "unitCod9"
@@ -828,13 +828,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "brandName.x_1.x_1"
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: None })
 "brandName.x_1.x_1*"
-  refused UnexpectedToken { position: 5, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 5"
+  refused UnexpectedCharacter { character: '*', position: 17 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 17"
 "brandName.x_1.9x_1"
-  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
+  refused Expected { expected: AttributeName, found: Character('9'), position: 14 }
   variant Expected
-  detail "q expression: expected identifier, found number"
+  detail "q expression: expected attribute name, found '9' at position 14"
 "sc%pe"
   refused UnexpectedCharacter { character: '%', position: 2 }
   variant UnexpectedCharacter
@@ -848,23 +848,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "x_1Z.\"ex:q\"[*]"
   accepted Path(ValuePath { attribute: AttributeName("x_1Z"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) })
 "x_1<.\"ex:q\"[*]"
-  refused UnexpectedToken { position: 1, token: Token(Lt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected < at position 1"
+  refused UnexpectedCharacter { character: '<', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '<' at position 3"
 "cope"
   accepted Path(ValuePath { attribute: AttributeName("cope"), sub_attributes: [], trailing: None })
 "observe<At"
-  refused UnexpectedToken { position: 1, token: Token(Lt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected < at position 1"
-"+reatedAt"
-  refused UnexpectedCharacter { character: '+', position: 0 }
+  refused UnexpectedCharacter { character: '<', position: 7 }
   variant UnexpectedCharacter
-  detail "q expression: unexpected character '+' at position 0"
+  detail "q expression: unexpected character '<' at position 7"
+"+reatedAt"
+  refused Expected { expected: AttributeName, found: Character('+'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '+' at position 0"
 "created\tAt"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'A', position: 8 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'A' at position 8"
 "datastId"
   accepted Path(ValuePath { attribute: AttributeName("datastId"), sub_attributes: [], trailing: None })
 "datasetI/"
@@ -876,17 +876,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '\\' at position 1"
 "}speed"
-  refused Expected { expected: Token(Ident), found: Token(RBrace) }
+  refused Expected { expected: AttributeName, found: Character('}'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found }"
+  detail "q expression: expected attribute name, found '}' at position 0"
 "modifie#At"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "m*odifiedAt"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 1"
 "\"ex:q\".brandName.x_1"
   accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName"), AttributeName("x_1")], trailing: None })
 "\"exq\".brandName.x_1"
@@ -914,43 +914,43 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "dele}tedAt"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 4"
 "i*"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 1"
 "id#"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "*datasetId"
-  refused Expected { expected: Token(Ident), found: Token(Star) }
+  refused Expected { expected: AttributeName, found: Character('*'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found *"
+  detail "q expression: expected attribute name, found '*' at position 0"
 "datase,Id"
-  refused UnexpectedToken { position: 1, token: Token(Comma) }
-  variant UnexpectedToken
-  detail "q expression: unexpected , at position 1"
+  refused UnexpectedCharacter { character: ',', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ',' at position 6"
 "i0d"
   accepted Path(ValuePath { attribute: AttributeName("i0d"), sub_attributes: [], trailing: None })
 "-type"
-  refused UnexpectedCharacter { character: '-', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 0"
+  refused Expected { expected: AttributeName, found: Character('-'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '-' at position 0"
 "id0"
   accepted Path(ValuePath { attribute: AttributeName("id0"), sub_attributes: [], trailing: None })
 "i0"
   accepted Path(ValuePath { attribute: AttributeName("i0"), sub_attributes: [], trailing: None })
 "id."
-  refused Expected { expected: Token(Ident), found: EndOfInput }
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 3 }
   variant Expected
-  detail "q expression: expected identifier, found end of input"
+  detail "q expression: expected attribute name, found end of input at position 3"
 "s{ope"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 1"
 "scoe"
   accepted Path(ValuePath { attribute: AttributeName("scoe"), sub_attributes: [], trailing: None })
 "ex:name.a.speed"
@@ -960,31 +960,31 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '+' at position 1"
 "ex:name.a>speed"
-  refused UnexpectedToken { position: 3, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 3"
+  refused UnexpectedCharacter { character: '>', position: 9 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 9"
 "u(itCode"
-  refused UnexpectedToken { position: 1, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 1"
+  refused UnexpectedCharacter { character: '(', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 1"
 "un:tCode"
   accepted Path(ValuePath { attribute: AttributeName("un:tCode"), sub_attributes: [], trailing: None })
 "delete)At"
-  refused UnexpectedToken { position: 1, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 1"
-"sc(pe"
-  refused UnexpectedToken { position: 1, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 1"
-"-cope"
-  refused UnexpectedCharacter { character: '-', position: 0 }
+  refused UnexpectedCharacter { character: ')', position: 6 }
   variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 0"
+  detail "q expression: unexpected character ')' at position 6"
+"sc(pe"
+  refused UnexpectedCharacter { character: '(', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 2"
+"-cope"
+  refused Expected { expected: AttributeName, found: Character('-'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '-' at position 0"
 "delete>At"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 6"
 ":deletedAt"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -994,23 +994,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "speed.brandNae[en.city]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandNae")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) })
 "speed.brandName}[en.city]"
-  refused UnexpectedToken { position: 3, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 3"
-"#eletedAt"
-  refused UnexpectedCharacter { character: '#', position: 0 }
+  refused UnexpectedCharacter { character: '}', position: 15 }
   variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 0"
+  detail "q expression: unexpected character '}' at position 15"
+"#eletedAt"
+  refused Expected { expected: AttributeName, found: Character('#'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '#' at position 0"
 "exname[*]"
   accepted Path(ValuePath { attribute: AttributeName("exname"), sub_attributes: [], trailing: Some(AllLanguages) })
 "ex:name[*#"
-  refused UnexpectedCharacter { character: '#', position: 9 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 9"
-"9modifiedAt"
-  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
+  refused Expected { expected: Punctuation(CloseBracket), found: Character('#'), position: 9 }
   variant Expected
-  detail "q expression: expected identifier, found number"
+  detail "q expression: expected ], found '#' at position 9"
+"9modifiedAt"
+  refused Expected { expected: AttributeName, found: Character('9'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '9' at position 0"
 "modifiedA%"
   refused UnexpectedCharacter { character: '%', position: 9 }
   variant UnexpectedCharacter
@@ -1018,9 +1018,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "brandName.a.x_1"
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("x_1")], trailing: None })
 "br\tandName.a.x_1"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'a', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'a' at position 3"
 "b~andName.a.x_1"
   refused UnexpectedCharacter { character: '~', position: 1 }
   variant UnexpectedCharacter
@@ -1030,9 +1030,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '\\' at position 2"
 "scop>e"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 4"
 "/eletedAt"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -1046,9 +1046,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "observedAt.observedAt.observedAt[en]"
   accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "(bservedAt.observedAt.observedAt[en]"
-  refused Expected { expected: Token(Ident), found: Token(LParen) }
+  refused Expected { expected: AttributeName, found: Character('('), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ("
+  detail "q expression: expected attribute name, found '(' at position 0"
 "obs-ervedAt.observedAt.observedAt[en]"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -1064,9 +1064,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '!' at position 4"
 "creat\tedAt"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'e', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'e' at position 6"
 "deltedAt"
   accepted Path(ValuePath { attribute: AttributeName("deltedAt"), sub_attributes: [], trailing: None })
 "a.\"https://example.com/q\".ex:name[*]"
@@ -1074,19 +1074,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "a.\"https://exampe.com/q\".ex:name[*]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://exampe.com/q"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "a\"https://example.com/q\".ex:name[*]"
-  refused UnexpectedToken { position: 1, token: Token(QuotedStr) }
-  variant UnexpectedToken
-  detail "q expression: unexpected quoted string at position 1"
+  refused UnexpectedCharacter { character: '"', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 1"
 "modifiedA"
   accepted Path(ValuePath { attribute: AttributeName("modifiedA"), sub_attributes: [], trailing: None })
 "mo,ifiedAt"
-  refused UnexpectedToken { position: 1, token: Token(Comma) }
-  variant UnexpectedToken
-  detail "q expression: unexpected , at position 1"
+  refused UnexpectedCharacter { character: ',', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ',' at position 2"
 "createdA>"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 8 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 8"
 "created~At"
   refused UnexpectedCharacter { character: '~', position: 7 }
   variant UnexpectedCharacter
@@ -1094,9 +1094,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "dtasetId"
   accepted Path(ValuePath { attribute: AttributeName("dtasetId"), sub_attributes: [], trailing: None })
 "dat}setId"
-  refused UnexpectedToken { position: 1, token: Token(RBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected } at position 1"
+  refused UnexpectedCharacter { character: '}', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 3"
 "typ"
   accepted Path(ValuePath { attribute: AttributeName("typ"), sub_attributes: [], trailing: None })
 "type%"
@@ -1110,9 +1110,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '\\' at position 4"
 "a.speed[*,"
-  refused Expected { expected: Token(RBracket), found: Token(Comma) }
+  refused Expected { expected: Punctuation(CloseBracket), found: Character(','), position: 9 }
   variant Expected
-  detail "q expression: expected ], found ,"
+  detail "q expression: expected ], found ',' at position 9"
 "\"ex:q\".\"https://example.com/q\".\"https://example.com/q\"[*]"
   accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) })
 "\"ex:q\".\"https://example.com/q\".\"https://exam ple.com/q\"[*]"
@@ -1130,9 +1130,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '%' at position 2"
 "~eletedAt"
-  refused UnexpectedCharacter { character: '~', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '~' at position 0"
+  refused Expected { expected: AttributeName, found: Character('~'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '~' at position 0"
 "scop9"
   accepted Path(ValuePath { attribute: AttributeName("scop9"), sub_attributes: [], trailing: None })
 "scape"
@@ -1140,69 +1140,69 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "a[*]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(AllLanguages) })
 "a*]"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
+  refused UnexpectedCharacter { character: '*', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 1"
 "[*]"
-  refused Expected { expected: Token(Ident), found: Token(LBracket) }
+  refused Expected { expected: AttributeName, found: Character('['), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ["
+  detail "q expression: expected attribute name, found '[' at position 0"
 "unitéCode"
   accepted Path(ValuePath { attribute: AttributeName("unitéCode"), sub_attributes: [], trailing: None })
 "un{tCode"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 2"
 "\tmodifiedAt"
   accepted Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None })
 "modifiaedAt"
   accepted Path(ValuePath { attribute: AttributeName("modifiaedAt"), sub_attributes: [], trailing: None })
 "*nitCode"
-  refused Expected { expected: Token(Ident), found: Token(Star) }
+  refused Expected { expected: AttributeName, found: Character('*'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found *"
+  detail "q expression: expected attribute name, found '*' at position 0"
 "unitCodea"
   accepted Path(ValuePath { attribute: AttributeName("unitCodea"), sub_attributes: [], trailing: None })
 "\"ex:q\"[*]"
   accepted Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(AllLanguages) })
 "\"ex\":q\"[*]"
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: ':', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ':' at position 4"
 "\"ex:q\"%*]"
   refused UnexpectedCharacter { character: '%', position: 6 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character '%' at position 6"
 "scop[e"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+  refused Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 6 }
   variant Expected
-  detail "q expression: expected ], found end of input"
+  detail "q expression: expected ], found end of input at position 6"
 "{a.speed[*]"
-  refused Expected { expected: Token(Ident), found: Token(LBrace) }
+  refused Expected { expected: AttributeName, found: Character('{'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found {"
+  detail "q expression: expected attribute name, found '{' at position 0"
 "a.sped[*]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("sped")], trailing: Some(AllLanguages) })
 "i|"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 1 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 1"
 "\td"
   accepted Path(ValuePath { attribute: AttributeName("d"), sub_attributes: [], trailing: None })
 "deleted[t"
-  refused Expected { expected: Token(RBracket), found: EndOfInput }
+  refused Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 9 }
   variant Expected
-  detail "q expression: expected ], found end of input"
+  detail "q expression: expected ], found end of input at position 9"
 "deleteAt"
   accepted Path(ValuePath { attribute: AttributeName("deleteAt"), sub_attributes: [], trailing: None })
 "o*servedAt"
-  refused UnexpectedToken { position: 1, token: Token(Star) }
-  variant UnexpectedToken
-  detail "q expression: unexpected * at position 1"
-"@datasetId"
-  refused UnexpectedCharacter { character: '@', position: 0 }
+  refused UnexpectedCharacter { character: '*', position: 1 }
   variant UnexpectedCharacter
-  detail "q expression: unexpected character '@' at position 0"
+  detail "q expression: unexpected character '*' at position 1"
+"@datasetId"
+  refused Expected { expected: AttributeName, found: Character('@'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '@' at position 0"
 "iéd"
   accepted Path(ValuePath { attribute: AttributeName("iéd"), sub_attributes: [], trailing: None })
 "i/"
@@ -1212,17 +1212,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "tyépe"
   accepted Path(ValuePath { attribute: AttributeName("tyépe"), sub_attributes: [], trailing: None })
 "9type"
-  refused Expected { expected: Token(Ident), found: Token(NumberLit) }
+  refused Expected { expected: AttributeName, found: Character('9'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found number"
+  detail "q expression: expected attribute name, found '9' at position 0"
 "dat,setId"
-  refused UnexpectedToken { position: 1, token: Token(Comma) }
-  variant UnexpectedToken
-  detail "q expression: unexpected , at position 1"
+  refused UnexpectedCharacter { character: ',', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ',' at position 3"
 "datasetI\td"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'd', position: 9 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'd' at position 9"
 "datase0Id"
   accepted Path(ValuePath { attribute: AttributeName("datase0Id"), sub_attributes: [], trailing: None })
 "da\\asetId"
@@ -1236,25 +1236,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "t9ype"
   accepted Path(ValuePath { attribute: AttributeName("t9ype"), sub_attributes: [], trailing: None })
 "typ]e"
-  refused UnexpectedToken { position: 1, token: Token(RBracket) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ] at position 1"
+  refused UnexpectedCharacter { character: ']', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ']' at position 3"
 "a[*]["
-  refused UnexpectedToken { position: 4, token: Token(LBracket) }
-  variant UnexpectedToken
-  detail "q expression: unexpected [ at position 4"
+  refused UnexpectedCharacter { character: '[', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '[' at position 4"
 "sc~ope"
   refused UnexpectedCharacter { character: '~', position: 2 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character '~' at position 2"
 "modifiedAt]"
-  refused UnexpectedToken { position: 1, token: Token(RBracket) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ] at position 1"
+  refused UnexpectedCharacter { character: ']', position: 10 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ']' at position 10"
 "mod>fiedAt"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 3"
 "aid"
   accepted Path(ValuePath { attribute: AttributeName("aid"), sub_attributes: [], trailing: None })
 "dataetId"
@@ -1264,21 +1264,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "obse.vedAt"
   accepted Path(ValuePath { attribute: AttributeName("obse"), sub_attributes: [AttributeName("vedAt")], trailing: None })
 "obs{rvedAt"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "modiiedAt"
   accepted Path(ValuePath { attribute: AttributeName("modiiedAt"), sub_attributes: [], trailing: None })
 "odifiedAt"
   accepted Path(ValuePath { attribute: AttributeName("odifiedAt"), sub_attributes: [], trailing: None })
 ",type"
-  refused Expected { expected: Token(Ident), found: Token(Comma) }
+  refused Expected { expected: AttributeName, found: Character(','), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ,"
+  detail "q expression: expected attribute name, found ',' at position 0"
 "ty pe"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'p', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'p' at position 3"
 "a.x_1.ex:name[*]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1"), AttributeName("ex:name")], trailing: Some(AllLanguages) })
 "a._1.ex:name[*]"
@@ -1290,9 +1290,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "observe.At"
   accepted Path(ValuePath { attribute: AttributeName("observe"), sub_attributes: [AttributeName("At")], trailing: None })
 "observe>dAt"
-  refused UnexpectedToken { position: 1, token: Token(Gt) }
-  variant UnexpectedToken
-  detail "q expression: unexpected > at position 1"
+  refused UnexpectedCharacter { character: '>', position: 7 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '>' at position 7"
 "obse-vedAt"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -1302,13 +1302,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "brandName.\"ex:q\""
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("ex:q")], trailing: None })
 "brandName.ex:q\""
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 14 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 14"
 "brandName\"ex:q\""
-  refused UnexpectedToken { position: 1, token: Token(QuotedStr) }
-  variant UnexpectedToken
-  detail "q expression: unexpected quoted string at position 1"
+  refused UnexpectedCharacter { character: '"', position: 9 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 9"
 "dat=asetId"
   refused UnexpectedCharacter { character: '=', position: 3 }
   variant UnexpectedCharacter
@@ -1316,17 +1316,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "éscope"
   accepted Path(ValuePath { attribute: AttributeName("éscope"), sub_attributes: [], trailing: None })
 "{cope"
-  refused Expected { expected: Token(Ident), found: Token(LBrace) }
+  refused Expected { expected: AttributeName, found: Character('{'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found {"
+  detail "q expression: expected attribute name, found '{' at position 0"
 "t+ype"
   refused UnexpectedCharacter { character: '+', position: 1 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character '+' at position 1"
 "%ype"
-  refused UnexpectedCharacter { character: '%', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '%' at position 0"
+  refused Expected { expected: AttributeName, found: Character('%'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '%' at position 0"
 "datasetéId"
   accepted Path(ValuePath { attribute: AttributeName("datasetéId"), sub_attributes: [], trailing: None })
 "/modifiedAt"
@@ -1334,9 +1334,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "<d"
-  refused Expected { expected: Token(Ident), found: Token(Lt) }
+  refused Expected { expected: AttributeName, found: Character('<'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found <"
+  detail "q expression: expected attribute name, found '<' at position 0"
 "i~d"
   refused UnexpectedCharacter { character: '~', position: 1 }
   variant UnexpectedCharacter
@@ -1352,59 +1352,59 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "tpe"
   accepted Path(ValuePath { attribute: AttributeName("tpe"), sub_attributes: [], trailing: None })
 "t ype"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'y', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'y' at position 2"
 "typa"
   accepted Path(ValuePath { attribute: AttributeName("typa"), sub_attributes: [], trailing: None })
 "*ype"
-  refused Expected { expected: Token(Ident), found: Token(Star) }
+  refused Expected { expected: AttributeName, found: Character('*'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found *"
+  detail "q expression: expected attribute name, found '*' at position 0"
 "a.brandName.\"https://example.com/q\"[zip.city]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) })
 "a.bran\"Name.\"https://example.com/q\"[zip.city]"
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 6"
 "a.brandName.\"https://example.com/q\"[zip.ci:y]"
   accepted Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("ci:y")], written: [AttributeName("zip"), AttributeName("ci:y")] })) })
 "brandName.brandName[*]"
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) })
 "*randName.brandName[*]"
-  refused Expected { expected: Token(Ident), found: Token(Star) }
+  refused Expected { expected: AttributeName, found: Character('*'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found *"
+  detail "q expression: expected attribute name, found '*' at position 0"
 "bandName.brandName[*]"
   accepted Path(ValuePath { attribute: AttributeName("bandName"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) })
 "cr|atedAt"
-  refused UnexpectedToken { position: 1, token: Token(Pipe) }
-  variant UnexpectedToken
-  detail "q expression: unexpected | at position 1"
+  refused UnexpectedCharacter { character: '|', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '|' at position 2"
 "unitCod~e"
   refused UnexpectedCharacter { character: '~', position: 7 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character '~' at position 7"
 "unit;ode"
-  refused UnexpectedToken { position: 1, token: Token(Semi) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ; at position 1"
+  refused UnexpectedCharacter { character: ';', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 4"
 "speed[en.b]"
   accepted Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) })
 "speed[en..b]"
-  refused Expected { expected: Token(RBracket), found: Token(Dots) }
+  refused Expected { expected: Punctuation(CloseBracket), found: Character('.'), position: 8 }
   variant Expected
-  detail "q expression: expected ], found .."
+  detail "q expression: expected ], found '.' at position 8"
 "speed[en>.b]"
-  refused Expected { expected: Token(RBracket), found: Token(Gt) }
+  refused Expected { expected: Punctuation(CloseBracket), found: Character('>'), position: 8 }
   variant Expected
-  detail "q expression: expected ], found >"
+  detail "q expression: expected ], found '>' at position 8"
 "brandName.speed[*]"
   accepted Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) })
 "bra dName.speed[*]"
-  refused UnexpectedToken { position: 1, token: Token(Ident) }
-  variant UnexpectedToken
-  detail "q expression: unexpected identifier at position 1"
+  refused UnexpectedCharacter { character: 'd', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character 'd' at position 4"
 "brandNme.speed[*]"
   accepted Path(ValuePath { attribute: AttributeName("brandNme"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) })
 "deleedAt"
@@ -1414,9 +1414,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "observedAt.a[en]"
   accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "obs\"rvedAt.a[en]"
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 3"
 "obsevedAt.a[en]"
   accepted Path(ValuePath { attribute: AttributeName("obsevedAt"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })
 "oservedAt[*]"
@@ -1426,13 +1426,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '=' at position 9"
 "]cope"
-  refused Expected { expected: Token(Ident), found: Token(RBracket) }
+  refused Expected { expected: AttributeName, found: Character(']'), position: 0 }
   variant Expected
-  detail "q expression: expected identifier, found ]"
+  detail "q expression: expected attribute name, found ']' at position 0"
 "sc(ope"
-  refused UnexpectedToken { position: 1, token: Token(LParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ( at position 1"
+  refused UnexpectedCharacter { character: '(', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 2"
 "unZitCode"
   accepted Path(ValuePath { attribute: AttributeName("unZitCode"), sub_attributes: [], trailing: None })
 "/nitCode"
@@ -1458,15 +1458,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "dele)edAt"
-  refused UnexpectedToken { position: 1, token: Token(RParen) }
-  variant UnexpectedToken
-  detail "q expression: unexpected ) at position 1"
+  refused UnexpectedCharacter { character: ')', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ')' at position 4"
 "\"https://example.com/q\".x_1[b]"
   accepted Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "\"https://example.com/q\".x_\"1[b]"
-  refused UnterminatedString
-  variant UnterminatedString
-  detail "q expression: unterminated string literal"
+  refused UnexpectedCharacter { character: '"', position: 26 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 26"
 "\"ttps://example.com/q\".x_1[b]"
   accepted Path(ValuePath { attribute: AttributeName("ttps://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) })
 "observedAt[zip]"
@@ -1476,21 +1476,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "observedAt[ip]"
   accepted Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("ip")], written: [AttributeName("ip")] })) })
 "data{etId"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 4 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 4"
 "dataset=Id"
   refused UnexpectedCharacter { character: '=', position: 7 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character '=' at position 7"
 "\\cope"
-  refused UnexpectedCharacter { character: '\\', position: 0 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '\\' at position 0"
+  refused Expected { expected: AttributeName, found: Character('\\'), position: 0 }
+  variant Expected
+  detail "q expression: expected attribute name, found '\\' at position 0"
 "delete{dAt"
-  refused UnexpectedToken { position: 1, token: Token(LBrace) }
-  variant UnexpectedToken
-  detail "q expression: unexpected { at position 1"
+  refused UnexpectedCharacter { character: '{', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 6"
 "datas@etId"
   refused UnexpectedCharacter { character: '@', position: 5 }
   variant UnexpectedCharacter
@@ -1500,14 +1500,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "deleted:t"
   accepted Path(ValuePath { attribute: AttributeName("deleted:t"), sub_attributes: [], trailing: None })
 "obser,vedAt"
-  refused UnexpectedToken { position: 1, token: Token(Comma) }
-  variant UnexpectedToken
-  detail "q expression: unexpected , at position 1"
+  refused UnexpectedCharacter { character: ',', position: 5 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ',' at position 5"
 "ex:name[zip.zip]"
   accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zip")], written: [AttributeName("zip"), AttributeName("zip")] })) })
 "ex:name[}ip.zip]"
-  refused Expected { expected: Token(Ident), found: Token(RBrace) }
+  refused Expected { expected: AttributeName, found: Character('}'), position: 8 }
   variant Expected
-  detail "q expression: expected identifier, found }"
+  detail "q expression: expected attribute name, found '}' at position 8"
 "ex:name[zip.zp]"
   accepted Path(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("zp")], written: [AttributeName("zip"), AttributeName("zp")] })) })

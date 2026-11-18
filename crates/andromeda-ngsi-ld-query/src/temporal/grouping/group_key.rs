@@ -65,7 +65,10 @@ impl FromStr for GroupKey {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::grouping::{entity_member::EntityMember, group_key::GroupKey};
+    use crate::{
+        filter::filter_error::FilterError,
+        temporal::grouping::{entity_member::EntityMember, group_key::GroupKey},
+    };
 
     #[test]
     fn a_member_token_classifies_as_a_member() {
@@ -92,6 +95,16 @@ mod tests {
     #[test]
     fn a_member_token_with_a_path_is_a_value_path() {
         assert!(matches!("datasetId.foo".parse::<GroupKey>().expect("parses"), GroupKey::Path(_)));
+    }
+
+    /// The key is read as a value path, so input after the name is refused at its first character.
+    #[test]
+    fn input_after_a_member_name_is_refused_at_its_first_character() {
+        let error = "datasetI\"".parse::<GroupKey>().expect_err("a quotation mark continues no name");
+        assert!(
+            matches!(error, FilterError::UnexpectedCharacter { character: '"', position: 8 }),
+            "got {error:?}"
+        );
     }
 
     #[test]

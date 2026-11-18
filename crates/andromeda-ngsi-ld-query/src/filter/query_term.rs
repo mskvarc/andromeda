@@ -95,7 +95,7 @@ pub enum OrderingOperator {
 }
 
 impl OrderingOperator {
-    /// Clause 4.9 token this comparison was written as.
+    /// The clause 4.9 operator this comparison is written as.
     ///
     /// The inverse of what the parser consumes, used to serialise a filter back
     /// into query-string form.
@@ -131,7 +131,7 @@ pub enum SetMembership {
 }
 
 impl SetMembership {
-    /// Clause 4.9 token this equality comparison was written as.
+    /// The clause 4.9 operator this equality comparison is written as.
     #[must_use]
     pub const fn spelling(self) -> &'static str {
         match self {
