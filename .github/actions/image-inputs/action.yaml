@@ -85,18 +85,17 @@ runs:
         rm -rf "$context"
         mkdir -p "$context"
         git archive --format=tar HEAD -- "${inputs[@]}" | tar -x -C "$context"
-        # cargo reads every workspace member, so a member the package doesn't compile gets an empty file at each of its
-        # library, binary and build script paths. Nothing compiles them.
-        jq -r --argjson compiled "$compiled" '
+        # cargo reads every workspace member and refuses a manifest naming a target whose file is missing, so every
+        # target the context leaves out gets an empty file at its path: each target of a member the image doesn't
+        # compile, and the tests, benches and examples of one it compiles beside the roots. Nothing compiles them.
+        jq -r '
           .workspace_root as $root
-          | .packages[]
-          | select(.name | IN($compiled[]) | not)
-          | .targets[]
-          | select(.kind | all(. != "test" and . != "bench" and . != "example"))
-          | .src_path
+          | .packages[].targets[].src_path
           | ltrimstr($root + "/")' "$workspace" | while IFS= read -r path; do
-          mkdir -p "$context/$(dirname "$path")"
-          : > "$context/$path"
+          if [ ! -e "$context/$path" ]; then
+            mkdir -p "$context/$(dirname "$path")"
+            : > "$context/$path"
+          fi
         done
         {
           echo "key=${key}"
