@@ -19,6 +19,7 @@
 pub mod advisory_lock;
 pub mod aggregate;
 pub mod bit_string;
+pub mod boolean_test;
 #[cfg(feature = "test-support")]
 pub mod bound_value_type;
 pub mod branch;
@@ -48,7 +49,6 @@ pub mod extension_update;
 pub mod external_arguments;
 pub mod generic_plan_stretch;
 pub mod gin_index;
-pub mod hashed_membership;
 mod identifier;
 pub mod interval;
 pub mod introspection;

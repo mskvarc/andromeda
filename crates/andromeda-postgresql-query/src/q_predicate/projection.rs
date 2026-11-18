@@ -127,7 +127,7 @@ fn compile_from_hop(term: &ResolvedTerm<'_>, scan: &InstanceScan<'_>, depth: usi
     };
     let linked = LinkedHop::at_depth(depth + 1);
     let inner_condition = match scan {
-        InstanceScan::Current(rows) => linked_condition(term, &linked.inner_rows(rows), depth + 1),
+        InstanceScan::Current(rows) | InstanceScan::Walked(rows) => linked_condition(term, &linked.inner_rows(rows), depth + 1),
         InstanceScan::History(window) => {
             let linked_window = window.over(linked.linked_evolution());
             let linked_scan = InstanceScan::History(&linked_window);

@@ -29,8 +29,8 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
+    boolean_test::boolean_test,
     conflict_image::Excluded,
-    hashed_membership::hashed_membership,
     keyed_lookup::{keyed_map, keyed_value},
     pg_array::any,
     pg_operator::PgBinaryOperator,
@@ -174,7 +174,7 @@ pub(crate) fn moved_rows(target: &ContextTarget, anchor: impl IntoIden) -> Updat
         .table(table_of(target, CurrentAttributes::Table))
         .value(CurrentAttributes::Ordinal, keyed_value(ordinals, stored_grain_parts(), PostgresType::Integer))
         .and_where(stored(CurrentAttributes::EntityKey).in_subquery(edited_entities(&anchor, GrainEdit::Moved)))
-        .and_where(hashed_membership(stored_grain().in_subquery(staged_grains(&anchor, GrainEdit::Moved))))
+        .and_where(boolean_test(stored_grain().in_subquery(staged_grains(&anchor, GrainEdit::Moved))))
         .take()
 }
 
@@ -183,7 +183,7 @@ pub(crate) fn moved_rows(target: &ContextTarget, anchor: impl IntoIden) -> Updat
 /// AND ((entity_key, attribute_name_key, dataset_key) IN (SELECT anchor.entity_key, grains.attribute_name_key, grains.dataset_key FROM anchor JOIN grains ON grains.id = anchor.id WHERE grains.ordinal IS NULL)) IS TRUE`.
 ///
 /// Only the rows of an Entity that removes a grain are read, and each is
-/// tested against the removed grains as a hashed set ([`hashed_membership`]),
+/// tested against the removed grains as a hashed set ([`boolean_test`]),
 /// so the deletion costs the rows of those Entities plus the grains whatever
 /// the planner believes about either: right after a large write the statistics
 /// of `current_attributes` can still read one row over pages that hold tens of
@@ -193,7 +193,7 @@ pub(crate) fn dropped_rows(target: &ContextTarget, anchor: impl IntoIden) -> Del
     Query::delete()
         .from_table(table_of(target, CurrentAttributes::Table))
         .and_where(stored(CurrentAttributes::EntityKey).in_subquery(edited_entities(&anchor, GrainEdit::Removed)))
-        .and_where(hashed_membership(stored_grain().in_subquery(staged_grains(&anchor, GrainEdit::Removed))))
+        .and_where(boolean_test(stored_grain().in_subquery(staged_grains(&anchor, GrainEdit::Removed))))
         .take()
 }
 

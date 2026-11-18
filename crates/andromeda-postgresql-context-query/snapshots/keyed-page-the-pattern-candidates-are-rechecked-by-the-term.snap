@@ -51,29 +51,31 @@ FROM
                 )
                 AND (
                   (
-                    ((("ca"."value_string") COLLATE "default") ~ $2)
-                    AND nullif("ca"."value_kind" = (2), FALSE)
-                  )
-                  OR (
                     (
-                      (("ca"."value_long_text") COLLATE "default") ~ $3
+                      ((("ca"."value_string") COLLATE "default") ~ $2)
+                      AND nullif("ca"."value_kind" = (2), FALSE)
                     )
-                    AND nullif("ca"."value_kind" = (2), FALSE)
-                  )
-                  OR EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      jsonb_array_elements(
-                        (
-                          CASE
-                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                          END
-                        )
-                      ) AS "ls"
-                    WHERE
-                      ("ls"."value" ->> ('@value')) ~ $4
-                  )
+                    OR (
+                      (
+                        (("ca"."value_long_text") COLLATE "default") ~ $3
+                      )
+                      AND nullif("ca"."value_kind" = (2), FALSE)
+                    )
+                    OR EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        jsonb_array_elements(
+                          (
+                            CASE
+                              WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                            END
+                          )
+                        ) AS "ls"
+                      WHERE
+                        ("ls"."value" ->> ('@value')) ~ $4
+                    )
+                  ) IS TRUE
                 )
                 AND "ca"."entity_key" = "walked"."entity_key"
             ) OFFSET 0
@@ -261,29 +263,31 @@ FROM
                     )
                     AND (
                       (
-                        ((("ca"."value_string") COLLATE "default") ~ $15)
-                        AND nullif("ca"."value_kind" = (2), FALSE)
-                      )
-                      OR (
                         (
-                          (("ca"."value_long_text") COLLATE "default") ~ $16
+                          ((("ca"."value_string") COLLATE "default") ~ $15)
+                          AND nullif("ca"."value_kind" = (2), FALSE)
                         )
-                        AND nullif("ca"."value_kind" = (2), FALSE)
-                      )
-                      OR EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          jsonb_array_elements(
-                            (
-                              CASE
-                                WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                              END
-                            )
-                          ) AS "ls"
-                        WHERE
-                          ("ls"."value" ->> ('@value')) ~ $17
-                      )
+                        OR (
+                          (
+                            (("ca"."value_long_text") COLLATE "default") ~ $16
+                          )
+                          AND nullif("ca"."value_kind" = (2), FALSE)
+                        )
+                        OR EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            jsonb_array_elements(
+                              (
+                                CASE
+                                  WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                                END
+                              )
+                            ) AS "ls"
+                          WHERE
+                            ("ls"."value" ->> ('@value')) ~ $17
+                        )
+                      ) IS TRUE
                     )
                     AND "ca"."entity_key" = "walked"."entity_key"
                 ) OFFSET 0

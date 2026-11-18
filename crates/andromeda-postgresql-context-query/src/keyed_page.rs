@@ -134,7 +134,7 @@ pub(crate) fn keyed_page(source: &PageSource<'_>, reads: KeyedReads<'_>, columns
             let walk = PageWalk {
                 source: *source,
                 walked: source.conditions(QFilter::Omitted, GeoFilter::Matched)?,
-                probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
+                probe: compile(q.reading(), &InstanceScan::Walked(&walked), source.names),
                 short: SHORT_WALK,
             };
             let reads = filter_read_before(source, GeoFilter::Matched, term_reads(source, terms, GeoFilter::Matched)?, census)?;

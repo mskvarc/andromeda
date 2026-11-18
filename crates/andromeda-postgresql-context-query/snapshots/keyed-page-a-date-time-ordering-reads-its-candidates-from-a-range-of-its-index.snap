@@ -49,7 +49,7 @@ FROM
                   "ca"."expires_at" IS NULL
                   OR "ca"."expires_at" > NOW()
                 )
-                AND "ca"."value_date_time" > $2
+                AND (("ca"."value_date_time" > $2) IS TRUE)
                 AND "ca"."entity_key" = "walked"."entity_key"
             ) OFFSET 0
         ) AS "kept" ON TRUE
@@ -181,7 +181,7 @@ FROM
                       "ca"."expires_at" IS NULL
                       OR "ca"."expires_at" > NOW()
                     )
-                    AND "ca"."value_date_time" > $9
+                    AND (("ca"."value_date_time" > $9) IS TRUE)
                     AND "ca"."entity_key" = "walked"."entity_key"
                 ) OFFSET 0
             ) AS "kept" ON TRUE

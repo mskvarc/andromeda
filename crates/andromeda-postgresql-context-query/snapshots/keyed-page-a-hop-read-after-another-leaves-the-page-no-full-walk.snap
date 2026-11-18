@@ -50,8 +50,10 @@ FROM
                   OR "ca"."expires_at" > NOW()
                 )
                 AND (
-                  "ca"."value_number" > $2
-                  AND "ca"."value_number" <> ('NaN'::numeric)
+                  (
+                    "ca"."value_number" > $2
+                    AND "ca"."value_number" <> ('NaN'::numeric)
+                  ) IS TRUE
                 )
                 AND "ca"."entity_key" = "walked"."entity_key"
             )

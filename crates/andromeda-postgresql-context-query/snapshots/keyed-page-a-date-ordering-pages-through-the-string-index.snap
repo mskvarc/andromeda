@@ -50,8 +50,10 @@ FROM
                   OR "ca"."expires_at" > NOW()
                 )
                 AND (
-                  "ca"."value_string" <= $2
-                  AND nullif("ca"."value_kind" = (8), FALSE)
+                  (
+                    "ca"."value_string" <= $2
+                    AND nullif("ca"."value_kind" = (8), FALSE)
+                  ) IS TRUE
                 )
                 AND "ca"."entity_key" = "walked"."entity_key"
             ) OFFSET 0
@@ -188,8 +190,10 @@ FROM
                       OR "ca"."expires_at" > NOW()
                     )
                     AND (
-                      "ca"."value_string" <= $9
-                      AND nullif("ca"."value_kind" = (8), FALSE)
+                      (
+                        "ca"."value_string" <= $9
+                        AND nullif("ca"."value_kind" = (8), FALSE)
+                      ) IS TRUE
                     )
                     AND "ca"."entity_key" = "walked"."entity_key"
                 ) OFFSET 0
