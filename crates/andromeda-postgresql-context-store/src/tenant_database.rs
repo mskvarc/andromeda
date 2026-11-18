@@ -8,7 +8,12 @@
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
-use andromeda_postgresql_pool::{database_url::DatabaseUrl, sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
+use andromeda_postgresql_pool::{
+    database_url::DatabaseUrl,
+    schema_change_lock::schema_change_connect_options,
+    sql_state::SqlState,
+    transaction_rollback::is_transaction_rolled_back,
+};
 use andromeda_postgresql_seaquery::{
     command::Command,
     database_definition::{ConnectedSessions, DatabaseDefinition},
@@ -26,7 +31,7 @@ use std::{num::NonZeroU32, time::Duration};
 pub enum DatabaseSource<'template> {
     /// The server's default template, which holds no broker schema.
     ServerDefault,
-    /// A database marked as a template, which the new database is a copy of.
+    /// A database locked as a template, which the new database is a copy of.
     Template(&'template TenantDatabaseName),
 }
 
@@ -69,7 +74,7 @@ pub async fn create_database_if_missing(
     database_name: &TenantDatabaseName,
     source: DatabaseSource<'_>,
 ) -> Result<DatabaseCreation, ContextStoreError> {
-    let mut conn = PgConnection::connect(base_url.as_ref().as_str()).await?;
+    let mut conn = open_administrative_connection(base_url).await?;
     let exists = database_exists_statement(database_name.as_str())
         .to_query()
         .fetch_optional(&mut conn)
@@ -89,7 +94,8 @@ pub async fn create_database_if_missing(
 pub enum DatabaseDrop {
     /// The database is gone, whether dropped now or missing already.
     Dropped,
-    /// A session is connected to the database, so it was left in place.
+    /// A session is connected to the database, or holds a lock on it, so it
+    /// was left in place.
     InUse,
 }
 
@@ -97,26 +103,61 @@ pub enum DatabaseDrop {
 /// connection to the database `base_url` names, which is never a tenant's.
 ///
 /// The drop never forces sessions out, so a database any broker still holds a
-/// connection to is left in place (SQLSTATE 55006, `object_in_use`).
+/// connection to is left in place (SQLSTATE 55006, `object_in_use`), and so
+/// is one whose lock another session holds past the wait the administrative
+/// connection allows (55P03, `lock_not_available`).
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the administrative connection
 /// cannot be opened or closed, or when the drop fails for any reason other
-/// than a connected session.
+/// than a connected session or a held lock.
 pub async fn drop_database_unless_in_use(base_url: &DatabaseUrl, database_name: &TenantDatabaseName) -> Result<DatabaseDrop, ContextStoreError> {
-    let mut conn = PgConnection::connect(base_url.as_ref().as_str()).await?;
+    let mut conn = open_administrative_connection(base_url).await?;
     let outcome = match DatabaseDefinition::drop(Alias::new(database_name.as_str()), ConnectedSessions::Refuse)
         .to_query()
         .execute(&mut conn)
         .await
     {
         Ok(_) => Ok(DatabaseDrop::Dropped),
-        Err(error) if SqlState::of(&error) == Some(SqlState::ObjectInUse) => Ok(DatabaseDrop::InUse),
+        Err(error) if is_database_held(&error) => Ok(DatabaseDrop::InUse),
         Err(error) => Err(error.into()),
     };
     conn.close().await?;
     outcome
+}
+
+/// A connection to the database `base_url` names for creating, dropping and
+/// altering databases.
+///
+/// It is opened with the options of a session that changes the schema, so it
+/// waits a bounded time for each lock and no statement is cut short by the
+/// `statement_timeout` the broker installs on the platform database. `DROP
+/// DATABASE` waits for a checkpoint, which on a server writing many databases
+/// at once takes longer than a request may.
+///
+/// # Errors
+///
+/// Returns the driver error when `base_url` is not a PostgreSQL URL or the
+/// connection cannot be opened.
+async fn open_administrative_connection(base_url: &DatabaseUrl) -> Result<PgConnection, sqlx::Error> {
+    let options = schema_change_connect_options(base_url.as_ref().as_str())?;
+    PgConnection::connect_with(&options).await
+}
+
+/// Run one database definition command, such as locking or unlocking a
+/// template, on an administrative connection to the database `base_url`
+/// names.
+///
+/// # Errors
+///
+/// Returns the driver error when the connection cannot be opened or closed or
+/// the command fails.
+pub(crate) async fn run_database_definition(base_url: &DatabaseUrl, definition: &DatabaseDefinition) -> Result<(), sqlx::Error> {
+    let mut conn = open_administrative_connection(base_url).await?;
+    let outcome = definition.to_query().execute(&mut conn).await;
+    conn.close().await?;
+    outcome.map(drop)
 }
 
 /// The retry a contended `CREATE DATABASE` runs under: six attempts a quarter
@@ -199,6 +240,13 @@ fn is_database_already_exists(error: &sqlx::Error) -> bool {
     SqlState::of(error) == Some(SqlState::DuplicateDatabase)
 }
 
+/// Whether a `DROP DATABASE` was refused because another session is connected
+/// to the database (55006) or holds its lock past the administrative
+/// connection's lock wait (55P03).
+fn is_database_held(error: &sqlx::Error) -> bool {
+    matches!(SqlState::of(error), Some(SqlState::ObjectInUse | SqlState::LockNotAvailable))
+}
+
 /// The `SELECT 1 FROM pg_database WHERE datname = $1` existence probe.
 ///
 /// `pg_database` is a PostgreSQL system catalog, not part of the application
@@ -217,6 +265,7 @@ mod tests {
         CREATE_DATABASE_RETRY,
         database_exists_statement,
         is_database_already_exists,
+        is_database_held,
         is_template_uncopyable,
         is_transient_create_failure,
     };
@@ -247,6 +296,17 @@ mod tests {
             assert!(!is_transient_create_failure(&database_error(code)), "{code}");
         }
         assert!(!is_transient_create_failure(&sqlx::Error::PoolTimedOut));
+    }
+
+    #[test]
+    fn only_a_connected_session_or_a_held_lock_leaves_a_dropped_database_in_place() {
+        for code in ["55006", "55P03"] {
+            assert!(is_database_held(&database_error(code)), "{code}");
+        }
+        for code in ["57014", "3D000", "42501", "08006"] {
+            assert!(!is_database_held(&database_error(code)), "{code}");
+        }
+        assert!(!is_database_held(&sqlx::Error::PoolTimedOut));
     }
 
     #[test]

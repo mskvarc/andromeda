@@ -1,12 +1,18 @@
 //! What the server's catalogue and a tenant database's own bookkeeping say
-//! about a database: whether it is a template, which database it is, when its
-//! schema was stamped and when its migrations were applied.
+//! about a database: whether it is a template, which database it is, how many
+//! sessions hold it, when its schema was stamped and when its migrations were
+//! applied.
 
 use crate::fixtures::{statements::name, test_error::UpgradeTestError};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_context_store::migration_set::tenant::TENANT_LEDGER;
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, statement::Statement, system_catalog::PgDatabase};
-use sea_query::{Expr, ExprTrait, Order, Query};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    pg_type::PostgresType,
+    statement::Statement,
+    system_catalog::{PgDatabase, PgStatActivity},
+};
+use sea_query::{Expr, ExprTrait, Func, Order, Query};
 use sqlx::PgPool;
 
 /// Whether the database `database` is marked a template and whether it admits
@@ -18,6 +24,17 @@ pub(crate) async fn template_flags(pool: &PgPool, database: &TenantDatabaseName)
         .and_where(Expr::col(PgDatabase::Datname).eq(database.as_str()))
         .to_owned();
     Ok(select.to_query_as::<(bool, bool)>().fetch_optional(pool).await?)
+}
+
+/// How many sessions are connected to the database `database`, background
+/// workers included.
+pub(crate) async fn sessions_on(pool: &PgPool, database: &TenantDatabaseName) -> Result<i64, UpgradeTestError> {
+    let select = Query::select()
+        .expr(Func::count(Expr::col(PgStatActivity::Pid)))
+        .from(PgStatActivity::Table)
+        .and_where(Expr::col(PgStatActivity::Datname).eq(database.as_str()))
+        .to_owned();
+    Ok(select.to_query_scalar::<i64>().fetch_one(pool).await?)
 }
 
 /// The object identifier of the database `database` as text, `None` when the

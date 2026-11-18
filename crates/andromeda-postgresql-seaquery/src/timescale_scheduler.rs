@@ -2,8 +2,8 @@
 //!
 //! The extension's launcher keeps one scheduler session connected to every
 //! database that allows connections and holds the extension. A database whose
-//! scheduler is connected cannot be copied, so a database made a template
-//! stops its scheduler first.
+//! scheduler is connected cannot be copied, so a database made a template has
+//! its scheduler stopped once it refuses new connections.
 
 use sea_query::{Func, Iden, Query, SelectStatement};
 

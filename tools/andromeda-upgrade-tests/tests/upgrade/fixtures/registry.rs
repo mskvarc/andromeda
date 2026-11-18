@@ -13,7 +13,7 @@ use andromeda_postgresql_context_store::{
     tenant_database::DatabaseDrop,
     tenant_migration::open_schema_change_pool,
     tenant_registry::PostgresTenantRegistry,
-    tenant_template::{current_template_name, template_retirement::retire_template},
+    tenant_template::{template_name::template_database_name, template_retirement::retire_template},
 };
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_upgrade_tests::{upgrade_database::UpgradeDatabase, upgrade_server::UpgradeServer};
@@ -85,8 +85,7 @@ pub(crate) async fn open_tenant_pool(server: &UpgradeServer, database: &TenantDa
 
 /// Drops the template a registry of `prefix` prepares on `server`.
 pub(crate) async fn drop_registry_template(server: &UpgradeServer, prefix: &DbNamePrefix) -> Result<(), UpgradeTestError> {
-    let template = current_template_name(server.url(), prefix).await?;
-    match retire_template(server.url(), &template).await? {
+    match retire_template(server.url(), &template_database_name(prefix)).await? {
         DatabaseDrop::Dropped => Ok(()),
         DatabaseDrop::InUse => Err(UpgradeTestError::TemplateHeld),
     }

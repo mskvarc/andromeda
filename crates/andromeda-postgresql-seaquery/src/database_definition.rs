@@ -36,14 +36,15 @@ pub enum DatabaseDefinition {
     },
     /// `ALTER DATABASE <database> WITH IS_TEMPLATE true ALLOW_CONNECTIONS
     /// false`: a database any role allowed to create databases may copy and
-    /// no session may connect to. `TimescaleDB` restarts the scheduler of a
-    /// template that still admits connections whenever the template is copied,
-    /// and that scheduler's session then fails the copy, so a template it
-    /// serves must refuse connections.
-    MarkTemplate(DynIden),
-    /// `ALTER DATABASE <database> WITH IS_TEMPLATE false`, which `DROP
-    /// DATABASE` requires of a template.
-    UnmarkTemplate(DynIden),
+    /// no new session may connect to. `TimescaleDB` restarts the scheduler of
+    /// a template that still admits connections whenever the template is
+    /// copied, and that scheduler's session then fails the copy, so a template
+    /// it serves must refuse connections.
+    LockTemplate(DynIden),
+    /// `ALTER DATABASE <database> WITH IS_TEMPLATE false ALLOW_CONNECTIONS
+    /// true`: an ordinary database again, which sessions may connect to and
+    /// `DROP DATABASE` may drop.
+    UnlockTemplate(DynIden),
     /// `DROP DATABASE IF EXISTS <database> [WITH (FORCE)]`.
     Drop {
         /// The database dropped.
@@ -87,13 +88,14 @@ impl DatabaseDefinition {
 
     /// `ALTER DATABASE <database> WITH IS_TEMPLATE true ALLOW_CONNECTIONS
     /// false`.
-    pub fn mark_template(database: impl IntoIden) -> DatabaseDefinition {
-        DatabaseDefinition::MarkTemplate(database.into_iden())
+    pub fn lock_template(database: impl IntoIden) -> DatabaseDefinition {
+        DatabaseDefinition::LockTemplate(database.into_iden())
     }
 
-    /// `ALTER DATABASE <database> WITH IS_TEMPLATE false`.
-    pub fn unmark_template(database: impl IntoIden) -> DatabaseDefinition {
-        DatabaseDefinition::UnmarkTemplate(database.into_iden())
+    /// `ALTER DATABASE <database> WITH IS_TEMPLATE false ALLOW_CONNECTIONS
+    /// true`.
+    pub fn unlock_template(database: impl IntoIden) -> DatabaseDefinition {
+        DatabaseDefinition::UnlockTemplate(database.into_iden())
     }
 
     /// `DROP DATABASE IF EXISTS <database>`, `sessions` deciding what happens
@@ -128,10 +130,12 @@ impl RenderedCommand for DatabaseDefinition {
                 database,
                 template: Some(template),
             } => format!("CREATE DATABASE {} TEMPLATE {}", quoted_iden(database), quoted_iden(template)),
-            DatabaseDefinition::MarkTemplate(database) => {
+            DatabaseDefinition::LockTemplate(database) => {
                 format!("ALTER DATABASE {} WITH IS_TEMPLATE true ALLOW_CONNECTIONS false", quoted_iden(database))
             }
-            DatabaseDefinition::UnmarkTemplate(database) => format!("ALTER DATABASE {} WITH IS_TEMPLATE false", quoted_iden(database)),
+            DatabaseDefinition::UnlockTemplate(database) => {
+                format!("ALTER DATABASE {} WITH IS_TEMPLATE false ALLOW_CONNECTIONS true", quoted_iden(database))
+            }
             DatabaseDefinition::Drop { database, sessions } => {
                 let force = match sessions {
                     ConnectedSessions::Refuse => "",
@@ -174,20 +178,20 @@ mod tests {
     #[test]
     fn a_copy_names_its_template_as_a_quoted_identifier() {
         assert_eq!(
-            DatabaseDefinition::create_from_template(Alias::new("andromeda_tenant_a"), Alias::new("andromeda_tenant-template-0badc0de")).rendered(),
-            r#"CREATE DATABASE "andromeda_tenant_a" TEMPLATE "andromeda_tenant-template-0badc0de""#
+            DatabaseDefinition::create_from_template(Alias::new("andromeda_tenant_a"), Alias::new("template_andromeda_tenant")).rendered(),
+            r#"CREATE DATABASE "andromeda_tenant_a" TEMPLATE "template_andromeda_tenant""#
         );
     }
 
     #[test]
-    fn marking_a_template_refuses_connections_and_unmarking_it_clears_only_the_template_flag() {
+    fn a_locked_template_refuses_connections_and_an_unlocked_one_is_an_ordinary_database_again() {
         assert_eq!(
-            DatabaseDefinition::mark_template(Alias::new("t")).rendered(),
+            DatabaseDefinition::lock_template(Alias::new("t")).rendered(),
             r#"ALTER DATABASE "t" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false"#
         );
         assert_eq!(
-            DatabaseDefinition::unmark_template(Alias::new("t")).rendered(),
-            r#"ALTER DATABASE "t" WITH IS_TEMPLATE false"#
+            DatabaseDefinition::unlock_template(Alias::new("t")).rendered(),
+            r#"ALTER DATABASE "t" WITH IS_TEMPLATE false ALLOW_CONNECTIONS true"#
         );
     }
 
