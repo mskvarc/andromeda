@@ -3,7 +3,7 @@
 use crate::{
     entity::entry::SpatialEntry,
     key::SpatialKey,
-    partitioned_rtree::{PartitionedRTree, WriteTracking},
+    partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
 };
 use andromeda_ngsi_ld_geometry::{
     form::GeometryForm,
@@ -314,18 +314,18 @@ fn meeting<'t>(
     at_most: usize,
 ) -> Option<HashSet<IdentifierSpelling>> {
     entries
-        .filter(|entry| admitted.admits(&entry.entity_id))
+        .filter(|entry| admitted.admits(entry.id()))
         .filter(|entry| match refinement_for(georel) {
-            Refinement::Exact => matches(georel, &entry.planar, reference),
+            Refinement::Exact => matches(georel, &entry.planar(), reference),
             Refinement::EnvelopeOnly => true,
         })
         .try_fold(HashSet::new(), |mut found, entry| {
-            if !found.contains(&entry.entity_id) {
+            if !found.contains(entry.id()) {
                 if found.len() == at_most {
                     return None;
                 }
                 // clone: the returned set owns its identifiers, which outlive the tree borrow
-                found.insert(entry.entity_id.clone());
+                found.insert(entry.id().clone());
             }
             Some(found)
         })
@@ -584,6 +584,33 @@ mod tests {
         assert_eq!(
             index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), Admitted::Every, usize::MAX),
             Some(identifiers([east, west]))
+        );
+    }
+
+    /// The two points on the seam are 106 m from the `near` reference, one
+    /// each side of it, and the polar reference is 111 m from the pole.
+    #[test]
+    fn points_on_the_seam_and_at_a_pole_are_found_where_they_lie() {
+        let index = seeded();
+        let east = uri("urn:ngsi-ld:Buoy:east-of-seam");
+        let west = uri("urn:ngsi-ld:Buoy:west-of-seam");
+        let pole = uri("urn:ngsi-ld:Buoy:pole");
+        index.replace_entity(east.clone(), [(key(), &point(180.0, -17.0))]);
+        index.replace_entity(west.clone(), [(key(), &point(-180.0, -17.0))]);
+        index.replace_entity(pole.clone(), [(key(), &point(45.0, 90.0))]);
+
+        let against_the_seam = GeometryForm::Polygon(boxes(&[(179.0, -18.0, 180.0, -16.0)]).remove(0));
+        assert_eq!(
+            index.query(&key(), &GeoRel::Intersects, &against_the_seam, Admitted::Every, usize::MAX),
+            Some(identifiers([east.clone()]))
+        );
+        assert_eq!(
+            index.query(&key(), &near(Some("300"), None), &point(179.999, -17.0), Admitted::Every, usize::MAX),
+            Some(identifiers([east, west]))
+        );
+        assert_eq!(
+            index.query(&key(), &near(Some("300"), None), &point(-135.0, 89.999), Admitted::Every, usize::MAX),
+            Some(identifiers([pole]))
         );
     }
 

@@ -380,12 +380,13 @@ mod tests {
     use crate::{
         entity::entry::SpatialEntry,
         key::SpatialKey,
-        partitioned_rtree::{PartitionedRTree, WriteTracking},
+        partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
+    use rstar::RTreeObject;
     use std::{collections::HashMap, ptr};
 
     fn uri(raw: &str) -> IdentifierSpelling {
@@ -420,9 +421,7 @@ mod tests {
     fn located(index: &PartitionedRTree<SpatialEntry>, key: &SpatialKey) -> Vec<(String, [f64; 2])> {
         let mut located = index
             .read_partition(key, |tree| {
-                tree.iter()
-                    .map(|entry| (entry.entity_id.to_string(), entry.envelope.lower()))
-                    .collect::<Vec<_>>()
+                tree.iter().map(|entry| (entry.id().to_string(), entry.envelope().lower())).collect::<Vec<_>>()
             })
             .unwrap_or_default();
         located.sort_by(|left, right| left.0.cmp(&right.0).then(left.1[0].total_cmp(&right.1[0])));
@@ -594,7 +593,7 @@ mod tests {
             snapshot_generation,
         );
         let held = index
-            .read_partition(&key_a(), |tree| tree.iter().map(|entry| entry.entity_id.clone()).collect::<Vec<_>>())
+            .read_partition(&key_a(), |tree| tree.iter().map(|entry| entry.id().clone()).collect::<Vec<_>>())
             .expect("the partition exists");
         let record = index.placements.get(&uri("urn:ngsi-ld:X:1")).expect("the object is indexed");
         assert!(

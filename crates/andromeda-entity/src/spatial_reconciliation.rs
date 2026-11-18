@@ -241,6 +241,7 @@ mod tests {
             index::{Admitted, SpatialEntityIndex},
         },
         key::SpatialKey,
+        partitioned_rtree::Indexed,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use futures::future::BoxFuture;
@@ -421,7 +422,7 @@ mod tests {
         let collected = read_location_snapshot(&index, &Stored::handing(fleet, usize::MAX), &placement())
             .await
             .expect("the store is readable");
-        let ids_in = |entries: &Vec<SpatialEntry>| entries.iter().map(|entry| entry.entity_id.clone()).collect::<Vec<_>>();
+        let ids_in = |entries: &Vec<SpatialEntry>| entries.iter().map(|entry| entry.id().clone()).collect::<Vec<_>>();
         assert_eq!(collected.partitions.located_entities, 3);
         assert_eq!(collected.partitions.entries.len(), 2, "the unexpanded type names no partition");
         assert_eq!(
