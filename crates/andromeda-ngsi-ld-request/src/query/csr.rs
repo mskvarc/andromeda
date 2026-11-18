@@ -10,7 +10,7 @@ use crate::{
         deserialization::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
-            deserialize_optional_filter_expr,
+            deserialize_optional_filter,
             deserialize_optional_pattern,
             deserialize_optional_projection_terms,
             deserialize_optional_uri_csv,
@@ -67,11 +67,11 @@ pub struct CsrQueryParameters {
     /// Clause 5.10.2.4: the attributes it names are matched against the
     /// registrations' `RegistrationInfo` like the `attrs` list; it is not
     /// evaluated against the registrations themselves.
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub q: Option<Filter>,
     /// The context source filter (clause 4.9 `csf`), evaluated against the
     /// registrations' own Context Source Properties (clause 5.10.2.4).
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub csf: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]

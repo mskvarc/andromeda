@@ -69,15 +69,15 @@ impl FilterComplexityLimits {
     /// comparisons than `comparisons`, and [`FilterError::NestedTooDeep`] for
     /// one nesting deeper than `nesting`; clause 5.5.6 answers both with
     /// `TooComplexQuery`.
-    pub fn admit(self, expr: &Filter) -> Result<(), FilterError> {
-        let comparisons = comparison_count(expr);
+    pub fn admit(self, filter: &Filter) -> Result<(), FilterError> {
+        let comparisons = comparison_count(filter);
         if comparisons > self.comparisons.get() {
             return Err(FilterError::TooManyComparisons {
                 comparisons,
                 limit: self.comparisons,
             });
         }
-        let depth = nesting_depth(expr);
+        let depth = nesting_depth(filter);
         if depth > self.nesting.get() {
             return Err(FilterError::NestedTooDeep { depth, limit: self.nesting });
         }
@@ -85,29 +85,29 @@ impl FilterComplexityLimits {
     }
 }
 
-/// The comparisons `expr` makes: one per Query Term, and one per value of a
+/// The comparisons `filter` makes: one per Query Term, and one per value of a
 /// value list.
 #[must_use]
-pub fn comparison_count(expr: &Filter) -> usize {
-    match expr {
-        Filter::And(terms) | Filter::Or(terms) => terms.iter().map(comparison_count).sum(),
-        Filter::Term(predicate) => predicate_comparisons(predicate),
+pub fn comparison_count(filter: &Filter) -> usize {
+    match filter {
+        Filter::And(filters) | Filter::Or(filters) => filters.iter().map(comparison_count).sum(),
+        Filter::Term(term) => term_comparisons(term),
     }
 }
 
-/// The levels `expr`'s `;` and `|` combinations nest; a lone Query Term nests
+/// The levels `filter`'s `;` and `|` combinations nest; a lone Query Term nests
 /// none, however many parentheses enclose it.
 #[must_use]
-pub fn nesting_depth(expr: &Filter) -> usize {
-    match expr {
-        Filter::And(terms) | Filter::Or(terms) => 1 + terms.iter().map(nesting_depth).max().unwrap_or(0),
+pub fn nesting_depth(filter: &Filter) -> usize {
+    match filter {
+        Filter::And(filters) | Filter::Or(filters) => 1 + filters.iter().map(nesting_depth).max().unwrap_or(0),
         Filter::Term(_) => 0,
     }
 }
 
 /// The comparisons one Query Term makes.
-const fn predicate_comparisons(predicate: &QueryTerm) -> usize {
-    match predicate {
+const fn term_comparisons(term: &QueryTerm) -> usize {
+    match term {
         QueryTerm::Equality {
             value: EqualityValue::ValueList(values),
             ..

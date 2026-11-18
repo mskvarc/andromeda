@@ -124,7 +124,7 @@ impl EntityQueryService {
         )
         .await?;
 
-        let order_by = compile_order_terms(params, &opt_ins.json_keys, &expander, language_targeting).await?;
+        let order_by = compile_ordering_terms(params, &opt_ins.json_keys, &expander, language_targeting).await?;
         let ordering_geometry = compile_ordering_geometry(params, self.geo_admission.limits)?;
 
         let compiled = CompiledEntityQuery::builder()
@@ -178,7 +178,7 @@ impl EntityQueryService {
 /// as a `q` path into the same attribute does. Clause 4.23.3 borrows the
 /// clause 4.9 path, so a term's target language is held to
 /// `language_targeting` as a `q` one is.
-async fn compile_order_terms(
+async fn compile_ordering_terms(
     params: &EntityQueryParameters,
     json_keys: &JsonKeyAttributes,
     expander: &impl TermExpander,

@@ -182,14 +182,14 @@ fn test_modules_are_not_scanned() {
 
 #[test]
 fn a_hop_admission_outside_the_engine_is_flagged() {
-    let source = "struct Stub; impl FilterHopAdmission for Stub { type Refusal = (); fn admit_hops(&self, f: &Expr) -> Result<(), ()> { Ok(()) } }";
+    let source = "struct Stub; impl FilterHopAdmission for Stub { type Refusal = (); fn admit_hops(&self, f: &Filter) -> Result<(), ()> { Ok(()) } }";
     assert_eq!(violations(OUTSIDE, source).len(), 1);
 }
 
 #[test]
 fn the_engine_implements_the_hop_admission_port() {
     let source =
-        "impl FilterHopAdmission for FilterHops { type Refusal = AdmissionError; fn admit_hops(&self, f: &Expr) -> Result<(), AdmissionError> { Ok(()) } }";
+        "impl FilterHopAdmission for FilterHops { type Refusal = AdmissionError; fn admit_hops(&self, f: &Filter) -> Result<(), AdmissionError> { Ok(()) } }";
     assert_eq!(violations("crates/andromeda-linked-retrieval/src/filter_hops.rs", source), Vec::<String>::new());
 }
 

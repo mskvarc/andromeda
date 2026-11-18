@@ -195,8 +195,8 @@ impl<'a> EntityAxes<'a> {
 /// The selectors of a POST body (clause 5.2.33) are alternatives of one
 /// another, as the operands of a top-level `|` are, so `type=A|B` and a body of
 /// the selectors `A` and `B` select alike.
-fn type_alternatives<'a>(expressions: impl Iterator<Item = &'a ExpandedTypeSelection>) -> Vec<&'a ExpandedTypeSelection> {
-    let mut alternatives: Vec<&ExpandedTypeSelection> = expressions.flat_map(ExpandedTypeSelection::alternatives).collect();
+fn type_alternatives<'a>(type_selections: impl Iterator<Item = &'a ExpandedTypeSelection>) -> Vec<&'a ExpandedTypeSelection> {
+    let mut alternatives: Vec<&ExpandedTypeSelection> = type_selections.flat_map(ExpandedTypeSelection::alternatives).collect();
     alternatives.sort_unstable();
     alternatives.dedup();
     alternatives
@@ -296,11 +296,11 @@ mod tests {
         ExpandedTypeSelection::Type(iri(name))
     }
 
-    fn selector(ids: &[u32], pattern: Option<&str>, type_expr: Option<ExpandedTypeSelection>) -> ExpandedEntitySelector {
+    fn selector(ids: &[u32], pattern: Option<&str>, type_selection: Option<ExpandedTypeSelection>) -> ExpandedEntitySelector {
         ExpandedEntitySelector::builder()
             .ids(ids.iter().copied().map(id).collect())
             .id_pattern(pattern.map(|source| source.parse::<Pattern>().expect("a valid pattern")))
-            .type_selection(type_expr)
+            .type_selection(type_selection)
             .build()
     }
 
@@ -488,9 +488,9 @@ mod tests {
 
     #[test]
     fn a_changed_scope_query_changes_the_identity() {
-        let scoped = |expression: &str| {
+        let scoped = |scope_query: &str| {
             EntitySelection::builder()
-                .scope_q(Some(expression.parse::<ScopeQuery>().expect("a scope query")))
+                .scope_q(Some(scope_query.parse::<ScopeQuery>().expect("a scope query")))
                 .build()
         };
         assert_eq!(kept(&scoped("/Madrid")), kept(&scoped("/Madrid")));

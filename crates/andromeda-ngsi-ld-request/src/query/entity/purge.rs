@@ -22,7 +22,7 @@ use crate::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
             deserialize_optional_dataset_selectors,
-            deserialize_optional_filter_expr,
+            deserialize_optional_filter,
             deserialize_optional_pattern,
             deserialize_optional_uri_csv,
         },
@@ -67,7 +67,7 @@ pub struct PurgeEntitiesParameters {
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
@@ -76,7 +76,7 @@ pub struct PurgeEntitiesParameters {
     #[serde(rename = "scopeQ")]
     pub scope_q: Option<ScopeQuery>,
     /// The context source filter (clause 4.9 `csf`).
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub csf: Option<Filter>,
     /// The `GeoProperty` Table 6.4.3.3-1 names for a `GeoJSON` representation
     /// (`geometryProperty`).

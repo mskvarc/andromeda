@@ -18,7 +18,7 @@ use crate::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
             deserialize_optional_dataset_selectors,
-            deserialize_optional_filter_expr,
+            deserialize_optional_filter,
             deserialize_optional_pattern,
             deserialize_optional_uri_csv,
         },
@@ -56,7 +56,7 @@ pub struct TemporalDeleteParameters {
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]
     pub id_pattern: Option<Pattern>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
@@ -66,7 +66,7 @@ pub struct TemporalDeleteParameters {
     pub scope_q: Option<ScopeQuery>,
     /// The context source filter (clause 5.7.4.3); parsed but never forwarded,
     /// because the delete is local-only.
-    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    #[serde(default, deserialize_with = "deserialize_optional_filter")]
     pub csf: Option<Filter>,
 
     /// How the window relates to the given instants (clause 4.11 `timerel`).

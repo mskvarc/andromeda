@@ -65,9 +65,9 @@ mod tests {
     /// The reading is the expression's, lowered under the matching given.
     #[test]
     fn the_reading_is_lowered_under_the_matching_given() {
-        let expr = "name[en]==\"y\"|name[en]==\"x\"".parse::<Filter>().expect("the filter parses");
-        let compiled = CompiledFilter::new(expr.clone(), LanguageMatching::ExtendedFiltering);
-        pretty_assertions::assert_eq!(compiled.reading(), &FilterReading::of(&expr, LanguageMatching::ExtendedFiltering));
+        let filter = "name[en]==\"y\"|name[en]==\"x\"".parse::<Filter>().expect("the filter parses");
+        let compiled = CompiledFilter::new(filter.clone(), LanguageMatching::ExtendedFiltering);
+        pretty_assertions::assert_eq!(compiled.reading(), &FilterReading::of(&filter, LanguageMatching::ExtendedFiltering));
         pretty_assertions::assert_eq!(
             compiled.reading(),
             &FilterReading::lowered(
@@ -75,6 +75,6 @@ mod tests {
                 LanguageMatching::ExtendedFiltering
             )
         );
-        pretty_assertions::assert_eq!(compiled.filter(), &expr);
+        pretty_assertions::assert_eq!(compiled.filter(), &filter);
     }
 }

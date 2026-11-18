@@ -147,7 +147,7 @@ where
 ///
 /// Returns a deserialization error when the expression does not satisfy the
 /// clause 4.9 filter grammar.
-pub fn deserialize_optional_filter_expr<'de, D>(deserializer: D) -> Result<Option<Filter>, D::Error>
+pub fn deserialize_optional_filter<'de, D>(deserializer: D) -> Result<Option<Filter>, D::Error>
 where
     D: Deserializer<'de>,
 {

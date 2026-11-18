@@ -49,9 +49,9 @@ impl ValuePath {
     /// Build a path addressing an attribute's own value, with no sub-attribute
     /// and no trailing group.
     #[must_use]
-    pub const fn simple(attr: AttributeName) -> ValuePath {
+    pub const fn simple(attribute: AttributeName) -> ValuePath {
         ValuePath {
-            attribute: attr,
+            attribute,
             sub_attributes: Vec::new(),
             trailing: None,
         }
@@ -120,7 +120,7 @@ mod tests {
     /// The local path the one Query Term of `q` ends on.
     fn terminal(q: &str) -> ValuePath {
         match q.parse::<Filter>().expect("a clause 4.9 filter") {
-            Filter::Term(predicate) => predicate.path().terminal().clone(),
+            Filter::Term(term) => term.path().terminal().clone(),
             other @ (Filter::And(_) | Filter::Or(_)) => panic!("{q} is no single term: {other:?}"),
         }
     }
@@ -145,9 +145,9 @@ mod tests {
     /// member's String or `DateTime` has no member to reach.
     #[test]
     fn a_member_before_a_trailing_group_ends_no_path() {
-        for trailing in ["[x]", "[a.b]", "[en]", "[en-GB]"] {
-            let path = terminal(&format!("speed.\"https://uri.etsi.org/ngsi-ld/observedAt\"{trailing}"));
-            pretty_assertions::assert_eq!(path.ending_member(), None, "{trailing}");
+        for trailing_group in ["[x]", "[a.b]", "[en]", "[en-GB]"] {
+            let path = terminal(&format!("speed.\"https://uri.etsi.org/ngsi-ld/observedAt\"{trailing_group}"));
+            pretty_assertions::assert_eq!(path.ending_member(), None, "{trailing_group}");
         }
     }
 }

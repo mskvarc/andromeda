@@ -30,12 +30,12 @@ pub enum FilterReading {
 }
 
 impl FilterReading {
-    /// The reading the executions run: `expr`, parsed and expanded, lowered
+    /// The reading the executions run: `filter`, parsed and expanded, lowered
     /// with its target languages selecting languageMap keys by `matching`,
     /// and in normal form.
     #[must_use]
-    pub fn of(expr: &Filter, matching: LanguageMatching) -> FilterReading {
-        FilterReading::lowered(expr, matching).normal_form()
+    pub fn of(filter: &Filter, matching: LanguageMatching) -> FilterReading {
+        FilterReading::lowered(filter, matching).normal_form()
     }
 
     /// The reading the executions run of a `csf` filter, parsed and
@@ -47,8 +47,8 @@ impl FilterReading {
     /// named by its core `@context` term, as
     /// [`FilterReading::lowered_context_source_filter`] reads it.
     #[must_use]
-    pub fn of_context_source_filter(expr: &Filter) -> FilterReading {
-        FilterReading::lowered_context_source_filter(expr).normal_form()
+    pub fn of_context_source_filter(filter: &Filter) -> FilterReading {
+        FilterReading::lowered_context_source_filter(filter).normal_form()
     }
 
     /// The reading in normal form, which holds for exactly the Entities this
@@ -313,11 +313,11 @@ mod tests {
     /// member read two keys of a `JsonProperty`.
     #[test]
     fn equalities_over_two_written_spellings_of_one_member_are_never_joined() {
-        let mut expr = "a[city_name]==1|a[city_name]==2".parse::<Filter>().expect("a filter");
-        let Filter::Or(terms) = &mut expr else {
+        let mut filter = "a[city_name]==1|a[city_name]==2".parse::<Filter>().expect("a filter");
+        let Filter::Or(filters) = &mut filter else {
             panic!("a disjunction");
         };
-        let Some(Filter::Term(second)) = terms.get_mut(1) else {
+        let Some(Filter::Term(second)) = filters.get_mut(1) else {
             panic!("a second term");
         };
         let AttributePath::Local(local) = second.path_mut() else {
@@ -328,7 +328,7 @@ mod tests {
             addressed: vec![member],
             written: vec!["cityName".parse().expect("an attribute name")],
         }));
-        let reading = FilterReading::of(&expr, LanguageMatching::TagEquality);
+        let reading = FilterReading::of(&filter, LanguageMatching::TagEquality);
         assert!(matches!(&reading, FilterReading::Any(children) if children.len() == 2), "{reading:?}");
     }
 
@@ -368,8 +368,8 @@ mod tests {
     /// is taken of.
     #[test]
     fn lowering_alone_keeps_the_filter_as_written() {
-        let expr: Filter = "b==2;(a==1;a==1)".parse().expect("a filter");
-        let FilterReading::All(children) = FilterReading::lowered(&expr, LanguageMatching::TagEquality) else {
+        let filter: Filter = "b==2;(a==1;a==1)".parse().expect("a filter");
+        let FilterReading::All(children) = FilterReading::lowered(&filter, LanguageMatching::TagEquality) else {
             panic!("a conjunction");
         };
         assert!(matches!(children.as_slice(), [FilterReading::Term(_), FilterReading::All(inner)] if inner.len() == 2));

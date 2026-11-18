@@ -1016,7 +1016,7 @@ fn parking(parking_id: &str, category: &str, parking_type: &str) -> Value {
 
 const DOWNTOWN: &str = "urn:ngsi-ld:OffStreetParking:Downtown1";
 
-fn linked_predicate(inner_value: &str) -> Filter {
+fn linked_filter(inner_value: &str) -> Filter {
     format!("\"https://example.com/isParkedIn\"{{\"https://example.com/category\"}}==\"{inner_value}\"")
         .parse::<Filter>()
         .expect("parses")
@@ -1027,13 +1027,13 @@ fn linked_predicate(inner_value: &str) -> Filter {
 #[test]
 fn a_hop_matches_on_the_value_of_the_linked_entity() {
     let linked = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
-    assert!(holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+    assert!(holds_linked(&linked_filter("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
 }
 
 #[test]
 fn a_hop_rejects_when_the_linked_entity_holds_another_value() {
     let linked = [parking(DOWNTOWN, "residential", "https://example.com/Building")];
-    assert!(!holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+    assert!(!holds_linked(&linked_filter("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
 }
 
 #[test]
@@ -1057,7 +1057,7 @@ fn a_type_guard_admits_only_a_linked_entity_of_a_listed_type() {
 #[test]
 fn a_hop_whose_object_names_no_known_entity_resolves_no_target() {
     let linked = [parking("urn:ngsi-ld:OffStreetParking:Elsewhere", "commercial", "https://example.com/Building")];
-    assert!(!holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+    assert!(!holds_linked(&linked_filter("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
     assert!(!holds_linked(
         &"\"https://example.com/isParkedIn\"{\"https://example.com/category\"}"
             .parse::<Filter>()
@@ -1065,7 +1065,7 @@ fn a_hop_whose_object_names_no_known_entity_resolves_no_target() {
         &vehicle_parked_in(DOWNTOWN),
         &linked
     ));
-    assert!(!holds(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN)));
+    assert!(!holds(&linked_filter("commercial"), &vehicle_parked_in(DOWNTOWN)));
 }
 
 #[test]
@@ -1116,9 +1116,9 @@ fn a_hop_follows_every_object_of_every_instance() {
         parking("urn:p1", "residential", "https://example.com/Building"),
         parking("urn:p2", "commercial", "https://example.com/Building"),
     ];
-    assert!(holds_linked(&linked_predicate("commercial"), &entity, &linked));
-    assert!(holds_linked(&linked_predicate("residential"), &entity, &linked));
-    assert!(!holds_linked(&linked_predicate("industrial"), &entity, &linked));
+    assert!(holds_linked(&linked_filter("commercial"), &entity, &linked));
+    assert!(holds_linked(&linked_filter("residential"), &entity, &linked));
+    assert!(!holds_linked(&linked_filter("industrial"), &entity, &linked));
 }
 
 /// Only a Relationship names a linked entity: a Property whose value spells
@@ -1131,7 +1131,7 @@ fn a_hop_through_a_property_follows_nothing() {
         "https://example.com/isParkedIn": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": DOWNTOWN}]}]
     }]);
     let linked = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
-    assert!(!holds_linked(&linked_predicate("commercial"), &entity, &linked));
+    assert!(!holds_linked(&linked_filter("commercial"), &entity, &linked));
 }
 
 /// A Door whose `description` is a language map, and whose `tags` hold two

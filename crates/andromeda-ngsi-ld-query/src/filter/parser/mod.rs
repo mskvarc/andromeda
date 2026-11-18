@@ -26,7 +26,7 @@ use crate::filter::{
     parser::{
         attribute_path::parse_linked_entity_relation,
         lexer::{Token, tokenize},
-        operand::{parse_comparable_value, parse_compare_value, parse_pattern_string},
+        operand::{parse_comparable_value, parse_equality_value, parse_pattern_string},
         token_cursor::TokenCursor,
     },
     query_term::{OrderingOperator, QueryTerm, SetMembership},
@@ -68,38 +68,38 @@ impl FromStr for Filter {
 /// parentheses.
 fn parse_or(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, FilterError> {
     let mut left = parse_and(cursor, depth)?;
-    let mut terms = Vec::new();
+    let mut filters = Vec::new();
 
     while cursor.peek() == Some(&Token::Pipe) {
         cursor.advance();
-        terms.push(left);
+        filters.push(left);
         left = parse_and(cursor, depth)?;
     }
 
-    if terms.is_empty() {
+    if filters.is_empty() {
         Ok(left)
     } else {
-        terms.push(left);
-        Ok(Filter::Or(terms))
+        filters.push(left);
+        Ok(Filter::Or(filters))
     }
 }
 
 /// Parse a conjunction: `primary (';' primary)*`, inside `depth` parentheses.
 fn parse_and(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, FilterError> {
     let mut left = parse_primary(cursor, depth)?;
-    let mut terms = Vec::new();
+    let mut filters = Vec::new();
 
     while cursor.peek() == Some(&Token::Semi) {
         cursor.advance();
-        terms.push(left);
+        filters.push(left);
         left = parse_primary(cursor, depth)?;
     }
 
-    if terms.is_empty() {
+    if filters.is_empty() {
         Ok(left)
     } else {
-        terms.push(left);
-        Ok(Filter::And(terms))
+        filters.push(left);
+        Ok(Filter::And(filters))
     }
 }
 
@@ -118,17 +118,17 @@ fn parse_primary(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, F
             });
         }
         cursor.advance();
-        let expr = parse_or(cursor, inner)?;
+        let filter = parse_or(cursor, inner)?;
         cursor.expect(&Token::RParen)?;
-        Ok(expr)
+        Ok(filter)
     } else {
-        Ok(Filter::Term(parse_predicate(cursor)?))
+        Ok(Filter::Term(parse_query_term(cursor)?))
     }
 }
 
 /// Parse one Query Term: its attribute axis (clause 4.9 `Attribute`, a hop's
 /// braces included), optionally followed by an operator and its operand.
-fn parse_predicate(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, FilterError> {
+fn parse_query_term(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, FilterError> {
     let leading = cursor.parse_ident()?;
     let path = parse_linked_entity_relation(cursor, leading, 0)?;
     parse_operator_and_operand(cursor, path)
@@ -140,56 +140,56 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath)
     match cursor.peek() {
         Some(Token::Eq) => {
             cursor.advance();
-            let rhs = parse_compare_value(cursor)?;
+            let value = parse_equality_value(cursor)?;
             Ok(QueryTerm::Equality {
                 path,
                 membership: SetMembership::Within,
-                value: rhs,
+                value,
             })
         }
         Some(Token::Neq) => {
             cursor.advance();
-            let rhs = parse_compare_value(cursor)?;
+            let value = parse_equality_value(cursor)?;
             Ok(QueryTerm::Equality {
                 path,
                 membership: SetMembership::Outside,
-                value: rhs,
+                value,
             })
         }
         Some(Token::Gt) => {
             cursor.advance();
-            let rhs = parse_comparable_value(cursor)?;
+            let value = parse_comparable_value(cursor)?;
             Ok(QueryTerm::Ordering {
                 path,
                 operator: OrderingOperator::Greater,
-                value: rhs,
+                value,
             })
         }
         Some(Token::Ge) => {
             cursor.advance();
-            let rhs = parse_comparable_value(cursor)?;
+            let value = parse_comparable_value(cursor)?;
             Ok(QueryTerm::Ordering {
                 path,
                 operator: OrderingOperator::GreaterEq,
-                value: rhs,
+                value,
             })
         }
         Some(Token::Lt) => {
             cursor.advance();
-            let rhs = parse_comparable_value(cursor)?;
+            let value = parse_comparable_value(cursor)?;
             Ok(QueryTerm::Ordering {
                 path,
                 operator: OrderingOperator::Less,
-                value: rhs,
+                value,
             })
         }
         Some(Token::Le) => {
             cursor.advance();
-            let rhs = parse_comparable_value(cursor)?;
+            let value = parse_comparable_value(cursor)?;
             Ok(QueryTerm::Ordering {
                 path,
                 operator: OrderingOperator::LessEq,
-                value: rhs,
+                value,
             })
         }
         Some(Token::Match) => {
@@ -249,9 +249,9 @@ mod tests {
 
     #[test]
     fn parse_existence() {
-        let expr = "temperature".parse::<Filter>().unwrap();
+        let filter = "temperature".parse::<Filter>().unwrap();
         pretty_assertions::assert_eq!(
-            expr,
+            filter,
             Filter::Term(QueryTerm::Exists(AttributePath::Local(ValuePath::simple(
                 "temperature".parse().expect("valid attribute name")
             ))))
@@ -260,12 +260,12 @@ mod tests {
 
     #[test]
     fn parse_equality_number() {
-        let expr = "temperature==20".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { path, membership, value: rhs }) => {
+        let filter = "temperature==20".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { path, membership, value }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "temperature");
                 pretty_assertions::assert_eq!(membership, SetMembership::Within);
-                pretty_assertions::assert_eq!(rhs, EqualityValue::Scalar(Scalar::Number(20.into())));
+                pretty_assertions::assert_eq!(value, EqualityValue::Scalar(Scalar::Number(20.into())));
             }
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected Equality, got {other:?}"),
         }
@@ -309,12 +309,12 @@ mod tests {
 
     #[test]
     fn parse_inequality_string() {
-        let expr = "brandName!=\"Mercedes\"".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { path, membership, value: rhs }) => {
+        let filter = "brandName!=\"Mercedes\"".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { path, membership, value }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "brandName");
                 pretty_assertions::assert_eq!(membership, SetMembership::Outside);
-                pretty_assertions::assert_eq!(rhs, EqualityValue::Scalar(Scalar::Str("Mercedes".to_string())));
+                pretty_assertions::assert_eq!(value, EqualityValue::Scalar(Scalar::Str("Mercedes".to_string())));
             }
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected Equality, got {other:?}"),
         }
@@ -322,47 +322,43 @@ mod tests {
 
     #[test]
     fn parse_greater_than() {
-        let expr = "speed>50".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Ordering {
-                path,
-                operator: op,
-                value: rhs,
-            }) => {
+        let filter = "speed>50".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Ordering { path, operator, value }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "speed");
-                pretty_assertions::assert_eq!(op, OrderingOperator::Greater);
-                pretty_assertions::assert_eq!(rhs, Scalar::Number(50.into()));
+                pretty_assertions::assert_eq!(operator, OrderingOperator::Greater);
+                pretty_assertions::assert_eq!(value, Scalar::Number(50.into()));
             }
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected Ordering, got {other:?}"),
         }
     }
 
     #[test]
-    fn parse_and_expression() {
-        let expr = "speed>50;brandName!=\"Mercedes\"".parse::<Filter>().unwrap();
-        match expr {
-            Filter::And(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
+    fn parse_and_filter() {
+        let filter = "speed>50;brandName!=\"Mercedes\"".parse::<Filter>().unwrap();
+        match filter {
+            Filter::And(filters) => pretty_assertions::assert_eq!(filters.len(), 2),
             other @ (Filter::Or(_) | Filter::Term(_)) => panic!("expected And, got {other:?}"),
         }
     }
 
     #[test]
-    fn parse_or_expression() {
-        let expr = "speed>50|temperature<10".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Or(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
+    fn parse_or_filter() {
+        let filter = "speed>50|temperature<10".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Or(filters) => pretty_assertions::assert_eq!(filters.len(), 2),
             other @ (Filter::And(_) | Filter::Term(_)) => panic!("expected Or, got {other:?}"),
         }
     }
 
     #[test]
     fn parse_and_takes_precedence_over_or() {
-        let expr = "a==1|b==2;c==3".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Or(terms) => {
-                pretty_assertions::assert_eq!(terms.len(), 2);
-                match &terms[1] {
-                    Filter::And(and_terms) => pretty_assertions::assert_eq!(and_terms.len(), 2),
+        let filter = "a==1|b==2;c==3".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Or(filters) => {
+                pretty_assertions::assert_eq!(filters.len(), 2);
+                match &filters[1] {
+                    Filter::And(and_filters) => pretty_assertions::assert_eq!(and_filters.len(), 2),
                     other @ (Filter::Or(_) | Filter::Term(_)) => panic!("expected And as second OR term, got {other:?}"),
                 }
             }
@@ -372,11 +368,11 @@ mod tests {
 
     #[test]
     fn parse_parenthesized_group() {
-        let expr = "(speed>50|rpm>3000);brandName==\"Mercedes\"".parse::<Filter>().unwrap();
-        match expr {
-            Filter::And(terms) => {
-                pretty_assertions::assert_eq!(terms.len(), 2);
-                match &terms[0] {
+        let filter = "(speed>50|rpm>3000);brandName==\"Mercedes\"".parse::<Filter>().unwrap();
+        match filter {
+            Filter::And(filters) => {
+                pretty_assertions::assert_eq!(filters.len(), 2);
+                match &filters[0] {
                     Filter::Or(_) => {}
                     other @ (Filter::And(_) | Filter::Term(_)) => panic!("expected Or inside parens, got {other:?}"),
                 }
@@ -387,9 +383,9 @@ mod tests {
 
     #[test]
     fn parse_range() {
-        let expr = "temperature==10..20".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
+        let filter = "temperature==10..20".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { value, .. }) => match value {
                 EqualityValue::Range { min, max } => {
                     pretty_assertions::assert_eq!(min, Scalar::Number(10.into()));
                     pretty_assertions::assert_eq!(max, Scalar::Number(20.into()));
@@ -409,11 +405,11 @@ mod tests {
 
     #[test]
     fn parse_value_list() {
-        let expr = "color==\"red\",\"blue\",\"green\"".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
-                EqualityValue::ValueList(vals) => {
-                    pretty_assertions::assert_eq!(vals.len(), 3);
+        let filter = "color==\"red\",\"blue\",\"green\"".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { value, .. }) => match value {
+                EqualityValue::ValueList(values) => {
+                    pretty_assertions::assert_eq!(values.len(), 3);
                 }
                 other @ (EqualityValue::Scalar(_) | EqualityValue::Range { .. }) => panic!("expected ValueList, got {other:?}"),
             },
@@ -423,8 +419,8 @@ mod tests {
 
     #[test]
     fn parse_match_pattern() {
-        let expr = "brandName~=\"Merc.*\"".parse::<Filter>().unwrap();
-        match expr {
+        let filter = "brandName~=\"Merc.*\"".parse::<Filter>().unwrap();
+        match filter {
             Filter::Term(QueryTerm::MatchPattern { path, pattern }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "brandName");
                 pretty_assertions::assert_eq!(pattern.as_str(), "Merc.*");
@@ -435,8 +431,8 @@ mod tests {
 
     #[test]
     fn parse_not_match_pattern() {
-        let expr = "brandName!~=\"Merc.*\"".parse::<Filter>().unwrap();
-        match expr {
+        let filter = "brandName!~=\"Merc.*\"".parse::<Filter>().unwrap();
+        match filter {
             Filter::Term(QueryTerm::NotMatchPattern { path, pattern }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "brandName");
                 pretty_assertions::assert_eq!(pattern.as_str(), "Merc.*");
@@ -533,21 +529,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_dotted_attr_path() {
-        let expr = "temperature.observedAt>=2017-12-24T12:00:00Z".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Ordering {
-                path,
-                operator: op,
-                value: rhs,
-            }) => {
+    fn parse_dotted_value_path() {
+        let filter = "temperature.observedAt>=2017-12-24T12:00:00Z".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Ordering { path, operator, value }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "temperature");
                 pretty_assertions::assert_eq!(
                     path.terminal().sub_attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
                     vec!["observedAt"]
                 );
-                pretty_assertions::assert_eq!(op, OrderingOperator::GreaterEq);
-                match rhs {
+                pretty_assertions::assert_eq!(operator, OrderingOperator::GreaterEq);
+                match value {
                     Scalar::DateTime(dt) => {
                         pretty_assertions::assert_eq!(instant_text(dt), "2017-12-24T12:00:00Z");
                     }
@@ -562,8 +554,8 @@ mod tests {
 
     #[test]
     fn parse_compound_value_path() {
-        let expr = "address[city]==\"Berlin\"".parse::<Filter>().unwrap();
-        match expr {
+        let filter = "address[city]==\"Berlin\"".parse::<Filter>().unwrap();
+        match filter {
             Filter::Term(QueryTerm::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "address");
                 pretty_assertions::assert_eq!(
@@ -583,8 +575,8 @@ mod tests {
 
     #[test]
     fn parse_nested_compound_value_path() {
-        let expr = "sensor.rawdata[airquality.particulate]==40".parse::<Filter>().unwrap();
-        match expr {
+        let filter = "sensor.rawdata[airquality.particulate]==40".parse::<Filter>().unwrap();
+        match filter {
             Filter::Term(QueryTerm::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "sensor");
                 pretty_assertions::assert_eq!(
@@ -608,10 +600,10 @@ mod tests {
 
     #[test]
     fn parse_less_equal() {
-        let expr = "capacity<=10".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Ordering { operator: op, .. }) => {
-                pretty_assertions::assert_eq!(op, OrderingOperator::LessEq);
+        let filter = "capacity<=10".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Ordering { operator, .. }) => {
+                pretty_assertions::assert_eq!(operator, OrderingOperator::LessEq);
             }
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected Ordering, got {other:?}"),
         }
@@ -619,12 +611,12 @@ mod tests {
 
     #[test]
     fn parse_complex_mixed() {
-        let expr = "(temperature>=20;temperature<=25)|capacity<=10".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Or(terms) => {
-                pretty_assertions::assert_eq!(terms.len(), 2);
-                match &terms[0] {
-                    Filter::And(and_terms) => pretty_assertions::assert_eq!(and_terms.len(), 2),
+        let filter = "(temperature>=20;temperature<=25)|capacity<=10".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Or(filters) => {
+                pretty_assertions::assert_eq!(filters.len(), 2);
+                match &filters[0] {
+                    Filter::And(and_filters) => pretty_assertions::assert_eq!(and_filters.len(), 2),
                     other @ (Filter::Or(_) | Filter::Term(_)) => panic!("expected And, got {other:?}"),
                 }
             }
@@ -634,9 +626,9 @@ mod tests {
 
     #[test]
     fn parse_uri_equality() {
-        let expr = "isParked==\"urn:ngsi-ld:OffStreetParking:Downtown1\"".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
+        let filter = "isParked==\"urn:ngsi-ld:OffStreetParking:Downtown1\"".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { value, .. }) => match value {
                 EqualityValue::Scalar(Scalar::Str(s)) => {
                     pretty_assertions::assert_eq!(s, "urn:ngsi-ld:OffStreetParking:Downtown1");
                 }
@@ -648,9 +640,9 @@ mod tests {
 
     #[test]
     fn parse_negative_number() {
-        let expr = "temperature>-5".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Ordering { value: rhs, .. }) => match rhs {
+        let filter = "temperature>-5".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Ordering { value, .. }) => match value {
                 Scalar::Number(n) => {
                     pretty_assertions::assert_eq!(n, JsonNumber::from(-5));
                 }
@@ -664,9 +656,9 @@ mod tests {
 
     #[test]
     fn parse_float_number() {
-        let expr = "temperature==23.5".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
+        let filter = "temperature==23.5".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { value, .. }) => match value {
                 EqualityValue::Scalar(Scalar::Number(n)) => {
                     pretty_assertions::assert_eq!(n, JsonNumber::try_from(23.5).expect("a finite number"));
                 }
@@ -678,11 +670,11 @@ mod tests {
 
     #[test]
     fn exact_fraction_and_range_failure_are_typed() {
-        let expr = "temperature==0.100000000000000005".parse::<Filter>().expect("supported exact number");
+        let filter = "temperature==0.100000000000000005".parse::<Filter>().expect("supported exact number");
         let Filter::Term(QueryTerm::Equality {
             value: EqualityValue::Scalar(Scalar::Number(number)),
             ..
-        }) = expr
+        }) = filter
         else {
             panic!("expected numeric equality");
         };
@@ -692,10 +684,10 @@ mod tests {
 
     #[test]
     fn parse_boolean_value() {
-        let expr = "active==true".parse::<Filter>().unwrap();
-        match expr {
-            Filter::Term(QueryTerm::Equality { value: rhs, .. }) => {
-                pretty_assertions::assert_eq!(rhs, EqualityValue::Scalar(Scalar::Bool(true)));
+        let filter = "active==true".parse::<Filter>().unwrap();
+        match filter {
+            Filter::Term(QueryTerm::Equality { value, .. }) => {
+                pretty_assertions::assert_eq!(value, EqualityValue::Scalar(Scalar::Bool(true)));
             }
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected Equality, got {other:?}"),
         }
@@ -738,9 +730,9 @@ mod tests {
         }
     }
 
-    fn predicate_of(expr: &Filter) -> &QueryTerm {
-        match expr {
-            Filter::Term(pred) => pred,
+    fn term_of(filter: &Filter) -> &QueryTerm {
+        match filter {
+            Filter::Term(term) => term,
             other @ (Filter::And(_) | Filter::Or(_)) => panic!("expected a single predicate, got {other:?}"),
         }
     }
@@ -750,15 +742,15 @@ mod tests {
         // Clause 4.9 `QueryTerm =/ Attribute equal CompEqualityValue` with
         // `Attribute = LinkedEntityRelation`: the braces close over the path and
         // the comparison follows them (EXAMPLE 13, `sensor{humidity}==40`).
-        let expr = "isParkedIn{category}==\"commercial\"".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
-            QueryTerm::Equality { path, membership, value: rhs } => {
+        let filter = "isParkedIn{category}==\"commercial\"".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
+            QueryTerm::Equality { path, membership, value } => {
                 let (relationship, guard, inner) = hop_of(path);
                 pretty_assertions::assert_eq!(relationship, "isParkedIn");
                 assert!(guard.is_empty(), "no type guard was written: {guard:?}");
                 pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "category");
                 pretty_assertions::assert_eq!(*membership, SetMembership::Within);
-                pretty_assertions::assert_eq!(*rhs, EqualityValue::Scalar(Scalar::Str("commercial".to_string())));
+                pretty_assertions::assert_eq!(*value, EqualityValue::Scalar(Scalar::Str("commercial".to_string())));
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
                 panic!("expected an equality predicate, got {other:?}")
@@ -770,8 +762,8 @@ mod tests {
     fn a_hop_carrying_two_comma_separated_types_parses_them_as_its_guard() {
         // The clause 4.9 guard production is `*1(EntityType 1*("," EntityType) ":")`,
         // so two or more types followed by a colon constrain the linked entity.
-        let expr = "isParkedIn{Building,Store:category}==\"x\"".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
+        let filter = "isParkedIn{Building,Store:category}==\"x\"".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
             QueryTerm::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
                 pretty_assertions::assert_eq!(relationship, "isParkedIn");
@@ -786,9 +778,9 @@ mod tests {
 
     #[test]
     fn hops_nest_and_the_innermost_one_carries_the_comparison() {
-        let expr = "a{b{c}}==5".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
-            QueryTerm::Equality { path, value: rhs, .. } => {
+        let filter = "a{b{c}}==5".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
+            QueryTerm::Equality { path, value, .. } => {
                 let (outer, outer_guard, inner_path) = hop_of(path);
                 pretty_assertions::assert_eq!(outer, "a");
                 assert!(outer_guard.is_empty(), "{outer_guard:?}");
@@ -796,7 +788,7 @@ mod tests {
                 pretty_assertions::assert_eq!(inner, "b");
                 assert!(inner_guard.is_empty(), "{inner_guard:?}");
                 pretty_assertions::assert_eq!(local_of(terminal).attribute.as_str(), "c");
-                pretty_assertions::assert_eq!(*rhs, EqualityValue::Scalar(Scalar::Number(5.into())));
+                pretty_assertions::assert_eq!(*value, EqualityValue::Scalar(Scalar::Number(5.into())));
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Ordering { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
                 panic!("expected an equality predicate, got {other:?}")
@@ -806,8 +798,8 @@ mod tests {
 
     #[test]
     fn a_hop_with_no_operator_inside_is_an_existence_check_on_the_linked_entity() {
-        let expr = "a{b}".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
+        let filter = "a{b}".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
             QueryTerm::Exists(path) => {
                 let (relationship, guard, inner) = hop_of(path);
                 pretty_assertions::assert_eq!(relationship, "a");
@@ -838,8 +830,8 @@ mod tests {
             ),
             ("sensor{\"ex:Device\":humidity}==40", "sensor", "ex:Device", "humidity"),
         ] {
-            let expr = q.parse::<Filter>().unwrap_or_else(|error| panic!("{q}: {error}"));
-            let (read_relationship, read_guard, inner) = hop_of(predicate_of(&expr).path());
+            let filter = q.parse::<Filter>().unwrap_or_else(|error| panic!("{q}: {error}"));
+            let (read_relationship, read_guard, inner) = hop_of(term_of(&filter).path());
             pretty_assertions::assert_eq!(
                 (read_relationship, read_guard, local_of(inner).attribute.as_str()),
                 (relationship, vec![guard], attribute),
@@ -851,8 +843,8 @@ mod tests {
     /// The guard of one type opens each hop of a chain, outermost first.
     #[test]
     fn each_hop_of_a_chain_takes_a_guard_of_one_type() {
-        let expr = "r{T1:s{T2:a}}==1".parse::<Filter>().expect("parses");
-        let (relationship, guard, inner) = hop_of(predicate_of(&expr).path());
+        let filter = "r{T1:s{T2:a}}==1".parse::<Filter>().expect("parses");
+        let (relationship, guard, inner) = hop_of(term_of(&filter).path());
         pretty_assertions::assert_eq!((relationship, guard), ("r", vec!["T1"]));
         let (relationship, guard, inner) = hop_of(inner);
         pretty_assertions::assert_eq!((relationship, guard), ("s", vec!["T2"]));
@@ -863,8 +855,8 @@ mod tests {
     /// its colon would otherwise end a type guard.
     #[test]
     fn a_quoted_prefixed_name_inside_a_hop_is_an_attribute_name() {
-        let expr = "a{\"prefix:name\"}==\"v\"".parse::<Filter>().expect("parses");
-        let (relationship, guard, inner) = hop_of(predicate_of(&expr).path());
+        let filter = "a{\"prefix:name\"}==\"v\"".parse::<Filter>().expect("parses");
+        let (relationship, guard, inner) = hop_of(term_of(&filter).path());
         pretty_assertions::assert_eq!(relationship, "a");
         assert!(guard.is_empty(), "a quoted name is no guard: {guard:?}");
         pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "prefix:name");
@@ -880,18 +872,18 @@ mod tests {
     }
 
     #[test]
-    fn a_traversal_predicate_combines_with_a_local_one_through_the_conjunction() {
-        let expr = "speed>50;isParkedIn{category}==\"x\"".parse::<Filter>().expect("parses");
-        match expr {
-            Filter::And(terms) => {
-                pretty_assertions::assert_eq!(terms.len(), 2);
-                match predicate_of(&terms[0]) {
+    fn a_traversal_term_combines_with_a_local_one_through_the_conjunction() {
+        let filter = "speed>50;isParkedIn{category}==\"x\"".parse::<Filter>().expect("parses");
+        match filter {
+            Filter::And(filters) => {
+                pretty_assertions::assert_eq!(filters.len(), 2);
+                match term_of(&filters[0]) {
                     QueryTerm::Ordering { path, .. } => pretty_assertions::assert_eq!(local_of(path).attribute.as_str(), "speed"),
                     other @ (QueryTerm::Exists(_) | QueryTerm::Equality { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
                         panic!("expected an ordering predicate, got {other:?}")
                     }
                 }
-                let (relationship, _, _) = hop_of(predicate_of(&terms[1]).path());
+                let (relationship, _, _) = hop_of(term_of(&filters[1]).path());
                 pretty_assertions::assert_eq!(relationship, "isParkedIn");
             }
             other @ (Filter::Or(_) | Filter::Term(_)) => panic!("expected a conjunction, got {other:?}"),
@@ -903,8 +895,8 @@ mod tests {
         // Only the final type can carry the guard's terminating colon, because a
         // comma says another type follows. A prefixed type written before the
         // last one is therefore unambiguous and must not be split.
-        let expr = "rel{ex:A,Store:category}==\"x\"".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
+        let filter = "rel{ex:A,Store:category}==\"x\"".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
             QueryTerm::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
                 pretty_assertions::assert_eq!(relationship, "rel");
@@ -929,8 +921,8 @@ mod tests {
 
     #[test]
     fn quoting_a_guard_type_resolves_the_ambiguity_its_colons_would_create() {
-        let expr = "rel{Building,\"ex:Store\":category}==\"x\"".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
+        let filter = "rel{Building,\"ex:Store\":category}==\"x\"".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
             QueryTerm::Equality { path, .. } => {
                 let (_, guard, inner) = hop_of(path);
                 pretty_assertions::assert_eq!(guard, vec!["Building", "ex:Store"]);
@@ -979,9 +971,9 @@ mod tests {
 
     #[test]
     fn a_hop_ending_in_a_compound_member_compares_that_member() {
-        let expr = "a{b[c.d]}>=1".parse::<Filter>().expect("parses");
-        match predicate_of(&expr) {
-            QueryTerm::Ordering { path, operator: op, .. } => {
+        let filter = "a{b[c.d]}>=1".parse::<Filter>().expect("parses");
+        match term_of(&filter) {
+            QueryTerm::Ordering { path, operator, .. } => {
                 let (_, _, inner) = hop_of(path);
                 pretty_assertions::assert_eq!(
                     local_of(inner)
@@ -993,7 +985,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                     vec!["c", "d"]
                 );
-                pretty_assertions::assert_eq!(*op, OrderingOperator::GreaterEq);
+                pretty_assertions::assert_eq!(*operator, OrderingOperator::GreaterEq);
             }
             other @ (QueryTerm::Exists(_) | QueryTerm::Equality { .. } | QueryTerm::MatchPattern { .. } | QueryTerm::NotMatchPattern { .. }) => {
                 panic!("expected an ordering predicate, got {other:?}")

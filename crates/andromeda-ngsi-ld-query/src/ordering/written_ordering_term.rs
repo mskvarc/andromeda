@@ -7,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// A parsed `orderBy` term. `attr` is the raw request text, before it is classified and expanded into a [`CompiledOrderingTerm`].
+/// A parsed `orderBy` term. `path` is the raw request text, before it is classified and expanded into a [`CompiledOrderingTerm`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct WrittenOrderingTerm {
@@ -29,14 +29,14 @@ impl FromStr for WrittenOrderingTerm {
             }
             None => (raw, OrderingDirection::Asc),
         };
-        let attr = member.parse::<ValuePath>().map_err(OrderingError::Path)?;
-        if attr.trailing == Some(TrailingGroup::AllLanguages) {
+        let path = member.parse::<ValuePath>().map_err(OrderingError::Path)?;
+        if path.trailing == Some(TrailingGroup::AllLanguages) {
             return Err(OrderingError::LanguageSuppression);
         }
-        if attr.target_language().is_some_and(LanguageSelector::is_range) {
+        if path.target_language().is_some_and(LanguageSelector::is_range) {
             return Err(OrderingError::LanguageRange);
         }
-        Ok(WrittenOrderingTerm { path: attr, direction })
+        Ok(WrittenOrderingTerm { path, direction })
     }
 }
 

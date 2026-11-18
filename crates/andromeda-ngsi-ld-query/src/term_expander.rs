@@ -65,7 +65,7 @@ mod tests {
     use crate::{query_error::QueryError, term_expander::TermExpansionError};
 
     #[test]
-    fn an_expansion_failure_names_its_class_in_the_query_error() {
+    fn an_expansion_error_names_its_class_in_the_query_error() {
         pretty_assertions::assert_eq!(
             QueryError::TermExpansion(TermExpansionError::NotAnIri).to_string(),
             "could not expand a term: the term expands to something that is not an absolute IRI"

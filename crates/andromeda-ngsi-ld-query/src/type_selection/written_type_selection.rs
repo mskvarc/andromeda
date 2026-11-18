@@ -205,8 +205,8 @@ fn write_separated(formatter: &mut fmt::Formatter<'_>, children: &[WrittenTypeSe
 // The wire form is produced by the `Display` above; this exists only because
 // `#[serde(into = "String")]` demands an `Into<String>` and cannot use it.
 impl From<WrittenTypeSelection> for String {
-    fn from(expr: WrittenTypeSelection) -> String {
-        expr.to_string()
+    fn from(type_selection: WrittenTypeSelection) -> String {
+        type_selection.to_string()
     }
 }
 
@@ -216,7 +216,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 
     #[test]
-    fn a_type_expression_round_trips_through_its_clause_4_17_text() {
+    fn a_type_selection_round_trips_through_its_clause_4_17_text() {
         for raw in ["Building", "Building,Tower", "(Building;Vehicle)", "(Home;Vehicle),Motorhome"] {
             let parsed: WrittenTypeSelection = raw.parse().expect("valid type expression");
             let reparsed: WrittenTypeSelection = parsed.to_string().parse().expect("re-parses");
@@ -227,7 +227,7 @@ mod tests {
     /// A leaf that is no absolute IRI was never expanded, so it is refused
     /// rather than read as an IRI it does not name.
     #[test]
-    fn a_compact_leaf_is_no_expanded_expression() {
+    fn a_compact_leaf_is_no_expanded_type_selection() {
         let compact: WrittenTypeSelection = "Vehicle".parse().expect("valid type expression");
         assert!(compact.to_expanded().is_err());
     }
@@ -235,11 +235,11 @@ mod tests {
     #[test]
     fn an_alternation_matches_whole_names_only() {
         // Names are compared whole: `Building` does not match `MyBuilding`.
-        let expr: WrittenTypeSelection = "Building|Tower".parse().expect("valid type expression");
-        assert!(expr.matches(&["Building"]));
-        assert!(expr.matches(&["Tower"]));
-        assert!(!expr.matches(&["MyBuilding"]));
-        assert!(!expr.matches(&["Vehicle"]));
+        let type_selection: WrittenTypeSelection = "Building|Tower".parse().expect("valid type expression");
+        assert!(type_selection.matches(&["Building"]));
+        assert!(type_selection.matches(&["Tower"]));
+        assert!(!type_selection.matches(&["MyBuilding"]));
+        assert!(!type_selection.matches(&["Vehicle"]));
     }
 
     /// A stored selector is re-serialised whenever the resource carrying it is
@@ -268,9 +268,9 @@ mod tests {
 
     #[test]
     fn a_conjunction_needs_every_type_present() {
-        let expr: WrittenTypeSelection = "(Home;Vehicle)".parse().expect("valid type expression");
-        assert!(expr.matches(&["Home", "Vehicle"]));
-        assert!(!expr.matches(&["Home"]));
+        let type_selection: WrittenTypeSelection = "(Home;Vehicle)".parse().expect("valid type expression");
+        assert!(type_selection.matches(&["Home", "Vehicle"]));
+        assert!(!type_selection.matches(&["Home"]));
     }
 
     #[test]
@@ -285,10 +285,10 @@ mod tests {
     }
 
     #[test]
-    fn a_raw_expression_names_its_leaf_types_in_order() {
+    fn a_written_type_selection_names_its_leaf_types_in_order() {
         let name = |raw: &str| raw.parse::<EntityTypeName>().expect("valid type name");
-        let expr = "Vehicle,(Home;Asset)".parse::<WrittenTypeSelection>().expect("valid");
-        pretty_assertions::assert_eq!(expr.named_types(), vec![name("Vehicle"), name("Home"), name("Asset")]);
+        let type_selection = "Vehicle,(Home;Asset)".parse::<WrittenTypeSelection>().expect("valid");
+        pretty_assertions::assert_eq!(type_selection.named_types(), vec![name("Vehicle"), name("Home"), name("Asset")]);
         pretty_assertions::assert_eq!(WrittenTypeSelection::Wildcard.named_types(), Vec::<EntityTypeName>::new());
     }
 
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_type_expression_is_rejected_when_the_resource_is_deserialized() {
+    fn a_malformed_type_selection_is_rejected_when_the_resource_is_deserialized() {
         assert!(serde_json::from_str::<WrittenTypeSelection>("\"(Building\"").is_err());
     }
 }

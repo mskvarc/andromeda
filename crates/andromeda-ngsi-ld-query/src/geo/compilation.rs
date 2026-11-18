@@ -27,18 +27,18 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 /// or [`GeoQueryError::InvalidGeoproperty`] when the `geoproperty` term does
 /// not expand to a usable attribute name.
 pub async fn compile_geo_query(
-    input: Option<&WrittenGeoQuery>,
+    geo_query: Option<&WrittenGeoQuery>,
     expander: &impl TermExpander,
     admission: GeoQueryAdmission,
 ) -> Result<Option<CompiledGeoQuery>, QueryError> {
-    let Some(input) = input else {
+    let Some(geo_query) = geo_query else {
         return Ok(None);
     };
-    admission.near_band.admit(&input.georel).map_err(QueryError::from)?;
-    let geometry = input.reference.admit(admission.limits).map_err(QueryError::from)?;
-    let geoproperty = input.geoproperty.as_ref().map_or(properties::LOCATION, AsRef::<str>::as_ref);
+    admission.near_band.admit(&geo_query.georel).map_err(QueryError::from)?;
+    let geometry = geo_query.reference.admit(admission.limits).map_err(QueryError::from)?;
+    let geoproperty = geo_query.geoproperty.as_ref().map_or(properties::LOCATION, AsRef::<str>::as_ref);
     Ok(Some(CompiledGeoQuery {
-        georel: input.georel.clone(),
+        georel: geo_query.georel.clone(),
         geometry,
         geoproperty: expander
             .expand_term(geoproperty)
@@ -80,14 +80,14 @@ mod tests {
 
     #[tokio::test]
     async fn expansion_consumes_a_decoded_geo_query_without_reparsing_components() {
-        let input = WrittenGeoQuery::from_wire(
+        let geo_query = WrittenGeoQuery::from_wire(
             "within",
             "Point",
             serde_json::from_value(serde_json::json!([1.0, 2.0])).expect("coordinates"),
             None,
         )
         .expect("valid decoded geo query");
-        let compiled = compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused))
+        let compiled = compile_geo_query(Some(&geo_query), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused))
             .await
             .expect("expansion succeeds")
             .expect("geo query present");
@@ -96,7 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_distance_band_compiles_only_under_the_extension() {
-        let input = WrittenGeoQuery::from_wire(
+        let geo_query = WrittenGeoQuery::from_wire(
             "near;minDistance==500;maxDistance==10000",
             "Point",
             serde_json::from_value(serde_json::json!([1.0, 2.0])).expect("coordinates"),
@@ -104,11 +104,11 @@ mod tests {
         )
         .expect("valid decoded geo query");
         assert!(matches!(
-            compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused)).await,
+            compile_geo_query(Some(&geo_query), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused)).await,
             Err(QueryError::GeoQuery(GeoQueryError::NearDistanceBand))
         ));
         assert!(
-            compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Admitted))
+            compile_geo_query(Some(&geo_query), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Admitted))
                 .await
                 .expect("the band compiles")
                 .is_some()

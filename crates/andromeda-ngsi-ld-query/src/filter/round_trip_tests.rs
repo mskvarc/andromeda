@@ -23,9 +23,9 @@ proptest! {
 
     #[test]
     fn serialising_a_parsed_filter_and_parsing_it_again_gives_the_same_filter(written in query()) {
-        let expr = parsed(&written);
-        let serialised = expr.to_string();
-        prop_assert_eq!(serialised.parse::<Filter>().ok(), Some(expr), "{} serialised as {}", written, serialised);
+        let filter = parsed(&written);
+        let serialised = filter.to_string();
+        prop_assert_eq!(serialised.parse::<Filter>().ok(), Some(filter), "{} serialised as {}", written, serialised);
     }
 
     #[test]

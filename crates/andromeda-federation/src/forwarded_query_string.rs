@@ -64,7 +64,7 @@ impl ForwardedNames<'_> {
         match parameter.names() {
             ParameterNames::TypeSelection => {
                 let expression: WrittenTypeSelection = value.parse().map_err(QueryError::from)?;
-                Ok(self.type_expr(&expression).await?.to_string())
+                Ok(self.type_selection(&expression).await?.to_string())
             }
             ParameterNames::AttributeList => {
                 let mut names = Vec::new();

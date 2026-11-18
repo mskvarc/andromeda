@@ -113,7 +113,7 @@ mod tests {
     /// A stored expression reads back as the expanded expression it was
     /// written from, every leaf the IRI it holds.
     #[test]
-    fn a_stored_expression_reads_back_as_the_expanded_expression_it_was_written_from() {
+    fn a_stored_type_selection_reads_back_as_the_expanded_type_selection_it_was_written_from() {
         let expanded = ExpandedTypeSelection::Or(vec![
             ExpandedTypeSelection::And(vec![
                 ExpandedTypeSelection::Type(IriBuf::new("https://example.com/Home".to_owned()).expect("valid IRI")),
@@ -126,13 +126,13 @@ mod tests {
     }
 
     #[test]
-    fn an_expanded_expression_names_its_leaf_types_in_order() {
+    fn an_expanded_type_selection_names_its_leaf_types_in_order() {
         let iri = |name: &str| IriBuf::new(format!("https://example.org/{name}")).expect("valid IRI");
-        let expr = ExpandedTypeSelection::Or(vec![
+        let type_selection = ExpandedTypeSelection::Or(vec![
             ExpandedTypeSelection::Type(iri("Vehicle")),
             ExpandedTypeSelection::And(vec![ExpandedTypeSelection::Type(iri("Home")), ExpandedTypeSelection::Type(iri("Asset"))]),
         ]);
-        pretty_assertions::assert_eq!(expr.named_types(), vec![iri("Vehicle"), iri("Home"), iri("Asset")]);
+        pretty_assertions::assert_eq!(type_selection.named_types(), vec![iri("Vehicle"), iri("Home"), iri("Asset")]);
         pretty_assertions::assert_eq!(ExpandedTypeSelection::Wildcard.named_types(), Vec::<IriBuf>::new());
     }
 
@@ -161,22 +161,22 @@ mod tests {
     fn an_expanded_alternation_matches_whole_iris_only() {
         // Clause 4.17 over the expanded form: the leaves are IRIs, and a
         // longer IRI that merely ends with one of them is a different type.
-        let expr = ExpandedTypeSelection::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
-        assert!(expr.matches(&["https://example.com/Building"]));
-        assert!(expr.matches(&["https://example.com/Tower"]));
-        assert!(!expr.matches(&["https://example.com/MyBuilding"]));
-        assert!(!expr.matches(&["https://example.com/Vehicle"]));
+        let type_selection = ExpandedTypeSelection::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
+        assert!(type_selection.matches(&["https://example.com/Building"]));
+        assert!(type_selection.matches(&["https://example.com/Tower"]));
+        assert!(!type_selection.matches(&["https://example.com/MyBuilding"]));
+        assert!(!type_selection.matches(&["https://example.com/Vehicle"]));
     }
 
     #[test]
     fn an_expanded_conjunction_needs_every_type_present() {
-        let expr = ExpandedTypeSelection::And(vec![iri("https://example.com/Home"), iri("https://example.com/Vehicle")]);
-        assert!(expr.matches(&["https://example.com/Home", "https://example.com/Vehicle"]));
-        assert!(!expr.matches(&["https://example.com/Home"]));
+        let type_selection = ExpandedTypeSelection::And(vec![iri("https://example.com/Home"), iri("https://example.com/Vehicle")]);
+        assert!(type_selection.matches(&["https://example.com/Home", "https://example.com/Vehicle"]));
+        assert!(!type_selection.matches(&["https://example.com/Home"]));
     }
 
     #[test]
-    fn the_expanded_and_compact_readings_of_one_expression_agree_in_structure() {
+    fn the_expanded_and_compact_readings_of_one_type_selection_agree_in_structure() {
         // The two ASTs are the same clause 4.17 tree either side of expansion,
         // so a shape that matches compactly must match once expanded.
         let compact: WrittenTypeSelection = "Building,Tower".parse().expect("valid type expression");
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn an_expanded_expression_converts_to_a_raw_tree_with_iri_leaves() {
+    fn an_expanded_type_selection_converts_to_a_written_tree_with_iri_leaves() {
         let expanded = ExpandedTypeSelection::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
         let raw = expanded.into_written().expect("expanded IRIs are valid NGSI-LD names");
         pretty_assertions::assert_eq!(raw.to_string(), "https://example.com/Building,https://example.com/Tower");
