@@ -169,6 +169,11 @@ budget_warning='warning: memory ceilings'
 tuner_version="$(docker run --rm --entrypoint timescaledb-tune "${run_args[@]}" "$image" --version | awk '{ print $2 }')"
 expect 'timescaledb-tune version' "$tuner_version" 0.19.0
 
+# The tag names the base image's PostgreSQL, which PG_VERSION records.
+expect 'the server is the base image'"'"'s PostgreSQL' \
+	"$(docker run --rm --entrypoint sh "${run_args[@]}" "$image" -c 'dpkg-query -W -f "\${Version}" postgresql-18')" \
+	"$(docker run --rm --entrypoint printenv "${run_args[@]}" "$image" PG_VERSION)"
+
 start limits-2g --memory 2g --cpus 2 --
 # timescaledb-tune: shared_buffers 25% and effective_cache_size 75% of memory.
 expect '2g max_connections defaults to 200' "$(sql limits-2g 'SHOW max_connections')" 200

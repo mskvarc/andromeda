@@ -37,17 +37,24 @@ RUN set -eux; \
 # so a full tag keeps its settings only with the tuner pinned too. The tsl
 # edition's TimescaleDB Toolkit is pinned for the same reason as the
 # extensions: a rebuild of a full tag ships the same one.
+#
+# The server stays the base image's: its packages are held, so a package built
+# for a later PostgreSQL fails the build instead of upgrading the server under
+# a tag that names the base image's version. PGDG's revision 2 of pg_repack
+# 1.5.3 requires a server after 18.7, and revision 1 runs on any 18.
 ARG TIMESCALEDB_VERSION=2.32.0
 ARG POSTGIS_VERSION=3.7.0
 ARG PG_REPACK_VERSION=1.5.3
+ARG PG_REPACK_REVISION=1.pgdg13+2
 ARG TIMESCALEDB_TUNE_VERSION=0.19.0
 ARG TIMESCALEDB_TOOLKIT_VERSION=1.27.0
 RUN set -eux; \
+    apt-mark hold postgresql-18 postgresql-18-jit postgresql-client-18 libpq5; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         "postgresql-18-postgis-3=${POSTGIS_VERSION}+*" \
         "postgresql-18-postgis-3-scripts=${POSTGIS_VERSION}+*" \
-        "postgresql-18-repack=${PG_REPACK_VERSION}-*" \
+        "postgresql-18-repack=${PG_REPACK_VERSION}-${PG_REPACK_REVISION}" \
         "timescaledb-2-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         "timescaledb-2-loader-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         "timescaledb-tools=${TIMESCALEDB_TUNE_VERSION}~*"; \
