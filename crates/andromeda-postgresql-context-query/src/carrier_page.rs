@@ -8,7 +8,7 @@
 //! thousand carriers it walks that index and filters each Entity; when they
 //! sort late, as the Entities of one type do behind those of a larger one, it
 //! visits every Entity before them. The page is therefore
-//! a [`gated_page`]:
+//! a gated page:
 //!
 //! 1. the short walk visits the first [`CARRIER_SHORT_WALK`] Entities in
 //!    identifier order, each probed through its search row;
@@ -26,7 +26,8 @@ use crate::{
     entity::{EntityConditions, GeoFilter, QFilter, build_entity_conditions},
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
-    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, Walked, gated_page},
+    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
+    page_walk::{PageWalk, Walked},
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
 use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, error::RenderError, one_time_gate::CandidateBound, query_names::QueryNames};

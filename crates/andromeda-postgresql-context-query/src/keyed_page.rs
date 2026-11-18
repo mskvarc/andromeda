@@ -5,7 +5,7 @@
 //! the bare existence of an attribute, or a Linked Entity hop.
 //!
 //! The planner cannot price any of these terms (it underestimates a broad one
-//! by orders of magnitude), so the page is a [`gated_page`]:
+//! by orders of magnitude), so the page is a gated page:
 //!
 //! 1. the short walk probes the first [`SHORT_WALK`] Entities of the
 //!    selection in page order for the whole `q`;
@@ -24,14 +24,13 @@
 //!    full walk.
 //!
 //! A geo-query beside the keyed terms is read the way the geo page reads it:
-//! its matches first, at most
-//! [`GEO_CANDIDATE_BOUND`](crate::geo_page::GEO_CANDIDATE_BOUND) + 1, and the
-//! walks probe it on each Entity they yield. Each keyed read's branch tests it
+//! its matches first, at most 10 001 of them, and the walks probe it on each
+//! Entity they yield. Each keyed read's branch tests it
 //! on each candidate by its key. Tested as the set of every match, it is
 //! hashed whole for the walks and read whole by an index branch however few
 //! its candidates, and the short walk visits every Entity before it fills its
 //! page when the matches are few: among 500 000 Entities `status=="fail"` (100 000 holders) beside a
-//! geo-query 111 meet took 1 050 ms that way and takes 3.3 ms, and
+//! geo-query 111 meet takes 1 050 ms that way and 3.3 ms read this way, and
 //! `temperature>39.99` (47) beside one all of them meet 974 ms against
 //! 5.8 ms. The geo read comes first because it costs the least when it
 //! passes its bound, 4.5 to 20 ms, where a keyed read costs 6 to 28 ms and a
@@ -41,8 +40,9 @@
 use crate::{
     entity::{GeoFilter, QFilter},
     entity_page::ProjectedPage,
-    gated_page::{GatedColumns, IndexRead, PageSource, PageWalk, gated_page, walked_rows},
+    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
     geo_page::{GeoMatches, GeoWalk, geo_probe, geo_read},
+    page_walk::{PageWalk, walked_rows},
 };
 use andromeda_ngsi_ld_query::{filter::compiled_filter::CompiledFilter, read_order::ReadOrder};
 use andromeda_postgresql_query::{
@@ -178,6 +178,7 @@ mod tests {
         entity_selection::{EntitySelection, EntitySelector},
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
+        scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
     use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
@@ -567,6 +568,37 @@ mod tests {
         let mut beside_attrs = failing_within_square();
         beside_attrs.selection.attrs = vec![iri("temperature")];
         assert_eq!(geo_fences(&beside_attrs), 2);
+    }
+
+    /// The walks test their filters on each Entity they yield, through its
+    /// search row and after the walk's `LIMIT`, so the short walk visits its
+    /// length of the selection whatever the filters keep.
+    #[test]
+    fn a_short_walk_visits_its_length_of_the_selection_whatever_its_filters_keep() {
+        let sql = build_query(
+            &ContextTarget::Live,
+            &failing_beside_attrs(&["Sensor"]),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query")
+        .select
+        .to_string(PostgresQueryBuilder);
+        let tested_after_the_walk =
+            r#"AS "walked" INNER JOIN LATERAL (SELECT 1 FROM "entity_search" WHERE "entity_search"."entity_key" = "walked"."entity_key""#;
+        assert_eq!(sql.matches(tested_after_the_walk).count(), 2);
+    }
+
+    /// `scopeQ` reads the scope paths of the search row each walked Entity is
+    /// looked up by.
+    #[test]
+    fn scope_q_beside_a_keyed_term_is_tested_on_each_walked_entity() {
+        let mut query = failing_beside_attrs(&["Sensor"]);
+        query.selection.attrs = Vec::new();
+        query.selection.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+        let built = build_query(&ContextTarget::Live, &query, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
+        assert_statement_snapshot!("keyed-page-scope-q-beside-a-keyed-term-is-tested-on-each-walked-entity", built.select);
     }
 
     /// `q=status=="fail"` beside the shared geo-query.

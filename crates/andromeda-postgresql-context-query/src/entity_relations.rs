@@ -153,18 +153,21 @@ impl EntityRelations {
         }
     }
 
-    /// These relations as a walk of the selection in page order reads them,
-    /// with a joined search row joined to each walked Entity on its own.
+    /// These relations as a walk of `query`'s selection in page order reads
+    /// them: the search row joined to each walked Entity on its own, and only
+    /// when the walk's selectors or sort keys read it. Every other filter that
+    /// reads it looks it up for each Entity the walk yields.
     ///
     /// A walk fenced by `OFFSET 0` alone is planned to yield every row, so a
     /// search row joined to it plainly makes it a merge join of every driving
     /// row with every search row, sorted by identifier before the first is
     /// probed. Joined per Entity, the walk stays an ordered scan of its index.
     #[must_use]
-    pub fn walked(&self) -> EntityRelations {
-        let search = match self.search {
-            Demand::Joined | Demand::JoinedPerRow => Demand::JoinedPerRow,
-            Demand::NotJoined => Demand::NotJoined,
+    pub fn walked(&self, query: &CompiledEntityQuery) -> EntityRelations {
+        let read = selected_by_search_row(&query.selection, &self.source) || query.ordering.terms.iter().any(reads_search_row);
+        let search = match (self.search, read) {
+            (Demand::Joined | Demand::JoinedPerRow, true) => Demand::JoinedPerRow,
+            (Demand::Joined | Demand::JoinedPerRow, false) | (Demand::NotJoined, true | false) => Demand::NotJoined,
         };
         EntityRelations {
             source: self.source.clone(),
@@ -262,11 +265,20 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
 /// membership walk does not answer, a geo-query playing `geo` that narrows the
 /// selection, or any other search axis.
 fn search_demand(selection: &EntitySelection, source: &RowSource, geo: GeoRole) -> bool {
-    let typed = match source {
+    selected_by_search_row(selection, source)
+        || !selection.attrs.is_empty()
+        || selection.projected_members.constrains()
+        || narrowed_by_geo(selection, geo)
+        || selection.scope_q.is_some()
+}
+
+/// Whether the selectors of `selection` read the search row of the Entities
+/// `source` drives: a type selector the membership walk does not answer.
+fn selected_by_search_row(selection: &EntitySelection, source: &RowSource) -> bool {
+    match source {
         RowSource::Entities => selection.selectors.iter().any(|selector| selector.type_expr.is_some()),
         RowSource::TypeMembers { .. } => false,
-    };
-    typed || !selection.attrs.is_empty() || selection.projected_members.constrains() || narrowed_by_geo(selection, geo) || selection.scope_q.is_some()
+    }
 }
 
 /// Join `table`, in the branch `schema`, on its `entity_key` column `key` to
@@ -586,18 +598,21 @@ mod tests {
         assert_statement_snapshot!("entity-relations-the-joins-are-on-the-surrogate-key", from_clause(joined(Demand::Joined)));
     }
 
+    /// A type selector read off the search row of `entities` is a selector of
+    /// the walk, so the walk joins the search row of each Entity it visits.
     #[test]
     fn a_walk_joins_the_search_row_of_each_entity_it_visits() {
-        let walked = joined(Demand::Joined).walked();
+        let walked = joined(Demand::Joined).walked(&typed_query());
         assert_eq!(walked, joined(Demand::JoinedPerRow));
         assert_statement_snapshot!("entity-relations-a-walk-joins-the-search-row-of-each-entity-it-visits", from_clause(walked));
     }
 
+    /// An ordering on `type` sorts the walk by the search row.
     #[test]
     fn a_membership_walk_joins_the_search_row_of_each_member() {
         let mut query = typed_query();
-        query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
-        let walked = relations(&query).walked();
+        query.ordering.terms = vec![term(OrderTarget::Type, OrderDirection::Asc)];
+        let walked = relations(&query).walked(&query);
         assert_eq!(walked.search, Demand::JoinedPerRow);
         assert!(matches!(
             walked.source,
@@ -634,7 +649,29 @@ mod tests {
         for query in [empty_query(), typed_query()] {
             let relations = relations(&query);
             assert_eq!(relations.search, Demand::NotJoined, "{query:?}");
-            assert_eq!(relations.walked(), relations, "{query:?}");
+            assert_eq!(relations.walked(&query), relations, "{query:?}");
         }
+    }
+
+    /// `attrs`, a projection and `scopeQ` test each Entity the walk yields on
+    /// a search row of their own, so a walk whose selectors and sort keys read
+    /// none joins none, and a walk of `entities` by type keeps it per Entity.
+    #[test]
+    fn a_walk_beside_filters_alone_joins_no_search_row() {
+        let speed = || vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
+        let mut by_type = typed_query();
+        by_type.selection.attrs = speed();
+        let mut untyped = empty_query();
+        untyped.selection.attrs = speed();
+        let mut scoped = typed_query();
+        scoped.selection.scope_q = Some(ScopeQuery::parse("/a").expect("valid scope query"));
+        for query in [by_type, untyped, scoped] {
+            assert_eq!(relations(&query).search, Demand::Joined, "{query:?}");
+            assert_eq!(relations(&query).walked(&query).search, Demand::NotJoined, "{query:?}");
+        }
+        let mut typed_by_identifier = typed_query();
+        typed_by_identifier.selection.selectors[0].ids = vec!["urn:a".parse().expect("valid URI")];
+        typed_by_identifier.selection.attrs = speed();
+        assert_eq!(relations(&typed_by_identifier).walked(&typed_by_identifier).search, Demand::JoinedPerRow);
     }
 }

@@ -271,7 +271,16 @@ pub(crate) fn entity_conditions(
     q: QFilter<'_>,
     geo: GeoFilter,
 ) -> Result<EntityConditions, RenderError> {
-    let mut conditions = EntityConditions::default();
+    Ok(EntityConditions {
+        selection: selection_conditions(query, names, rows, source),
+        tested: tested_conditions(query, names, rows, q, geo)?,
+    })
+}
+
+/// Which Entities a statement driven by `source` reads: the considered set
+/// and the selectors.
+pub(crate) fn selection_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs, source: &RowSource) -> Vec<Condition> {
+    let mut selection = Vec::new();
 
     // Clause 5.5.14: a request narrowed to an empty identifier set considers no
     // entity, so nothing can match it whatever the selectors and filters admit.
@@ -281,52 +290,65 @@ pub(crate) fn entity_conditions(
     // row at all.
     match query.selection.considered {
         ConsideredEntities::Selected => {}
-        ConsideredEntities::NoEntity => conditions.selection.push(false_literal().into()),
+        ConsideredEntities::NoEntity => selection.push(false_literal().into()),
     }
 
     if let Some(selectors) = selector_condition(&query.selection, rows, &names.types, source) {
-        conditions.selection.push(selectors);
+        selection.push(selectors);
     }
+    selection
+}
+
+/// What each Entity a statement reads through `rows` is tested by: `attrs`,
+/// the projected members, `q` and the geo-query as `q` and `geo` say, and
+/// `scopeQ`, the last read off the search row named `entity_search`.
+///
+/// # Errors
+///
+/// Fails as rendering the geo-query fails: a reference geometry with no EWKB
+/// spelling, or `georel=near` naming no distance.
+pub(crate) fn tested_conditions(
+    query: &CompiledEntityQuery,
+    names: &QueryNames,
+    rows: &EntityRowRefs,
+    q: QFilter<'_>,
+    geo: GeoFilter,
+) -> Result<Vec<Condition>, RenderError> {
+    let mut tested = Vec::new();
 
     if let Some(attrs) = attrs_condition(&query.selection, names, rows) {
-        conditions.tested.push(attrs);
+        tested.push(attrs);
     }
 
     // Clauses 5.7.2.5 and 6.3.13: an entity the `pick` / `omit` projection
     // would reduce to no member is not selected, so it is left out here, where
     // the count and the page are taken.
     if let Some(members) = projected_member_condition(&query.selection.projected_members, names, rows) {
-        conditions.tested.push(members);
+        tested.push(members);
     }
 
     if let Some(compiled) = &query.selection.q {
         let scan = InstanceScan::Current(rows);
         match q {
-            QFilter::Whole => conditions.tested.push(q_filter::compile(compiled.reading(), &scan, names)),
-            QFilter::Except(answered) => conditions.tested.push(q_filter::compile_except(compiled.reading(), answered, &scan, names)),
+            QFilter::Whole => tested.push(q_filter::compile(compiled.reading(), &scan, names)),
+            QFilter::Except(answered) => tested.push(q_filter::compile_except(compiled.reading(), answered, &scan, names)),
             QFilter::Omitted => {}
         }
     }
 
     if let Some(geo_query) = &query.selection.geo {
         match geo {
-            GeoFilter::Matched => {
-                conditions
-                    .tested
-                    .push(geo_sql::condition(geo_query, rows, &query.selection.default_location, &names.attributes)?);
-            }
-            GeoFilter::Probed => conditions.tested.push(geo_sql::probe(geo_query, rows, &names.attributes)?),
+            GeoFilter::Matched => tested.push(geo_sql::condition(geo_query, rows, &query.selection.default_location, &names.attributes)?),
+            GeoFilter::Probed => tested.push(geo_sql::probe(geo_query, rows, &names.attributes)?),
             GeoFilter::Omitted => {}
         }
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        conditions
-            .tested
-            .push(scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))));
+        tested.push(scope_condition(scope_q, &ScopeTarget::paths((EntitySearch::Table, EntitySearch::ScopePaths))));
     }
 
-    Ok(conditions)
+    Ok(tested)
 }
 
 #[cfg(test)]

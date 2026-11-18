@@ -69,7 +69,10 @@ mod tests {
         spatial_reconciliation::rebuild_location_index,
     };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
-    use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
+    use andromeda_spatial_index::{
+        entity::index::{Admitted, SpatialEntityIndex},
+        key::SpatialKey,
+    };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use futures::future::BoxFuture;
     use iri_rs::IriBuf;
@@ -123,13 +126,13 @@ mod tests {
             placement.geoproperty().clone(),
         );
         let reference = GeometryForm::Point(Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"));
-        assert!(index.query(&key, &GeoRel::Intersects, &reference, usize::MAX).is_none());
+        assert!(index.query(&key, &GeoRel::Intersects, &reference, Admitted::Every, usize::MAX).is_none());
 
         let outcome = rebuild_location_index(&index, &OneVehicle, &placement).await.expect("the store is readable");
 
         assert_eq!((outcome.partition_count, outcome.total_entries, outcome.horizon), (1, 1, ChangeHorizon::new(7)));
         assert_eq!(
-            index.query(&key, &GeoRel::Intersects, &reference, usize::MAX),
+            index.query(&key, &GeoRel::Intersects, &reference, Admitted::Every, usize::MAX),
             Some(HashSet::from(["urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI")]))
         );
     }
