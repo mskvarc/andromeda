@@ -440,7 +440,7 @@
               "description": "How the index is kept consistent with the database. `\"commit-synchronous\"` saves a read per geo query but is exact only when a single broker process writes the database.",
               "oneOf": [
                 {
-                  "description": "Before narrowing a geo query, catch the index up with every location the database changed since its last recorded position. Exact in every deployment, including replicas sharing the database, at the cost of one indexed read per geo query.",
+                  "description": "Before narrowing a geo query, take in every location the database changed since the index's last recorded position, when at most 10,000 entities changed. When more did, the database answers the query in full while a background catch-up takes them in, which this process's own writes also start. Exact in every deployment, including replicas sharing the database, at the cost of one indexed read per geo query.",
                   "type": "string",
                   "const": "watermark"
                 },
@@ -459,7 +459,7 @@
             },
             "rebuild_interval": {
               "title": "duration",
-              "description": "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes.",
+              "description": "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read.",
               "type": "string"
             }
           },

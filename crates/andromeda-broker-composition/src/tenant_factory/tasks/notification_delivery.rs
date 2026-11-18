@@ -234,7 +234,8 @@ async fn paced_cleanup(
 #[cfg(test)]
 mod tests {
     use crate::tenant_factory::{
-        background_pacer::{BackgroundPacer, ObligationSource},
+        background_pacer::BackgroundPacer,
+        obligation_source::ObligationSource,
         tasks::notification_delivery::{CleanupRetention, paced_cleanup},
     };
     use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;

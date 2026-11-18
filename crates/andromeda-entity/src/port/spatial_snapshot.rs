@@ -5,29 +5,48 @@ use crate::error::EntityError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use futures::future::BoxFuture;
+use std::num::NonZeroUsize;
 
-/// A position in the store's commit history below which every change is
-/// already reflected in a read.
+/// A cut through the store's commit history, taken by one read. Every change
+/// below it is reflected in that read, and none above it is.
 ///
-/// Opaque to entity policy: it is produced by one read and handed back to the
-/// next, and only the store that produced it can say what it counts. Every
-/// change that committed before the read's snapshot and is not already
-/// reflected by it is at or above the horizon, so a read of the changes since
-/// the horizon misses nothing the previous read did not already hold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ChangeHorizon(u64);
+/// Entity policy never reads it. One read produces it and the next is handed
+/// it back, and only the store that produced it can say what its positions
+/// count.
+/// A change is above the cut when it was made at or above the ceiling, or by
+/// one of the unseen positions below it, which had not committed when the read
+/// was taken. A read of the changes above the cut therefore misses nothing the
+/// read that took it did not already hold, and reads nothing it held.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeHorizon {
+    /// Every change made at or above this position is above the cut.
+    ceiling: u64,
+    /// The positions below the ceiling whose changes the read could not see.
+    unseen: Box<[u64]>,
+}
 
 impl ChangeHorizon {
-    /// A horizon the store reported as `position`.
+    /// A cut the store reported as `ceiling` with `unseen` below it.
     #[must_use]
-    pub const fn new(position: u64) -> ChangeHorizon {
-        ChangeHorizon(position)
+    pub fn new(ceiling: u64, unseen: Vec<u64>) -> ChangeHorizon {
+        ChangeHorizon {
+            ceiling,
+            unseen: unseen.into_boxed_slice(),
+        }
     }
 
-    /// The store's own spelling of this horizon.
+    /// The store's spelling of the position every later change is made at or
+    /// above.
     #[must_use]
-    pub const fn position(self) -> u64 {
-        self.0
+    pub const fn ceiling(&self) -> u64 {
+        self.ceiling
+    }
+
+    /// The store's spelling of the positions below the ceiling whose changes
+    /// the read could not see.
+    #[must_use]
+    pub const fn unseen(&self) -> &[u64] {
+        &self.unseen
     }
 }
 
@@ -53,20 +72,56 @@ pub struct LocationRead {
     pub horizon: ChangeHorizon,
 }
 
+/// What a change read bounded to a number of entities found.
+#[derive(Debug)]
+pub enum BoundedChangeRead {
+    /// No more entities changed than the bound, so the read returns every one
+    /// of them and its horizon.
+    Within(LocationRead),
+    /// More entities changed than the bound. None of them is returned, and the
+    /// read moves no horizon.
+    Exceeded,
+}
+
 /// Reads entity locations without mutating an in-memory index.
 pub trait EntitySpatialSnapshotSource: Send + Sync + 'static {
     /// Read every live entity that conveys a default `location`, together with
     /// the horizon the read was taken at.
+    ///
+    /// The read takes as long as the store is large, and no request waits for
+    /// it.
     fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
 
-    /// Read every live entity whose types or geometries changed at or above
-    /// `horizon`, with or without a `location` now, together with the
-    /// horizon this read was taken at.
-    fn locations_changed_since<'life0, 'async_trait>(&'life0 self, horizon: ChangeHorizon) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+    /// Read every live entity whose types or geometries changed above
+    /// `horizon`, with or without a `location` now, together with the horizon
+    /// this read was taken at.
+    ///
+    /// The read takes as long as the changes are many, and no request waits for
+    /// it.
+    fn locations_changed_since<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        horizon: &'life1 ChangeHorizon,
+    ) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
     where
         'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
+    /// Read what [`EntitySpatialSnapshotSource::locations_changed_since`]
+    /// reads when at most `bound` entities changed above `horizon`, and only
+    /// learn that more did otherwise.
+    ///
+    /// Bounded by `bound` entities, so a request may wait for it.
+    fn locations_changed_within<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        horizon: &'life1 ChangeHorizon,
+        bound: NonZeroUsize,
+    ) -> BoxFuture<'async_trait, Result<BoundedChangeRead, EntityError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
         Self: 'async_trait;
 }

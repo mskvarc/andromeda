@@ -3,8 +3,9 @@
 use crate::{
     context_hit_flush::ContextHitFlush,
     tenant_factory::{
-        background_pacer::{BackgroundPacer, TenantObligations},
+        background_pacer::BackgroundPacer,
         due_work_check::TenantDueWork,
+        obligation_source::TenantObligations,
         periodic_due::PeriodicDue,
         tasks::TaskSupervision,
     },

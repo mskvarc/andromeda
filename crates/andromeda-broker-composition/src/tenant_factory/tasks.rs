@@ -19,6 +19,7 @@ mod pool_gauges;
 mod retention;
 mod snapshot;
 pub(super) mod snapshot_preparation_start;
+pub(super) mod spatial_maintenance;
 mod subscription_cache_reconcile;
 mod table_size_gauges;
 mod temporal_retention;
@@ -49,13 +50,14 @@ use crate::{
                 register_notification_workers,
             },
             expiry::register_expiry_workers,
-            maintenance::{register_entity_side_effects, register_spatial_workers},
+            maintenance::register_entity_side_effects,
             mqtt_health_probe::register_mqtt_health_probe,
             notification_delivery::{DeliveryDrainDrive, delivery_queue},
             periodic_evaluation::register_periodic_evaluations,
             placement_resumption::register_placement_resumption,
             pool_gauges::register_pool_gauges,
             snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
+            spatial_maintenance::register_spatial_workers,
             table_size_gauges::register_table_size_gauges,
             temporal_retention::register_temporal_retention,
         },
@@ -168,6 +170,9 @@ pub(super) struct TenantTaskChannels {
     pub(super) snapshot_status_wake: WakeHandle,
     /// The Snapshot status-delivery drain's wake receiver.
     pub(super) snapshot_status_receiver: DrainWakeReceiver,
+    /// The spatial catch-up drain's wake receiver, whose handle the tenant's
+    /// watermark holds.
+    pub(super) spatial_catch_up_wake: DrainWakeReceiver,
     /// Decides when the tenant's background passes run; every task consults
     /// the one pacer, so one obligation read serves them all.
     pub(super) pacer: Arc<BackgroundPacer>,
@@ -237,6 +242,7 @@ pub(super) fn supervise_tasks(
         side_effect_wake,
         snapshot_status_wake,
         snapshot_status_receiver,
+        spatial_catch_up_wake,
         pacer,
         periodic,
     } = channels;
@@ -248,9 +254,7 @@ pub(super) fn supervise_tasks(
         registration_receiver,
         csource_subscription,
     } = signals;
-    register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?;
-    register_table_size_gauges(&task_supervisor, Arc::clone(&pacer), storage.pool.clone(), &storage.tenant)?;
-    register_discovery_census_fold(&task_supervisor, Arc::clone(&pacer), storage.pool.clone())?;
+    register_storage_upkeep(&task_supervisor, config, storage, spatial_catch_up_wake, &pacer)?;
     register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
     register_mqtt_health_probe(&task_supervisor, &storage.tenant, transport)?;
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
@@ -313,7 +317,6 @@ pub(super) fn supervise_tasks(
         },
         periodic,
     )?;
-    register_history_sweeps(&task_supervisor, &storage.temporal_repo, &config.temporal.storage)?;
     register_snapshot_workers(
         &task_supervisor,
         &storage.pool,
@@ -329,8 +332,29 @@ pub(super) fn supervise_tasks(
             receiver: snapshot_status_receiver,
         },
     )?;
-    register_spatial_workers(&task_supervisor, config, storage)?;
     Ok(TaskSupervision::new(task_supervisor, &entity, &registration))
+}
+
+/// Register the tasks that observe the tenant's storage and keep what is
+/// derived from it current: the pool and table-size gauges, the discovery
+/// census fold, the history sweeps and the spatial index's upkeep.
+///
+/// # Errors
+///
+/// Returns [`TenantAssemblyError`] when a task's configuration is out of range
+/// or the supervisor refuses one of the registrations.
+fn register_storage_upkeep(
+    supervisor: &TaskSupervisor,
+    config: &TenantFactoryConfig,
+    storage: &TenantStorage,
+    spatial_catch_up_wake: DrainWakeReceiver,
+    pacer: &Arc<BackgroundPacer>,
+) -> Result<(), TenantAssemblyError> {
+    register_pool_gauges(supervisor, storage.pool.clone(), &storage.tenant)?;
+    register_table_size_gauges(supervisor, Arc::clone(pacer), storage.pool.clone(), &storage.tenant)?;
+    register_discovery_census_fold(supervisor, Arc::clone(pacer), storage.pool.clone())?;
+    register_history_sweeps(supervisor, &storage.temporal_repo, &config.temporal.storage)?;
+    register_spatial_workers(supervisor, config, storage, spatial_catch_up_wake, Arc::clone(pacer))
 }
 
 /// Register the history sweeps, conversion and retention, under the horizons

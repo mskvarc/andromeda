@@ -10,9 +10,9 @@
 /// The `commit-synchronous` mode: every write path updates the index before it returns.
 mod commit_synchronous;
 /// The query the tests ask and the index it is narrowed through.
-mod geo_query;
+pub(crate) mod geo_query;
 /// The store another broker process writes, which a watermark catches up from.
-mod replicated_store;
+pub(crate) mod replicated_store;
 /// The `store-verified` mode: no index narrows a query.
 mod store_verified;
 /// The `watermark` mode: the index catches up from the store before it narrows.

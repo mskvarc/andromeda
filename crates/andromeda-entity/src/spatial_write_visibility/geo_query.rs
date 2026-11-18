@@ -30,12 +30,12 @@ use serde_json::{Value, json};
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 /// The expanded type every vehicle in these tests carries.
-pub(super) const VEHICLE_TYPE: &str = "https://uri.etsi.org/ngsi-ld/default-context/Vehicle";
-pub(super) fn placement() -> LocationPlacement {
+pub(crate) const VEHICLE_TYPE: &str = "https://uri.etsi.org/ngsi-ld/default-context/Vehicle";
+pub(crate) fn placement() -> LocationPlacement {
     LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name")
 }
 
-pub(super) fn vehicle_key() -> SpatialKey {
+pub(crate) fn vehicle_key() -> SpatialKey {
     SpatialKey::new(
         TenantRef::UnnamedDefault,
         IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI"),
@@ -43,13 +43,13 @@ pub(super) fn vehicle_key() -> SpatialKey {
     )
 }
 
-pub(super) fn point(longitude: f64) -> Geometry {
+pub(crate) fn point(longitude: f64) -> Geometry {
     Geometry::new(GeometryForm::Point(
         Position::try_new(longitude, 0.0, None).expect("a test position lies on the CRS84 axes"),
     ))
 }
 
-pub(super) fn uri(raw: &str) -> Identifier {
+pub(crate) fn uri(raw: &str) -> Identifier {
     raw.parse().expect("a well-formed URI")
 }
 

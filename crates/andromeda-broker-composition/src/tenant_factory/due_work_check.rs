@@ -6,7 +6,7 @@
 //! the tenant owes is due now, while a change it accepted still waits for live
 //! evaluation, and whenever the read fails.
 
-use crate::tenant_factory::background_pacer::ObligationSource;
+use crate::tenant_factory::obligation_source::ObligationSource;
 use andromeda_notification::pending_change::PendingCommits;
 use andromeda_tenancy::due_work::{DueWork, DueWorkSource};
 use async_trait::async_trait;
@@ -48,7 +48,7 @@ impl DueWorkSource for TenantDueWork {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_factory::{background_pacer::ObligationSource, due_work_check::TenantDueWork, held_change_fixture::committed_change};
+    use crate::tenant_factory::{due_work_check::TenantDueWork, held_change_fixture::committed_change, obligation_source::ObligationSource};
     use andromeda_notification::pending_change::PendingCommits;
     use andromeda_postgresql_context_store::error::ContextStoreError;
     use andromeda_tenancy::due_work::{DueWork, DueWorkSource};

@@ -1,4 +1,5 @@
-//! Durable entity side-effect and spatial-maintenance task registration.
+//! Durable entity side-effect task registration, and the failure
+//! classification the tenant's policy tasks share.
 
 use crate::{
     event::entity_change_sink::QueuedEntityChangeSink,
@@ -7,7 +8,6 @@ use crate::{
         assembly_invariant::{AssemblyInvariant, RetentionSetting},
         background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
-        spatial::location_placement,
         storage::TenantStorage,
         tasks::retention::retention_duration,
     },
@@ -20,8 +20,6 @@ use andromeda_entity::{
     error::EntityError,
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
     side_effect_notification::SideEffectNotificationRoute,
-    spatial_acceleration::SpatialAcceleration,
-    spatial_reconciliation::{RebuildOutcome, rebuild_location_index},
 };
 use andromeda_jsonld::compound_context_host::ContextHostingError;
 use andromeda_postgresql_context_store::pending_side_effects::repo::PendingSideEffectsRepository;
@@ -42,7 +40,7 @@ use andromeda_task_runtime::{
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
 use chrono::{DateTime, Utc};
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 /// Compose the tenant's durable side-effect drain and register the workers
 /// that service it.
@@ -115,42 +113,6 @@ pub(super) fn register_entity_side_effects(
     Ok(())
 }
 
-/// Register the periodic rebuild of the tenant's spatial index from the store,
-/// under the consistency mode the index was composed for.
-///
-/// No worker applies entity changes to the index: under `commit-synchronous`
-/// the commit path already has, and under `watermark` the query path catches
-/// the index up from the store itself. The rebuild is what drops the entries
-/// of entities deleted since, and under `commit-synchronous` what brings in the
-/// writes of another broker process sharing the store.
-///
-/// # Errors
-///
-/// Returns [`TenantAssemblyError`] when the configured rebuild cadence is
-/// rejected or when the supervisor refuses the registration.
-pub(super) fn register_spatial_workers(supervisor: &TaskSupervisor, config: &TenantFactoryConfig, storage: &TenantStorage) -> Result<(), TenantAssemblyError> {
-    let cadence = config.entity.spatial_index.rebuild_interval.duration();
-    match &storage.spatial {
-        SpatialAcceleration::StoreVerified => Ok(()),
-        SpatialAcceleration::CommitSynchronous(index) => {
-            let index = Arc::clone(index);
-            let source = Arc::clone(&storage.entity_ports.spatial_snapshots);
-            let placement = Arc::new(location_placement(&storage.tenant)?);
-            register_spatial_rebuild(supervisor, cadence, move || {
-                let (index, source, placement) = (Arc::clone(&index), Arc::clone(&source), Arc::clone(&placement));
-                async move { rebuild_location_index(&index, source.as_ref(), &placement).await }
-            })
-        }
-        SpatialAcceleration::Watermark(watermark) => {
-            let watermark = Arc::clone(watermark);
-            register_spatial_rebuild(supervisor, cadence, move || {
-                let watermark = Arc::clone(&watermark);
-                async move { watermark.rebuild().await }
-            })
-        }
-    }
-}
-
 /// Register the wake-driven drain of durable entity side-effect jobs.
 ///
 /// Without a wake it runs on the fallback interval between `fallback_floor` and
@@ -218,38 +180,6 @@ fn register_entity_side_effect_reap(
             let now = DateTime::<Utc>::from(execution.cutoff());
             let purged = drain.purge_dead(now - dead_letter_after).await.map_err(classify_entity_expiry_failure)?;
             tracing::debug!(purged, "pending side-effect dead-letter reap completed");
-            Ok(())
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| AssemblyInvariant::from(error).into())
-}
-
-/// Register one periodic spatial rebuild pass at `cadence`.
-fn register_spatial_rebuild<Rebuild, Pass>(supervisor: &TaskSupervisor, cadence: Duration, rebuild: Rebuild) -> Result<(), TenantAssemblyError>
-where
-    Rebuild: Fn() -> Pass + Send + Sync + 'static,
-    Pass: Future<Output = Result<RebuildOutcome, EntityError>> + Send + 'static,
-{
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
-    let name = TaskName::try_from("spatial-rebuild").map_err(AssemblyInvariant::from)?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
-        ShutdownPolicy::new(cadence),
-    );
-    let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let pass = rebuild();
-        async move {
-            let outcome = pass.await.map_err(classify_entity_expiry_failure)?;
-            tracing::info!(
-                partitions = outcome.partition_count,
-                entries = outcome.total_entries,
-                "spatial rebuild completed"
-            );
             Ok(())
         }
     });

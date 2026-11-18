@@ -5,17 +5,18 @@
 //! durable drains (notification deliveries, side effects, temporal append
 //! intents, Snapshot status notifications), the clause-5.8.6 periodic
 //! notification sweeps, the clause-5.13.1 cached-`@context` invalidation, the
-//! resumption of abandoned clause-5.8.1.4 subscription copy placements and
-//! the table-size gauges. Each runs on its own clock (a fixed cadence, or a
-//! drain's fallback timer backing off to a ceiling), and every tick touches
-//! the tenant's pool. Through a transaction pooler, a touched pool keeps its
-//! server connection for the pooler's `server_idle_timeout` after the tick, and
-//! a server held idle for one database is not handed to another until that
-//! timeout closes it. A handful of independent clocks per tenant therefore keep
-//! a server attached to every cached tenant, a few hundred cached tenants pin
-//! the pooler's global cap, and a tenant loaded next queues behind them until
-//! its acquire deadline sheds it. That is the opposite of the intent that the
-//! fleet's backend count tracks active tenants, not cached ones.
+//! resumption of abandoned clause-5.8.1.4 subscription copy placements, the
+//! spatial index's background catch-up and the table-size gauges. Each runs on
+//! its own clock (a fixed cadence, or a drain's fallback timer backing off to a
+//! ceiling), and every tick touches the tenant's pool. Through a transaction
+//! pooler, a touched pool keeps its server connection for the pooler's
+//! `server_idle_timeout` after the tick, and a server held idle for one
+//! database is not handed to another until that timeout closes it. A handful of
+//! independent clocks per tenant therefore keep a server attached to every
+//! cached tenant, a few hundred cached tenants pin the pooler's global cap, and
+//! a tenant loaded next queues behind them until its acquire deadline sheds it.
+//! That is the opposite of the intent that the fleet's backend count tracks
+//! active tenants, not cached ones.
 //!
 //! The pacer lets a timer tick of a tenant nobody is using run only when
 //! something is due. The tenant's earliest outstanding obligation is read once
@@ -61,12 +62,15 @@
 //! rows, and both move only when something writes. They run when the tenant has
 //! been used or a background pass has run since they last ran, and rest
 //! otherwise.
+//!
+//! The spatial catch-up's fallback timer serves no obligation either, since a
+//! geo query takes in what changed itself and wakes the catch-up when it finds
+//! more. A fallback pass runs when the tenant was used within a cadence or the
+//! read finds something else due, and rests otherwise.
 
-use andromeda_postgresql_context_store::{error::ContextStoreError, pending_work::earliest_obligation};
+use crate::tenant_factory::obligation_source::ObligationSource;
 use andromeda_task_runtime::{control::DrainCause, drain_task::DrainPassOutcome, failure::TaskFailure};
 use andromeda_tenancy::state_factory::RuntimeActivity;
-use async_trait::async_trait;
-use sqlx::PgPool;
 use std::{
     future::Future,
     sync::{
@@ -86,34 +90,6 @@ use tokio::{sync::Mutex, time::Instant};
 /// path could wait, and it is the cadence of the cached-`@context`
 /// invalidation of a tenant nobody uses.
 pub(crate) const QUIET_CEILING_CADENCES: u32 = 16;
-
-/// Where a tenant's earliest outstanding obligation is read from.
-#[async_trait]
-pub(crate) trait ObligationSource: Send + Sync + 'static {
-    /// The earliest instant any obligation falls due, or `None` when nothing is
-    /// outstanding.
-    async fn earliest_due(&self) -> Result<Option<SystemTime>, ContextStoreError>;
-}
-
-/// The tenant's own database, read over its serving pool.
-pub(crate) struct TenantObligations {
-    /// The tenant's serving pool.
-    pool: PgPool,
-}
-
-impl TenantObligations {
-    /// Read obligations over `pool`.
-    pub(crate) fn new(pool: &PgPool) -> TenantObligations {
-        TenantObligations { pool: pool.clone() }
-    }
-}
-
-#[async_trait]
-impl ObligationSource for TenantObligations {
-    async fn earliest_due(&self) -> Result<Option<SystemTime>, ContextStoreError> {
-        earliest_obligation(&self.pool).await
-    }
-}
 
 /// Whether a timer tick does its work or rests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,7 +375,10 @@ impl RuntimeActivity for BackgroundPacer {
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_factory::background_pacer::{BackgroundPacer, ObligationSource, PassAdmission, QUIET_CEILING_CADENCES};
+    use crate::tenant_factory::{
+        background_pacer::{BackgroundPacer, PassAdmission, QUIET_CEILING_CADENCES},
+        obligation_source::ObligationSource,
+    };
     use andromeda_postgresql_context_store::error::ContextStoreError;
     use andromeda_task_runtime::{control::DrainCause, drain_task::DrainPassOutcome, failure::TaskFailure};
     use andromeda_tenancy::state_factory::RuntimeActivity;

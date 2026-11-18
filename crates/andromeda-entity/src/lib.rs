@@ -131,14 +131,17 @@ mod side_effect_replay;
 mod snapshot_supply;
 /// Which spatial index, if any, a geo query may be narrowed through.
 pub mod spatial_acceleration;
-/// Entity spatial-index consistency configuration.
+/// Counting this broker process's own live writes toward a background spatial
+/// catch-up.
+pub mod spatial_catch_up_committer;
 /// Keeping the entity spatial index in step with every live commit.
 pub mod spatial_indexing_committer;
 /// Where one entity's location belongs in the entity spatial index.
 pub mod spatial_placement;
 /// Rebuilding the entity spatial index from a read of the store.
 pub mod spatial_reconciliation;
-/// Catching the entity spatial index up from the store before it narrows a query.
+/// Keeping the entity spatial index exact by catching it up from the store,
+/// without making a geo query wait for more than a bounded catch-up.
 pub mod spatial_watermark;
 /// Every write a broker process commits is visible to its next geo query.
 #[cfg(test)]

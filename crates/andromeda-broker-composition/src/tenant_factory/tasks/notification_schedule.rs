@@ -192,8 +192,9 @@ pub(super) const fn classify_notification_failure(error: NotificationError) -> T
 #[cfg(test)]
 mod tests {
     use crate::tenant_factory::{
-        background_pacer::{BackgroundPacer, ObligationSource},
+        background_pacer::BackgroundPacer,
         error::TenantAssemblyError,
+        obligation_source::ObligationSource,
         periodic_due::{PeriodicDue, PeriodicSweep},
         tasks::{
             PeriodicPacing,
