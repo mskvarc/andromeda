@@ -47,6 +47,7 @@ pub mod pattern;
 pub mod projection;
 pub mod query_error;
 pub mod query_identity;
+mod query_text;
 pub mod read_order;
 pub mod scope;
 pub mod split_filter;

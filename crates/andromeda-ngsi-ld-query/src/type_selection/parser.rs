@@ -12,9 +12,17 @@
 //! names, so `Home;Vehicle`, `((Home;Vehicle))` and `(Building|House)` are all
 //! outside the language and refused.
 
-use crate::type_selection::{type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection};
+use crate::{
+    query_text::{
+        disjunctive_form::{delimits_item, disjunctive_form},
+        grammar_fault::GrammarFault,
+        whitespace::Whitespace,
+    },
+    type_selection::{type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection},
+};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use std::iter;
+use std::ops::Range;
+use winnow::{Parser, stream::LocatingSlice, token::take_while};
 
 /// Parses the text of a type selection into a [`WrittenTypeSelection`].
 ///
@@ -27,133 +35,47 @@ use std::iter;
 /// does not admit at its position, and [`TypeSelectionError::InvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
 pub(super) fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
-    let trimmed = input.trim();
+    let trimmed = input.trim_matches(|character| Whitespace::Unicode.contains(character));
     if trimmed.is_empty() {
         return Err(TypeSelectionError::Empty);
     }
     if trimmed == "*" {
         return Ok(WrittenTypeSelection::Wildcard);
     }
-
-    let mut parser = Parser::new(trimmed);
-    let type_selection = parser.parse_entity_types()?;
-
-    if parser.pos < parser.input.len() {
-        let character = parser.input[parser.pos..].chars().next().unwrap_or(' ');
-        return Err(TypeSelectionError::UnexpectedCharacter {
-            character,
-            position: parser.pos,
-        });
-    }
-
-    Ok(type_selection)
+    disjunctive_form(trimmed, type_name).map(disjunction)
 }
 
-/// Cursor over the text of a type selection.
-struct Parser<'a> {
-    /// The text being consumed.
-    input: &'a str,
-    /// Byte offset of the next character to consume.
-    pos: usize,
-}
-
-impl<'a> Parser<'a> {
-    /// Start at the beginning of the text.
-    const fn new(input: &'a str) -> Parser<'a> {
-        Parser { input, pos: 0 }
-    }
-
-    /// The next character without consuming it.
-    fn peek(&self) -> Option<char> {
-        self.input[self.pos..].chars().next()
-    }
-
-    /// Consume the next character.
-    fn advance(&mut self) {
-        if let Some(character) = self.peek() {
-            self.pos += character.len_utf8();
-        }
-    }
-
-    /// Parses `EntityTypes = OrEntityType *(orOp OrEntityType)`.
-    ///
-    /// A single operand is returned as itself rather than wrapped in a
-    /// one-element `Or`.
-    fn parse_entity_types(&mut self) -> Result<WrittenTypeSelection, TypeSelectionError> {
-        let first = self.parse_or_entity_type()?;
-        if !matches!(self.peek(), Some('|' | ',')) {
-            return Ok(first);
-        }
-        let mut terms = vec![first];
-        while matches!(self.peek(), Some('|' | ',')) {
-            self.advance();
-            terms.push(self.parse_or_entity_type()?);
-        }
-        Ok(WrittenTypeSelection::Or(terms))
-    }
-
-    /// Parses `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`.
-    ///
-    /// A parenthesised group with a single name is that name.
-    fn parse_or_entity_type(&mut self) -> Result<WrittenTypeSelection, TypeSelectionError> {
-        self.skip_whitespace();
-        if self.peek() != Some('(') {
-            return self.parse_type_name().map(WrittenTypeSelection::Type);
-        }
-        self.advance();
-        let first = self.parse_type_name()?;
-        let mut rest = Vec::new();
-        while self.peek() == Some(';') {
-            self.advance();
-            rest.push(self.parse_type_name()?);
-        }
-        if self.peek() != Some(')') {
-            return Err(TypeSelectionError::UnbalancedParenthesis { position: self.pos });
-        }
-        self.advance();
-        self.skip_whitespace();
-        if rest.is_empty() {
-            return Ok(WrittenTypeSelection::Type(first));
-        }
-        Ok(WrittenTypeSelection::And(
-            iter::once(first).chain(rest).map(WrittenTypeSelection::Type).collect(),
-        ))
-    }
-
-    /// Parses one `EntityType`: a clause 4.6.2 name or a URI.
-    fn parse_type_name(&mut self) -> Result<EntityTypeName, TypeSelectionError> {
-        self.skip_whitespace();
-        let start = self.pos;
-        match self.peek() {
-            Some(character) if is_type_char(character) => {}
-            Some(character) => return Err(TypeSelectionError::UnexpectedCharacter { character, position: start }),
-            None => return Err(TypeSelectionError::UnexpectedEnd),
-        }
-        while self.peek().is_some_and(is_type_char) {
-            self.advance();
-        }
-        let name = &self.input[start..self.pos];
-        self.skip_whitespace();
-        name.parse::<EntityTypeName>()
-            .map_err(|source| TypeSelectionError::InvalidName { position: start, source })
-    }
-
-    /// Skip over any run of whitespace.
-    fn skip_whitespace(&mut self) {
-        while let Some(character) = self.peek() {
-            if character.is_whitespace() {
-                self.advance();
-            } else {
-                break;
-            }
-        }
+/// The selection of the alternatives of a form: the only alternative itself, or their disjunction.
+fn disjunction(alternatives: Vec<Vec<EntityTypeName>>) -> WrittenTypeSelection {
+    let alternatives = alternatives.into_iter().map(conjunction).collect::<Vec<_>>();
+    match <[WrittenTypeSelection; 1]>::try_from(alternatives) {
+        Ok([only]) => only,
+        Err(several) => WrittenTypeSelection::Or(several),
     }
 }
 
-/// Returns `true` for characters that may appear in a type name.
-/// Excludes the type selection operators: `|`, `,`, `;`, `(`, `)`.
-const fn is_type_char(character: char) -> bool {
-    !matches!(character, '|' | ',' | ';' | '(' | ')') && !character.is_whitespace()
+/// The selection of the names of one alternative: the only name itself, or their conjunction.
+fn conjunction(names: Vec<EntityTypeName>) -> WrittenTypeSelection {
+    match <[EntityTypeName; 1]>::try_from(names) {
+        Ok([only]) => WrittenTypeSelection::Type(only),
+        Err(several) => WrittenTypeSelection::And(several.into_iter().map(WrittenTypeSelection::Type).collect()),
+    }
+}
+
+/// Reads one `EntityType`: a clause 4.6.2 name or a URI.
+fn type_name(input: &mut LocatingSlice<&str>) -> Result<EntityTypeName, GrammarFault<TypeSelectionError>> {
+    take_while(1.., is_type_character)
+        .with_span()
+        .try_map(|(name, span): (&str, Range<usize>)| {
+            name.parse::<EntityTypeName>()
+                .map_err(|source| TypeSelectionError::InvalidName { position: span.start, source })
+        })
+        .parse_next(input)
+}
+
+/// Whether `character` may appear in a type name: neither a delimiter of the grammar nor whitespace.
+fn is_type_character(character: char) -> bool {
+    !delimits_item(character) && !Whitespace::Unicode.contains(character)
 }
 
 #[cfg(test)]
@@ -261,5 +183,15 @@ mod tests {
     fn multiple_or_terms() {
         let type_selection = parse("A|B|C").unwrap();
         pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("A"), t("B"), t("C"),]));
+    }
+
+    #[test]
+    fn unicode_whitespace_separates_every_slot_and_a_position_counts_bytes() {
+        pretty_assertions::assert_eq!(
+            parse("A\u{2003}|\u{3000}(B ;\u{A0}C)").unwrap(),
+            WrittenTypeSelection::Or(vec![t("A"), WrittenTypeSelection::And(vec![t("B"), t("C")])])
+        );
+        // U+3000 takes three bytes, so the `|` that leaves the group open stands at byte 5.
+        assert!(matches!(parse("(A\u{3000}|B)"), Err(TypeSelectionError::UnbalancedParenthesis { position: 5 })));
     }
 }
