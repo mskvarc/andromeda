@@ -25,7 +25,7 @@
 
 use crate::{error::RenderError, stored_geometry::StoredGeometry};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_query::query_error::QueryError;
+use andromeda_ngsi_ld_query::{geo::geo_query_error::GeoQueryError, query_error::QueryError};
 use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal, true_literal},
     postgis::{exact_dwithin, st_dimension, st_distance, uncached_distance, uncached_dwithin},
@@ -59,7 +59,7 @@ impl ReferenceShape {
 ///
 /// # Errors
 ///
-/// Returns [`RenderError::Query`] carrying [`QueryError::NearWithoutDistance`]
+/// Returns [`RenderError::Query`] carrying [`GeoQueryError::NearWithoutDistance`]
 /// when neither distance is given, which clause 4.10 requires at least one of.
 pub(crate) fn near_expression(
     subject: &StoredGeometry,
@@ -74,7 +74,7 @@ pub(crate) fn near_expression(
     match (within, beyond) {
         (Some(within), Some(beyond)) => Ok(within.and(beyond)),
         (Some(half), None) | (None, Some(half)) => Ok(half),
-        (None, None) => Err(RenderError::Query(QueryError::NearWithoutDistance)),
+        (None, None) => Err(RenderError::Query(QueryError::GeoQuery(GeoQueryError::NearWithoutDistance))),
     }
 }
 

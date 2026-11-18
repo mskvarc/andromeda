@@ -21,7 +21,7 @@ impl GroupingTerm {
         }
         let (key_text, bucket) = match text.split_once(';') {
             Some((key_text, bucket_text)) => {
-                let bucket = BucketTerm::from_str(bucket_text.trim()).map_err(GroupingError::Bucket)?;
+                let bucket = BucketTerm::from_str(bucket_text.trim()).map_err(GroupingError::InvalidBucket)?;
                 (key_text.trim(), Some(bucket))
             }
             None => (text, None),

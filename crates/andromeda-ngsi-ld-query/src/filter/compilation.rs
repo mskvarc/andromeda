@@ -57,7 +57,7 @@ impl FilterOptIns {
     /// # Errors
     ///
     /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-    /// [`QueryError::AttributeNameInvalid`] when a name does not expand to a
+    /// [`FilterError::InvalidAttributeName`] when a name does not expand to a
     /// usable attribute name.
     pub async fn expanded(
         json_keys: Option<&[AttributeName]>,
@@ -108,9 +108,9 @@ where
     E: From<QueryError> + From<H::Refusal>,
     H: FilterHopAdmission,
 {
-    admission.complexity.admit(filter)?;
+    admission.complexity.admit(filter).map_err(QueryError::from)?;
     hops.admit_hops(filter)?;
-    admission.language_targeting.admit(filter)?;
+    admission.language_targeting.admit(filter).map_err(QueryError::from)?;
     // clone: the request keeps the filter it wrote, which forwarding reads
     Ok(AdmittedFilter(filter.clone()))
 }
@@ -122,7 +122,7 @@ where
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
-/// [`QueryError::AttributeNameInvalid`] when a term or an opted-in operand
+/// [`FilterError::InvalidAttributeName`] when a term or an opted-in operand
 /// does not expand.
 pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Filter, QueryError> {
     // clone: expansion consumes its tree, and every compilation of the request reads the admitted filter again
@@ -138,6 +138,7 @@ mod tests {
             compilation::{AdmittedFilter, FilterAdmission, FilterOptIns, admit_q_filter, compile_q_filter},
             complexity::FilterComplexityLimits,
             display::serialize,
+            filter_error::FilterError,
             hop_admission::FilterHopAdmission,
             language_targeting::LanguageTargeting,
             parser::parse,
@@ -251,7 +252,10 @@ mod tests {
         let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
         let q = format!("speed=={values}");
         let refused = admitted(&q, admission(LanguageTargeting::Specification), &Hops::Admitted);
-        assert!(matches!(refused, Err(Refused::Query(QueryError::QTooManyComparisons { .. }))), "{refused:?}");
+        assert!(
+            matches!(refused, Err(Refused::Query(QueryError::Filter(FilterError::TooManyComparisons { .. })))),
+            "{refused:?}"
+        );
         let stored = FilterAdmission {
             complexity: FilterComplexityLimits::PARSED,
             language_targeting: LanguageTargeting::Specification,
@@ -265,7 +269,10 @@ mod tests {
     fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
         admitted("name[en-GB]==\"x\"", admission(LanguageTargeting::LanguageTags), &Hops::Admitted).expect("the language-tags level admits a tag");
         let refused = admitted("name[en-GB]==\"x\"", admission(LanguageTargeting::Specification), &Hops::Admitted);
-        assert!(matches!(refused, Err(Refused::Query(QueryError::LanguageTagNotAdmitted(_)))), "{refused:?}");
+        assert!(
+            matches!(refused, Err(Refused::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_))))),
+            "{refused:?}"
+        );
     }
 
     /// Clause 4.9 EXAMPLE 11: the member under a `jsonKeys` attribute
@@ -291,7 +298,10 @@ mod tests {
         assert!(matches!(refused, Err(Refused::Hop(HopRefused))), "{refused:?}");
         let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
         let refused = admitted(&format!("r{{a}}=={values}"), admission(LanguageTargeting::Specification), &Hops::Refused);
-        assert!(matches!(refused, Err(Refused::Query(QueryError::QTooManyComparisons { .. }))), "{refused:?}");
+        assert!(
+            matches!(refused, Err(Refused::Query(QueryError::Filter(FilterError::TooManyComparisons { .. })))),
+            "{refused:?}"
+        );
     }
 
     /// The admitted filter is the filter the request wrote, and compiling it

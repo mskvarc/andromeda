@@ -36,7 +36,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
-    filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    filter::{complexity::FilterComplexityLimits, filter_error::FilterError, language_targeting::LanguageTargeting},
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
     query_error::QueryError,
@@ -826,7 +826,10 @@ async fn a_too_complex_q_is_refused_before_the_identifier_is_looked_up() {
         .create(&ContextTarget::Live, request, SubscriptionContext::CoreOnly, &[])
         .await
         .expect_err("clause 5.5.6 refuses it");
-    assert!(matches!(error, SubscriptionError::Query(QueryError::QTooManyComparisons { .. })), "{error:?}");
+    assert!(
+        matches!(error, SubscriptionError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
+        "{error:?}"
+    );
     assert_eq!(*written.lock().expect("the written context is never poisoned"), None);
 }
 

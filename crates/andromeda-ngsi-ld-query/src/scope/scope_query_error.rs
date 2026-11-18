@@ -7,38 +7,38 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ScopeQueryError {
     /// A pattern named no level at all.
-    #[error("a scope pattern must name at least one level")]
-    Empty,
+    #[error("invalid scopeQ pattern: a scope pattern must name at least one level")]
+    EmptyPattern,
     /// A level carries more characters than the label-path index can hold.
-    #[error("a scope level carries {characters} characters, more than the {LEVEL_CHARACTER_LIMIT} a level may hold")]
+    #[error("invalid scopeQ pattern: a scope level carries {characters} characters, more than the {LEVEL_CHARACTER_LIMIT} a level may hold")]
     LevelTooLong {
         /// The number of characters the level carries.
         characters: usize,
     },
     /// A level is outside the clause 4.18 level-name production.
-    #[error("a scope level must be a letter followed by letters, digits or underscores")]
+    #[error("invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores")]
     InvalidLevel,
     /// The `#` wildcard stands anywhere but last.
-    #[error("the # wildcard may only end a scope pattern")]
+    #[error("invalid scopeQ pattern: the # wildcard may only end a scope pattern")]
     MultiLevelNotLast,
     /// Two requirements are conjoined outside parentheses; clause 4.19 admits a
     /// conjunction only as `(ScopeQ;ScopeQ)`.
-    #[error("a conjunction of scopes must be parenthesised")]
+    #[error("invalid scopeQ pattern: a conjunction of scopes must be parenthesised")]
     UngroupedConjunction,
     /// A parenthesised group holds a disjunction or another group; clause 4.19
     /// admits only a conjunction of scope patterns inside one.
-    #[error("a parenthesised group may only hold scope patterns joined by ;")]
+    #[error("invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;")]
     NestedGroup,
     /// A parenthesised group is not closed.
-    #[error("a parenthesised group is not closed")]
+    #[error("invalid scopeQ pattern: a parenthesised group is not closed")]
     UnclosedGroup,
     /// An operator, a `)` or the end of the input stands where a pattern is
     /// required.
-    #[error("a pattern is missing before an operator, a closing parenthesis or the end of the input")]
+    #[error("invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input")]
     MissingPattern,
     /// Input continues after a complete expression: a dangling `)` or a
     /// trailing operator.
-    #[error("the expression continues after it is complete")]
+    #[error("invalid scopeQ pattern: the expression continues after it is complete")]
     TrailingInput,
 }
 
@@ -50,7 +50,15 @@ mod tests {
     fn an_overlong_level_reports_its_length_against_the_bound() {
         pretty_assertions::assert_eq!(
             ScopeQueryError::LevelTooLong { characters: 1001 }.to_string(),
-            "a scope level carries 1001 characters, more than the 1000 a level may hold"
+            "invalid scopeQ pattern: a scope level carries 1001 characters, more than the 1000 a level may hold"
+        );
+    }
+
+    #[test]
+    fn a_scope_refusal_keeps_the_text_its_wrapper_gave_it() {
+        pretty_assertions::assert_eq!(
+            ScopeQueryError::EmptyPattern.to_string(),
+            "invalid scopeQ pattern: a scope pattern must name at least one level"
         );
     }
 }

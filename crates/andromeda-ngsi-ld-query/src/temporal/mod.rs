@@ -13,4 +13,5 @@ pub mod ordering;
 pub mod period_budget;
 pub mod period_grid;
 pub mod representation;
+pub mod time_interval_error;
 pub mod window;

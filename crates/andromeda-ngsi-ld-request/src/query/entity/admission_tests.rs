@@ -10,7 +10,7 @@ use crate::{
 use andromeda_linked_retrieval::admission::{LinkedMember, ReachingMember};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, filter_error::FilterError, language_targeting::LanguageTargeting},
     query_error::QueryError,
 };
 use std::num::NonZeroUsize;
@@ -56,13 +56,16 @@ fn a_q_past_the_comparison_limit_is_refused_at_validation() {
         admitted(operation, &too_many_comparisons(1000), admission).expect("1000 comparisons are within the limit");
         let refused = admitted(operation, &too_many_comparisons(1001), admission).expect_err("1001 comparisons are too many");
         assert!(
-            matches!(refused, ParameterError::Query(QueryError::QTooManyComparisons { .. })),
+            matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
             "{operation:?}: {refused:?}"
         );
     }
     purged(&too_many_comparisons(1000), admission).expect("1000 comparisons are within the limit");
     let refused = purged(&too_many_comparisons(1001), admission).expect_err("1001 comparisons are too many");
-    assert!(matches!(refused, ParameterError::Query(QueryError::QTooManyComparisons { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
+        "{refused:?}"
+    );
 }
 
 /// Clause 5.5.6: a filter nested deeper than the limit is `TooComplexQuery`.
@@ -73,7 +76,10 @@ fn a_q_nested_past_the_depth_limit_is_refused_at_validation() {
     let admission = broker(LanguageTargeting::Specification);
     admitted(EntityQueryOperation::Query, &query(16), admission).expect("16 levels are within the limit");
     let refused = admitted(EntityQueryOperation::Query, &query(17), admission).expect_err("17 levels are too deep");
-    assert!(matches!(refused, ParameterError::Query(QueryError::QNestedTooDeep { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::NestedTooDeep { .. }))),
+        "{refused:?}"
+    );
 }
 
 /// Clause 4.9: a full language tag as a target language is admitted at
@@ -85,13 +91,16 @@ fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
         admitted(operation, query, broker(LanguageTargeting::LanguageTags)).expect("the language-tags level admits a tag");
         let refused = admitted(operation, query, broker(LanguageTargeting::Specification)).expect_err("the specification level refuses a tag");
         assert!(
-            matches!(refused, ParameterError::Query(QueryError::LanguageTagNotAdmitted(_))),
+            matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_)))),
             "{operation:?}: {refused:?}"
         );
     }
     purged(query, broker(LanguageTargeting::LanguageTags)).expect("the language-tags level admits a tag");
     let refused = purged(query, broker(LanguageTargeting::Specification)).expect_err("the specification level refuses a tag");
-    assert!(matches!(refused, ParameterError::Query(QueryError::LanguageTagNotAdmitted(_))), "{refused:?}");
+    assert!(
+        matches!(refused, ParameterError::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_)))),
+        "{refused:?}"
+    );
 }
 
 /// Clauses 5.7.2.4 and 5.14.4.4: a hop without a retrieving `join`
@@ -158,7 +167,7 @@ fn the_admissions_run_complexity_then_hops_then_target_languages() {
     let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
     let hop_and_size = admitted(EntityQueryOperation::Query, &format!("type=Car&q=r%7Ba%7D%3D%3D{values}"), admission).expect_err("a hop and a size");
     assert!(
-        matches!(hop_and_size, ParameterError::Query(QueryError::QTooManyComparisons { .. })),
+        matches!(hop_and_size, ParameterError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. }))),
         "{hop_and_size:?}"
     );
 }

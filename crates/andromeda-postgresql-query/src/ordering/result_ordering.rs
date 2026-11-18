@@ -24,6 +24,7 @@ use andromeda_ngsi_ld_query::{
     ordering::{
         compiled_ordering_term::CompiledOrderingTerm,
         expanded_ordering_target::ExpandedOrderingTarget,
+        ordering_error::OrderingError,
         result_ordering::ResultOrdering,
         sort_direction::SortDirection,
     },
@@ -48,7 +49,7 @@ use sea_query::{Expr as SeaExpr, JoinType, SelectStatement, SimpleExpr};
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when a reference geometry
 /// has no EWKB spelling the store can bind, and
-/// [`RenderError::Query`] carrying [`QueryError::DistanceOrderWithoutReference`]
+/// [`RenderError::Query`] carrying [`OrderingError::DistanceWithoutReference`]
 /// for a distance term with no `orderFrom` to measure from, which Table
 /// 6.4.3.2-1 makes mandatory for a distance ordering.
 pub fn sort_keys(
@@ -175,7 +176,7 @@ fn distance_reference(term: &CompiledOrderingTerm, ordering: &ResultOrdering) ->
     }
     match &ordering.geometry {
         Some(reference) => Ok(Some(encode(reference.geometry.form())?.to_vec())),
-        None => Err(RenderError::Query(QueryError::DistanceOrderWithoutReference)),
+        None => Err(RenderError::Query(QueryError::Ordering(OrderingError::DistanceWithoutReference))),
     }
 }
 

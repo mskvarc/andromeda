@@ -389,6 +389,7 @@ mod tests {
             expanded_ordering_target::ExpandedOrderingTarget,
             icu_collation::IcuCollation,
             ordering_direction::OrderingDirection,
+            ordering_error::OrderingError,
             ordering_geometry::OrderingGeometry,
         },
         page_window::{PageStart, PageWindow},
@@ -1143,7 +1144,10 @@ mod tests {
         }];
         let target = ContextTarget::Live;
         let result = build_query(&target, &q, &first_offset_page(), CountPolicy::Omit, &known_types());
-        assert!(matches!(result, Err(RenderError::Query(QueryError::DistanceOrderWithoutReference))));
+        assert!(matches!(
+            result,
+            Err(RenderError::Query(QueryError::Ordering(OrderingError::DistanceWithoutReference)))
+        ));
     }
 
     #[test]

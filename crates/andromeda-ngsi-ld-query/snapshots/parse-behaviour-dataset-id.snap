@@ -5,35 +5,35 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted Default
   written "@none", read back to the same tree
 "@)one"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@{none"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@one"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@noneZ"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:ngsi-ld:Dataset:1"
   accepted Id(Identifier(Uri(Urn(Urn(urn:ngsi-ld:Dataset:1)))))
   written "urn:ngsi-ld:Dataset:1", read back to the same tree
 "urn:ngsi-ld:Dataset|1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:ngsi-ld:Dataset\t1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:ngsi-{d:Dataset:1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:ngsi-ld:Datase+t:1"
   accepted Id(Identifier(Uri(Urn(Urn(urn:ngsi-ld:Datase+t:1)))))
@@ -57,213 +57,213 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted Id(Identifier(Uri(Url(Url { scheme: "http", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("example.com")), port: None, path: "/d", query: None, fragment: None }))))
   written "http://example.com/d", read back to the same tree
 "http*://example.com/d"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "http://exmple.com/d"
   accepted Id(Identifier(Uri(Url(Url { scheme: "http", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("exmple.com")), port: None, path: "/d", query: None, fragment: None }))))
   written "http://exmple.com/d", read back to the same tree
 "http|://example.com/d"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "http://ex@mple.com/d"
   accepted Id(Identifier(Uri(Url(Url { scheme: "http", cannot_be_a_base: false, username: "ex", password: None, host: Some(Domain("mple.com")), port: None, path: "/d", query: None, fragment: None }))))
   written "http://ex@mple.com/d", read back to the same tree
 ""
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "%"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "{"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 ";"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 ","
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "dataset"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "dat set"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "datset"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "=ataset"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "dtaset"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@nonex"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@none+x"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@.onex"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@nonx"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@non-ex"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 " urn:x:1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 " urn:x<1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 " u\trn:x:1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 " urn:x:{1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 " u(rn:x:1"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:x:1 "
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:x:1 }"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:x~1 "
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "Zurn:x:1 "
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:x:1+ "
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@None"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@N one"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "[@None"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "*@None"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "@Nne"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:"
   accepted Id(Identifier(Uri(Url(Url { scheme: "urn", cannot_be_a_base: true, username: "", password: None, host: None, port: None, path: "", query: None, fragment: None }))))
   written "urn:", read back to the same tree
 "-rn:"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "u~n:"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "<rn:"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 ">urn:"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "https://example.com/a b"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "https://exmple.com/a b"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "https://example.com/#a b"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "https://example.com=a b"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "https:/)/example.com/a b"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "é:x"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "é}x"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "é:9x"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 ":x"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "é>:x"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:x:é"
   accepted Id(Identifier(Uri(Iri("urn:x:é"))))
   written "urn:x:é", read back to the same tree
 "urn:x{é"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn:x:{é"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"
 "urn::é"
   accepted Id(Identifier(Uri(Iri("urn::é"))))
   written "urn::é", read back to the same tree
 "<urn:x:é"
-  refused ParamDatasetIdInvalid(Malformed(UriParseError))
-  variant ParamDatasetIdInvalid/Malformed/UriParseError
+  refused InvalidIdentifier(Malformed(UriParseError))
+  variant InvalidIdentifier/Malformed/UriParseError
   detail "invalid datasetId value: invalid URI: not a valid URN, URL or IRI"

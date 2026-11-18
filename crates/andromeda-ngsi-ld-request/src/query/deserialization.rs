@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::{
     comma_separated_list::{ListedMemberKind, parse_listed},
     dataset_selector::DatasetSelector,
     filter::{Filter, parser},
-    geo::written_geo_query::{GeoQueryInputError, WrittenGeoQuery},
+    geo::{geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
     pattern::Pattern,
     projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
 };
@@ -99,7 +99,7 @@ pub enum GeoQueryDecodeError {
     /// The geo-query wire form could not be decoded; the inner error names which
     /// member (`georel`, `coordinates`, `geometry`) was at fault and why.
     #[error(transparent)]
-    Decode(#[from] GeoQueryInputError),
+    Decode(#[from] GeoQueryError),
 }
 
 /// Deserialize an optional comma-separated entity identifier list.

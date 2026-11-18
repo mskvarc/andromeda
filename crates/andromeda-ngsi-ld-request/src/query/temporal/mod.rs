@@ -334,9 +334,10 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
         filter::display::serialize_attr_path,
+        ordering::ordering_error::OrderingError,
         projection::exclusivity::ProjectionConflict,
         query_error::QueryError,
-        temporal::window::TimeInterval,
+        temporal::{time_interval_error::TimeIntervalError, window::TimeInterval},
         written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -442,7 +443,13 @@ mod tests {
         let error = params_from_query("type=Vehicle&endTimeAt=2024-01-03T00:00:00Z")
             .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("a lone endTimeAt");
-        assert!(matches!(error, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "{error:?}");
+        assert!(
+            matches!(
+                error,
+                ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::EndTimeAtWithoutBetween))
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -906,7 +913,7 @@ mod tests {
         );
         assert!(matches!(
             params_from_query(&format!("{window}&local=true&orderBy=speed")).admit(TemporalQueryOperation::Query, TemporalJoin::Extended, PERMISSIVE),
-            Err(ParameterError::Query(QueryError::TemporalOrderingMember(member))) if serialize_attr_path(&member) == "speed"
+            Err(ParameterError::Query(QueryError::Ordering(OrderingError::TemporalMember(member)))) if serialize_attr_path(&member) == "speed"
         ));
         assert!(
             params_from_query(&format!("{window}&local=true&orderBy=id"))
@@ -927,7 +934,7 @@ mod tests {
                 TemporalJoin::Extended,
                 PERMISSIVE
             ),
-            Err(ParameterError::Query(QueryError::TemporalOrderingDirection(_)))
+            Err(ParameterError::Query(QueryError::Ordering(OrderingError::TemporalDirection(_))))
         ));
     }
 

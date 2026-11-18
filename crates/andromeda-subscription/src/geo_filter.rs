@@ -24,9 +24,13 @@
 use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, query_coordinates::WrittenCoordinates};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
-use andromeda_ngsi_ld_query::{
-    geo::{admission::GeoQueryAdmission, compiled_geo_query::CompiledGeoQuery, reference_geometry::ReferenceGeometry, written_geo_query::WrittenGeoQuery},
-    query_error::QueryError,
+use andromeda_ngsi_ld_query::geo::{
+    admission::GeoQueryAdmission,
+    compiled_geo_query::CompiledGeoQuery,
+    geo_query_error::GeoQueryError,
+    reference_budget::ReferenceBudgetError,
+    reference_geometry::ReferenceGeometry,
+    written_geo_query::WrittenGeoQuery,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use thiserror::Error;
@@ -40,14 +44,14 @@ pub enum GeoQError {
     Relation {
         /// What makes the relation unusable.
         #[source]
-        source: Box<QueryError>,
+        source: Box<GeoQueryError>,
     },
     /// The reference geometry was refused when it was admitted.
     #[error("geoQ reference geometry: {source}")]
     Reference {
         /// What makes the reference geometry unusable.
         #[source]
-        source: Box<QueryError>,
+        source: Box<GeoQueryError>,
     },
     /// The `coordinates` member was a string that was not JSON.
     #[error("geoQ coordinates: {source}")]
@@ -124,7 +128,7 @@ pub fn admit_geo_q(geo_q: &WrittenGeoQuery, admission: GeoQueryAdmission) -> Res
         .admit(&geo_q.georel)
         .map_err(|refused| SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(GeoQError::Relation { source: Box::new(refused) })))?;
     geo_q.reference.admit(admission.limits).map(drop).map_err(|refused| {
-        if let QueryError::ReferenceGeometryTooComplex { over } = refused {
+        if let GeoQueryError::ReferenceBudget(ReferenceBudgetError { over }) = refused {
             SubscriptionError::GeoQTooLarge { over }
         } else {
             SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(GeoQError::Reference { source: Box::new(refused) }))

@@ -16,6 +16,7 @@ pub mod display;
 pub mod equality_value;
 pub mod expansion;
 pub mod expectation;
+pub mod filter_error;
 #[cfg(test)]
 pub(crate) mod generated_filters;
 pub mod hop_admission;
@@ -40,10 +41,7 @@ pub mod trailing_group;
 pub mod value_path;
 pub mod written_members;
 
-use crate::{
-    filter::{query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath},
-    query_error::QueryError,
-};
+use crate::filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -132,9 +130,9 @@ impl Filter {
 }
 
 impl FromStr for Filter {
-    type Err = QueryError;
+    type Err = FilterError;
 
-    fn from_str(raw: &str) -> Result<Filter, QueryError> {
+    fn from_str(raw: &str) -> Result<Filter, FilterError> {
         parser::parse(raw)
     }
 }
@@ -142,9 +140,9 @@ impl FromStr for Filter {
 // Parsing lives in `FromStr` so borrowed call sites do not allocate; this
 // adapter exists only because `#[serde(try_from = "String")]` requires it.
 impl TryFrom<String> for Filter {
-    type Error = QueryError;
+    type Error = FilterError;
 
-    fn try_from(raw: String) -> Result<Filter, QueryError> {
+    fn try_from(raw: String) -> Result<Filter, FilterError> {
         raw.parse()
     }
 }

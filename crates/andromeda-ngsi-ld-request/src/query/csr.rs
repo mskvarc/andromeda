@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_query::{
     filter::Filter,
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
+    query_error::QueryError,
     scope::scope_query::ScopeQuery,
     temporal::window::TimeInterval,
     type_selection::written_type_selection::WrittenTypeSelection,
@@ -195,7 +196,9 @@ impl CsrQueryParameters {
         // page a collection by different mechanisms and cannot both govern it.
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // interval, so the request seam builds it rather than re-deriving it.
-        TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at).map_err(ParameterError::Query)?;
+        TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at)
+            .map_err(QueryError::from)
+            .map_err(ParameterError::Query)?;
 
         Ok(())
     }
@@ -205,7 +208,7 @@ impl CsrQueryParameters {
 mod tests {
     use super::*;
     use crate::{params_from_query, query::SharedQueryParams};
-    use andromeda_ngsi_ld_query::query_error::QueryError;
+    use andromeda_ngsi_ld_query::temporal::time_interval_error::TimeIntervalError;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn params_from_query(query: &str) -> CsrQueryParameters {
@@ -284,7 +287,10 @@ mod tests {
     fn validate_rejects_temporal_without_time_at() {
         let p = params_from_query("type=Vehicle&timerel=before");
         let err = p.validate().expect_err("expected error");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamTimerelTimeatPair)));
+        assert!(matches!(
+            err,
+            ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::UnpairedTimerel))
+        ));
     }
 
     #[test]
@@ -301,11 +307,17 @@ mod tests {
         let err = params_from_query("type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00Z")
             .validate()
             .expect_err("endTimeAt beside after");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "{err:?}");
+        assert!(
+            matches!(err, ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::EndTimeAtWithoutBetween))),
+            "{err:?}"
+        );
         let err = params_from_query("type=Vehicle&timerel=between&timeAt=2024-02-01T00:00:00Z&endTimeAt=2024-01-01T00:00:00Z")
             .validate()
             .expect_err("an inverted between");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtNotAfterTimeAt)), "{err:?}");
+        assert!(
+            matches!(err, ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::EndTimeAtNotAfterTimeAt))),
+            "{err:?}"
+        );
     }
 
     /// Table 6.8.3.2-1: the members the entity query shares with discovery.

@@ -18,42 +18,40 @@ pub mod quoted_string;
 pub mod token_cursor;
 pub mod value_path;
 
-use crate::{
-    filter::{
-        Filter,
-        attribute_path::AttributePath,
-        complexity::WRITTEN_NESTING_CEILING,
-        parser::{
-            attribute_path::parse_linked_entity_relation,
-            lexer::{Token, tokenize},
-            operand::{parse_comparable_value, parse_compare_value, parse_pattern_string},
-            token_cursor::TokenCursor,
-        },
-        query_term::{OrderingOperator, QueryTerm, SetMembership},
+use crate::filter::{
+    Filter,
+    attribute_path::AttributePath,
+    complexity::WRITTEN_NESTING_CEILING,
+    filter_error::FilterError,
+    parser::{
+        attribute_path::parse_linked_entity_relation,
+        lexer::{Token, tokenize},
+        operand::{parse_comparable_value, parse_compare_value, parse_pattern_string},
+        token_cursor::TokenCursor,
     },
-    query_error::QueryError,
+    query_term::{OrderingOperator, QueryTerm, SetMembership},
 };
 
 /// Parses an NGSI-LD `q` filter expression string into an AST (clause 4.9).
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QEmpty`] when the input is blank, the tokeniser's
-/// [`QueryError::QUnterminatedString`] or [`QueryError::QUnexpectedChar`] when
-/// it cannot be lexed, and [`QueryError::QExpected`],
-/// [`QueryError::QUnexpectedToken`], [`QueryError::QAttributePathTooDeep`] or
+/// Returns [`FilterError::Empty`] when the input is blank, the tokeniser's
+/// [`FilterError::UnterminatedString`] or [`FilterError::UnexpectedCharacter`] when
+/// it cannot be lexed, and [`FilterError::Expected`],
+/// [`FilterError::UnexpectedToken`], [`FilterError::PathTooDeep`] or
 /// one of the literal-typing variants when it is outside the clause 4.9
-/// grammar, and [`QueryError::QNestedTooDeep`] when its parentheses nest past
+/// grammar, and [`FilterError::NestedTooDeep`] when its parentheses nest past
 /// [`WRITTEN_NESTING_CEILING`].
-pub fn parse(input: &str) -> Result<Filter, QueryError> {
+pub fn parse(input: &str) -> Result<Filter, FilterError> {
     if input.trim().is_empty() {
-        return Err(QueryError::QEmpty);
+        return Err(FilterError::Empty);
     }
     let tokens = tokenize(input)?;
     let mut cursor = TokenCursor::new(&tokens);
     let expr = parse_or(&mut cursor, 0)?;
     if !cursor.is_exhausted() {
-        return Err(QueryError::QUnexpectedToken {
+        return Err(FilterError::UnexpectedToken {
             position: cursor.position(),
             token: cursor.found(),
         });
@@ -63,7 +61,7 @@ pub fn parse(input: &str) -> Result<Filter, QueryError> {
 
 /// Parse a disjunction: `and_expr ('|' and_expr)*`, inside `depth`
 /// parentheses.
-fn parse_or(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, QueryError> {
+fn parse_or(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, FilterError> {
     let mut left = parse_and(cursor, depth)?;
     let mut terms = Vec::new();
 
@@ -82,7 +80,7 @@ fn parse_or(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, QueryE
 }
 
 /// Parse a conjunction: `primary (';' primary)*`, inside `depth` parentheses.
-fn parse_and(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, QueryError> {
+fn parse_and(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, FilterError> {
     let mut left = parse_primary(cursor, depth)?;
     let mut terms = Vec::new();
 
@@ -105,11 +103,11 @@ fn parse_and(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, Query
 ///
 /// Each group recurses once, so the group that would nest past
 /// [`WRITTEN_NESTING_CEILING`] is refused before it is descended into.
-fn parse_primary(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, QueryError> {
+fn parse_primary(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, FilterError> {
     if cursor.peek() == Some(&Token::LParen) {
         let inner = depth + 1;
         if inner > WRITTEN_NESTING_CEILING.get() {
-            return Err(QueryError::QNestedTooDeep {
+            return Err(FilterError::NestedTooDeep {
                 depth: inner,
                 limit: WRITTEN_NESTING_CEILING,
             });
@@ -125,7 +123,7 @@ fn parse_primary(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Filter, Q
 
 /// Parse one Query Term: its attribute axis (clause 4.9 `Attribute`, a hop's
 /// braces included), optionally followed by an operator and its operand.
-fn parse_predicate(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, QueryError> {
+fn parse_predicate(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, FilterError> {
     let leading = cursor.parse_ident()?;
     let path = parse_linked_entity_relation(cursor, leading, 0)?;
     parse_operator_and_operand(cursor, path)
@@ -133,7 +131,7 @@ fn parse_predicate(cursor: &mut TokenCursor<'_>) -> Result<QueryTerm, QueryError
 
 /// Read the comparison operator and operand that follow an attribute axis,
 /// or accept the axis on its own as an existence predicate.
-fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath) -> Result<QueryTerm, QueryError> {
+fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: AttributePath) -> Result<QueryTerm, FilterError> {
     match cursor.peek() {
         Some(Token::Eq) => {
             cursor.advance();
@@ -234,12 +232,13 @@ mod tests {
             display::serialize,
             equality_value::EqualityValue,
             expectation::{Expectation, Found},
+            filter_error::FilterError,
             parser::{lexer::TokenKind, parse, value_path::MAX_SUB_ATTRIBUTE_DEPTH},
             query_term::{OrderingOperator, QueryTerm, SetMembership},
             scalar::Scalar,
             value_path::ValuePath,
         },
-        query_error::QueryError,
+        pattern::pattern_error::PatternError,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
     use andromeda_ngsi_ld_number::JsonNumber;
@@ -281,7 +280,7 @@ mod tests {
         // its depth.
         let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
         assert!(
-            matches!(parse(&too_deep), Err(QueryError::QAttributePathTooDeep { .. })),
+            matches!(parse(&too_deep), Err(FilterError::PathTooDeep { .. })),
             "an over-deep path must be rejected"
         );
     }
@@ -294,11 +293,11 @@ mod tests {
         assert!(parse(&grouped(WRITTEN_NESTING_CEILING.get())).is_ok(), "parentheses at the ceiling must parse");
         let error = parse(&grouped(WRITTEN_NESTING_CEILING.get() + 1)).expect_err("must reject");
         assert!(
-            matches!(error, QueryError::QNestedTooDeep { depth: 65, limit } if limit == WRITTEN_NESTING_CEILING),
+            matches!(error, FilterError::NestedTooDeep { depth: 65, limit } if limit == WRITTEN_NESTING_CEILING),
             "got {error:?}"
         );
         let unbounded = format!("{}a", "(".repeat(1_000_000));
-        assert!(matches!(parse(&unbounded), Err(QueryError::QNestedTooDeep { depth: 65, .. })));
+        assert!(matches!(parse(&unbounded), Err(FilterError::NestedTooDeep { depth: 65, .. })));
     }
 
     #[test]
@@ -453,10 +452,10 @@ mod tests {
         }
 
         let error = parse("observed>=2017-13-45").expect_err("must reject");
-        assert!(matches!(error, QueryError::QInvalidDate { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidDate { .. }), "got {error:?}");
 
         let error = parse("observed>=2017-12-24T99:00:00Z").expect_err("must reject");
-        assert!(matches!(error, QueryError::QInvalidDateTime { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidDateTime { .. }), "got {error:?}");
     }
 
     /// Clause 4.6.3 lets a request write "a comma instead of a decimal point"
@@ -520,10 +519,10 @@ mod tests {
         // unterminated character class is not one, and the request is rejected
         // rather than turned into a filter that matches nothing.
         let error = parse("name~=\"[\"").expect_err("must reject");
-        assert!(matches!(error, QueryError::PatternRegex(_)), "got {error:?}");
+        assert!(matches!(error, FilterError::Pattern(PatternError::Regex(_))), "got {error:?}");
 
         let error = parse("name!~=\"[\"").expect_err("must reject");
-        assert!(matches!(error, QueryError::PatternRegex(_)), "got {error:?}");
+        assert!(matches!(error, FilterError::Pattern(PatternError::Regex(_))), "got {error:?}");
     }
 
     #[test]
@@ -681,7 +680,7 @@ mod tests {
             panic!("expected numeric equality");
         };
         pretty_assertions::assert_eq!(number.to_string(), "0.100000000000000005");
-        assert!(matches!(parse("temperature==1e-16384"), Err(QueryError::QInvalidNumber { .. })));
+        assert!(matches!(parse("temperature==1e-16384"), Err(FilterError::InvalidNumber { .. })));
     }
 
     #[test]
@@ -870,7 +869,7 @@ mod tests {
     #[test]
     fn a_bare_name_with_two_colons_at_the_head_of_a_hop_is_ambiguous() {
         let error = parse("rel{ex:Store:category}==\"x\"").expect_err("must reject");
-        assert!(matches!(error, QueryError::QAmbiguousTypeGuard), "got {error:?}");
+        assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
@@ -918,7 +917,7 @@ mod tests {
         // `Store:category`. Nothing in the clause 4.9 grammar decides between
         // them, so the request is rejected and the client quotes what it meant.
         let error = parse("rel{Building,ex:Store:category}==\"x\"").expect_err("must reject");
-        assert!(matches!(error, QueryError::QAmbiguousTypeGuard), "got {error:?}");
+        assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
@@ -942,7 +941,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                QueryError::QExpected {
+                FilterError::Expected {
                     expected: Expectation::Token(TokenKind::RBrace),
                     found: Found::EndOfInput
                 }
@@ -961,7 +960,7 @@ mod tests {
             assert!(
                 matches!(
                     error,
-                    QueryError::QExpected {
+                    FilterError::Expected {
                         expected: Expectation::Token(TokenKind::RBrace),
                         found: Found::Token(_)
                     }
@@ -999,7 +998,7 @@ mod tests {
     fn a_hop_with_nothing_inside_it_is_rejected() {
         // Clause 4.9 requires a `LinkedEntityPath` between the braces.
         let error = parse("a{}").expect_err("must reject");
-        assert!(matches!(error, QueryError::QExpected { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::Expected { .. }), "got {error:?}");
     }
 
     #[test]
@@ -1009,7 +1008,7 @@ mod tests {
         let chain = |hops: usize| format!("{}z{}", "a{".repeat(hops), "}".repeat(hops));
         assert!(parse(&chain(MAX_SUB_ATTRIBUTE_DEPTH)).is_ok(), "a chain at the limit must parse");
         assert!(
-            matches!(parse(&chain(MAX_SUB_ATTRIBUTE_DEPTH + 1)), Err(QueryError::QAttributePathTooDeep { .. })),
+            matches!(parse(&chain(MAX_SUB_ATTRIBUTE_DEPTH + 1)), Err(FilterError::PathTooDeep { .. })),
             "an over-deep hop chain must be rejected"
         );
     }

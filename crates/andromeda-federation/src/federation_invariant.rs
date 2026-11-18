@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReferenceError,
 };
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
-use andromeda_ngsi_ld_query::geo::written_geo_query::GeoQueryInputError;
+use andromeda_ngsi_ld_query::geo::geo_query_error::GeoQueryError;
 use andromeda_retry::schedule_error::BackoffScheduleError;
 use mediatype::MediaTypeBuf;
 use std::num::ParseIntError;
@@ -41,7 +41,7 @@ pub enum FederationInvariant {
     /// The clause 4.10 members a forwarded query writes do not read back as a
     /// geo-query, although the narrowing wrote them from an admitted one.
     #[error("the geo-query members of a forwarded query do not read back as a geo-query: {0}")]
-    ForwardedGeoQuery(#[source] GeoQueryInputError),
+    ForwardedGeoQuery(#[source] GeoQueryError),
     /// A forwarded query writes some of `georel`, `geometry` and `coordinates`
     /// but not all three, which the narrowing writes together.
     #[error("a forwarded query writes only part of a geo-query")]

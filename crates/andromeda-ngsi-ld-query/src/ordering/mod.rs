@@ -5,6 +5,7 @@ pub mod compiled_ordering_term;
 pub mod expanded_ordering_target;
 pub mod icu_collation;
 pub mod ordering_direction;
+pub mod ordering_error;
 pub mod ordering_geometry;
 pub mod ordering_parameters;
 pub mod result_ordering;

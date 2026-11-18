@@ -11,9 +11,13 @@
 //! one. A filter is parsed whole under every level, so a stored filter keeps
 //! round-tripping through its text, and the level is held to it on admission.
 
-use crate::{
-    filter::{Filter, language_matching::LanguageMatching, target_language::TargetLanguage, trailing_group::TrailingGroup, value_path::ValuePath},
-    query_error::QueryError,
+use crate::filter::{
+    Filter,
+    filter_error::FilterError,
+    language_matching::LanguageMatching,
+    target_language::TargetLanguage,
+    trailing_group::TrailingGroup,
+    value_path::ValuePath,
 };
 use strum::Display;
 
@@ -56,11 +60,11 @@ impl LanguageTargeting {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::LanguageTagNotAdmitted`] for a target language
+    /// Returns [`FilterError::LanguageTagNotAdmitted`] for a target language
     /// only a full tag spells below [`LanguageTargeting::LanguageTags`], and
-    /// [`QueryError::LanguageRangeNotAdmitted`] for an extended range below
+    /// [`FilterError::LanguageRangeNotAdmitted`] for an extended range below
     /// [`LanguageTargeting::LanguageRanges`].
-    pub fn admit(self, expr: &Filter) -> Result<(), QueryError> {
+    pub fn admit(self, expr: &Filter) -> Result<(), FilterError> {
         expr.terminal_paths().into_iter().try_for_each(|path| self.admit_path(path))
     }
 
@@ -70,15 +74,15 @@ impl LanguageTargeting {
     /// # Errors
     ///
     /// As [`LanguageTargeting::admit`].
-    pub fn admit_path(self, path: &ValuePath) -> Result<(), QueryError> {
+    pub fn admit_path(self, path: &ValuePath) -> Result<(), FilterError> {
         if required_by_path(path) <= self {
             return Ok(());
         }
         match &path.trailing {
             // clone: the error outlives the filter that names the language
-            Some(TrailingGroup::Language(TargetLanguage::Tag(tag))) => Err(QueryError::LanguageTagNotAdmitted(tag.clone())),
+            Some(TrailingGroup::Language(TargetLanguage::Tag(tag))) => Err(FilterError::LanguageTagNotAdmitted(tag.clone())),
             // clone: the error outlives the filter that names the language
-            Some(TrailingGroup::Language(TargetLanguage::Range(range))) => Err(QueryError::LanguageRangeNotAdmitted(range.clone())),
+            Some(TrailingGroup::Language(TargetLanguage::Range(range))) => Err(FilterError::LanguageRangeNotAdmitted(range.clone())),
             Some(TrailingGroup::Members(_) | TrailingGroup::AllLanguages) | None => Ok(()),
         }
     }
@@ -98,10 +102,7 @@ const fn required_by_path(path: &ValuePath) -> LanguageTargeting {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        filter::{Filter, language_matching::LanguageMatching, language_targeting::LanguageTargeting},
-        query_error::QueryError,
-    };
+    use crate::filter::{Filter, filter_error::FilterError, language_matching::LanguageMatching, language_targeting::LanguageTargeting};
     use pretty_assertions::assert_eq;
 
     fn filter(q: &str) -> Filter {
@@ -130,7 +131,7 @@ mod tests {
         let tagged = filter("name[en-GB]==\"x\";speed>1");
         let error = LanguageTargeting::Specification.admit(&tagged).expect_err("no AttrName spells en-GB");
         assert!(
-            matches!(&error, QueryError::LanguageTagNotAdmitted(tag) if tag.as_str() == "en-GB"),
+            matches!(&error, FilterError::LanguageTagNotAdmitted(tag) if tag.as_str() == "en-GB"),
             "{error:?}"
         );
         assert!(LanguageTargeting::LanguageTags.admit(&tagged).is_ok());
@@ -144,12 +145,12 @@ mod tests {
         for level in [LanguageTargeting::Specification, LanguageTargeting::LanguageTags] {
             let error = level.admit(&ranged).expect_err("a range needs the ranges level");
             assert!(
-                matches!(error, QueryError::LanguageRangeNotAdmitted(_) | QueryError::LanguageTagNotAdmitted(_)),
+                matches!(error, FilterError::LanguageRangeNotAdmitted(_) | FilterError::LanguageTagNotAdmitted(_)),
                 "{error:?}"
             );
         }
         let error = LanguageTargeting::LanguageTags.admit(&ranged).expect_err("a range needs the ranges level");
-        assert!(matches!(error, QueryError::LanguageRangeNotAdmitted(_)), "{error:?}");
+        assert!(matches!(error, FilterError::LanguageRangeNotAdmitted(_)), "{error:?}");
         assert!(LanguageTargeting::LanguageRanges.admit(&ranged).is_ok());
         assert_eq!(LanguageTargeting::required_by(&ranged), LanguageTargeting::LanguageRanges);
     }

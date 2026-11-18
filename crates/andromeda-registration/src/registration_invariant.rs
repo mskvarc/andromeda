@@ -1,7 +1,7 @@
 //! The invariants registration policy relies on, and how each one broke.
 
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceRegistrationIdParseError;
-use andromeda_ngsi_ld_query::query_error::QueryError;
+use andromeda_ngsi_ld_query::type_selection::type_selection_error::TypeSelectionError;
 use iri_rs::InvalidIri;
 use thiserror::Error;
 
@@ -17,7 +17,7 @@ pub enum RegistrationInvariant {
     /// A type selector the JSON-LD engine expanded has a leaf that is not a
     /// type name.
     #[error("an expanded entity type is not a type name: {0}")]
-    ExpandedTypeName(#[source] QueryError),
+    ExpandedTypeName(#[source] TypeSelectionError),
     /// The entity store could not answer a proxied-registration admission check.
     #[error("the entity store could not answer a registration admission check")]
     EntityProbe,

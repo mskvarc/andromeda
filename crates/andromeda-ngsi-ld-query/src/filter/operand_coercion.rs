@@ -107,10 +107,10 @@ impl OperandCoercion {
 
     /// One term expanded under the rule.
     async fn expand(self, term: &str, expander: &impl TermExpander) -> Result<IriBuf, QueryError> {
-        match self {
-            OperandCoercion::ExpandValues => expander.expand_term(term).await,
-            OperandCoercion::Vocabulary => expander.expand_type(term).await,
-        }
+        Ok(match self {
+            OperandCoercion::ExpandValues => expander.expand_term(term).await?,
+            OperandCoercion::Vocabulary => expander.expand_type(term).await?,
+        })
     }
 
     /// Compact the operands of an equality; a range is left as it is.

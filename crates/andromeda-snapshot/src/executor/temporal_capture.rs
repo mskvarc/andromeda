@@ -160,7 +160,7 @@ impl SnapshotExecutor {
         };
         let interval = match TimeInterval::from_parts(params.timerel, params.time_at, params.end_time_at) {
             Ok(interval) => interval,
-            Err(error) => return Ok(failure_detail(classify_query_error(&error).into_problem())),
+            Err(error) => return Ok(failure_detail(classify_query_error(&QueryError::from(error)).into_problem())),
         };
         let temporal = &self.sources.temporal;
         let params = match params.admit(TemporalQueryOperation::Query, temporal.linked_retrieval(), temporal.filter_admission()) {

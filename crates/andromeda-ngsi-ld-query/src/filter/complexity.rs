@@ -12,10 +12,7 @@
 //! recursion inside a fixed depth however a filter reaches it, a request, a
 //! stored subscription or a forwarded query.
 
-use crate::{
-    filter::{Filter, equality_value::EqualityValue, query_term::QueryTerm},
-    query_error::QueryError,
-};
+use crate::filter::{Filter, equality_value::EqualityValue, filter_error::FilterError, query_term::QueryTerm};
 use std::num::NonZeroUsize;
 
 /// The deepest a `q` filter may nest its parentheses, and the highest nesting
@@ -55,21 +52,21 @@ impl FilterComplexityLimits {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::QTooManyComparisons`] for a filter making more
-    /// comparisons than `comparisons`, and [`QueryError::QNestedTooDeep`] for
+    /// Returns [`FilterError::TooManyComparisons`] for a filter making more
+    /// comparisons than `comparisons`, and [`FilterError::NestedTooDeep`] for
     /// one nesting deeper than `nesting`; clause 5.5.6 answers both with
     /// `TooComplexQuery`.
-    pub fn admit(self, expr: &Filter) -> Result<(), QueryError> {
+    pub fn admit(self, expr: &Filter) -> Result<(), FilterError> {
         let comparisons = comparison_count(expr);
         if comparisons > self.comparisons.get() {
-            return Err(QueryError::QTooManyComparisons {
+            return Err(FilterError::TooManyComparisons {
                 comparisons,
                 limit: self.comparisons,
             });
         }
         let depth = nesting_depth(expr);
         if depth > self.nesting.get() {
-            return Err(QueryError::QNestedTooDeep { depth, limit: self.nesting });
+            return Err(FilterError::NestedTooDeep { depth, limit: self.nesting });
         }
         Ok(())
     }
@@ -115,12 +112,10 @@ const fn predicate_comparisons(predicate: &QueryTerm) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        filter::{
-            Filter,
-            complexity::{FilterComplexityLimits, comparison_count, nesting_depth},
-        },
-        query_error::QueryError,
+    use crate::filter::{
+        Filter,
+        complexity::{FilterComplexityLimits, comparison_count, nesting_depth},
+        filter_error::FilterError,
     };
     use std::num::NonZeroUsize;
 
@@ -190,7 +185,7 @@ mod tests {
         assert!(limits.admit(&filter(&conjunction(100))).is_ok());
         let refusal = limits.admit(&filter(&conjunction(101))).expect_err("one comparison too many");
         assert!(
-            matches!(refusal, QueryError::QTooManyComparisons { comparisons: 101, limit } if limit.get() == 100),
+            matches!(refusal, FilterError::TooManyComparisons { comparisons: 101, limit } if limit.get() == 100),
             "{refusal:?}"
         );
     }
@@ -200,7 +195,7 @@ mod tests {
         let limits = limits(1000, 16);
         assert!(limits.admit(&filter(&value_list(1000))).is_ok());
         let refusal = limits.admit(&filter(&value_list(1001))).expect_err("one value too many");
-        assert!(matches!(refusal, QueryError::QTooManyComparisons { comparisons: 1001, .. }), "{refusal:?}");
+        assert!(matches!(refusal, FilterError::TooManyComparisons { comparisons: 1001, .. }), "{refusal:?}");
     }
 
     #[test]
@@ -210,7 +205,7 @@ mod tests {
         let refusal = limits
             .admit(&filter(&format!("{};{}", value_list(8), conjunction(3))))
             .expect_err("the list and the terms pass the limit together");
-        assert!(matches!(refusal, QueryError::QTooManyComparisons { comparisons: 11, .. }), "{refusal:?}");
+        assert!(matches!(refusal, FilterError::TooManyComparisons { comparisons: 11, .. }), "{refusal:?}");
     }
 
     #[test]
@@ -219,7 +214,7 @@ mod tests {
         assert!(limits.admit(&filter(&nested(16))).is_ok());
         let refusal = limits.admit(&filter(&nested(17))).expect_err("one level too deep");
         assert!(
-            matches!(refusal, QueryError::QNestedTooDeep { depth: 17, limit } if limit.get() == 16),
+            matches!(refusal, FilterError::NestedTooDeep { depth: 17, limit } if limit.get() == 16),
             "{refusal:?}"
         );
     }

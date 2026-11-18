@@ -32,7 +32,7 @@
 //!
 //! Every reading recorded here was established by executing the construct against both engines (PostgreSQL 18 over a `COLLATE "C"` operand, the collation every column a pattern is applied to carries) rather than from either engine's documentation.
 
-use crate::{pattern::non_posix_construct::NonPosixConstruct, query_error::QueryError};
+use crate::pattern::{non_posix_construct::NonPosixConstruct, pattern_error::PatternError};
 use regex_syntax::ast::{
     Assertion,
     AssertionKind,
@@ -58,17 +58,17 @@ use regex_syntax::ast::{
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::PatternRepeatedQuantifier`] when a repetition operator
+/// Returns [`PatternError::RepeatedQuantifier`] when a repetition operator
 /// is applied directly to another repetition, and
-/// [`QueryError::PatternNonPosixConstruct`] for a construct the broker does not
+/// [`PatternError::NonPosixConstruct`] for a construct the broker does not
 /// admit.
-pub fn check_posix_dialect(ast: &Ast) -> Result<(), QueryError> {
+pub fn check_posix_dialect(ast: &Ast) -> Result<(), PatternError> {
     match ast {
         Ast::Repetition(repetition) => {
             // IEEE 1003.2 gives `a**` no meaning and PostgreSQL answers it with
             // "quantifier operand invalid"; the `regex` crate compiles it.
             if matches!(repetition.ast.as_ref(), Ast::Repetition(_)) {
-                return Err(QueryError::PatternRepeatedQuantifier);
+                return Err(PatternError::RepeatedQuantifier);
             }
             check_repetition_count(&repetition.op.kind)?;
             check_posix_dialect(&repetition.ast)
@@ -92,7 +92,7 @@ pub fn check_posix_dialect(ast: &Ast) -> Result<(), QueryError> {
 /// PostgreSQL stops there: `a{256}` is "invalid repetition count(s)". The
 /// `regex` crate accepts far larger counts, and the restatement the store runs
 /// carries the count unchanged.
-const fn check_repetition_count(kind: &RepetitionKind) -> Result<(), QueryError> {
+const fn check_repetition_count(kind: &RepetitionKind) -> Result<(), PatternError> {
     match kind {
         RepetitionKind::ZeroOrOne | RepetitionKind::ZeroOrMore | RepetitionKind::OneOrMore => Ok(()),
         RepetitionKind::Range(RepetitionRange::Exactly(count) | RepetitionRange::AtLeast(count)) => bounded_count(*count),
@@ -101,7 +101,7 @@ const fn check_repetition_count(kind: &RepetitionKind) -> Result<(), QueryError>
 }
 
 /// Whether one repetition count is within `RE_DUP_MAX`.
-const fn bounded_count(count: u32) -> Result<(), QueryError> {
+const fn bounded_count(count: u32) -> Result<(), PatternError> {
     if count > RE_DUP_MAX {
         Err(unsupported(NonPosixConstruct::RepetitionCount))
     } else {
@@ -113,7 +113,7 @@ const fn bounded_count(count: u32) -> Result<(), QueryError> {
 const RE_DUP_MAX: u32 = 255;
 
 /// Rejects a group the broker does not admit: a named capture is an extension of the `regex` crate alone, and a flag group is admitted only for the case-insensitive option, see [`check_group_flags`].
-fn check_group(group: &Group) -> Result<(), QueryError> {
+fn check_group(group: &Group) -> Result<(), PatternError> {
     match &group.kind {
         GroupKind::CaptureIndex(_) => {}
         GroupKind::CaptureName { .. } => return Err(unsupported(NonPosixConstruct::NamedCaptureGroup)),
@@ -125,7 +125,7 @@ fn check_group(group: &Group) -> Result<(), QueryError> {
 /// Reject a flag group other than `(?i:…)`, `(?-i:…)` or their combination.
 ///
 /// Scoping the case-insensitive option to a group is how a client folds case in one part of a pattern, such as a name, and not in another, such as an identifier prefix. Scoping `m`, `s` or `x` would render as faithfully, but the admitted set is kept to the option the both-engine integration suite verifies.
-fn check_group_flags(flags: &Flags) -> Result<(), QueryError> {
+fn check_group_flags(flags: &Flags) -> Result<(), PatternError> {
     flags.items.iter().try_for_each(|item| match &item.kind {
         FlagsItemKind::Negation | FlagsItemKind::Flag(Flag::CaseInsensitive) => Ok(()),
         FlagsItemKind::Flag(Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace) => Err(unsupported(NonPosixConstruct::InlineFlagGroup)),
@@ -134,7 +134,7 @@ fn check_group_flags(flags: &Flags) -> Result<(), QueryError> {
 }
 
 /// Rejects a standalone flag directive the broker does not admit. Every option may be set; only the case-insensitive one may be cleared, `(?-i)`, which ends a case-insensitive span. Clearing `m`, `s` or `x` is refused for the reason [`check_group_flags`] gives.
-fn check_set_flags(flags: &SetFlags) -> Result<(), QueryError> {
+fn check_set_flags(flags: &SetFlags) -> Result<(), PatternError> {
     let mut negated = false;
     for item in &flags.flags.items {
         match &item.kind {
@@ -157,7 +157,7 @@ fn check_set_flags(flags: &SetFlags) -> Result<(), QueryError> {
 /// does, including `(?i)`'s Unicode simple case folding and `(?m)`'s line
 /// anchors, which PostgreSQL's own options read differently. `(?u)`, `(?U)` and
 /// `(?R)` are `regex`-crate extensions with no counterpart in IEEE 1003.2.
-const fn check_flag(flag: Flag) -> Result<(), QueryError> {
+const fn check_flag(flag: Flag) -> Result<(), PatternError> {
     match flag {
         Flag::CaseInsensitive | Flag::MultiLine | Flag::DotMatchesNewLine | Flag::IgnoreWhitespace => Ok(()),
         Flag::Unicode | Flag::SwapGreed | Flag::CRLF => Err(unsupported(NonPosixConstruct::NonPosixFlag)),
@@ -173,7 +173,7 @@ const fn check_flag(flag: Flag) -> Result<(), QueryError> {
 /// `\B` as a literal, so the same text means two different filters depending
 /// on the engine a client last used, and no portable construct restates the
 /// `regex` crate's reading.
-const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
+const fn check_assertion(assertion: &Assertion) -> Result<(), PatternError> {
     match assertion.kind {
         AssertionKind::StartLine | AssertionKind::EndLine | AssertionKind::StartText => Ok(()),
         AssertionKind::EndText => Err(unsupported(NonPosixConstruct::EndTextAnchor)),
@@ -191,7 +191,7 @@ const fn check_assertion(assertion: &Assertion) -> Result<(), QueryError> {
 /// Reject a literal written with a numeric character escape, which the two engines spell to different widths.
 ///
 /// PostgreSQL's `\xhhh` consumes every hexadecimal digit that follows it, while the `regex` crate's `\xhh` is exactly two digits: `Merc\x33de` is `Merc` followed by U+33DE to PostgreSQL and `Merc3de` to the `regex` crate. The braced form `\x{61}` PostgreSQL refuses outright, and the octal form has widths of its own. None of the three is IEEE 1003.2, which gives a backslash no meaning beyond escaping a metacharacter, so refusing them turns away nothing clause 4.9 mandates. The character escapes `\n`, `\t`, `\r`, `\f`, `\v`, `\a` and `\e` are fixed-width in both engines.
-const fn check_literal(literal: &Literal) -> Result<(), QueryError> {
+const fn check_literal(literal: &Literal) -> Result<(), PatternError> {
     match literal.kind {
         LiteralKind::Verbatim | LiteralKind::Meta | LiteralKind::Superfluous | LiteralKind::Special(_) => Ok(()),
         LiteralKind::Octal | LiteralKind::HexFixed(_) | LiteralKind::HexBrace(_) => Err(unsupported(NonPosixConstruct::NumericCharacterEscape)),
@@ -205,7 +205,7 @@ const fn check_literal(literal: &Literal) -> Result<(), QueryError> {
 /// IEEE 1003.2 and PostgreSQL read `&`, `-` and `~` as ordinary members, so
 /// `[a-z&&b-d]` is the intersection `[b-d]` to the `regex` crate and the union
 /// of `a-z`, `&` and `b-d` to POSIX.2.
-fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
+fn check_class_set(set: &ClassSet) -> Result<(), PatternError> {
     match set {
         ClassSet::Item(item) => check_class_set_item(item),
         ClassSet::BinaryOp(_) => Err(unsupported(NonPosixConstruct::ClassSetOperation)),
@@ -218,7 +218,7 @@ fn check_class_set(set: &ClassSet) -> Result<(), QueryError> {
 /// PostgreSQL answers `[\p{L}]` with "invalid escape \ sequence". A bracketed
 /// shorthand class is admitted for the reason a bare one is, see
 /// [`check_posix_dialect`].
-fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
+fn check_class_set_item(item: &ClassSetItem) -> Result<(), PatternError> {
     match item {
         ClassSetItem::Unicode(_) => Err(unsupported(NonPosixConstruct::UnicodePropertyClass)),
         // Every `[` inside a bracket expression that does not open a known character class is escaped or refused before parsing, so a nested one is a `[:` the `regex` crate could not read as a class.
@@ -238,7 +238,7 @@ fn check_class_set_item(item: &ClassSetItem) -> Result<(), QueryError> {
 /// `regex`-crate spelling of its complement, which POSIX.2 does not define and
 /// PostgreSQL answers with "invalid character class"; the portable spelling of
 /// the same set is `[^[:alpha:]]`, which both engines run.
-const fn check_ascii_class(class: &ClassAscii) -> Result<(), QueryError> {
+const fn check_ascii_class(class: &ClassAscii) -> Result<(), PatternError> {
     if class.negated {
         Err(unsupported(NonPosixConstruct::NegatedPosixClass))
     } else {
@@ -247,7 +247,7 @@ const fn check_ascii_class(class: &ClassAscii) -> Result<(), QueryError> {
 }
 
 /// Walk the endpoints of a bracketed range.
-fn check_class_set_range(range: &ClassSetRange) -> Result<(), QueryError> {
+fn check_class_set_range(range: &ClassSetRange) -> Result<(), PatternError> {
     check_literal(&range.start)?;
     check_literal(&range.end)
 }
@@ -264,7 +264,7 @@ fn check_class_set_range(range: &ClassSetRange) -> Result<(), QueryError> {
 /// ranges to POSIX.2 and member lists to the `regex` crate. A `-` that opens or
 /// closes the list, and an escaped `\-` anywhere, are read the same way by
 /// both.
-fn check_class_set_union(union: &ClassSetUnion) -> Result<(), QueryError> {
+fn check_class_set_union(union: &ClassSetUnion) -> Result<(), PatternError> {
     let last = union.items.len().saturating_sub(1);
     for (position, item) in union.items.iter().enumerate() {
         if position != 0 && position != last && is_bare_hyphen(item) {
@@ -290,13 +290,13 @@ const fn is_bare_hyphen(item: &ClassSetItem) -> bool {
 }
 
 /// Name the construct in the rejection a client receives.
-const fn unsupported(construct: NonPosixConstruct) -> QueryError {
-    QueryError::PatternNonPosixConstruct { construct }
+const fn unsupported(construct: NonPosixConstruct) -> PatternError {
+    PatternError::NonPosixConstruct { construct }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{pattern::Pattern, query_error::QueryError};
+    use crate::pattern::{Pattern, pattern_error::PatternError};
     use pretty_assertions::assert_eq;
 
     /// Assert that every pattern is refused as a construct the two engines do
@@ -304,7 +304,7 @@ mod tests {
     fn each_is_refused(patterns: &[&str]) {
         for pattern in patterns {
             let error = Pattern::parse(pattern).expect_err("must be refused");
-            assert!(matches!(error, QueryError::PatternNonPosixConstruct { .. }), "{pattern}: got {error:?}");
+            assert!(matches!(error, PatternError::NonPosixConstruct { .. }), "{pattern}: got {error:?}");
         }
     }
 
@@ -514,7 +514,7 @@ mod tests {
     fn a_repetition_applied_to_another_repetition_keeps_its_own_rejection() {
         for pattern in ["a**", "invalid_entity_id_pattern**", "(a+)*+"] {
             let error = Pattern::parse(pattern).expect_err("must be refused");
-            assert!(matches!(error, QueryError::PatternRepeatedQuantifier), "{pattern}: got {error:?}");
+            assert!(matches!(error, PatternError::RepeatedQuantifier), "{pattern}: got {error:?}");
         }
     }
 

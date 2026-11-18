@@ -6,15 +6,15 @@
 //!
 //! The scan follows the `regex` crate's tokenizer everywhere else, escapes and the comments and ignored whitespace of `(?x)` included, so that it and the parser reading the restatement agree on where every bracket expression opens and closes.
 
-use crate::{pattern::non_posix_construct::NonPosixConstruct, query_error::QueryError};
+use crate::pattern::{non_posix_construct::NonPosixConstruct, pattern_error::PatternError};
 use regex_syntax::{ast::ClassAsciiKind, is_escapeable_character};
 
 /// Restates every bracket expression of `pattern` in the form the `regex` crate reads as IEEE 1003.2 does.
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::PatternNonPosixConstruct`] for a collating symbol or equivalence class that does not name exactly one character, for a `[:` that does not open a character class, and for a range whose end is a character class.
-pub fn restate_bracket_expressions(pattern: &str) -> Result<String, QueryError> {
+/// Returns [`PatternError::NonPosixConstruct`] for a collating symbol or equivalence class that does not name exactly one character, for a `[:` that does not open a character class, and for a range whose end is a character class.
+pub fn restate_bracket_expressions(pattern: &str) -> Result<String, PatternError> {
     let mut scan = BracketScan {
         rest: pattern,
         restated: String::with_capacity(pattern.len()),
@@ -48,7 +48,7 @@ struct BracketScan<'pattern> {
 
 impl BracketScan<'_> {
     /// Scans the whole pattern outside any bracket expression.
-    fn pattern(&mut self) -> Result<(), QueryError> {
+    fn pattern(&mut self) -> Result<(), PatternError> {
         while let Some(next) = self.rest.chars().next() {
             match next {
                 '\\' => self.escape(),
@@ -76,7 +76,7 @@ impl BracketScan<'_> {
     /// Scans a bracket expression whose `[` is already copied, through its closing `]`.
     ///
     /// The opening follows the `regex` crate: an optional `^`, then any run of `-`, each an ordinary member, then, when no `-` came first, a `]` that is an ordinary member too.
-    fn bracket_expression(&mut self) -> Result<(), QueryError> {
+    fn bracket_expression(&mut self) -> Result<(), PatternError> {
         self.skip_all_ignored();
         if self.rest.starts_with('^') {
             self.copy(1);
@@ -109,7 +109,7 @@ impl BracketScan<'_> {
     }
 
     /// Restates a `[` inside a bracket expression.
-    fn bracketed_member(&mut self) -> Result<(), QueryError> {
+    fn bracketed_member(&mut self) -> Result<(), PatternError> {
         let rest = self.rest;
         if let Some(after) = rest.strip_prefix("[:") {
             let length = character_class_length(after).ok_or(unsupported(NonPosixConstruct::UnknownCharacterClass))?;
@@ -128,7 +128,7 @@ impl BracketScan<'_> {
     }
 
     /// Restates an equivalence class or collating symbol whose opening is already stripped from `after`, as the one character it names.
-    fn collating_element(&mut self, after: &str, close: &str) -> Result<(), QueryError> {
+    fn collating_element(&mut self, after: &str, close: &str) -> Result<(), PatternError> {
         let refused = || unsupported(NonPosixConstruct::CollatingElement);
         let end = after.find(close).ok_or_else(refused)?;
         let mut characters = after[..end].chars();
@@ -150,7 +150,7 @@ impl BracketScan<'_> {
     /// Copies a `-` inside a bracket expression, after its opening run.
     ///
     /// A range whose end is a character class (`[a-[:digit:]]`) is malformed in POSIX.2, and the `regex` crate reads the `[` as the range's end, so the bracket expression closes at another `]` than the one POSIX.2 closes it at.
-    fn hyphen(&mut self) -> Result<(), QueryError> {
+    fn hyphen(&mut self) -> Result<(), PatternError> {
         if after_ignored(&self.rest[1..], self.whitespace).starts_with("[:") {
             return Err(unsupported(NonPosixConstruct::MedialHyphen));
         }
@@ -268,16 +268,13 @@ fn after_one_ignored(text: &str, whitespace: Whitespace) -> &str {
 }
 
 /// Name the construct in the rejection a client receives.
-const fn unsupported(construct: NonPosixConstruct) -> QueryError {
-    QueryError::PatternNonPosixConstruct { construct }
+const fn unsupported(construct: NonPosixConstruct) -> PatternError {
+    PatternError::NonPosixConstruct { construct }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        pattern::{bracket_expression::restate_bracket_expressions, non_posix_construct::NonPosixConstruct},
-        query_error::QueryError,
-    };
+    use crate::pattern::{bracket_expression::restate_bracket_expressions, non_posix_construct::NonPosixConstruct, pattern_error::PatternError};
     use pretty_assertions::assert_eq;
 
     fn restated(pattern: &str) -> Option<String> {
@@ -285,7 +282,7 @@ mod tests {
     }
 
     fn refusal(pattern: &str) -> Option<NonPosixConstruct> {
-        let Err(QueryError::PatternNonPosixConstruct { construct }) = restate_bracket_expressions(pattern) else {
+        let Err(PatternError::NonPosixConstruct { construct }) = restate_bracket_expressions(pattern) else {
             return None;
         };
         Some(construct)

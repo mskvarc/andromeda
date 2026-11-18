@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLd
 use andromeda_ngsi_ld_query::{
     filter::parser,
     projection::written_projection_list::WrittenProjectionList,
+    query_error::QueryError,
     type_selection::written_type_selection::WrittenTypeSelection,
 };
 use url::form_urlencoded;
@@ -62,7 +63,7 @@ impl ForwardedNames<'_> {
     async fn reworded_parameter(&self, parameter: ForwardedParameter, value: &str, json_keys: &[AttributeName]) -> Result<String, FederationError> {
         match parameter.names() {
             ParameterNames::TypeSelection => {
-                let expression: WrittenTypeSelection = value.parse()?;
+                let expression: WrittenTypeSelection = value.parse().map_err(QueryError::from)?;
                 Ok(self.type_expr(&expression).await?.to_string())
             }
             ParameterNames::AttributeList => {
@@ -79,15 +80,15 @@ impl ForwardedNames<'_> {
                 Ok(self.geoproperty(&parsed).await?.to_string())
             }
             ParameterNames::Projection => {
-                let terms: WrittenProjectionList = value.parse()?;
+                let terms: WrittenProjectionList = value.parse().map_err(QueryError::from)?;
                 Ok(self.projection(&terms).await?.iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
             }
             ParameterNames::Query => {
-                let expression = parser::parse(value)?;
+                let expression = parser::parse(value).map_err(QueryError::from)?;
                 Ok(self.q(&expression, Some(json_keys)).await?.to_string())
             }
             ParameterNames::SourceFilter => {
-                let expression = parser::parse(value)?;
+                let expression = parser::parse(value).map_err(QueryError::from)?;
                 Ok(self.csf(&expression).await?.to_string())
             }
             ParameterNames::Nothing => Ok(value.to_owned()),

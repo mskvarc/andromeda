@@ -12,18 +12,17 @@
 
 pub mod bracket_expression;
 pub mod non_posix_construct;
+pub mod pattern_error;
 pub mod portable_pattern;
 pub mod posix_dialect;
 pub mod subject_start;
 
-use crate::{
-    pattern::{
-        bracket_expression::restate_bracket_expressions,
-        portable_pattern::PortablePattern,
-        posix_dialect::check_posix_dialect,
-        subject_start::SubjectStart,
-    },
-    query_error::QueryError,
+use crate::pattern::{
+    bracket_expression::restate_bracket_expressions,
+    pattern_error::PatternError,
+    portable_pattern::PortablePattern,
+    posix_dialect::check_posix_dialect,
+    subject_start::SubjectStart,
 };
 use derive_more::Display;
 use derive_where::derive_where;
@@ -58,12 +57,12 @@ impl Pattern {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::PatternNonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`QueryError::PatternRegex`] when the `regex` crate rejects the pattern, [`QueryError::PatternRepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, and [`QueryError::PatternTranslation`] when the pattern cannot be translated for rendering.
-    pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
+    /// Returns [`PatternError::NonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`PatternError::Regex`] when the `regex` crate rejects the pattern, [`PatternError::RepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, and [`PatternError::Translation`] when the pattern cannot be translated for rendering.
+    pub fn parse(pattern: &str) -> Result<Pattern, PatternError> {
         let restated = restate_bracket_expressions(pattern)?;
         // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store.
         let compiled = RegexBuilder::new(&restated).dot_matches_new_line(true).build()?;
-        let ast = Parser::new().parse(&restated).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
+        let ast = Parser::new().parse(&restated).map_err(|_| PatternError::RepeatedQuantifier)?;
         check_posix_dialect(&ast)?;
         // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
         let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(&restated, &ast)?;
@@ -104,18 +103,18 @@ impl Pattern {
 }
 
 impl FromStr for Pattern {
-    type Err = QueryError;
+    type Err = PatternError;
 
-    fn from_str(raw: &str) -> Result<Pattern, QueryError> {
+    fn from_str(raw: &str) -> Result<Pattern, PatternError> {
         Pattern::parse(raw)
     }
 }
 
 // Parsing lives in `Pattern::parse` so borrowed call sites do not allocate; `#[serde(try_from = "String")]` requires this.
 impl TryFrom<String> for Pattern {
-    type Error = QueryError;
+    type Error = PatternError;
 
-    fn try_from(raw: String) -> Result<Pattern, QueryError> {
+    fn try_from(raw: String) -> Result<Pattern, PatternError> {
         Pattern::parse(&raw)
     }
 }
@@ -129,7 +128,7 @@ impl From<Pattern> for String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{pattern::Pattern, query_error::QueryError};
+    use crate::pattern::{Pattern, pattern_error::PatternError};
     use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]
@@ -141,7 +140,7 @@ mod tests {
     #[test]
     fn an_invalid_regex_pattern_is_rejected_when_the_filter_is_parsed() {
         let error = Pattern::parse("[").expect_err("must reject");
-        assert!(matches!(error, QueryError::PatternRegex(_)), "got {error:?}");
+        assert!(matches!(error, PatternError::Regex(_)), "got {error:?}");
     }
 
     #[test]

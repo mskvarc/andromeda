@@ -37,7 +37,7 @@ fn attribute_names(terms: &[&str]) -> Result<Vec<AttributeName>, CaseFilterError
 /// does not expand, and an error when a term of the case is no attribute name.
 pub async fn expanded_filter(case: &CorpusCase) -> Result<Filter, CaseFilterError> {
     let json_keys = expand_json_keys(Some(&attribute_names(case.json_keys)?), &CorpusVocabulary).await?;
-    let expr = expand_q_expr(parser::parse(case.q)?, &json_keys, &CorpusVocabulary).await?;
+    let expr = expand_q_expr(parser::parse(case.q).map_err(QueryError::from)?, &json_keys, &CorpusVocabulary).await?;
     let opted_in: HashSet<AttributeName> = expand_attribute_names(&attribute_names(case.expand_values)?, &CorpusVocabulary)
         .await?
         .into_iter()

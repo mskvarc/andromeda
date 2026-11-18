@@ -1,6 +1,6 @@
 //! One scope path pattern of a `scopeQ` expression (clause 4.19).
 
-use crate::{query_error::QueryError, scope::scope_query_error::ScopeQueryError};
+use crate::scope::scope_query_error::ScopeQueryError;
 use andromeda_ngsi_ld_lexicon::scope::{
     level::{ScopeLevelBuf, ScopeLevelError, checked_level},
     path::{ScopePath, split_levels},
@@ -38,16 +38,14 @@ impl ScopeLabel {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ScopePatternInvalid`] when `raw` is outside the
+    /// Returns [`ScopeQueryError`] when `raw` is outside the
     /// clause 4.18 level-name production, or carries more characters than a
     /// label the pattern is answered through can hold, which would otherwise
     /// reach PostgreSQL as an `lquery` cast and fail there.
-    pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
-        checked_level(raw).map(|level| ScopeLabel(level.to_owned())).map_err(|error| {
-            QueryError::ScopePatternInvalid(match error {
-                ScopeLevelError::Malformed => ScopeQueryError::InvalidLevel,
-                ScopeLevelError::TooLong(characters) => ScopeQueryError::LevelTooLong { characters },
-            })
+    pub fn parse(raw: &str) -> Result<ScopeLabel, ScopeQueryError> {
+        checked_level(raw).map(|level| ScopeLabel(level.to_owned())).map_err(|error| match error {
+            ScopeLevelError::Malformed => ScopeQueryError::InvalidLevel,
+            ScopeLevelError::TooLong(characters) => ScopeQueryError::LevelTooLong { characters },
         })
     }
 
@@ -73,13 +71,13 @@ impl ScopePattern {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ScopePatternInvalid`] when the pattern is empty,
+    /// Returns [`ScopeQueryError`] when the pattern is empty,
     /// carries a level outside the clause 4.18 production, or places `#`
     /// anywhere but last.
-    pub fn parse(raw: &str) -> Result<ScopePattern, QueryError> {
+    pub fn parse(raw: &str) -> Result<ScopePattern, ScopeQueryError> {
         let trimmed = raw.trim();
         if split_levels(trimmed).eq([""]) {
-            return Err(QueryError::ScopePatternInvalid(ScopeQueryError::Empty));
+            return Err(ScopeQueryError::EmptyPattern);
         }
 
         let mut segments = Vec::new();
@@ -88,7 +86,7 @@ impl ScopePattern {
             let segment = match part {
                 SINGLE_LEVEL_TOKEN => ScopeSegment::SingleLevel,
                 MULTI_LEVEL_TOKEN if parts.peek().is_none() => ScopeSegment::MultiLevel,
-                MULTI_LEVEL_TOKEN => return Err(QueryError::ScopePatternInvalid(ScopeQueryError::MultiLevelNotLast)),
+                MULTI_LEVEL_TOKEN => return Err(ScopeQueryError::MultiLevelNotLast),
                 // `&str` is unbounded, so a catch-all is the only way to close
                 // this match; anything that is not a wildcard is a level name.
                 label => ScopeSegment::Label(ScopeLabel::parse(label)?),
@@ -168,6 +166,7 @@ impl fmt::Display for ScopePattern {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scope::scope_query_error::ScopeQueryError;
     use andromeda_ngsi_ld_lexicon::scope::level::LEVEL_CHARACTER_LIMIT;
 
     fn segments(raw: &str) -> Vec<ScopeSegment> {
@@ -187,12 +186,9 @@ mod tests {
         assert!(ScopePattern::parse(&format!("/{longest}")).is_ok(), "the bound itself is admitted");
         assert!(matches!(
             ScopePattern::parse(&format!("/{longest}a")),
-            Err(QueryError::ScopePatternInvalid(ScopeQueryError::LevelTooLong { characters: 1001 }))
+            Err(ScopeQueryError::LevelTooLong { characters: 1001 })
         ));
-        assert!(matches!(
-            ScopePattern::parse(&format!("/A/{longest}a/C")),
-            Err(QueryError::ScopePatternInvalid(_))
-        ));
+        assert!(ScopePattern::parse(&format!("/A/{longest}a/C")).is_err());
     }
 
     #[test]
@@ -272,10 +268,7 @@ mod tests {
     fn a_multi_level_wildcard_is_only_valid_last() {
         // `#` stands for the remainder of the path, so nothing can follow it.
         let error = ScopePattern::parse("/A/#/C").expect_err("must reject");
-        assert!(
-            matches!(error, QueryError::ScopePatternInvalid(ScopeQueryError::MultiLevelNotLast)),
-            "got {error:?}"
-        );
+        assert!(matches!(error, ScopeQueryError::MultiLevelNotLast), "got {error:?}");
     }
 
     #[test]

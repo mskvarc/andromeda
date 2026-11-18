@@ -7,7 +7,7 @@
 //! decides once which of the two applies and every request-side geo-query is
 //! admitted under that decision.
 
-use crate::query_error::QueryError;
+use crate::geo::geo_query_error::GeoQueryError;
 use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 
 /// Whether the distance band is admitted.
@@ -26,11 +26,11 @@ impl NearDistanceBand {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::NearDistanceBand`] for a distance band while the
+    /// Returns [`GeoQueryError::NearDistanceBand`] for a distance band while the
     /// band is [`NearDistanceBand::Refused`].
-    pub const fn admit(self, georel: &GeoRel) -> Result<(), QueryError> {
+    pub const fn admit(self, georel: &GeoRel) -> Result<(), GeoQueryError> {
         match self {
-            NearDistanceBand::Refused if georel.is_distance_band() => Err(QueryError::NearDistanceBand),
+            NearDistanceBand::Refused if georel.is_distance_band() => Err(GeoQueryError::NearDistanceBand),
             NearDistanceBand::Refused | NearDistanceBand::Admitted => Ok(()),
         }
     }
@@ -38,7 +38,7 @@ impl NearDistanceBand {
 
 #[cfg(test)]
 mod tests {
-    use crate::{geo::near_distance_band::NearDistanceBand, query_error::QueryError};
+    use crate::geo::{geo_query_error::GeoQueryError, near_distance_band::NearDistanceBand};
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 
     fn georel(raw: &str) -> GeoRel {
@@ -49,7 +49,7 @@ mod tests {
     fn a_band_is_refused_without_the_extension() {
         assert!(matches!(
             NearDistanceBand::Refused.admit(&georel("near;minDistance==500;maxDistance==10000")),
-            Err(QueryError::NearDistanceBand)
+            Err(GeoQueryError::NearDistanceBand)
         ));
     }
 

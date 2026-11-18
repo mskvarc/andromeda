@@ -1,6 +1,6 @@
 //! An entity type selection (clause 4.17) with every type name expanded to its IRI.
 
-use crate::{query_error::QueryError, type_selection::written_type_selection::WrittenTypeSelection};
+use crate::type_selection::{type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection};
 use iri_rs::IriBuf;
 use serde::Serialize;
 use std::slice;
@@ -80,16 +80,16 @@ impl ExpandedTypeSelection {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TypeExprInvalidName`] when an expanded leaf IRI
+    /// Returns [`TypeSelectionError::InvalidName`] when an expanded leaf IRI
     /// does not satisfy the clause 4.6.2 type-name grammar.
-    pub fn into_raw(self) -> Result<WrittenTypeSelection, QueryError> {
+    pub fn into_raw(self) -> Result<WrittenTypeSelection, TypeSelectionError> {
         match self {
             ExpandedTypeSelection::Wildcard => Ok(WrittenTypeSelection::Wildcard),
             ExpandedTypeSelection::Type(iri) => iri
                 .as_str()
                 .parse()
                 .map(WrittenTypeSelection::Type)
-                .map_err(|source| QueryError::TypeExprInvalidName { position: 0, source }),
+                .map_err(|source| TypeSelectionError::InvalidName { position: 0, source }),
             ExpandedTypeSelection::And(children) => children
                 .into_iter()
                 .map(ExpandedTypeSelection::into_raw)

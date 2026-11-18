@@ -158,8 +158,7 @@ mod tests {
         geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, near_distance_band::NearDistanceBand, written_geo_query::WrittenGeoQuery},
         namespace_expander::EXAMPLE_NAMESPACE,
         projection::expanded_projection::ExpandedProjection,
-        query_error::QueryError,
-        term_expander::TermExpander,
+        term_expander::{TermExpander, TermExpansionError},
     };
     use andromeda_ngsi_ld_query_evaluation::{geo_query::geo_query_matches, queried_entity::linked_entities::NoLinkedEntities};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -262,11 +261,11 @@ mod tests {
     struct LocationExpander;
 
     impl TermExpander for LocationExpander {
-        fn expand_term(&self, _term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_term(&self, _term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             ready(Ok(IriBuf::from(LOCATION)))
         }
 
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             ready(EXAMPLE_NAMESPACE.type_iri(term))
         }
     }

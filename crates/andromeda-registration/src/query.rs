@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_query::{
     page_reach::PageReach,
     page_window::PageWindow,
     projection::expansion::expand_attrs,
+    query_error::QueryError,
     temporal::window::TimeInterval,
     type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
 };
@@ -168,7 +169,7 @@ impl RegistrationService {
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
             Some(
                 CompiledCsrTemporalFilter::builder()
-                    .interval(TimeInterval::from_parts(Some(*timerel), Some(*time_at), params.end_time_at)?)
+                    .interval(TimeInterval::from_parts(Some(*timerel), Some(*time_at), params.end_time_at).map_err(QueryError::from)?)
                     .timeproperty(params.timeproperty)
                     .build(),
             )
@@ -222,7 +223,12 @@ fn registration_matching_the_query(
     } else {
         Vec::new()
     };
-    let attributes = compiled.attrs.iter().map(expanded_attribute_name).collect::<Result<Vec<AttributeName>, _>>()?;
+    let attributes = compiled
+        .attrs
+        .iter()
+        .map(expanded_attribute_name)
+        .collect::<Result<Vec<AttributeName>, _>>()
+        .map_err(QueryError::from)?;
     let specification = RegistrationMatchSpecification {
         entities: &entities,
         attributes: &attributes,
@@ -245,7 +251,7 @@ mod tests {
     };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::{page_reach::PageReach, page_window::PageWindow, query_error::QueryError};
+    use andromeda_ngsi_ld_query::{filter::filter_error::FilterError, page_reach::PageReach, page_window::PageWindow, query_error::QueryError};
     use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
     use iri_rs::{Iri, iri};
     use serde_json::json;
@@ -329,7 +335,10 @@ mod tests {
         let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
         let refused = q_attributes(&format!("speed=={values}")).await;
         assert!(
-            matches!(refused, Err(RegistrationError::Query(QueryError::QTooManyComparisons { .. }))),
+            matches!(
+                refused,
+                Err(RegistrationError::Query(QueryError::Filter(FilterError::TooManyComparisons { .. })))
+            ),
             "{refused:?}"
         );
     }
@@ -341,7 +350,10 @@ mod tests {
     async fn a_discovery_q_naming_a_full_tag_is_refused_at_the_specification_level() {
         let refused = q_attributes("name[en-GB]==\"x\"").await;
         assert!(
-            matches!(refused, Err(RegistrationError::Query(QueryError::LanguageTagNotAdmitted(_)))),
+            matches!(
+                refused,
+                Err(RegistrationError::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_))))
+            ),
             "{refused:?}"
         );
     }

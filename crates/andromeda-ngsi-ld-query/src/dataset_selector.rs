@@ -1,11 +1,19 @@
 //! The `datasetId` that names one instance of a multi-instance attribute
 //! (clause 4.5.5).
 
-use crate::query_error::QueryError;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
+use thiserror::Error;
+
+/// Why a `datasetId` entry is refused.
+#[derive(Debug, Error)]
+pub enum DatasetSelectorError {
+    /// The entry is neither `@none` nor a URI short enough to be an identifier.
+    #[error("invalid datasetId value: {0}")]
+    InvalidIdentifier(#[source] IdentifierParseError),
+}
 
 /// One `datasetId`, naming either a specific dataset or the default instance.
 ///
@@ -24,13 +32,15 @@ impl DatasetSelector {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::ParamDatasetIdInvalid`] when `raw` is neither the
+    /// Returns [`DatasetSelectorError::InvalidIdentifier`] when `raw` is neither the
     /// `@none` token of clause 4.5.5 nor a URI.
-    pub fn parse(raw: &str) -> Result<DatasetSelector, QueryError> {
+    pub fn parse(raw: &str) -> Result<DatasetSelector, DatasetSelectorError> {
         if raw == keyword::NONE {
             return Ok(DatasetSelector::Default);
         }
-        raw.parse::<Identifier>().map(DatasetSelector::Id).map_err(QueryError::ParamDatasetIdInvalid)
+        raw.parse::<Identifier>()
+            .map(DatasetSelector::Id)
+            .map_err(DatasetSelectorError::InvalidIdentifier)
     }
 
     /// The `datasetId` an attribute instance written with this selector
@@ -62,9 +72,9 @@ impl DatasetSelector {
 }
 
 impl FromStr for DatasetSelector {
-    type Err = QueryError;
+    type Err = DatasetSelectorError;
 
-    fn from_str(raw: &str) -> Result<DatasetSelector, QueryError> {
+    fn from_str(raw: &str) -> Result<DatasetSelector, DatasetSelectorError> {
         DatasetSelector::parse(raw)
     }
 }
@@ -73,9 +83,9 @@ impl FromStr for DatasetSelector {
 // allocate; this adapter exists only because `#[serde(try_from = "String")]`
 // requires it.
 impl TryFrom<String> for DatasetSelector {
-    type Error = QueryError;
+    type Error = DatasetSelectorError;
 
-    fn try_from(raw: String) -> Result<DatasetSelector, QueryError> {
+    fn try_from(raw: String) -> Result<DatasetSelector, DatasetSelectorError> {
         DatasetSelector::parse(&raw)
     }
 }
@@ -152,10 +162,7 @@ impl DatasetFilter {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        dataset_selector::{DatasetFilter, DatasetSelector},
-        query_error::QueryError,
-    };
+    use crate::dataset_selector::{DatasetFilter, DatasetSelector, DatasetSelectorError};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     fn dataset_uri(raw: &str) -> Identifier {
@@ -187,7 +194,7 @@ mod tests {
     #[test]
     fn a_dataset_id_that_is_not_a_uri_is_rejected() {
         let error = DatasetSelector::parse("not a uri").expect_err("must reject");
-        assert!(matches!(error, QueryError::ParamDatasetIdInvalid { .. }), "got {error:?}");
+        assert!(matches!(error, DatasetSelectorError::InvalidIdentifier(_)), "got {error:?}");
     }
 
     #[test]

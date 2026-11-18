@@ -1,11 +1,9 @@
 //! Comparison operands of a `q` predicate (clause 4.9).
 
-use crate::{
-    filter::{
-        parser::operand::{parse_date, parse_date_time, parse_time},
-        quoting::Quoting,
-    },
-    query_error::QueryError,
+use crate::filter::{
+    filter_error::FilterError,
+    parser::operand::{parse_date, parse_date_time, parse_time},
+    quoting::Quoting,
 };
 use andromeda_ngsi_ld_lexicon::time::{
     date::NgsiLdDate,
@@ -64,12 +62,12 @@ impl Scalar {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::QInvalidDateTime`], [`QueryError::QInvalidDate`] or
-    /// [`QueryError::QInvalidTime`] when a bare literal is written in that
+    /// Returns [`FilterError::InvalidDateTime`], [`FilterError::InvalidDate`] or
+    /// [`FilterError::InvalidTime`] when a bare literal is written in that
     /// clause 4.6.3 form but is not a well-formed value of it, and
-    /// [`QueryError::QBareWord`] when a bare literal is in no clause 4.6.3 form
+    /// [`FilterError::BareWord`] when a bare literal is in no clause 4.6.3 form
     /// and is no `URI`.
-    pub fn from_literal(raw: &str, quoting: Quoting) -> Result<Scalar, QueryError> {
+    pub fn from_literal(raw: &str, quoting: Quoting) -> Result<Scalar, FilterError> {
         if quoting == Quoting::Quoted {
             return Ok(Scalar::Str(raw.to_string()));
         }
@@ -90,9 +88,9 @@ impl Scalar {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::QBareWord`] when the word is no `URI`.
-    pub fn bare_word(word: &str) -> Result<Scalar, QueryError> {
-        Iri::new(word).map(|_| Scalar::Uri(word.to_owned())).map_err(|_not_a_uri| QueryError::QBareWord)
+    /// Returns [`FilterError::BareWord`] when the word is no `URI`.
+    pub fn bare_word(word: &str) -> Result<Scalar, FilterError> {
+        Iri::new(word).map(|_| Scalar::Uri(word.to_owned())).map_err(|_not_a_uri| FilterError::BareWord)
     }
 
     /// The operand's canonical text form.
@@ -120,13 +118,11 @@ impl Scalar {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        filter::{
-            parser::operand::{parse_date, parse_date_time, parse_time},
-            quoting::Quoting,
-            scalar::Scalar,
-        },
-        query_error::QueryError,
+    use crate::filter::{
+        filter_error::FilterError,
+        parser::operand::{parse_date, parse_date_time, parse_time},
+        quoting::Quoting,
+        scalar::Scalar,
     };
     use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 
@@ -144,7 +140,7 @@ mod tests {
             Scalar::from_literal("http://example.org/a", Quoting::Quoted).unwrap(),
             Scalar::Str("http://example.org/a".to_owned())
         );
-        assert!(matches!(Scalar::from_literal("active", Quoting::Bare), Err(QueryError::QBareWord)));
+        assert!(matches!(Scalar::from_literal("active", Quoting::Bare), Err(FilterError::BareWord)));
     }
 
     #[test]
@@ -158,29 +154,29 @@ mod tests {
     #[test]
     fn an_unparseable_date_time_operand_is_rejected() {
         let error = parse_date_time("2017-13-45").expect_err("must reject");
-        assert!(matches!(error, QueryError::QInvalidDateTime { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidDateTime { .. }), "got {error:?}");
     }
 
     #[test]
     fn an_unparseable_date_operand_is_rejected() {
         let error = parse_date("2017-13-45").expect_err("must reject");
-        assert!(matches!(error, QueryError::QInvalidDate { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidDate { .. }), "got {error:?}");
     }
 
     #[test]
     fn an_unparseable_time_operand_is_rejected() {
         let error = parse_time("25:99:99Z").expect_err("must reject");
-        assert!(matches!(error, QueryError::QInvalidTime { .. }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidTime { .. }), "got {error:?}");
     }
 
     /// Clause 4.9's grammar defines `dateTime` and `time` as values "as mandated by clause 4.6.3", and clause 4.6.3 requires the literal `Z` designator for `DateTime` and states that a `Time` string "shall not contain expressions of the difference between local time and UTC". A filter operand carrying a numeric offset is refused.
     #[test]
     fn an_offset_bearing_operand_is_rejected_rather_than_normalised() {
         let date_time_error = parse_date_time("2017-12-24T13:00:00+01:00").expect_err("a numeric offset is forbidden");
-        assert!(matches!(date_time_error, QueryError::QInvalidDateTime { .. }), "got {date_time_error:?}");
+        assert!(matches!(date_time_error, FilterError::InvalidDateTime { .. }), "got {date_time_error:?}");
 
         let time_error = parse_time("13:00:00+01:00").expect_err("a numeric offset is forbidden");
-        assert!(matches!(time_error, QueryError::QInvalidTime { .. }), "got {time_error:?}");
+        assert!(matches!(time_error, FilterError::InvalidTime { .. }), "got {time_error:?}");
     }
 
     /// Clause 4.6.3, for both `DateTime` and `Time`: "In requests, also a comma
@@ -201,10 +197,10 @@ mod tests {
     #[test]
     fn a_fraction_beyond_six_digits_is_rejected() {
         let date_time_error = parse_date_time("2024-01-01T00:00:00.1234567Z").expect_err("seven digits exceeds the maximum");
-        assert!(matches!(date_time_error, QueryError::QInvalidDateTime { .. }), "got {date_time_error:?}");
+        assert!(matches!(date_time_error, FilterError::InvalidDateTime { .. }), "got {date_time_error:?}");
 
         let time_error = parse_time("12:00:00.1234567Z").expect_err("seven digits exceeds the maximum");
-        assert!(matches!(time_error, QueryError::QInvalidTime { .. }), "got {time_error:?}");
+        assert!(matches!(time_error, FilterError::InvalidTime { .. }), "got {time_error:?}");
     }
 
     /// Clause 4.9: `quotedStr` is a String, and only the unquoted `dateTime`,
@@ -249,7 +245,7 @@ mod tests {
     #[test]
     fn a_bare_literal_that_satisfies_no_form_is_a_malformed_operand() {
         for (literal, is_expected) in [
-            ("2024-01-01T01:00:00+01:00", matches_date_time as fn(&QueryError) -> bool),
+            ("2024-01-01T01:00:00+01:00", matches_date_time as fn(&FilterError) -> bool),
             ("2024-01-01T00:00:00.1234567Z", matches_date_time),
             ("12:34:5678", matches_time),
             ("1234-56-78", matches_date),
@@ -261,18 +257,18 @@ mod tests {
     }
 
     /// Whether a refusal is the `dateTime` one.
-    fn matches_date_time(error: &QueryError) -> bool {
-        matches!(error, QueryError::QInvalidDateTime { .. })
+    fn matches_date_time(error: &FilterError) -> bool {
+        matches!(error, FilterError::InvalidDateTime { .. })
     }
 
     /// Whether a refusal is the `date` one.
-    fn matches_date(error: &QueryError) -> bool {
-        matches!(error, QueryError::QInvalidDate { .. })
+    fn matches_date(error: &FilterError) -> bool {
+        matches!(error, FilterError::InvalidDate { .. })
     }
 
     /// Whether a refusal is the `time` one.
-    fn matches_time(error: &QueryError) -> bool {
-        matches!(error, QueryError::QInvalidTime { .. })
+    fn matches_time(error: &FilterError) -> bool {
+        matches!(error, FilterError::InvalidTime { .. })
     }
 
     /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying colons is compared as the text it is; bare, a word with a scheme is a `URI` and any other derives from no production.
@@ -284,7 +280,7 @@ mod tests {
         }
         for literal in ["12:00:00 in the morning", "1999-2000"] {
             let refused = Scalar::from_literal(literal, Quoting::Bare);
-            assert!(matches!(refused, Err(QueryError::QBareWord)), "{literal}: {refused:?}");
+            assert!(matches!(refused, Err(FilterError::BareWord)), "{literal}: {refused:?}");
         }
         // Bare, both derive the clause 4.9 `URI` production: each has a scheme.
         for literal in ["ab:cd:ef", "urn:ngsi-ld:Vehicle:A4567"] {

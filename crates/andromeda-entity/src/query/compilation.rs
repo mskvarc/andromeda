@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
     ordering::{
         compiled_ordering_term::CompiledOrderingTerm,
         expanded_ordering_target::ExpandedOrderingTarget,
+        ordering_error::OrderingError,
         ordering_geometry::OrderingGeometry,
         result_ordering::ResultOrdering,
         written_ordering_target::WrittenOrderingTarget,
@@ -29,6 +30,7 @@ use andromeda_ngsi_ld_query::{
         expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
+    query_error::QueryError,
     selector_compilation::compile_entity_selectors,
     term_expander::TermExpander,
 };
@@ -197,7 +199,7 @@ async fn compile_order_terms(
             // clone: expansion rewrites the path it consumes, and the cached
             // request parameters stay immutable across compilations.
             WrittenOrderingTarget::Attribute(path) => {
-                language_targeting.admit_path(path)?;
+                language_targeting.admit_path(path).map_err(QueryError::from)?;
                 ExpandedOrderingTarget::Attribute(expand_attr_path(path.clone(), NestedNames::Terms(json_keys), expander).await?)
             }
         };
@@ -221,7 +223,7 @@ fn compile_ordering_geometry(params: &EntityQueryParameters, limits: GeometryCen
     let Some(ordering) = &params.ordering.geometry else {
         return Ok(None);
     };
-    admit_reference_geometry(&ordering.geometry, limits)?;
+    admit_reference_geometry(&ordering.geometry, limits).map_err(|budget| QueryError::Ordering(OrderingError::ReferenceBudget(budget)))?;
     // The compiled query owns the geometry independently of the reusable request parameters.
     Ok(Some(ordering.clone()))
 }
@@ -247,7 +249,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
         filter::language_targeting::LanguageTargeting,
-        ordering::expanded_ordering_target::ExpandedOrderingTarget,
+        geo::geo_query_error::GeoQueryError,
+        ordering::{expanded_ordering_target::ExpandedOrderingTarget, ordering_error::OrderingError},
         query_error::QueryError,
     };
     use iri_rs::IriBuf;
@@ -284,7 +287,13 @@ mod tests {
     /// resolve, which is what the error names.
     fn assert_too_complex(result: Result<(), EntityError>) {
         let error = result.expect_err("the reference geometry exceeds the budget");
-        assert!(matches!(error, EntityError::Query(QueryError::ReferenceGeometryTooComplex { .. })), "{error:?}");
+        assert!(
+            matches!(
+                error,
+                EntityError::Query(QueryError::GeoQuery(GeoQueryError::ReferenceBudget(_)) | QueryError::Ordering(OrderingError::ReferenceBudget(_)))
+            ),
+            "{error:?}"
+        );
     }
 
     /// The member names the first `orderBy` term of `query` addresses once

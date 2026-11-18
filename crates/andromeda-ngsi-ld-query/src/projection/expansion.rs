@@ -5,6 +5,7 @@ use crate::{
         exclusivity::check_member_exclusivity,
         expanded_projection::ExpandedProjection,
         expanded_projection_term::ExpandedProjectionTerm,
+        projection_error::ProjectionError,
         written_projection_term::WrittenProjectionTerm,
     },
     query_error::QueryError,
@@ -32,7 +33,7 @@ pub async fn expand_attrs<S: AsRef<str> + Sync>(raw: &[S], expander: &impl TermE
 /// # Errors
 ///
 /// Returns what [`expand_projection_terms`] returns for either list, and
-/// [`QueryError::ProjectionMemberPickedAndOmitted`] when `pick` and `omit`
+/// [`ProjectionError::MemberPickedAndOmitted`] when `pick` and `omit`
 /// name one member.
 pub async fn expand_projection(
     pick: &[WrittenProjectionTerm],
@@ -51,7 +52,7 @@ pub async fn expand_projection(
 ///
 /// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when an
 /// attribute term does not expand, and
-/// [`QueryError::ProjectionKeywordWithLinkedTerm`] when `id`, `type` or `scope`
+/// [`ProjectionError::KeywordWithLinkedTerm`] when `id`, `type` or `scope`
 /// carries a linked-entity sub-projection.
 pub async fn expand_projection_terms(raw: &[WrittenProjectionTerm], expander: &impl TermExpander) -> Result<Vec<ExpandedProjectionTerm>, QueryError> {
     expand_projection_terms_inner(raw, expander).await
@@ -89,16 +90,21 @@ fn keyword_term(term: &WrittenProjectionTerm, expanded: ExpandedProjectionTerm) 
     if term.linked.is_empty() {
         Ok(expanded)
     } else {
-        Err(QueryError::ProjectionKeywordWithLinkedTerm {
+        Err(ProjectionError::KeywordWithLinkedTerm {
             keyword: term.name.clone(), // clone: the raw projection is borrowed and the refusal outlives it
-        })
+        }
+        .into())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{namespace_expander::EXAMPLE_NAMESPACE_TYPED, projection::written_projection_list::WrittenProjectionList};
+    use crate::{
+        namespace_expander::EXAMPLE_NAMESPACE_TYPED,
+        projection::{projection_error::ProjectionError, written_projection_list::WrittenProjectionList},
+        term_expander::TermExpansionError,
+    };
     use pretty_assertions::assert_eq;
     use std::future::ready;
 
@@ -183,12 +189,12 @@ mod tests {
     struct TableExpander(&'static [(&'static str, &'static str)]);
 
     impl TermExpander for TableExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             let expanded = self.0.iter().find(|(short, _)| *short == term).map_or(term, |(_, full)| *full);
             ready(Ok(IriBuf::new(expanded.to_owned()).expect("valid IRI")))
         }
 
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             self.expand_term(term)
         }
     }
@@ -213,7 +219,7 @@ mod tests {
     async fn a_short_name_against_its_full_iri_is_refused() {
         let error = projected("name", "https://schema.org/name").await.expect_err("one member in both");
         assert!(
-            matches!(&error, QueryError::ProjectionMemberPickedAndOmitted { member } if member.to_string() == "https://schema.org/name"),
+            matches!(&error, QueryError::Projection(ProjectionError::MemberPickedAndOmitted { member }) if member.to_string() == "https://schema.org/name"),
             "got {error:?}"
         );
     }
@@ -224,7 +230,10 @@ mod tests {
         let error = projected("owner{name,email}", "owner{https://schema.org/name}")
             .await
             .expect_err("one member in both");
-        assert!(matches!(error, QueryError::ProjectionMemberPickedAndOmitted { .. }), "got {error:?}");
+        assert!(
+            matches!(error, QueryError::Projection(ProjectionError::MemberPickedAndOmitted { .. })),
+            "got {error:?}"
+        );
     }
 
     /// Two short names a context maps to different IRIs are different members.
@@ -256,7 +265,7 @@ mod tests {
         }];
         let error = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect_err("must reject");
         assert!(
-            matches!(&error, QueryError::ProjectionKeywordWithLinkedTerm { keyword } if keyword.as_str() == "id"),
+            matches!(&error, QueryError::Projection(ProjectionError::KeywordWithLinkedTerm { keyword }) if keyword.as_str() == "id"),
             "got {error:?}"
         );
     }

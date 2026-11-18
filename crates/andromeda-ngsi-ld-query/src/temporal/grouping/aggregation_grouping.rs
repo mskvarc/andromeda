@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn an_unknown_bucket_token_is_rejected() {
         let error = AggregationGrouping::parse("speed;bogus").expect_err("bogus is no bucket");
-        assert!(matches!(error, GroupingError::Bucket(_)), "got {error:?}");
+        assert!(matches!(error, GroupingError::InvalidBucket(_)), "got {error:?}");
     }
 
     #[test]

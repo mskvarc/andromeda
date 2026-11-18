@@ -8,7 +8,7 @@
 //! character instead would make `q=name=="aé"` match the literal
 //! `au00e9`, and would silently accept escapes the grammar does not define.
 
-use crate::query_error::QueryError;
+use crate::filter::filter_error::FilterError;
 use andromeda_ngsi_ld_number::held_text::admit_held_text;
 use derive_more::Display;
 
@@ -61,19 +61,19 @@ pub enum UnicodeEscapeError {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QUnterminatedString`] when the literal is left open.
-pub fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usize), QueryError> {
+/// Returns [`FilterError::UnterminatedString`] when the literal is left open.
+pub fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usize), FilterError> {
     let mut body = String::new();
     let mut cursor = start + 1;
     loop {
         let Some(&current) = chars.get(cursor) else {
-            return Err(QueryError::QUnterminatedString);
+            return Err(FilterError::UnterminatedString);
         };
         match current {
             '"' => return Ok((body, cursor + 1)),
             '\\' => {
                 let Some(&deferred) = chars.get(cursor + 1) else {
-                    return Err(QueryError::QUnterminatedString);
+                    return Err(FilterError::UnterminatedString);
                 };
                 body.push('\\');
                 body.push(deferred);
@@ -101,14 +101,14 @@ pub fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usiz
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::QInvalidStringEscape`] for a backslash the RFC 8259
-/// `escape` production does not admit, [`QueryError::QInvalidUnicodeEscape`]
+/// Returns [`FilterError::InvalidStringEscape`] for a backslash the RFC 8259
+/// `escape` production does not admit, [`FilterError::InvalidUnicodeEscape`]
 /// for a malformed or unpaired `\uXXXX` form,
-/// [`QueryError::QUnescapedControlCharacter`] for a raw character below U+0020,
-/// [`QueryError::QUnterminatedString`] for a trailing lone backslash, and
-/// [`QueryError::Unholdable`] for a literal whose escapes spell a character
+/// [`FilterError::UnescapedControlCharacter`] for a raw character below U+0020,
+/// [`FilterError::UnterminatedString`] for a trailing lone backslash, and
+/// [`FilterError::UnholdableCharacter`] for a literal whose escapes spell a character
 /// the broker cannot hold.
-pub fn decode_quoted_str(body: &str) -> Result<String, QueryError> {
+pub fn decode_quoted_str(body: &str) -> Result<String, FilterError> {
     let chars: Vec<char> = body.chars().collect();
     let mut literal = String::new();
     let mut cursor = 0;
@@ -120,7 +120,7 @@ pub fn decode_quoted_str(body: &str) -> Result<String, QueryError> {
                 cursor = next;
             }
             control if u32::from(control) < FIRST_UNESCAPED_CODE_POINT => {
-                return Err(QueryError::QUnescapedControlCharacter {
+                return Err(FilterError::UnescapedControlCharacter {
                     code_point: u32::from(control),
                     position: cursor,
                 });
@@ -137,9 +137,9 @@ pub fn decode_quoted_str(body: &str) -> Result<String, QueryError> {
 
 /// Resolve the escape whose backslash sits at `escape_at`, returning the
 /// character it names and the index that follows it.
-fn resolve_escape(chars: &[char], escape_at: usize) -> Result<(char, usize), QueryError> {
+fn resolve_escape(chars: &[char], escape_at: usize) -> Result<(char, usize), FilterError> {
     let Some(&named) = chars.get(escape_at + 1) else {
-        return Err(QueryError::QUnterminatedString);
+        return Err(FilterError::UnterminatedString);
     };
     // RFC 8259 section 7 lists these eight and no others; anything else is a
     // malformed string rather than a literal backslash followed by a letter.
@@ -154,7 +154,7 @@ fn resolve_escape(chars: &[char], escape_at: usize) -> Result<(char, usize), Que
         't' => Some('\t'),
         'u' => None,
         other => {
-            return Err(QueryError::QInvalidStringEscape {
+            return Err(FilterError::InvalidStringEscape {
                 escape: other,
                 position: escape_at,
             });
@@ -168,7 +168,7 @@ fn resolve_escape(chars: &[char], escape_at: usize) -> Result<(char, usize), Que
 
 /// Resolve a `\uXXXX` escape, joining a surrogate pair when the first code
 /// unit is a high surrogate.
-fn resolve_unicode_escape(chars: &[char], escape_at: usize) -> Result<(char, usize), QueryError> {
+fn resolve_unicode_escape(chars: &[char], escape_at: usize) -> Result<(char, usize), FilterError> {
     let unit = read_code_unit(chars, escape_at)?;
     let after_unit = escape_at + UNICODE_ESCAPE_PREFIX + UNICODE_ESCAPE_DIGITS;
     if let Some(scalar) = char::from_u32(u32::from(unit)) {
@@ -180,7 +180,7 @@ fn resolve_unicode_escape(chars: &[char], escape_at: usize) -> Result<(char, usi
     if (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(&unit) {
         resolve_surrogate_pair(chars, unit, escape_at)
     } else {
-        Err(QueryError::QInvalidUnicodeEscape {
+        Err(FilterError::InvalidUnicodeEscape {
             position: escape_at,
             fault: UnicodeEscapeError::UnpairedLowSurrogate,
         })
@@ -189,8 +189,8 @@ fn resolve_unicode_escape(chars: &[char], escape_at: usize) -> Result<(char, usi
 
 /// Join the high surrogate at `high_escape_at` with the `\u` low surrogate
 /// that must follow it.
-fn resolve_surrogate_pair(chars: &[char], high: u16, high_escape_at: usize) -> Result<(char, usize), QueryError> {
-    let unpaired = || QueryError::QInvalidUnicodeEscape {
+fn resolve_surrogate_pair(chars: &[char], high: u16, high_escape_at: usize) -> Result<(char, usize), FilterError> {
+    let unpaired = || FilterError::InvalidUnicodeEscape {
         position: high_escape_at,
         fault: UnicodeEscapeError::UnpairedHighSurrogate,
     };
@@ -207,8 +207,8 @@ fn resolve_surrogate_pair(chars: &[char], high: u16, high_escape_at: usize) -> R
 }
 
 /// Read the four hexadecimal digits that follow the `\u` at `escape_at`.
-fn read_code_unit(chars: &[char], escape_at: usize) -> Result<u16, QueryError> {
-    let not_four_hex_digits = || QueryError::QInvalidUnicodeEscape {
+fn read_code_unit(chars: &[char], escape_at: usize) -> Result<u16, FilterError> {
+    let not_four_hex_digits = || FilterError::InvalidUnicodeEscape {
         position: escape_at,
         fault: UnicodeEscapeError::NotFourHexDigits,
     };
@@ -225,8 +225,9 @@ fn read_code_unit(chars: &[char], escape_at: usize) -> Result<u16, QueryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filter::filter_error::FilterError;
 
-    fn scan(input: &str) -> Result<(String, usize), QueryError> {
+    fn scan(input: &str) -> Result<(String, usize), FilterError> {
         let chars: Vec<char> = input.chars().collect();
         let (body, next) = scan_quoted_literal(&chars, 0)?;
         Ok((decode_quoted_str(&body)?, next))
@@ -264,7 +265,7 @@ mod tests {
     #[test]
     fn an_escape_the_json_grammar_does_not_define_is_refused() {
         let error = scan(r#""a\qb""#).expect_err("`\\q` is not a JSON escape");
-        assert!(matches!(error, QueryError::QInvalidStringEscape { escape: 'q', position: 1 }), "got {error:?}");
+        assert!(matches!(error, FilterError::InvalidStringEscape { escape: 'q', position: 1 }), "got {error:?}");
     }
 
     #[test]
@@ -274,7 +275,7 @@ mod tests {
             assert!(
                 matches!(
                     error,
-                    QueryError::QInvalidUnicodeEscape {
+                    FilterError::InvalidUnicodeEscape {
                         fault: UnicodeEscapeError::NotFourHexDigits,
                         ..
                     }
@@ -290,7 +291,7 @@ mod tests {
         assert!(
             matches!(
                 high,
-                QueryError::QInvalidUnicodeEscape {
+                FilterError::InvalidUnicodeEscape {
                     fault: UnicodeEscapeError::UnpairedHighSurrogate,
                     ..
                 }
@@ -301,7 +302,7 @@ mod tests {
         assert!(
             matches!(
                 low,
-                QueryError::QInvalidUnicodeEscape {
+                FilterError::InvalidUnicodeEscape {
                     fault: UnicodeEscapeError::UnpairedLowSurrogate,
                     ..
                 }
@@ -312,7 +313,7 @@ mod tests {
         assert!(
             matches!(
                 mismatched,
-                QueryError::QInvalidUnicodeEscape {
+                FilterError::InvalidUnicodeEscape {
                     fault: UnicodeEscapeError::UnpairedHighSurrogate,
                     ..
                 }
@@ -325,15 +326,15 @@ mod tests {
     fn an_unescaped_control_character_is_refused() {
         let error = scan("\"a\u{0007}b\"").expect_err("the `unescaped` production starts at U+0020");
         assert!(
-            matches!(error, QueryError::QUnescapedControlCharacter { code_point: 0x07, position: 1 }),
+            matches!(error, FilterError::UnescapedControlCharacter { code_point: 0x07, position: 1 }),
             "got {error:?}"
         );
     }
 
     #[test]
     fn a_string_that_is_never_closed_is_refused() {
-        assert!(matches!(scan(r#""abc"#), Err(QueryError::QUnterminatedString)));
-        assert!(matches!(scan(r#""abc\"#), Err(QueryError::QUnterminatedString)));
+        assert!(matches!(scan(r#""abc"#), Err(FilterError::UnterminatedString)));
+        assert!(matches!(scan(r#""abc\"#), Err(FilterError::UnterminatedString)));
     }
 
     #[test]
@@ -380,7 +381,7 @@ mod tests {
     /// so the literal is refused rather than compared.
     #[test]
     fn an_escape_spelling_u0000_is_refused() {
-        assert!(matches!(decode_quoted_str(r"a\u0000b"), Err(QueryError::Unholdable(_))));
+        assert!(matches!(decode_quoted_str(r"a\u0000b"), Err(FilterError::UnholdableCharacter(_))));
         pretty_assertions::assert_eq!(decode_quoted_str(r"\\u0000").expect("an escaped reverse solidus"), r"\u0000");
     }
 }

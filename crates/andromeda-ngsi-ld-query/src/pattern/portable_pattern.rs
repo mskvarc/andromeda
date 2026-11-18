@@ -38,7 +38,7 @@
 //! and `pg_unicode_fast`), so the restatement means the same whatever collation
 //! the operand it is applied to carries.
 
-use crate::{pattern::non_posix_construct::NonPosixConstruct, query_error::QueryError};
+use crate::pattern::{non_posix_construct::NonPosixConstruct, pattern_error::PatternError};
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind, Look, Repetition};
 use std::str;
 
@@ -68,11 +68,11 @@ impl PortablePattern {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::PatternNonPosixConstruct`] for a node no portable
+    /// Returns [`PatternError::NonPosixConstruct`] for a node no portable
     /// construct expresses. [`crate::pattern::posix_dialect::check_posix_dialect`]
     /// refuses every pattern that could produce one before it is translated, so
     /// reaching the error means the two checks disagree.
-    pub(crate) fn render(hir: &Hir) -> Result<PortablePattern, QueryError> {
+    pub(crate) fn render(hir: &Hir) -> Result<PortablePattern, PatternError> {
         let mut text = String::new();
         write_node(hir, &mut text)?;
         Ok(PortablePattern(text))
@@ -86,7 +86,7 @@ impl PortablePattern {
 }
 
 /// Append one node.
-fn write_node(hir: &Hir, out: &mut String) -> Result<(), QueryError> {
+fn write_node(hir: &Hir, out: &mut String) -> Result<(), PatternError> {
     match hir.kind() {
         HirKind::Empty => Ok(()),
         HirKind::Literal(literal) => {
@@ -123,7 +123,7 @@ fn write_node(hir: &Hir, out: &mut String) -> Result<(), QueryError> {
 ///
 /// Captures are written without capturing too: a pattern is only ever asked
 /// whether it matches, never for what a group captured.
-fn write_group(hir: &Hir, out: &mut String) -> Result<(), QueryError> {
+fn write_group(hir: &Hir, out: &mut String) -> Result<(), PatternError> {
     out.push_str("(?:");
     write_node(hir, out)?;
     out.push(')');
@@ -135,7 +135,7 @@ fn write_group(hir: &Hir, out: &mut String) -> Result<(), QueryError> {
 /// PostgreSQL answers a quantifier applied directly to another quantifier with
 /// "quantifier operand invalid", and a quantifier after a multi-character
 /// literal would repeat only its last character.
-fn write_repetition(repetition: &Repetition, out: &mut String) -> Result<(), QueryError> {
+fn write_repetition(repetition: &Repetition, out: &mut String) -> Result<(), PatternError> {
     if is_atom(&repetition.sub) {
         write_node(&repetition.sub, out)?;
     } else {
@@ -196,7 +196,7 @@ fn is_atom(hir: &Hir) -> bool {
 /// subject, which is what [`Look::Start`] and [`Look::End`] mean. The line
 /// anchors `(?m)` asks for are written as the lookaround each one is, since
 /// PostgreSQL's own `m` option changes what `.` matches as well.
-fn write_look(look: Look, out: &mut String) -> Result<(), QueryError> {
+fn write_look(look: Look, out: &mut String) -> Result<(), PatternError> {
     match look {
         Look::Start => out.push('^'),
         Look::End => out.push('$'),
@@ -226,7 +226,7 @@ fn write_look(look: Look, out: &mut String) -> Result<(), QueryError> {
 /// translation of a negated bracket expression, or of `.`) is written as the
 /// negation of its complement, and a class holding every character as `.`,
 /// which PostgreSQL's default newline-insensitive mode lets match anything.
-fn write_class(class: &ClassUnicode, out: &mut String) -> Result<(), QueryError> {
+fn write_class(class: &ClassUnicode, out: &mut String) -> Result<(), PatternError> {
     let Some(first) = class.ranges().first() else {
         return Err(unrenderable(NonPosixConstruct::EmptyClass));
     };
@@ -288,8 +288,8 @@ fn push_inside_bracket(character: char, out: &mut String) {
 }
 
 /// Name the node in the rejection a client receives.
-const fn unrenderable(construct: NonPosixConstruct) -> QueryError {
-    QueryError::PatternNonPosixConstruct { construct }
+const fn unrenderable(construct: NonPosixConstruct) -> PatternError {
+    PatternError::NonPosixConstruct { construct }
 }
 
 #[cfg(test)]

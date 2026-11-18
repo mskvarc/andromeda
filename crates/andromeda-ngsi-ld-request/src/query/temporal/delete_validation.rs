@@ -5,7 +5,7 @@ use crate::{
     query::temporal::delete_parameters::TemporalDeleteParameters,
     query_narrowing::{AdmittedNarrowings, NarrowingInputs, require_narrowing},
 };
-use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+use andromeda_ngsi_ld_query::{query_error::QueryError, temporal::window::TimeInterval};
 
 impl TemporalDeleteParameters {
     /// Validate the delete-by-query before it is compiled.
@@ -48,7 +48,7 @@ impl TemporalDeleteParameters {
 
         // Clause 4.11: the window is read by the same rule the temporal query's
         // own window is built with.
-        TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at)?;
+        TimeInterval::from_parts(self.timerel, self.time_at, self.end_time_at).map_err(QueryError::from)?;
 
         Ok(())
     }
@@ -57,7 +57,7 @@ impl TemporalDeleteParameters {
 #[cfg(test)]
 mod tests {
     use crate::{error::ParameterError, params_from_query, query::temporal::delete_parameters::TemporalDeleteParameters};
-    use andromeda_ngsi_ld_query::query_error::QueryError;
+    use andromeda_ngsi_ld_query::{query_error::QueryError, temporal::time_interval_error::TimeIntervalError};
 
     fn params(query: &str) -> TemporalDeleteParameters {
         params_from_query!(query, TemporalDeleteParameters)
@@ -101,7 +101,10 @@ mod tests {
         let err = params("type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z")
             .validate()
             .expect_err("between needs endTimeAt");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtRequired)), "got {err:?}");
+        assert!(
+            matches!(err, ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::EndTimeAtRequired))),
+            "got {err:?}"
+        );
         assert!(
             params("type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-06-01T00:00:00Z")
                 .validate()
@@ -116,18 +119,27 @@ mod tests {
         let err = params("type=Vehicle&timerel=before&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-06-01T00:00:00Z")
             .validate()
             .expect_err("endTimeAt beside before");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "got {err:?}");
+        assert!(
+            matches!(err, ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::EndTimeAtWithoutBetween))),
+            "got {err:?}"
+        );
         let err = params("type=Vehicle&timerel=between&timeAt=2024-06-01T00:00:00Z&endTimeAt=2024-06-01T00:00:00Z")
             .validate()
             .expect_err("an empty between");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamEndTimeAtNotAfterTimeAt)), "got {err:?}");
+        assert!(
+            matches!(err, ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::EndTimeAtNotAfterTimeAt))),
+            "got {err:?}"
+        );
     }
 
     /// Clause 5.7.3: `timerel` and `timeAt` are meaningless apart.
     #[test]
     fn a_half_specified_window_is_rejected() {
         let err = params("type=Vehicle&timerel=after").validate().expect_err("timerel needs timeAt");
-        assert!(matches!(err, ParameterError::Query(QueryError::ParamTimerelTimeatPair)), "got {err:?}");
+        assert!(
+            matches!(err, ParameterError::Query(QueryError::TimeInterval(TimeIntervalError::UnpairedTimerel))),
+            "got {err:?}"
+        );
     }
 
     /// A read-only temporal parameter the delete cannot use is refused while the

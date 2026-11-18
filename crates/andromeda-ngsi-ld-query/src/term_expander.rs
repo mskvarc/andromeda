@@ -11,7 +11,6 @@
 //! JSON-LD layer supplies an implementation bound to one context, and nothing
 //! in this module names it.
 
-use crate::query_error::QueryError;
 use iri_rs::IriBuf;
 use std::future::Future;
 use thiserror::Error;
@@ -30,10 +29,10 @@ use thiserror::Error;
 /// own text.
 pub trait TermExpander: Sync {
     /// Expand an attribute term to its full IRI.
-    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send;
+    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send;
 
     /// Expand an entity-type term to its full IRI.
-    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send;
+    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send;
 }
 
 /// Why an expander could not turn a term into an IRI.

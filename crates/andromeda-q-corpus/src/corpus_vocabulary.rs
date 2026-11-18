@@ -2,7 +2,6 @@
 
 use andromeda_ngsi_ld_query::{
     namespace_expander::NamespaceExpander,
-    query_error::QueryError,
     term_expander::{TermExpander, TermExpansionError},
 };
 use andromeda_ngsi_ld_vocabulary::compact_to_expanded;
@@ -43,15 +42,15 @@ impl CorpusVocabulary {
 }
 
 impl TermExpander for CorpusVocabulary {
-    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
         let core = compact_to_expanded(term).filter(|expanded| expanded.contains("://"));
         ready(match core {
-            Some(expanded) => IriBuf::new(expanded.to_owned()).map_err(|_| QueryError::TermExpansion(TermExpansionError::NotAnIri)),
+            Some(expanded) => IriBuf::new(expanded.to_owned()).map_err(|_| TermExpansionError::NotAnIri),
             None => CORPUS_NAMESPACE.term_iri(term),
         })
     }
 
-    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
         ready(CORPUS_NAMESPACE.type_iri(term))
     }
 }

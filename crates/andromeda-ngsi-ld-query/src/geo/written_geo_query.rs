@@ -1,17 +1,10 @@
 //! Decoded NGSI-LD geo-query input before JSON-LD context expansion.
 
-use crate::geo::reference_geometry::ReferenceGeometry;
-use andromeda_ngsi_ld_geometry::{
-    geo_rel::{GeoRel, GeoRelParseError},
-    geojson::GeometryError,
-    geometry::Geometry,
-    geometry_type::GeometryType,
-    query_coordinates::QueryCoordinates,
-};
+use crate::geo::{geo_query_error::GeoQueryError, reference_geometry::ReferenceGeometry};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, geometry_type::GeometryType, query_coordinates::QueryCoordinates};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError, ser::SerializeStruct};
 use strum::Display;
-use thiserror::Error;
 
 /// A complete clause-4.10 geo-query whose reference geometry is read, or
 /// held encoded until the query is compiled.
@@ -70,22 +63,22 @@ impl WrittenGeoQuery {
     ///
     /// # Errors
     ///
-    /// Returns [`GeoQueryInputError::GeoRel`] when `georel` names no clause 4.10
-    /// relation, [`GeoQueryInputError::GeometryType`] when `geometry_type` is
+    /// Returns [`GeoQueryError::InvalidGeorel`] when `georel` names no clause 4.10
+    /// relation, [`GeoQueryError::InvalidGeometryType`] when `geometry_type` is
     /// not an RFC 7946 type NGSI-LD supports, and
-    /// [`GeoQueryInputError::Geometry`] when JSON coordinates do not form a
+    /// [`GeoQueryError::InvalidReferenceGeometry`] when JSON coordinates do not form a
     /// valid reference geometry.
     pub fn from_wire(
         georel: &str,
         geometry_type: &str,
         coordinates: QueryCoordinates,
         geoproperty: Option<NgsiLdReference>,
-    ) -> Result<WrittenGeoQuery, GeoQueryInputError> {
-        let georel = georel.parse().map_err(GeoQueryInputError::GeoRel)?;
-        let geometry_type = geometry_type.parse::<GeometryType>().map_err(GeoQueryInputError::GeometryType)?;
+    ) -> Result<WrittenGeoQuery, GeoQueryError> {
+        let georel = georel.parse().map_err(GeoQueryError::InvalidGeorel)?;
+        let geometry_type = geometry_type.parse::<GeometryType>().map_err(GeoQueryError::InvalidGeometryType)?;
         let reference = match coordinates {
             QueryCoordinates::Text(coordinates) => ReferenceGeometry::Encoded { geometry_type, coordinates },
-            QueryCoordinates::Written(written) => ReferenceGeometry::Read(written.read_as(geometry_type).map_err(GeoQueryInputError::Geometry)?),
+            QueryCoordinates::Written(written) => ReferenceGeometry::Read(written.read_as(geometry_type).map_err(GeoQueryError::InvalidReferenceGeometry)?),
         };
         Ok(WrittenGeoQuery {
             georel,
@@ -106,7 +99,7 @@ impl WrittenGeoQuery {
         geometry_type: &str,
         coordinates: &str,
         geoproperty: Option<NgsiLdReference>,
-    ) -> Result<WrittenGeoQuery, GeoQueryInputError> {
+    ) -> Result<WrittenGeoQuery, GeoQueryError> {
         WrittenGeoQuery::from_wire(georel, geometry_type, QueryCoordinates::Text(coordinates.to_owned()), geoproperty)
     }
 }
@@ -125,10 +118,10 @@ impl<'de> Deserialize<'de> for WrittenGeoQuery {
 impl GeoQueryMembers {
     /// The geo-query the members make, once every member Table 5.2.13-1 gives
     /// cardinality 1 is present.
-    fn into_input(self) -> Result<WrittenGeoQuery, GeoQueryInputError> {
-        let georel = self.georel.ok_or(GeoQueryInputError::MissingMember(RequiredMember::Georel))?;
-        let geometry = self.geometry.ok_or(GeoQueryInputError::MissingMember(RequiredMember::Geometry))?;
-        let coordinates = self.coordinates.ok_or(GeoQueryInputError::MissingMember(RequiredMember::Coordinates))?;
+    fn into_input(self) -> Result<WrittenGeoQuery, GeoQueryError> {
+        let georel = self.georel.ok_or(GeoQueryError::MissingMember(RequiredMember::Georel))?;
+        let geometry = self.geometry.ok_or(GeoQueryError::MissingMember(RequiredMember::Geometry))?;
+        let coordinates = self.coordinates.ok_or(GeoQueryError::MissingMember(RequiredMember::Coordinates))?;
         WrittenGeoQuery::from_wire(&georel.to_string(), &geometry, coordinates, self.geoproperty)
     }
 }
@@ -149,28 +142,6 @@ impl Serialize for WrittenGeoQuery {
         }
         state.end()
     }
-}
-
-/// Geo-query wire decoding failure.
-#[derive(Debug, Error)]
-pub enum GeoQueryInputError {
-    /// A member Table 5.2.13-1 gives cardinality 1 is absent or `null`.
-    #[error("a geo-query requires its '{0}' member (Table 5.2.13-1)")]
-    MissingMember(RequiredMember),
-    /// The relation is not defined by clause 4.10.
-    #[error("invalid georel: {0}")]
-    GeoRel(GeoRelParseError),
-    /// The geometry name is not one of the `GeoJSON` types supported by NGSI-LD.
-    #[error("invalid geo-query geometry type: {0}")]
-    GeometryType(strum::ParseError),
-    /// The reference geometry is invalid.
-    ///
-    /// Carries the geometry diagnostic verbatim so that a position with an
-    /// ordinate count RFC 7946 section 3.1.1 gives no meaning to reaches the
-    /// client as a `BadRequestData` detail naming that count, rather than as a
-    /// bare "invalid geometry".
-    #[error("geo-query reference geometry: {0}")]
-    Geometry(GeometryError),
 }
 
 #[cfg(test)]

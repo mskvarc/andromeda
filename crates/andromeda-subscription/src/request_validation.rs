@@ -22,6 +22,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     filter::compilation::{AdmittedFilter, admit_q_filter},
+    query_error::QueryError,
     temporal::window::TimeInterval,
 };
 use chrono::Utc;
@@ -177,7 +178,7 @@ pub(crate) fn validate_common_members(
     // A full tag or a range is admitted only at the `q_target_languages`
     // level that serves it; below it the clause 4.9 `AttrName` spells neither.
     if let Some(csf) = request.csf.as_set() {
-        admission.language_targeting.admit(csf)?;
+        admission.language_targeting.admit(csf).map_err(QueryError::from)?;
     }
 
     // An update fragment's NGSI-LD Null removes the `geoQ`, which has nothing to admit.
@@ -278,7 +279,10 @@ mod tests {
         subscription_validation_reason::SubscriptionValidationReason,
     };
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, query_error::QueryError};
+    use andromeda_ngsi_ld_query::{
+        filter::{filter_error::FilterError, language_targeting::LanguageTargeting},
+        query_error::QueryError,
+    };
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
@@ -758,9 +762,9 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(SubscriptionError::Query(
-                                QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. }
-                            ))
+                            Err(SubscriptionError::Query(QueryError::Filter(
+                                FilterError::TooManyComparisons { .. } | FilterError::NestedTooDeep { .. }
+                            )))
                         ),
                         "{q}: {result:?}"
                     );
@@ -777,7 +781,10 @@ mod tests {
             for level in [LanguageTargeting::Specification, LanguageTargeting::LanguageTags] {
                 let refused = validate_common_members(&request(&body), broker_defaults(level));
                 assert!(
-                    matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageRangeNotAdmitted(_)))),
+                    matches!(
+                        refused,
+                        Err(SubscriptionError::Query(QueryError::Filter(FilterError::LanguageRangeNotAdmitted(_))))
+                    ),
                     "{body} at {level}: {refused:?}"
                 );
             }
@@ -795,7 +802,10 @@ mod tests {
         for body in [json!({"q": "name[en-GB]==\"Lift\""}), json!({"csf": "name[en-GB]==\"Lift\""})] {
             let refused = validate_common_members(&request(&body), broker_defaults(LanguageTargeting::Specification));
             assert!(
-                matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageTagNotAdmitted(_)))),
+                matches!(
+                    refused,
+                    Err(SubscriptionError::Query(QueryError::Filter(FilterError::LanguageTagNotAdmitted(_))))
+                ),
                 "{body}: {refused:?}"
             );
             for level in [LanguageTargeting::LanguageTags, LanguageTargeting::LanguageRanges] {

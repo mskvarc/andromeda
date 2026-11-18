@@ -99,8 +99,7 @@ mod tests {
     use crate::{
         namespace_expander::EXAMPLE_NAMESPACE_TYPED,
         projection::attribute_iri_index::AttributeIriIndex,
-        query_error::QueryError,
-        term_expander::TermExpander,
+        term_expander::{TermExpander, TermExpansionError},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::IriBuf;
@@ -142,12 +141,12 @@ mod tests {
     }
 
     impl TermExpander for CountingExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             self.asked.lock().expect("never poisoned").push(term.to_owned());
             ready(EXAMPLE_NAMESPACE_TYPED.term_iri(term))
         }
 
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
             ready(EXAMPLE_NAMESPACE_TYPED.type_iri(term))
         }
     }

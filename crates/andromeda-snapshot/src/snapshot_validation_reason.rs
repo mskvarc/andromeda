@@ -1,7 +1,7 @@
 //! The concrete reasons a Snapshot request is rejected as `BadRequestData`.
 
 use andromeda_ngsi_ld_model::{notification_header_field::NotificationHeaderFieldError, snapshot::SnapshotStatus};
-use andromeda_ngsi_ld_query::query_error::QueryError;
+use andromeda_ngsi_ld_query::temporal::time_interval_error::TimeIntervalError;
 use thiserror::Error;
 
 /// Why a Snapshot request violates Snapshot semantics (clause 5.16).
@@ -29,7 +29,7 @@ pub enum SnapshotValidationReason {
         /// Position of the offending query.
         index: usize,
         /// The window fault.
-        source: QueryError,
+        source: TimeIntervalError,
     },
     /// A patch named a Snapshot id other than the one it patches.
     #[error("the Snapshot id is immutable")]

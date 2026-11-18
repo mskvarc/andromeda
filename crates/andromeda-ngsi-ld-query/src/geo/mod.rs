@@ -5,6 +5,7 @@ pub mod admission;
 pub mod compilation;
 pub mod compiled_geo_query;
 pub mod default_location_narrowing;
+pub mod geo_query_error;
 pub mod near_distance_band;
 pub mod reference_budget;
 pub mod reference_geometry;

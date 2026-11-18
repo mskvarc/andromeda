@@ -16,7 +16,7 @@
 use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError};
 use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_model::subscription_member::SubscriptionMember;
-use andromeda_ngsi_ld_query::{projection::exclusivity::ProjectionConflict, query_error::QueryError};
+use andromeda_ngsi_ld_query::{projection::exclusivity::ProjectionConflict, temporal::time_interval_error::TimeIntervalError};
 use thiserror::Error;
 
 /// Why a subscription request is invalid.
@@ -85,7 +85,7 @@ pub enum SubscriptionValidationReason {
     /// The `temporalQ` names no time window (clause 4.11, Table 5.2.21-1:
     /// `endTimeAt` comes with `between` alone and closes after `timeAt`).
     #[error("temporalQ is invalid: {0}")]
-    TemporalQ(QueryError),
+    TemporalQ(TimeIntervalError),
     /// An entity subscription carried a `temporalQ`, which Table 5.2.12-1
     /// reserves for Context Registration Subscriptions.
     #[error("temporalQ is only allowed in Context Source Registration Subscriptions")]
