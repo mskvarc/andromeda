@@ -10,12 +10,12 @@ use andromeda_ngsi_ld_query::{
         compiled_filter::CompiledFilter,
         expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
-        trailing_members::TrailingMembers,
+        nested_names::NestedNames,
     },
-    geo::{compile as geo_compile, query::GeoQuery},
+    geo::{compilation as geo_compile, compiled_geo_query::CompiledGeoQuery},
     projection::{
         attrs_selection::{AttrsAdmission, expand_attrs_admitted},
-        compiled::Projection,
+        expanded_projection::ExpandedProjection,
         expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_query::{
     temporal::{
         aggregation_period::AggregationPeriod,
         compiled::CompiledTemporalQuery,
-        grouping::{AggregationGrouping, GroupingTerm, group_key::GroupKey},
+        grouping::{aggregation_grouping::AggregationGrouping, group_key::GroupKey, grouping_term::GroupingTerm},
         instance_page::InstancePage,
         instance_selection::InstanceSelection,
         ordering::TemporalEntityOrdering,
@@ -153,7 +153,7 @@ impl TemporalService {
     /// Returns [`TemporalError::Query`] when a projection term is not well
     /// formed, and [`TemporalError::JsonLd`] when a term cannot be expanded
     /// against `context`.
-    pub async fn request_projection(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Projection, TemporalError> {
+    pub async fn request_projection(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<ExpandedProjection, TemporalError> {
         let prepared_context = self.engine.prepare_term_context(context);
         compile_projection(params, &ContextualExpander::new(&self.engine, &prepared_context)).await
     }
@@ -162,7 +162,7 @@ impl TemporalService {
     ///
     /// A reference geometry holding more positions than the broker resolves
     /// makes the query the `TooComplexQuery` of clause 5.5.6.
-    async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, TemporalError> {
+    async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &PreparedTermContext) -> Result<Option<CompiledGeoQuery>, TemporalError> {
         Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context), self.geo_admission()).await?)
     }
 }
@@ -250,21 +250,21 @@ async fn compile_grouping(
     for term in grouping.0 {
         let key = match term.key {
             GroupKey::Member(member) => GroupKey::Member(member),
-            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, TrailingMembers::Terms(json_keys), expander).await?),
+            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, NestedNames::Terms(json_keys), expander).await?),
         };
         expanded_terms.push(GroupingTerm { key, bucket: term.bucket });
     }
     Ok(Some(AggregationGrouping(expanded_terms)))
 }
 
-/// Expand `pick` / `omit` into a compiled clause 4.21 [`Projection`].
+/// Expand `pick` / `omit` into a compiled clause 4.21 [`ExpandedProjection`].
 ///
 /// Kept apart from the rest of [`TemporalService::compile_temporal_query`] so
 /// the clause 4.5.23 join traversal (`crate::linked`) can expand the *root*
 /// request's projection on its own, against its own freshly prepared
 /// expander, without compiling the unrelated selection, window and
 /// representation the traversal never reads.
-pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expander: &impl TermExpander) -> Result<Projection, TemporalError> {
+pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expander: &impl TermExpander) -> Result<ExpandedProjection, TemporalError> {
     Ok(expand_projection(params.pick.as_deref().unwrap_or_default(), params.omit.as_deref().unwrap_or_default(), expander).await?)
 }
 

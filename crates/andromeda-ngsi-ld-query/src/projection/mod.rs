@@ -4,12 +4,13 @@
 
 pub mod attribute_iri_index;
 pub mod attrs_selection;
-pub mod compiled;
 pub mod exclusivity;
+pub mod expanded_projection;
+pub mod expanded_projection_term;
 pub mod expansion;
-pub mod grammar;
 pub mod matching;
 pub mod projected_members;
 pub mod purge;
 pub mod returned_attributes;
-pub mod term;
+pub mod written_projection_list;
+pub mod written_projection_term;

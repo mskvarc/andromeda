@@ -14,8 +14,8 @@ use crate::{
 use andromeda_linked_retrieval::admission::{LinkedMember, LinkedOperation, ReachingMember, TemporalJoin};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    query_error::QueryError,
     temporal::window::TimeInterval,
 };
 use std::num::NonZeroUsize;

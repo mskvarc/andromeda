@@ -5,7 +5,7 @@
 //! one membership test with plain `=`, and an index on the grain answers it.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::dataset::DatasetFilter;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetFilter;
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
 use andromeda_postgresql_stored_form::default_instance::is_default_instance;
 use andromeda_postgresql_stored_values::dataset_key::DatasetKey;
@@ -35,7 +35,7 @@ pub fn dataset_condition(column: &SimpleExpr, filter: &DatasetFilter) -> Conditi
 #[cfg(test)]
 mod tests {
     use crate::dataset_predicate::dataset_condition;
-    use andromeda_ngsi_ld_query::dataset::DatasetFilter;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetFilter;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 

@@ -13,15 +13,15 @@
 //! discovery all take these two steps.
 
 use crate::{
-    error::QueryError,
     filter::{
+        Filter,
         complexity::FilterComplexityLimits,
         expansion::{apply_expand_values, expand_attribute_names, expand_json_keys, expand_q_expr},
-        expression::Expr,
         hop_admission::FilterHopAdmission,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
     },
+    query_error::QueryError,
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -80,12 +80,12 @@ impl FilterOptIns {
 /// makes one, so every filter a pipeline compiles was admitted once, by the
 /// request that wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdmittedFilter(Expr);
+pub struct AdmittedFilter(Filter);
 
 impl AdmittedFilter {
     /// The filter as the request wrote it.
     #[must_use]
-    pub const fn written(&self) -> &Expr {
+    pub const fn written(&self) -> &Filter {
         &self.0
     }
 }
@@ -103,7 +103,7 @@ impl AdmittedFilter {
 /// Returns the [`QueryError`] of the complexity admission or of a target
 /// language the level does not admit, and the refusal of `hops` for a hop the
 /// operation does not admit, each converted into `E`.
-pub fn admit_q_filter<E, H>(filter: &Expr, admission: FilterAdmission, hops: &H) -> Result<AdmittedFilter, E>
+pub fn admit_q_filter<E, H>(filter: &Filter, admission: FilterAdmission, hops: &H) -> Result<AdmittedFilter, E>
 where
     E: From<QueryError> + From<H::Refusal>,
     H: FilterHopAdmission,
@@ -124,7 +124,7 @@ where
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
 /// [`QueryError::AttributeNameInvalid`] when a term or an opted-in operand
 /// does not expand.
-pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Expr, QueryError> {
+pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Filter, QueryError> {
     // clone: expansion consumes its tree, and every compilation of the request reads the admitted filter again
     let filter = expand_q_expr(filter.0.clone(), &opt_ins.json_keys, expander).await?;
     apply_expand_values(filter, &opt_ins.expand_values, expander).await
@@ -133,17 +133,17 @@ pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins:
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         filter::{
+            Filter,
             compilation::{AdmittedFilter, FilterAdmission, FilterOptIns, admit_q_filter, compile_q_filter},
             complexity::FilterComplexityLimits,
-            expression::Expr,
+            display::serialize,
             hop_admission::FilterHopAdmission,
             language_targeting::LanguageTargeting,
             parser::parse,
-            serialize::serialize,
         },
         namespace_expander::NamespaceExpander,
+        query_error::QueryError,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::{IriBuf, iri};
@@ -176,7 +176,7 @@ mod tests {
     impl FilterHopAdmission for Hops {
         type Refusal = HopRefused;
 
-        fn admit_hops(&self, filter: &Expr) -> Result<(), HopRefused> {
+        fn admit_hops(&self, filter: &Filter) -> Result<(), HopRefused> {
             match self {
                 Hops::Refused if filter.linked_depth() > 0 => Err(HopRefused),
                 Hops::Refused | Hops::Admitted => Ok(()),

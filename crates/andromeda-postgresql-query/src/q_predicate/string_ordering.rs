@@ -14,7 +14,7 @@
 
 use andromeda_ngsi_ld_query::{
     filter::reading::{comparator::Comparator, operand::Operand},
-    ordering::collation::IcuCollation,
+    ordering::icu_collation::IcuCollation,
 };
 use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
 use sea_query::SimpleExpr;
@@ -46,8 +46,8 @@ pub fn ordered_string(stored: SimpleExpr, operand: &Operand, comparator: Compara
 mod tests {
     use crate::q_predicate::string_ordering::{ordered_string, string_ordering_collation};
     use andromeda_ngsi_ld_query::filter::{
+        parser::operand::{parse_date, parse_time},
         reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation},
-        scalar::{parse_date, parse_time},
     };
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
     use sea_query::{Alias, Expr, Query, SelectStatement};

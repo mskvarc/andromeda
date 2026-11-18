@@ -18,11 +18,11 @@ use andromeda_linked_retrieval::{
 };
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::compilation::{FilterAdmission, admit_q_filter},
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+    query_error::QueryError,
     temporal::{
-        grouping::{AggregationGrouping, group_key::GroupKey},
+        grouping::{aggregation_grouping::AggregationGrouping, group_key::GroupKey},
         ordering::TemporalEntityOrdering,
         window::{TemporalWindow, TimeInterval},
     },
@@ -308,10 +308,10 @@ impl TemporalQueryParameters {
         if let Some(attrs) = self.attrs.as_deref() {
             for term in grouping.terms() {
                 if let GroupKey::Path(path) = &term.key
-                    && attrs.iter().any(|attr| attr.as_str() == path.attr.as_str())
+                    && attrs.iter().any(|attr| attr.as_str() == path.attribute.as_str())
                 {
                     // clone: the error owns the offending name past the borrow of the parsed grouping.
-                    return Err(ParameterError::AggrGroupByOnAggregatedAttribute(path.attr.clone()));
+                    return Err(ParameterError::AggrGroupByOnAggregatedAttribute(path.attribute.clone()));
                 }
             }
         }

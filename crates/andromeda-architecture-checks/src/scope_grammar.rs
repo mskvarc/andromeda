@@ -38,7 +38,7 @@ use syn::{
 const SCOPE_OWNER: &str = "crates/andromeda-ngsi-ld-lexicon/src/scope/";
 
 /// The `scope` submodules whose import marks a source as one handling Scopes.
-const SCOPE_MODULES: [&str; 5] = ["grammar", "level", "path", "pattern", "query"];
+const SCOPE_MODULES: [&str; 5] = ["grammar", "level", "path", "scope_pattern", "scope_query"];
 
 /// The string methods that split or strip text on a separator.
 const SEPARATOR_METHODS: [&str; 8] = [
@@ -204,7 +204,7 @@ mod tests {
     fn a_scope_handling_source_that_splits_on_the_separator_is_flagged() {
         let source = "use andromeda_ngsi_ld_lexicon::scope::path::ScopePath; fn levels(raw: &str) -> usize { raw.split('/').count() }";
         assert_eq!(violations(source), vec!["calls `split` on the scope separator `/`".to_owned()]);
-        let grouped = "use andromeda_ngsi_ld_query::{scope::{query::ScopeQuery}}; fn root(raw: &str) -> Option<&str> { raw.strip_prefix(\"/\") }";
+        let grouped = "use andromeda_ngsi_ld_query::{scope::{scope_query::ScopeQuery}}; fn root(raw: &str) -> Option<&str> { raw.strip_prefix(\"/\") }";
         assert_eq!(violations(grouped).len(), 1);
     }
 

@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_model::subscription::{
     SubscriptionStatus,
     SubscriptionType,
 };
-use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
+use andromeda_ngsi_ld_query::projection::written_projection_list::WrittenProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer};
@@ -41,12 +41,12 @@ use std::num::{NonZeroU32, NonZeroU64};
 /// The projection lists of one `pick` or `omit` member, written as the clause
 /// 4.21 strings they were sent as.
 #[derive(Clone, Copy, Debug)]
-struct ProjectionStrings<'a>(&'a [ProjectionList]);
+struct ProjectionStrings<'a>(&'a [WrittenProjectionList]);
 
 // A derive would write each list as the term tree the subscription stores.
 impl Serialize for ProjectionStrings<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.0.iter().map(ProjectionList::to_string))
+        serializer.collect_seq(self.0.iter().map(WrittenProjectionList::to_string))
     }
 }
 

@@ -9,9 +9,9 @@
 
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
-    filter::{expansion::expand_csf_expr, expression::Expr, reading::filter_reading::FilterReading},
-    geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, query::GeoQuery},
+    filter::{Filter, expansion::expand_csf_expr, reading::filter_reading::FilterReading},
+    geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, compiled_geo_query::CompiledGeoQuery, written_geo_query::WrittenGeoQuery},
+    query_error::QueryError,
 };
 
 /// A query's context source filter and geoquery, expanded under the request
@@ -25,7 +25,7 @@ pub struct ExpandedRegistrationFilters {
     csf: Option<FilterReading>,
     /// The geoquery, compiled, which a registration's declared geometry has to
     /// admit (clauses 4.3.6.1 and 5.10.2.4); `None` when the query has none.
-    geo: Option<GeoQuery>,
+    geo: Option<CompiledGeoQuery>,
 }
 
 impl ExpandedRegistrationFilters {
@@ -44,8 +44,8 @@ impl ExpandedRegistrationFilters {
     pub async fn expand(
         engine: &JsonLdEngine,
         context: &ContextSpec,
-        csf: Option<&Expr>,
-        geo: Option<&GeoQueryInput>,
+        csf: Option<&Filter>,
+        geo: Option<&WrittenGeoQuery>,
         admission: GeoQueryAdmission,
     ) -> Result<ExpandedRegistrationFilters, QueryError> {
         let prepared_context = engine.prepare_term_context(context);
@@ -70,7 +70,7 @@ impl ExpandedRegistrationFilters {
 
     /// The compiled geoquery, if the query carries one.
     #[must_use]
-    pub const fn geo(&self) -> Option<&GeoQuery> {
+    pub const fn geo(&self) -> Option<&CompiledGeoQuery> {
         self.geo.as_ref()
     }
 }
@@ -80,7 +80,7 @@ mod tests {
     use crate::{expanded_registration_filters::ExpandedRegistrationFilters, fixed_registration_store::generous_geo_admission};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_query::{filter::parser, geo::input::GeoQueryInput};
+    use andromeda_ngsi_ld_query::{filter::parser, geo::written_geo_query::WrittenGeoQuery};
     use serde_json::json;
 
     fn engine() -> JsonLdEngine {
@@ -114,7 +114,7 @@ mod tests {
     /// to `location`.
     #[tokio::test]
     async fn the_geoquery_is_compiled_with_its_default_geoproperty() {
-        let input: GeoQueryInput =
+        let input: WrittenGeoQuery =
             serde_urlencoded::from_str("georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B-3.7%2C40.4%5D").expect("a decodable geoquery");
         let filters = ExpandedRegistrationFilters::expand(&engine(), &ContextSpec::none(), None, Some(&input), generous_geo_admission())
             .await

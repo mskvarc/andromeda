@@ -7,8 +7,8 @@
 //! member token is that member, and anything carrying a path is a value key.
 
 use crate::{
-    error::QueryError,
-    filter::{path::AttrPath, value_path::parse_attribute_path},
+    filter::{parser::value_path::parse_attribute_path, value_path::ValuePath},
+    query_error::QueryError,
     temporal::grouping::entity_member::EntityMember,
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
@@ -22,7 +22,7 @@ pub enum GroupKey {
     Member(EntityMember),
     /// One attribute's value in effect at each instant, addressed by a clause
     /// 4.9 `ValuePath`.
-    Path(AttrPath),
+    Path(ValuePath),
 }
 
 impl GroupKey {
@@ -38,7 +38,7 @@ impl GroupKey {
     /// well-formed clause 4.9 `ValuePath`.
     pub fn parse(name: &str) -> Result<GroupKey, QueryError> {
         let path = parse_attribute_path(name)?;
-        if let Some(member) = path.is_simple().then(|| EntityMember::classify(path.attr.as_str())).flatten() {
+        if let Some(member) = path.is_simple().then(|| EntityMember::classify(path.attribute.as_str())).flatten() {
             return Ok(GroupKey::Member(member));
         }
         Ok(GroupKey::Path(path))
@@ -54,7 +54,7 @@ impl GroupKey {
     #[must_use]
     pub fn temporal_property(&self) -> Option<TimeProp> {
         match self {
-            GroupKey::Path(path) if path.is_simple() => TimeProp::from_str(path.attr.as_str()).ok(),
+            GroupKey::Path(path) if path.is_simple() => TimeProp::from_str(path.attribute.as_str()).ok(),
             GroupKey::Member(_) | GroupKey::Path(_) => None,
         }
     }
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn a_plain_attribute_name_classifies_as_a_value_path() {
         let key = GroupKey::parse("speed").expect("parses");
-        assert!(matches!(key, GroupKey::Path(path) if path.attr.as_str() == "speed"));
+        assert!(matches!(key, GroupKey::Path(path) if path.attribute.as_str() == "speed"));
     }
 
     /// Clause 4.9 forms: a bracketed and a dotted value path.

@@ -7,10 +7,10 @@ use crate::registration::{ContextSourceRegistration, coverage::RegistrationCover
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     filter::reading::filter_reading::FilterReading,
-    geo::query::GeoQuery,
-    scope::query::ScopeQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
 
@@ -69,7 +69,7 @@ pub struct RegistrationFilters<'a> {
     /// The Scope query, matched against the registration's `scope`.
     pub scope: ScopeFilter<'a>,
     /// The geoquery, matched against the geometry its `geoproperty` names.
-    pub geo: Option<&'a GeoQuery>,
+    pub geo: Option<&'a CompiledGeoQuery>,
     /// The reading of the context source filter, expanded, matched against the
     /// Context Source Properties.
     pub csf: Option<&'a FilterReading>,
@@ -117,9 +117,9 @@ mod tests {
         selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     };
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
     };
     use serde_json::{Value, json};
 

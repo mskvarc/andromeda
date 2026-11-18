@@ -12,8 +12,8 @@
 //! round-tripping through its text, and the level is held to it on admission.
 
 use crate::{
-    error::QueryError,
-    filter::{expression::Expr, language_matching::LanguageMatching, path::AttrPath, target_language::TargetLanguage, trailing_path::TrailingPath},
+    filter::{Filter, language_matching::LanguageMatching, target_language::TargetLanguage, trailing_group::TrailingGroup, value_path::ValuePath},
+    query_error::QueryError,
 };
 use strum::Display;
 
@@ -48,7 +48,7 @@ impl LanguageTargeting {
 
     /// The least level admitting every target language `expr` names.
     #[must_use]
-    pub fn required_by(expr: &Expr) -> LanguageTargeting {
+    pub fn required_by(expr: &Filter) -> LanguageTargeting {
         expr.terminal_paths().into_iter().map(required_by_path).max().unwrap_or_default()
     }
 
@@ -60,7 +60,7 @@ impl LanguageTargeting {
     /// only a full tag spells below [`LanguageTargeting::LanguageTags`], and
     /// [`QueryError::LanguageRangeNotAdmitted`] for an extended range below
     /// [`LanguageTargeting::LanguageRanges`].
-    pub fn admit(self, expr: &Expr) -> Result<(), QueryError> {
+    pub fn admit(self, expr: &Filter) -> Result<(), QueryError> {
         expr.terminal_paths().into_iter().try_for_each(|path| self.admit_path(path))
     }
 
@@ -70,16 +70,16 @@ impl LanguageTargeting {
     /// # Errors
     ///
     /// As [`LanguageTargeting::admit`].
-    pub fn admit_path(self, path: &AttrPath) -> Result<(), QueryError> {
+    pub fn admit_path(self, path: &ValuePath) -> Result<(), QueryError> {
         if required_by_path(path) <= self {
             return Ok(());
         }
         match &path.trailing {
             // clone: the error outlives the filter that names the language
-            Some(TrailingPath::Language(TargetLanguage::Tag(tag))) => Err(QueryError::LanguageTagNotAdmitted(tag.clone())),
+            Some(TrailingGroup::Language(TargetLanguage::Tag(tag))) => Err(QueryError::LanguageTagNotAdmitted(tag.clone())),
             // clone: the error outlives the filter that names the language
-            Some(TrailingPath::Language(TargetLanguage::Range(range))) => Err(QueryError::LanguageRangeNotAdmitted(range.clone())),
-            Some(TrailingPath::Members(_) | TrailingPath::AllLanguages) | None => Ok(()),
+            Some(TrailingGroup::Language(TargetLanguage::Range(range))) => Err(QueryError::LanguageRangeNotAdmitted(range.clone())),
+            Some(TrailingGroup::Members(_) | TrailingGroup::AllLanguages) | None => Ok(()),
         }
     }
 }
@@ -88,23 +88,23 @@ impl LanguageTargeting {
 ///
 /// A one-member group an `AttrName` spells is clause 4.9's own target
 /// language, and `[*]` is clause 4.9's every-language marker.
-const fn required_by_path(path: &AttrPath) -> LanguageTargeting {
+const fn required_by_path(path: &ValuePath) -> LanguageTargeting {
     match &path.trailing {
-        Some(TrailingPath::Language(TargetLanguage::Tag(_))) => LanguageTargeting::LanguageTags,
-        Some(TrailingPath::Language(TargetLanguage::Range(_))) => LanguageTargeting::LanguageRanges,
-        Some(TrailingPath::Members(_) | TrailingPath::AllLanguages) | None => LanguageTargeting::Specification,
+        Some(TrailingGroup::Language(TargetLanguage::Tag(_))) => LanguageTargeting::LanguageTags,
+        Some(TrailingGroup::Language(TargetLanguage::Range(_))) => LanguageTargeting::LanguageRanges,
+        Some(TrailingGroup::Members(_) | TrailingGroup::AllLanguages) | None => LanguageTargeting::Specification,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
-        filter::{expression::Expr, language_matching::LanguageMatching, language_targeting::LanguageTargeting},
+        filter::{Filter, language_matching::LanguageMatching, language_targeting::LanguageTargeting},
+        query_error::QueryError,
     };
     use pretty_assertions::assert_eq;
 
-    fn filter(q: &str) -> Expr {
+    fn filter(q: &str) -> Filter {
         q.parse().expect("a clause 4.9 filter")
     }
 

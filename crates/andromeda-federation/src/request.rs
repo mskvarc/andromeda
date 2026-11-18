@@ -14,10 +14,10 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     filter::reading::filter_reading::FilterReading,
-    geo::query::GeoQuery,
-    type_selection::grammar::TypeExprRaw,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
@@ -174,7 +174,7 @@ pub struct ForwardProvisionRequest<'a> {
     /// with, matched against each registration by clause 5.12. A request that
     /// carries a single type names it as a one-type selector; without one, the
     /// local entity's own types stand in.
-    pub entity_type_selector: Option<&'a TypeExprRaw>,
+    pub entity_type_selector: Option<&'a WrittenTypeSelection>,
     /// Attribute name used to filter registration information entries.
     pub attribute_name: Option<&'a AttributeName>,
     /// The one `datasetId` whose Attribute instance the operation targets,
@@ -217,7 +217,7 @@ pub struct ForwardTemporalQueryRequest<'a> {
     /// The client's geoquery, compiled, which a registration's declared
     /// geometry has to admit for it to be contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).
-    pub geo: Option<&'a GeoQuery>,
+    pub geo: Option<&'a CompiledGeoQuery>,
     /// Registration modes included in this forwarding phase.
     pub mode_filter: CsrModeFilter,
     /// Which of the matching registrations are contacted: a request repeated
@@ -262,7 +262,7 @@ pub struct ForwardQueryRequest<'a> {
     /// The client's geoquery, compiled, which a registration's declared
     /// geometry has to admit for it to be contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).
-    pub geo: Option<&'a GeoQuery>,
+    pub geo: Option<&'a CompiledGeoQuery>,
     /// The `EntityMap` the request runs under (clause 5.5.14).
     pub entity_map: EntityMapInUse<'a>,
     /// The entities the request may gather from every source it contacts,

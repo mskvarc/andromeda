@@ -8,19 +8,19 @@ use crate::{
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
-    comma_separated_list::{ListedItem, parse_listed},
-    dataset::DatasetSelector,
-    filter::{expression::Expr, parser},
-    geo::input::{GeoQueryInput, GeoQueryInputError},
+    comma_separated_list::{ListedMemberKind, parse_listed},
+    dataset_selector::DatasetSelector,
+    filter::{Filter, parser},
+    geo::written_geo_query::{GeoQueryInputError, WrittenGeoQuery},
     pattern::Pattern,
-    projection::grammar::{ProjectionList, RawProjectionTerm},
+    projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
 };
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use std::num::{IntErrorKind, NonZeroU32};
 
 /// A complete optional geo-query decoded from URL parameters.
 #[derive(Debug, Clone, Default)]
-pub struct OptionalGeoQuery(pub Option<GeoQueryInput>);
+pub struct OptionalGeoQuery(pub Option<WrittenGeoQuery>);
 
 query_parameter_set!(OptionalGeoQuery {
     Georel,
@@ -89,8 +89,8 @@ pub fn decode_geo_query(
     geometry_type: &str,
     coordinates: QueryCoordinates,
     geoproperty: Option<NgsiLdReference>,
-) -> Result<GeoQueryInput, GeoQueryDecodeError> {
-    GeoQueryInput::from_wire(georel, geometry_type, coordinates, geoproperty).map_err(GeoQueryDecodeError::from)
+) -> Result<WrittenGeoQuery, GeoQueryDecodeError> {
+    WrittenGeoQuery::from_wire(georel, geometry_type, coordinates, geoproperty).map_err(GeoQueryDecodeError::from)
 }
 
 /// Geo-query decoding failure at a request boundary.
@@ -117,7 +117,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_listed(&value, ListedItem::EntityIdentifier).map_err(DeserializeError::custom))
+    raw.map(|value| parse_listed(&value, ListedMemberKind::EntityIdentifier).map_err(DeserializeError::custom))
         .transpose()
 }
 
@@ -147,7 +147,7 @@ where
 ///
 /// Returns a deserialization error when the expression does not satisfy the
 /// clause 4.9 filter grammar.
-pub fn deserialize_optional_filter_expr<'de, D>(deserializer: D) -> Result<Option<Expr>, D::Error>
+pub fn deserialize_optional_filter_expr<'de, D>(deserializer: D) -> Result<Option<Filter>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -166,14 +166,14 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_listed(&value, ListedItem::AttributeName).map_err(DeserializeError::custom))
+    raw.map(|value| parse_listed(&value, ListedMemberKind::AttributeName).map_err(DeserializeError::custom))
         .transpose()
 }
 
 /// Deserialize an optional `pick` / `omit` raw projection list (clause 4.21,
 /// with the projection grammar also defined in clause 4.21).
 ///
-/// The whole wire value is parsed as one [`ProjectionList`] rather than
+/// The whole wire value is parsed as one [`WrittenProjectionList`] rather than
 /// split on `,` here first: a linked-entity term such as
 /// `observation{temperature,humidity}` uses `,` inside its `{...}` group too,
 /// so splitting before parsing would tear the group apart. Comma (and `|`)
@@ -183,12 +183,12 @@ where
 ///
 /// Returns a deserialization error when the value does not satisfy the
 /// clause 4.21 projection-list grammar.
-pub fn deserialize_optional_projection_terms<'de, D>(deserializer: D) -> Result<Option<Vec<RawProjectionTerm>>, D::Error>
+pub fn deserialize_optional_projection_terms<'de, D>(deserializer: D) -> Result<Option<Vec<WrittenProjectionTerm>>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| value.parse::<ProjectionList>().map(Vec::from).map_err(DeserializeError::custom))
+    raw.map(|value| value.parse::<WrittenProjectionList>().map(Vec::from).map_err(DeserializeError::custom))
         .transpose()
 }
 
@@ -206,7 +206,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_listed(&value, ListedItem::DatasetIdentifier).map_err(DeserializeError::custom))
+    raw.map(|value| parse_listed(&value, ListedMemberKind::DatasetIdentifier).map_err(DeserializeError::custom))
         .transpose()
 }
 

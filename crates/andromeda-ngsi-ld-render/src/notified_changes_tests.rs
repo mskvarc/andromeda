@@ -7,7 +7,7 @@ use crate::{
     structural_projection::StructuralProjection,
 };
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{TimeZone, Utc};
 use pretty_assertions::assert_eq;
@@ -312,7 +312,7 @@ fn a_held_deletion_of_a_dataset_is_written_as_a_reported_one() {
         "speed": {"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"},
         "location": {"type": "GeoProperty", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"}
     }));
-    let projection = Projection::default();
+    let projection = ExpandedProjection::default();
     let written = |format| {
         serde_json::to_value(NotificationEntity::relayed(&relayed, format, StructuralProjection::from(&projection), None)).expect("the walk writes it")
     };
@@ -353,18 +353,18 @@ fn a_member_reported_by_the_bare_null_is_written_bare() {
 fn a_pick_naming_an_attribute_or_scope_leaves_the_id_and_type_out() {
     let notified = every_family();
     let stamped = StampedInstants::default();
-    let written = |pick: Vec<ProjectionTerm>| {
-        let projection = Projection { pick, omit: Vec::new() };
+    let written = |pick: Vec<ExpandedProjectionTerm>| {
+        let projection = ExpandedProjection { pick, omit: Vec::new() };
         let entity = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized).with_projection(StructuralProjection::from(&projection));
         serde_json::to_value(entity).expect("the walk writes it")
     };
-    let scope_only = written(vec![ProjectionTerm::Scope]);
+    let scope_only = written(vec![ExpandedProjectionTerm::Scope]);
     assert!(scope_only.get("id").is_none() && scope_only.get("type").is_none(), "{scope_only}");
     assert_eq!(scope_only["scope"], json!("/Madrid"));
-    let id_only = written(vec![ProjectionTerm::Id]);
+    let id_only = written(vec![ExpandedProjectionTerm::Id]);
     assert_eq!(id_only["id"], json!("urn:ngsi-ld:Vehicle:1"));
     assert!(id_only.get("type").is_none(), "{id_only}");
-    let id_and_type = written(vec![ProjectionTerm::Id, ProjectionTerm::Type]);
+    let id_and_type = written(vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type]);
     assert_eq!(id_and_type["id"], json!("urn:ngsi-ld:Vehicle:1"));
     assert!(id_and_type.get("type").is_some(), "{id_and_type}");
 }

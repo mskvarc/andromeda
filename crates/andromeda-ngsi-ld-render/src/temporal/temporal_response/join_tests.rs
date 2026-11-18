@@ -18,7 +18,7 @@ use andromeda_linked_retrieval::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::{temporal_body::TemporalBody, temporal_entity::TemporalEntity};
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection_term::ExpandedProjectionTerm};
 use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json, value::RawValue};
@@ -41,15 +41,15 @@ fn index() -> AttributeIriIndex {
     index
 }
 
-fn leaf(key: &str) -> ProjectionTerm {
-    ProjectionTerm::Attribute {
+fn leaf(key: &str) -> ExpandedProjectionTerm {
+    ExpandedProjectionTerm::Attribute {
         iri: iri(key),
         linked: Vec::new(),
     }
 }
 
-fn nested(key: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-    ProjectionTerm::Attribute { iri: iri(key), linked }
+fn nested(key: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+    ExpandedProjectionTerm::Attribute { iri: iri(key), linked }
 }
 
 /// The evolution of the entity `id` holding `members`.

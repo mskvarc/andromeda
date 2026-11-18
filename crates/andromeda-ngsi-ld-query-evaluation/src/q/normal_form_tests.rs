@@ -13,7 +13,7 @@ use crate::{
         expanded_fixture::{FixtureEntity, FixtureLinked},
     },
 };
-use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
 use andromeda_q_corpus::{case_filter::expanded_filter, corpus::CORPUS, corpus_vocabulary::CorpusVocabulary};
 use proptest::{
     collection::vec,
@@ -297,7 +297,7 @@ pub(crate) static CORPUS_ENTITIES: LazyLock<Vec<FixtureEntity>> = LazyLock::new(
 
 /// The first Entity and matching for which the normal form of `expr` and
 /// `expr` as lowered disagree, over `entities`.
-fn disagreement(expr: &Expr, entities: &[FixtureEntity]) -> Option<String> {
+fn disagreement(expr: &Filter, entities: &[FixtureEntity]) -> Option<String> {
     [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering]
         .into_iter()
         .find_map(|matching| {

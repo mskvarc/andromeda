@@ -38,7 +38,7 @@ use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_query::{
-    ordering::parameters::OrderingParameters,
+    ordering::ordering_parameters::OrderingParameters,
     query_identity::{IdentifierScope, QueryIdentity},
 };
 use andromeda_ngsi_ld_request::{

@@ -44,7 +44,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_linked_retrieval::narrowing::list::ListInForce;
     use andromeda_ngsi_ld_model::entity::Entity;
-    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
     use serde_json::json;
 
@@ -75,8 +75,8 @@ mod tests {
         IriBuf::new(value.to_owned()).expect("valid IRI")
     }
 
-    fn attribute(value: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute { iri: iri(value), linked }
+    fn attribute(value: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute { iri: iri(value), linked }
     }
 
     async fn narrowed(list: ListInForce<'_>) -> Entity {
@@ -96,7 +96,7 @@ mod tests {
     /// `scope` keyword, drops `scope`.
     #[tokio::test]
     async fn a_pick_keeps_its_attributes_and_drops_an_unnamed_scope() {
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: vec![attribute(SPEED, Vec::new())],
             omit: Vec::new(),
         };
@@ -110,7 +110,7 @@ mod tests {
     /// naming it.
     #[tokio::test]
     async fn an_omit_removes_only_its_bare_terms() {
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: Vec::new(),
             omit: vec![attribute(SPEED, Vec::new()), attribute(OWNER, vec![attribute(NAME, Vec::new())])],
         };
@@ -122,14 +122,14 @@ mod tests {
     /// Clause 4.21: `scope` is a keyword `pick` may keep and `omit` remove.
     #[tokio::test]
     async fn the_scope_keyword_decides_the_scope() {
-        let kept = Projection {
-            pick: vec![ProjectionTerm::Scope],
+        let kept = ExpandedProjection {
+            pick: vec![ExpandedProjectionTerm::Scope],
             omit: Vec::new(),
         };
         assert!(narrowed(ListInForce::of(Some(&kept), &[])).await.scope.is_some());
-        let omitted = Projection {
+        let omitted = ExpandedProjection {
             pick: Vec::new(),
-            omit: vec![ProjectionTerm::Scope],
+            omit: vec![ExpandedProjectionTerm::Scope],
         };
         assert!(narrowed(ListInForce::of(Some(&omitted), &[])).await.scope.is_none());
     }

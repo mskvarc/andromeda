@@ -1,64 +1,22 @@
 //! Which entities a query matches.
 
 use crate::{
+    expanded_entity_selector::ExpandedEntitySelector,
     filter::compiled_filter::CompiledFilter,
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
-    identifier_axis::IdentifierAxis,
-    pattern::Pattern,
+    geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
     projection::projected_members::ProjectedMembers,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
     standing_instant::StandingInstant,
-    type_selection::grammar::TypeExpr,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
-/// One entity selector: an identifier list, an identifier pattern and a type
-/// expression a candidate must satisfy together (clause 5.2.33).
-///
-/// A selector is the unit a POST query body's `entities[]` array is a union of.
-/// `{id:A,type:T1}` and `{id:B,type:T2}` are two selectors, and an entity
-/// matches the query when it satisfies *either* one, never the cross product
-/// `(A,T2)` that neither named. A GET query, whose `id` and `type` parameters
-/// are independent lists over one implicit group, is a single selector.
-#[derive(Debug, Clone, Default, TypedBuilder)]
-#[builder(field_defaults(default = Default::default()))]
-pub struct EntitySelector {
-    /// Resource identifiers this selector admits. Empty means no identifier
-    /// constraint (clause 5.7.2 `id`).
-    pub ids: Vec<Identifier>,
-    /// Regular expression the entity id must match (clause 5.7.2 `idPattern`).
-    pub id_pattern: Option<Pattern>,
-    /// Boolean expression over entity type IRIs (clause 4.17 `type`).
-    ///
-    /// `None` when this selector places no type constraint.
-    pub type_expr: Option<TypeExpr>,
-}
-
-impl EntitySelector {
-    /// What this selector constrains about the entity identifier, with the
-    /// clause 5.2.33 precedence of `id` over `idPattern` applied.
-    #[must_use]
-    pub fn identifier_axis(&self) -> IdentifierAxis<'_> {
-        IdentifierAxis::of(&self.ids, self.id_pattern.as_ref())
-    }
-
-    /// Whether this selector constrains a candidate at all.
-    ///
-    /// An unconstrained selector (no id, no pattern, no type) admits every
-    /// entity, so a union that contains one is unconstrained on these axes.
-    #[must_use]
-    pub const fn constrains(&self) -> bool {
-        !self.ids.is_empty() || self.id_pattern.is_some() || self.type_expr.is_some()
-    }
-}
-
 /// Which entities a request is allowed to consider at all, before any selector
 /// or filter runs (clause 5.5.14).
 ///
 /// A list of identifiers cannot express this on its own: an empty
-/// [`EntitySelector::ids`] reads as "no identifier constraint", so it can only
+/// [`ExpandedEntitySelector::ids`] reads as "no identifier constraint", so it can only
 /// stand for a request that named no identifier, never for one that named an
 /// empty set of them. Clause 5.5.14 makes the second case routine: "An
 /// `EntityMap` fixes the Entities to be considered for subsequent requests based
@@ -98,7 +56,7 @@ impl ConsideredEntities {
 ///
 /// Everything here narrows the result set; nothing here affects how a matching entity is rendered, or which of its attribute instances come back. That separation is what lets a consumer that only needs the identifiers read this alone, without seeing the time window.
 ///
-/// The identifier, pattern and type axes are grouped into [`EntitySelector`]s
+/// The identifier, pattern and type axes are grouped into [`ExpandedEntitySelector`]s
 /// and combined as a union (clause 5.2.33): an entity matches when it satisfies
 /// any selector. The remaining members (`attrs`, `q`, `geo`, `scopeQ`,
 /// `considered` and the projected members) are global, and hold for every
@@ -116,7 +74,7 @@ pub struct EntitySelection {
     /// Empty, or a single unconstrained selector, places no id/pattern/type
     /// constraint. A GET query holds one selector; a POST `entities[]` body
     /// holds one per array entry.
-    pub selectors: Vec<EntitySelector>,
+    pub selectors: Vec<ExpandedEntitySelector>,
     /// Expanded attribute IRIs the entity must carry. Empty means no attribute
     /// filter.
     pub attrs: Vec<IriBuf>,
@@ -125,7 +83,7 @@ pub struct EntitySelection {
     /// level.
     pub q: Option<CompiledFilter>,
     /// Geo-spatial query filter, if specified (clause 4.10).
-    pub geo: Option<GeoQuery>,
+    pub geo: Option<CompiledGeoQuery>,
     /// What an in-memory spatial index established about `geo`'s default
     /// `location` instances, set by the broker after compilation and never by a
     /// request.
@@ -163,7 +121,7 @@ impl EntitySelection {
     /// renderings both read this, so their readings of a union cannot
     /// disagree.
     pub fn selectors_constrain(&self) -> bool {
-        !self.selectors.is_empty() && self.selectors.iter().all(EntitySelector::constrains)
+        !self.selectors.is_empty() && self.selectors.iter().all(ExpandedEntitySelector::constrains)
     }
 
     /// Drop every identifier constraint, leaving the pattern, type and value
@@ -210,27 +168,17 @@ impl EntitySelection {
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
+        entity_selection::{ConsideredEntities, EntitySelection},
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        geo::query::GeoQuery,
-        identifier_axis::IdentifierAxis,
+        geo::compiled_geo_query::CompiledGeoQuery,
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriBuf;
-
-    /// Clause 5.2.33: a selector naming an `id` reads as constraining by id
-    /// alone, whatever `idPattern` it also carries.
-    #[test]
-    fn a_selector_with_an_id_and_an_id_pattern_constrains_by_id() {
-        let pattern = Pattern::parse("^urn:nomatch").expect("valid pattern");
-        let id: Identifier = "urn:ngsi-ld:A:1".parse().expect("valid id");
-        let selector = EntitySelector::builder().ids(vec![id]).id_pattern(Some(pattern)).build();
-        assert!(matches!(selector.identifier_axis(), IdentifierAxis::Ids(_)));
-    }
 
     /// Clause 5.5.14: a request that named no identifier fixes nothing, so the
     /// selectors and filters alone decide what it considers.
@@ -270,7 +218,7 @@ mod tests {
         let pattern = Pattern::parse("^urn:").expect("valid pattern");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
-                EntitySelector::builder()
+                ExpandedEntitySelector::builder()
                     .ids(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")])
                     .id_pattern(Some(pattern))
                     .build(),
@@ -291,14 +239,14 @@ mod tests {
         let speed: IriBuf = "https://example.com/speed".parse().expect("valid IRI");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
-                EntitySelector::builder()
+                ExpandedEntitySelector::builder()
                     .ids(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")])
                     .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
                     .build(),
             ])
             .attrs(vec![speed.clone()])
             .q(Some(CompiledFilter::new(parse("speed>10").expect("q parses"), LanguageMatching::TagEquality)))
-            .geo(Some(GeoQuery {
+            .geo(Some(CompiledGeoQuery {
                 georel: GeoRel::Within,
                 geometry: serde_json::from_value::<Geometry>(serde_json::json!({
                     "type": "Polygon",
@@ -328,7 +276,7 @@ mod tests {
         let speed: IriBuf = "https://example.com/speed".parse().expect("valid IRI");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
-                EntitySelector::builder()
+                ExpandedEntitySelector::builder()
                     .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
                     .build(),
             ])

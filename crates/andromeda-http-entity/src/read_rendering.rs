@@ -18,7 +18,7 @@ use andromeda_http_response::{problem_response::ProblemResponse, rendered_respon
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_query::projection::expanded_projection::ExpandedProjection;
 use andromeda_ngsi_ld_render::{
     entity_response::{EntityBody, EntityPayload},
     response::ResponseRenderer,
@@ -34,12 +34,12 @@ pub(crate) struct EntityRepresentation<'a> {
     /// The clause 4.5.1 representation the response is written in.
     pub(crate) mode: ResponseFormat,
     /// The compiled clause 4.21 projection, absent when the request narrows no member.
-    pub(crate) projection: Option<&'a Projection>,
+    pub(crate) projection: Option<&'a ExpandedProjection>,
 }
 
 impl<'a> EntityRepresentation<'a> {
     /// Gather the selectors a read resolved from its request.
-    pub(crate) const fn new(mode: ResponseFormat, projection: Option<&'a Projection>) -> EntityRepresentation<'a> {
+    pub(crate) const fn new(mode: ResponseFormat, projection: Option<&'a ExpandedProjection>) -> EntityRepresentation<'a> {
         EntityRepresentation { mode, projection }
     }
 

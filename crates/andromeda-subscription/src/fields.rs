@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{NotificationParams, Subscription},
     subscription_request::SubscriptionRequest,
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, filter::Filter, geo::written_geo_query::WrittenGeoQuery, scope::scope_query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 
@@ -35,13 +35,13 @@ pub(crate) struct SubscriptionWriteValues {
     /// Periodic notification interval in seconds.
     pub time_interval: Option<f64>,
     /// Parsed NGSI-LD query expression.
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Geo-spatial query.
-    pub geo_q: Option<GeoQueryInput>,
+    pub geo_q: Option<WrittenGeoQuery>,
     /// Parsed scope query expression.
     pub scope_q: Option<ScopeQuery>,
     /// Parsed context-source filter expression.
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// Validated `datasetId` selectors, `@none` naming the default instance.
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Whether the subscription is currently active.
@@ -278,7 +278,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription::Subscription, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 

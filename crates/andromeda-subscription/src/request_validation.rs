@@ -278,7 +278,7 @@ mod tests {
         subscription_validation_reason::SubscriptionValidationReason,
     };
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting};
+    use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, query_error::QueryError};
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 

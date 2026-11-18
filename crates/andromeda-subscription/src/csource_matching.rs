@@ -94,7 +94,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading},
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
     };
     use chrono::{DateTime, Utc};

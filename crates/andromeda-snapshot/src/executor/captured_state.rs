@@ -8,7 +8,7 @@
 //! rendering and back.
 
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_query::dataset::{DatasetFilter, DatasetSelector};
+use andromeda_ngsi_ld_query::dataset_selector::{DatasetFilter, DatasetSelector};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -41,7 +41,7 @@ mod tests {
     use crate::executor::captured_state::narrow_captured;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use chrono::{DateTime, Utc};
     use serde_json::json;
     use std::sync::Arc;

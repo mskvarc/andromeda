@@ -134,11 +134,12 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -166,7 +167,7 @@ mod tests {
 
     fn by_attrs(attrs: &[&str]) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.selectors = vec![EntitySelector::builder().build()];
+        query.selection.selectors = vec![ExpandedEntitySelector::builder().build()];
         query.selection.attrs = attrs.iter().map(|attr| iri(&format!("https://example.com/{attr}"))).collect();
         query
     }
@@ -257,8 +258,8 @@ mod tests {
     fn an_attrs_selection_beside_a_type_keeps_the_type_walk() {
         let mut query = by_attrs(&["headSign"]);
         query.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Trip"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Trip"))))
                 .build(),
         ];
         assert_statement_snapshot!(
@@ -275,9 +276,9 @@ mod tests {
             LanguageMatching::TagEquality,
         ));
         let mut ordered = by_attrs(&["headSign"]);
-        ordered.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::ModifiedAt,
-            direction: OrderDirection::Desc,
+        ordered.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::ModifiedAt,
+            direction: OrderingDirection::Desc,
             collation: None,
         }];
         for (index, query) in [filtered, ordered, by_attrs(&["neverWritten"])].into_iter().enumerate() {

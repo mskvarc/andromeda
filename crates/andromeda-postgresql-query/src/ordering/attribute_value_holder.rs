@@ -20,9 +20,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::filter::{
     instance_metadata::InstanceMetadata,
-    path::AttrPath,
     target_language::LanguageSelector,
-    trailing_path::{MemberPath, TrailingPath},
+    trailing_group::{MemberPath, TrailingGroup},
+    value_path::ValuePath,
 };
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, TIME},
@@ -46,16 +46,16 @@ use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleEx
 /// The typed value the read instance holds for the path, read off the
 /// columns of `source`: `member` of the instance `element` locates when the
 /// path ends on one.
-pub(crate) fn ordered_value(path: &AttrPath, element: Option<&ElementPath>, member: Option<InstanceMetadata>, source: &Alias) -> OrderedValue {
+pub(crate) fn ordered_value(path: &ValuePath, element: Option<&ElementPath>, member: Option<InstanceMetadata>, source: &Alias) -> OrderedValue {
     let holder = match element.map(|element| element.chain.is_empty()) {
         Some(false) => Holder::Element(SeaExpr::col((source.clone(), Alias::new(ELEMENT_COLUMN)))),
         Some(true) | None => Holder::Row(source.clone()),
     };
     match (element.and(member), &path.trailing) {
-        (Some(field), None | Some(TrailingPath::AllLanguages | TrailingPath::Members(_) | TrailingPath::Language(_))) => holder.member(field),
-        (None, None | Some(TrailingPath::AllLanguages)) => holder.own_value(),
-        (None, Some(TrailingPath::Members(members))) => holder.member_of_value(Some(members), path.target_language()),
-        (None, Some(TrailingPath::Language(language))) => holder.member_of_value(None, Some(language.selector())),
+        (Some(field), None | Some(TrailingGroup::AllLanguages | TrailingGroup::Members(_) | TrailingGroup::Language(_))) => holder.member(field),
+        (None, None | Some(TrailingGroup::AllLanguages)) => holder.own_value(),
+        (None, Some(TrailingGroup::Members(members))) => holder.member_of_value(Some(members), path.target_language()),
+        (None, Some(TrailingGroup::Language(language))) => holder.member_of_value(None, Some(language.selector())),
     }
 }
 

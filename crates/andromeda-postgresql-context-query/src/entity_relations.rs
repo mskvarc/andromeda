@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
-    ordering::term::{CompiledOrderTerm, OrderTarget},
+    ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget},
     standing_instant::StandingInstant,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -236,14 +236,14 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
                 && selection
                     .selectors
                     .iter()
-                    .all(|selector| selector.ids.is_empty() && selector.type_expr.as_ref().is_some_and(drives))
+                    .all(|selector| selector.ids.is_empty() && selector.type_selection.as_ref().is_some_and(drives))
         }
         ConsideredEntities::NoEntity => false,
     };
     let walk = walkable
         .then(|| {
             members_of_any(
-                selection.selectors.iter().filter_map(|selector| selector.type_expr.as_ref()),
+                selection.selectors.iter().filter_map(|selector| selector.type_selection.as_ref()),
                 types,
                 Memberships {
                     side: MembershipSide::Current,
@@ -276,7 +276,7 @@ fn search_demand(selection: &EntitySelection, source: &RowSource, geo: GeoRole) 
 /// `source` drives: a type selector the membership walk does not answer.
 fn selected_by_search_row(selection: &EntitySelection, source: &RowSource) -> bool {
     match source {
-        RowSource::Entities => selection.selectors.iter().any(|selector| selector.type_expr.is_some()),
+        RowSource::Entities => selection.selectors.iter().any(|selector| selector.type_selection.is_some()),
         RowSource::TypeMembers { .. } => false,
     }
 }
@@ -307,22 +307,22 @@ const fn demand(needed: bool) -> Demand {
 
 /// Whether an ordering term reads a lifecycle column of the `entities` row
 /// other than the key and the identifier the membership walk carries.
-const fn reads_lifecycle(term: &CompiledOrderTerm) -> bool {
+const fn reads_lifecycle(term: &CompiledOrderingTerm) -> bool {
     match &term.target {
-        OrderTarget::CreatedAt | OrderTarget::ModifiedAt => true,
-        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::Attribute(_) => false,
+        ExpandedOrderingTarget::CreatedAt | ExpandedOrderingTarget::ModifiedAt => true,
+        ExpandedOrderingTarget::Id | ExpandedOrderingTarget::Type | ExpandedOrderingTarget::Scope | ExpandedOrderingTarget::Attribute(_) => false,
     }
 }
 
 /// Whether an ordering term reads a column of the search row.
-fn reads_search_row(term: &CompiledOrderTerm) -> bool {
+fn reads_search_row(term: &CompiledOrderingTerm) -> bool {
     match &term.target {
-        OrderTarget::Type | OrderTarget::Scope => true,
+        ExpandedOrderingTarget::Type | ExpandedOrderingTarget::Scope => true,
         // Only a term naming the attribute itself can read the dedicated
         // geometry column; a path descending into it reads the attribute's rows.
-        OrderTarget::Attribute(path) => term.direction.is_distance() && path.is_simple() && path.attr.as_str() == LOCATION.as_str(),
+        ExpandedOrderingTarget::Attribute(path) => term.direction.is_distance() && path.is_simple() && path.attribute.as_str() == LOCATION.as_str(),
         // `createdAt` and `modifiedAt` read the identity row.
-        OrderTarget::Id | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => false,
+        ExpandedOrderingTarget::Id | ExpandedOrderingTarget::CreatedAt | ExpandedOrderingTarget::ModifiedAt => false,
     }
 }
 
@@ -333,14 +333,15 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser, path::AttrPath},
-        geo::query::GeoQuery,
-        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        entity_selection::{ConsideredEntities, EntitySelection},
+        expanded_entity_selector::ExpandedEntitySelector,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser, value_path::ValuePath},
+        geo::compiled_geo_query::CompiledGeoQuery,
+        ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         pattern::Pattern,
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         standing_instant::StandingInstant,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_schema::current::Entities;
@@ -354,8 +355,8 @@ mod tests {
         CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build()
     }
 
-    fn term(target: OrderTarget, direction: OrderDirection) -> CompiledOrderTerm {
-        CompiledOrderTerm {
+    fn term(target: ExpandedOrderingTarget, direction: OrderingDirection) -> CompiledOrderingTerm {
+        CompiledOrderingTerm {
             target,
             direction,
             collation: None,
@@ -383,16 +384,18 @@ mod tests {
     fn typed_query() -> CompiledEntityQuery {
         let mut query = empty_query();
         query.selection.selectors = vec![
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/T".to_string()).expect("valid IRI"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(
+                    IriBuf::new("https://example.com/T".to_string()).expect("valid IRI"),
+                )))
                 .build(),
         ];
         query
     }
 
     /// The Entities whose `location` lies within a point.
-    fn within_point() -> GeoQuery {
-        GeoQuery {
+    fn within_point() -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
@@ -438,11 +441,11 @@ mod tests {
         let mut scope = empty_query();
         scope.selection.scope_q = Some(ScopeQuery::parse("/a").expect("valid scope query"));
         let mut by_type = empty_query();
-        by_type.ordering.terms = vec![term(OrderTarget::Type, OrderDirection::Asc)];
+        by_type.ordering.terms = vec![term(ExpandedOrderingTarget::Type, OrderingDirection::Asc)];
         let mut by_distance = empty_query();
         by_distance.ordering.terms = vec![term(
-            OrderTarget::Attribute(AttrPath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
-            OrderDirection::DistAsc,
+            ExpandedOrderingTarget::Attribute(ValuePath::simple(LOCATION.as_str().parse().expect("valid attribute name"))),
+            OrderingDirection::DistAsc,
         )];
         let mut typed_by_identifier = typed_query();
         typed_by_identifier.selection.selectors[0].ids = vec!["urn:a".parse().expect("valid URI")];
@@ -480,7 +483,7 @@ mod tests {
         assert!(matches!(relations(&patterned).source, RowSource::TypeMembers { .. }));
 
         let mut wildcard = empty_query();
-        wildcard.selection.selectors = vec![EntitySelector::builder().type_expr(Some(TypeExpr::Wildcard)).build()];
+        wildcard.selection.selectors = vec![ExpandedEntitySelector::builder().type_selection(Some(ExpandedTypeSelection::Wildcard)).build()];
         assert_eq!(relations(&wildcard).source, RowSource::Entities);
 
         let mut nothing = typed_query();
@@ -497,8 +500,10 @@ mod tests {
         one.selection.geo = Some(within_point());
         let mut several = typed_query();
         several.selection.selectors.push(
-            EntitySelector::builder()
-                .type_expr(Some(TypeExpr::Type(IriBuf::new("https://example.com/U".to_string()).expect("valid IRI"))))
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Type(
+                    IriBuf::new("https://example.com/U".to_string()).expect("valid IRI"),
+                )))
                 .build(),
         );
         several.selection.geo = Some(within_point());
@@ -513,7 +518,7 @@ mod tests {
     #[test]
     fn a_created_at_sort_joins_the_entities_row_to_the_walk() {
         let mut query = typed_query();
-        query.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Asc)];
+        query.ordering.terms = vec![term(ExpandedOrderingTarget::CreatedAt, OrderingDirection::Asc)];
         let relations = relations(&query);
         assert!(matches!(relations.source, RowSource::TypeMembers { entities: Demand::Joined, .. }));
         assert_statement_snapshot!("entity-relations-a-created-at-sort-joins-the-entities-row-to-the-walk", from_clause(relations));
@@ -537,8 +542,8 @@ mod tests {
     fn an_attribute_ordering_joins_nothing() {
         let mut ordered = empty_query();
         ordered.ordering.terms = vec![term(
-            OrderTarget::Attribute(AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
-            OrderDirection::Asc,
+            ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
+            OrderingDirection::Asc,
         )];
         assert_eq!(relations(&ordered), joined(Demand::NotJoined));
     }
@@ -547,9 +552,9 @@ mod tests {
     /// ordering on either joins nothing beside it.
     #[test]
     fn a_system_time_ordering_joins_nothing() {
-        for target in [OrderTarget::ModifiedAt, OrderTarget::CreatedAt] {
+        for target in [ExpandedOrderingTarget::ModifiedAt, ExpandedOrderingTarget::CreatedAt] {
             let mut query = empty_query();
-            query.ordering.terms = vec![term(target, OrderDirection::Desc)];
+            query.ordering.terms = vec![term(target, OrderingDirection::Desc)];
             assert_eq!(relations(&query), joined(Demand::NotJoined));
         }
     }
@@ -559,14 +564,14 @@ mod tests {
     #[test]
     fn a_modified_at_sort_joins_the_entities_row_to_the_walk() {
         let mut query = typed_query();
-        query.ordering.terms = vec![term(OrderTarget::ModifiedAt, OrderDirection::Asc)];
+        query.ordering.terms = vec![term(ExpandedOrderingTarget::ModifiedAt, OrderingDirection::Asc)];
         assert!(matches!(relations(&query).source, RowSource::TypeMembers { entities: Demand::Joined, .. }));
     }
 
     #[test]
     fn a_selector_on_identifiers_alone_needs_no_search_row() {
         let mut query = empty_query();
-        query.selection.selectors = vec![EntitySelector::builder().ids(vec!["urn:a".parse().expect("valid URI")]).build()];
+        query.selection.selectors = vec![ExpandedEntitySelector::builder().ids(vec!["urn:a".parse().expect("valid URI")]).build()];
         assert_eq!(relations(&query).search, Demand::NotJoined);
     }
 
@@ -582,7 +587,7 @@ mod tests {
     #[test]
     fn the_count_of_a_walked_selection_counts_the_walk() {
         let mut query = typed_query();
-        query.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Asc)];
+        query.ordering.terms = vec![term(ExpandedOrderingTarget::CreatedAt, OrderingDirection::Asc)];
         let count = EntityRelations::for_count(&query, &types(), None);
         assert!(matches!(
             count.source,
@@ -611,7 +616,7 @@ mod tests {
     #[test]
     fn a_membership_walk_joins_the_search_row_of_each_member() {
         let mut query = typed_query();
-        query.ordering.terms = vec![term(OrderTarget::Type, OrderDirection::Asc)];
+        query.ordering.terms = vec![term(ExpandedOrderingTarget::Type, OrderingDirection::Asc)];
         let walked = relations(&query).walked(&query);
         assert_eq!(walked.search, Demand::JoinedPerRow);
         assert!(matches!(

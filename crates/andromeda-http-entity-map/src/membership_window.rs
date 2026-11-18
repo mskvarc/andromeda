@@ -13,7 +13,7 @@
 use crate::error::EntityMapResultExt;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, ordering::parameters::OrderingParameters, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, ordering::ordering_parameters::OrderingParameters, page_window::PageWindow};
 use andromeda_ngsi_ld_request::pagination::{
     page_pointers::PagePointers,
     page_request::{CollectionOrder, PageRequest},
@@ -65,7 +65,7 @@ mod tests {
     use crate::membership_window::membership_window;
     use andromeda_http_extraction::pagination_policy::RequestPagination;
     use andromeda_http_response::link_target::PointedRequest;
-    use andromeda_ngsi_ld_query::{ordering::parameters::OrderingParameters, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{ordering::ordering_parameters::OrderingParameters, page_window::PageWindow};
     use andromeda_ngsi_ld_request::pagination::{
         cursor_request::CursorRequest,
         page_context::PageContext,

@@ -7,7 +7,7 @@
 //! registration subscriptions evaluate it in memory; all three read it from the
 //! same table.
 
-use crate::geo::query::GeoQuery;
+use crate::geo::compiled_geo_query::CompiledGeoQuery;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation_reading::RelationReading};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 
@@ -26,7 +26,7 @@ pub enum RegistrationGeometry {
 impl RegistrationGeometry {
     /// The registration geometry `geo` names through its `geoproperty`.
     #[must_use]
-    pub fn of(geo: &GeoQuery) -> RegistrationGeometry {
+    pub fn of(geo: &CompiledGeoQuery) -> RegistrationGeometry {
         let geoproperty = geo.geoproperty.as_str();
         if geoproperty == OBSERVATION_SPACE.as_str() {
             RegistrationGeometry::ObservationSpace
@@ -38,7 +38,7 @@ impl RegistrationGeometry {
     }
 }
 
-impl GeoQuery {
+impl CompiledGeoQuery {
     /// Whether a registration declaring `area` for the geometry
     /// [`RegistrationGeometry::of`] names may hold an Entity this geoquery
     /// matches.
@@ -53,7 +53,7 @@ impl GeoQuery {
 
 #[cfg(test)]
 mod tests {
-    use crate::geo::{query::GeoQuery, registration_area::RegistrationGeometry};
+    use crate::geo::{compiled_geo_query::CompiledGeoQuery, registration_area::RegistrationGeometry};
     use andromeda_ngsi_ld_geometry::{
         geo_rel::GeoRel,
         geometry::Geometry,
@@ -81,12 +81,12 @@ mod tests {
         }))
     }
 
-    fn query(georel: &str, reference: Geometry) -> GeoQuery {
+    fn query(georel: &str, reference: Geometry) -> CompiledGeoQuery {
         query_on(georel, reference, LOCATION)
     }
 
-    fn query_on(georel: &str, reference: Geometry, geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn query_on(georel: &str, reference: Geometry, geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: georel.parse().expect("a valid georel"),
             geometry: reference,
             geoproperty: geoproperty.parse().expect("a valid attribute name"),
@@ -180,7 +180,7 @@ mod tests {
         let reference = square(-3.7, 40.4, 1.0);
         let inside = point(-3.7, 40.4);
         for georel in [GeoRel::Within, GeoRel::Intersects] {
-            let geo = GeoQuery {
+            let geo = CompiledGeoQuery {
                 georel,
                 geometry: reference.clone(),
                 geoproperty: LOCATION.parse().expect("a valid attribute name"),

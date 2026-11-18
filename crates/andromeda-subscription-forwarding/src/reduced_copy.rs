@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{Subscription, SubscriptionType},
     subscription_request::SubscriptionRequest,
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_subscription::deleted_members::{DeletableMember, DeletedMembers};
 

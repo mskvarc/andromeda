@@ -15,12 +15,12 @@ use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_query::{
     entity_filters::EntityFilters,
     filter::{
+        Filter,
         compilation::{AdmittedFilter, FilterOptIns, compile_q_filter},
         compiled_filter::CompiledFilter,
-        expression::Expr,
         language_targeting::LanguageTargeting,
     },
-    geo::compile::compile_geo_query,
+    geo::compilation::compile_geo_query,
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_query_evaluation::entity_filters::entity_filters_admit;
@@ -90,7 +90,7 @@ impl EntityQueryService {
         &self,
         target: &ContextTarget,
         documents: &[(ReceivedState, EntityDocument)],
-        q: Option<&Expr>,
+        q: Option<&Filter>,
     ) -> Result<LinkedStates, EntityError> {
         match q.filter(|expr| expr.contains_linked_hop()) {
             Some(expr) => {
@@ -103,7 +103,7 @@ impl EntityQueryService {
 }
 
 /// Compile the deferred `q`, expanded under the opt-ins `deferred` carries.
-async fn compile_deferred_q(admitted: &AdmittedFilter, deferred: &DeferredSplitFilters, expander: &impl TermExpander) -> Result<Expr, EntityError> {
+async fn compile_deferred_q(admitted: &AdmittedFilter, deferred: &DeferredSplitFilters, expander: &impl TermExpander) -> Result<Filter, EntityError> {
     // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
     // the same `jsonKeys` declaration the local query used, so one
     // request has one expansion of one filter.
@@ -126,7 +126,7 @@ mod tests {
             language_targeting::LanguageTargeting,
             parser::parse,
         },
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
     };
     use andromeda_ngsi_ld_request::{deferred_split_filters::DeferredSplitFilters, error::ParameterError};
     use serde_json::json;

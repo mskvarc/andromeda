@@ -23,7 +23,7 @@
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_geometry::{geometry_member::GeometryMember, geometry_object_type::GeometryObjectType};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use std::borrow::Cow;
 
@@ -185,7 +185,7 @@ mod tests {
     use crate::geometry_selection::GeometrySelection;
     use andromeda_json_literal::piece::JsonPiece;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use serde_json::{Value, json, value::RawValue};
 
     fn selectors(values: &[&str]) -> Vec<DatasetSelector> {

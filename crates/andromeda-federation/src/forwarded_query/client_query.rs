@@ -8,7 +8,12 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery, written_entity_selector::WrittenEntitySelector};
+use andromeda_ngsi_ld_query::{
+    dataset_selector::DatasetSelector,
+    filter::Filter,
+    scope::scope_query::ScopeQuery,
+    written_entity_selector::WrittenEntitySelector,
+};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
@@ -72,12 +77,12 @@ impl ClientQuery<'_> {
             ClientQuery::EntityQuery(params) => params.selectors(),
             ClientQuery::TemporalQuery(params) => params.selectors(),
             ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![WrittenEntitySelector {
-                id: Some(vec![(*id).clone()]),
-                type_: params.entity_type.clone(),
+                ids: Some(vec![(*id).clone()]),
+                type_selection: params.entity_type.clone(),
                 id_pattern: None,
             }]),
             ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![WrittenEntitySelector {
-                id: Some(vec![(*id).clone()]),
+                ids: Some(vec![(*id).clone()]),
                 ..WrittenEntitySelector::default()
             }]),
         }
@@ -107,7 +112,7 @@ impl ClientQuery<'_> {
     /// The `q` filter the client wrote, as written, if the operation forwards
     /// one: a retrieval carries none (Tables 6.5.3.1-1 and 6.19.3.1-1).
     #[must_use]
-    pub const fn q(&self) -> Option<&Expr> {
+    pub const fn q(&self) -> Option<&Filter> {
         match self {
             ClientQuery::EntityQuery(params) => params.q.as_ref(),
             ClientQuery::TemporalQuery(params) => params.q.as_ref(),

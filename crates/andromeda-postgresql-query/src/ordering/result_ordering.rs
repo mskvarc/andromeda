@@ -21,12 +21,13 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     ordering::{
-        compiled::ResultOrdering,
+        compiled_ordering_term::CompiledOrderingTerm,
+        expanded_ordering_target::ExpandedOrderingTarget,
+        result_ordering::ResultOrdering,
         sort_direction::SortDirection,
-        term::{CompiledOrderTerm, OrderTarget},
     },
+    query_error::QueryError,
 };
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
@@ -65,31 +66,31 @@ pub fn sort_keys(
         // attribute it happens to address.
         let reference = distance_reference(term, ordering)?;
         match &term.target {
-            OrderTarget::Id => keys.push(entity_identifier_key(rows.identity_column(Entities::Id), direction, &collation)),
+            ExpandedOrderingTarget::Id => keys.push(entity_identifier_key(rows.identity_column(Entities::Id), direction, &collation)),
             // The interned keys sort by dictionary id, which is meaningless to a
             // client; the IRIs are read back through the dictionary and sorted.
-            OrderTarget::Type => {
+            ExpandedOrderingTarget::Type => {
                 let names = type_names_of(rows.search_column(EntitySearch::EntityTypeNameKeys));
                 keys.push(SortKey::new(collate(names, &collation), nulls_last(direction)));
             }
             // The scope path column is an `ltree[]`, which no client collation
             // applies to. An unscoped entity stores NULL, which is the clause
             // 4.23.2 "Attribute does not exist" and so ranks last.
-            OrderTarget::Scope => keys.push(SortKey::new(rows.search_column(EntitySearch::ScopePaths), nulls_last(direction))),
+            ExpandedOrderingTarget::Scope => keys.push(SortKey::new(rows.search_column(EntitySearch::ScopePaths), nulls_last(direction))),
             // Clause 4.8 `createdAt` and `modifiedAt` are `timestamptz` columns
             // of the identity row that are never null, so they need no `NULLS
             // LAST` and no collation; two entities written in one transaction
             // share them and fall to the `id ASC` tie-break below (clause
             // 5.5.9).
-            OrderTarget::CreatedAt => keys.push(SortKey::new(
+            ExpandedOrderingTarget::CreatedAt => keys.push(SortKey::new(
                 rows.identity_column(Entities::CreatedAt),
                 KeyOrder::new(direction, NullPlacement::Unstated),
             )),
-            OrderTarget::ModifiedAt => keys.push(SortKey::new(
+            ExpandedOrderingTarget::ModifiedAt => keys.push(SortKey::new(
                 rows.identity_column(Entities::ModifiedAt),
                 KeyOrder::new(direction, NullPlacement::Unstated),
             )),
-            OrderTarget::Attribute(path) => {
+            ExpandedOrderingTarget::Attribute(path) => {
                 // Only an attribute is a `GeoProperty`. Clause 4.23.1 sorts by
                 // distance when "Attribute is a GeoProperty"; a path descending
                 // into a sub-attribute or into a member of a compound value
@@ -99,7 +100,7 @@ pub fn sort_keys(
                 let distance = reference
                     .as_deref()
                     .filter(|_| path.is_simple())
-                    .and_then(|reference| geo_order_distance(&path.attr, attribute_names, rows, reference));
+                    .and_then(|reference| geo_order_distance(&path.attribute, attribute_names, rows, reference));
                 let value = AttributeValue::at(position);
                 select.join_lateral(
                     JoinType::LeftJoin,
@@ -168,7 +169,7 @@ const fn nulls_last(direction: SortDirection) -> KeyOrder {
 /// Only `orderFrom` names it (Table 6.4.3.2-1); a geo-query's geometry decides
 /// which entities match, never where distance is measured from. A term that
 /// does not sort by distance needs none.
-fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering) -> Result<Option<Vec<u8>>, RenderError> {
+fn distance_reference(term: &CompiledOrderingTerm, ordering: &ResultOrdering) -> Result<Option<Vec<u8>>, RenderError> {
     if !term.direction.is_distance() {
         return Ok(None);
     }

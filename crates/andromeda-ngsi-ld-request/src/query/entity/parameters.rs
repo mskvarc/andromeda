@@ -26,14 +26,14 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
-    filter::expression::Expr,
-    ordering::parameters::OrderingParameters,
+    filter::Filter,
+    ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
-    projection::grammar::RawProjectionTerm,
-    scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
+    projection::written_projection_term::WrittenProjectionTerm,
+    scope::scope_query::ScopeQuery,
+    type_selection::written_type_selection::WrittenTypeSelection,
     written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
@@ -54,7 +54,7 @@ pub struct EntityQueryParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]
@@ -75,7 +75,7 @@ pub struct EntityQueryParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -94,10 +94,10 @@ pub struct EntityQueryParameters {
     pub local: Option<bool>,
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Typed ordering semantics shared by GET and POST query bindings.
     #[serde(flatten)]
     pub ordering: OrderingParameters,
@@ -148,7 +148,7 @@ pub struct EntityQueryParameters {
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
     /// are contacted during distributed operations. Uses the q-expression grammar.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
 }
 
 query_parameter_set!(
@@ -216,7 +216,7 @@ mod tests {
         query::{entity::operation::EntityQueryOperation, permissive_admission::PERMISSIVE},
     };
     use andromeda_ngsi_ld_model::query::body::Query;
-    use andromeda_ngsi_ld_query::{ordering::term::OrderDirection, projection::exclusivity::ProjectionConflict};
+    use andromeda_ngsi_ld_query::{ordering::ordering_direction::OrderingDirection, projection::exclusivity::ProjectionConflict};
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
         params_from_query!(query, EntityQueryParameters)
@@ -259,8 +259,8 @@ mod tests {
         let p = params_from_query("orderBy=temperature");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
+        pretty_assertions::assert_eq!(order[0].path.attribute.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::Asc);
     }
 
     /// Clause 4.23.3 has no `!` prefix; a descending term is `name;desc`.
@@ -275,8 +275,8 @@ mod tests {
         let p = params_from_query("orderBy=speed,temperature;desc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 2);
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
-        pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::Asc);
+        pretty_assertions::assert_eq!(order[1].direction, OrderingDirection::Desc);
     }
 
     #[test]
@@ -284,8 +284,8 @@ mod tests {
         let p = params_from_query("orderBy=temperature;asc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
+        pretty_assertions::assert_eq!(order[0].path.attribute.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::Asc);
     }
 
     #[test]
@@ -293,8 +293,8 @@ mod tests {
         let p = params_from_query("orderBy=temperature;desc");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "temperature");
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
+        pretty_assertions::assert_eq!(order[0].path.attribute.as_str(), "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::Desc);
     }
 
     #[test]
@@ -302,8 +302,8 @@ mod tests {
         let p = params_from_query("orderBy=location;dist-asc&orderFrom=%5B8%2C40%5D");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "location");
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistAsc);
+        pretty_assertions::assert_eq!(order[0].path.attribute.as_str(), "location");
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::DistAsc);
         assert!(order[0].direction.is_distance());
     }
 
@@ -312,8 +312,8 @@ mod tests {
         let p = params_from_query("orderBy=location;dist-desc&orderFrom=%5B8%2C40%5D");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "location");
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistDesc);
+        pretty_assertions::assert_eq!(order[0].path.attribute.as_str(), "location");
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::DistDesc);
         assert!(order[0].direction.is_distance());
     }
 
@@ -322,9 +322,9 @@ mod tests {
         let p = params_from_query("orderBy=name,age;desc,location;dist-asc&orderFrom=%5B8%2C40%5D");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 3);
-        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
-        pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
-        pretty_assertions::assert_eq!(order[2].direction, OrderDirection::DistAsc);
+        pretty_assertions::assert_eq!(order[0].direction, OrderingDirection::Asc);
+        pretty_assertions::assert_eq!(order[1].direction, OrderingDirection::Desc);
+        pretty_assertions::assert_eq!(order[2].direction, OrderingDirection::DistAsc);
     }
 
     #[test]
@@ -689,10 +689,16 @@ mod tests {
         .expect("valid canonical query");
         let params = EntityQueryParameters::try_from(request).expect("applicable entity query");
         pretty_assertions::assert_eq!(params.entity_selectors.len(), 2);
-        pretty_assertions::assert_eq!(params.entity_selectors[0].id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:A"));
-        pretty_assertions::assert_eq!(params.entity_selectors[0].type_.as_ref().map(ToString::to_string).as_deref(), Some("T1"));
-        pretty_assertions::assert_eq!(params.entity_selectors[1].id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:B"));
-        pretty_assertions::assert_eq!(params.entity_selectors[1].type_.as_ref().map(ToString::to_string).as_deref(), Some("T2"));
+        pretty_assertions::assert_eq!(params.entity_selectors[0].ids.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:A"));
+        pretty_assertions::assert_eq!(
+            params.entity_selectors[0].type_selection.as_ref().map(ToString::to_string).as_deref(),
+            Some("T1")
+        );
+        pretty_assertions::assert_eq!(params.entity_selectors[1].ids.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:B"));
+        pretty_assertions::assert_eq!(
+            params.entity_selectors[1].type_selection.as_ref().map(ToString::to_string).as_deref(),
+            Some("T2")
+        );
         pretty_assertions::assert_eq!(
             params.geo.0.and_then(|geo| geo.geoproperty).as_ref().map(AsRef::<str>::as_ref),
             Some("location")

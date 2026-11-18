@@ -39,7 +39,7 @@ use andromeda_ngsi_ld_lexicon::{
     tenant::TenantName,
     time::instant_serde,
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_vocabulary::{
     compact::properties as compact_properties,
     expanded::{classes as expanded_classes, properties as expanded_properties},

@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     registration::ContextSourceRegistration,
 };
-use andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm;
+use andromeda_ngsi_ld_query::projection::written_projection_term::WrittenProjectionTerm;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde::{
     Serialize,
@@ -71,9 +71,9 @@ struct MemberSelection<'a> {
     /// Whether the clause 4.8 system attributes survive.
     sys_attrs: SysAttrsInclusion,
     /// The clause 4.21 `pick` terms, when the request narrowed the members.
-    pick: Option<&'a [RawProjectionTerm]>,
+    pick: Option<&'a [WrittenProjectionTerm]>,
     /// The clause 4.21 `omit` terms, when the request dropped members.
-    omit: Option<&'a [RawProjectionTerm]>,
+    omit: Option<&'a [WrittenProjectionTerm]>,
     /// The clause 4.15 `lang` preferences, when the request negotiated language.
     language_filter: Option<&'a LanguageFilter>,
 }
@@ -94,7 +94,7 @@ impl MemberSelection<'_> {
         if is_always_retained(name) {
             return true;
         }
-        let named_in = |terms: &[RawProjectionTerm]| terms.iter().any(|term| term.name.as_str() == name);
+        let named_in = |terms: &[WrittenProjectionTerm]| terms.iter().any(|term| term.name.as_str() == name);
         let picked = self.pick.filter(|terms| !terms.is_empty()).is_none_or(named_in);
         let omitted = self.omit.filter(|terms| !terms.is_empty()).is_some_and(named_in);
         picked && !omitted
@@ -125,14 +125,14 @@ impl<'a> RegistrationRenderer<'a> {
 
     /// Set the clause 4.21 `pick` terms the response is narrowed to.
     #[must_use]
-    pub const fn with_pick(mut self, pick: Option<&'a [RawProjectionTerm]>) -> Self {
+    pub const fn with_pick(mut self, pick: Option<&'a [WrittenProjectionTerm]>) -> Self {
         self.selection.pick = pick;
         self
     }
 
     /// Set the clause 4.21 `omit` terms the response drops.
     #[must_use]
-    pub const fn with_omit(mut self, omit: Option<&'a [RawProjectionTerm]>) -> Self {
+    pub const fn with_omit(mut self, omit: Option<&'a [WrittenProjectionTerm]>) -> Self {
         self.selection.omit = omit;
         self
     }
@@ -203,7 +203,7 @@ mod tests {
     use crate::registration::RegistrationRenderer;
     use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
+    use andromeda_ngsi_ld_query::projection::written_projection_list::WrittenProjectionList;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn pick_narrows_to_the_named_members_and_keeps_id_and_type() {
         let registration = registration();
-        let pick = Vec::from("endpoint".parse::<ProjectionList>().expect("valid pick"));
+        let pick = Vec::from("endpoint".parse::<WrittenProjectionList>().expect("valid pick"));
         let rendered = document_under(RegistrationRenderer::new(&registration).with_pick(Some(&pick)));
         assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceRegistration:1");
         assert_eq!(rendered["type"], "ContextSourceRegistration");
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn omit_drops_the_named_members_but_never_id_or_type() {
         let registration = registration();
-        let omit = Vec::from("endpoint,type".parse::<ProjectionList>().expect("valid omit"));
+        let omit = Vec::from("endpoint,type".parse::<WrittenProjectionList>().expect("valid omit"));
         let rendered = document_under(RegistrationRenderer::new(&registration).with_omit(Some(&omit)));
         assert!(rendered.get("endpoint").is_none(), "omitted member survived: {rendered}");
         assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceRegistration:1");
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn an_empty_projection_leaves_every_member() {
         let registration = registration();
-        let pick = "".parse::<ProjectionList>().map_or_default(Vec::from);
+        let pick = "".parse::<WrittenProjectionList>().map_or_default(Vec::from);
         let rendered = document_under(RegistrationRenderer::new(&registration).with_pick(Some(&pick)));
         assert_eq!(rendered["endpoint"], "http://source:1026/");
         assert_eq!(rendered["information"], json!([{"entities": [{"type": "Vehicle"}]}]));

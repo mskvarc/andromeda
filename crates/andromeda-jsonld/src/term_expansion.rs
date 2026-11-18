@@ -10,8 +10,8 @@ use crate::{
     error::JsonLdError,
 };
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
-    term_expander::{TermExpander, TermExpansionFailure},
+    query_error::QueryError,
+    term_expander::{TermExpander, TermExpansionError},
 };
 use iri_rs::IriBuf;
 use std::future::Future;
@@ -66,13 +66,13 @@ fn expansion_failed(term: &str, error: &JsonLdError) -> QueryError {
 }
 
 /// The class of expansion failure a JSON-LD failure is.
-const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
+const fn expansion_failure(error: &JsonLdError) -> TermExpansionError {
     match error {
-        JsonLdError::TypeNotExpanded | JsonLdError::TermNotExpanded => TermExpansionFailure::NotExpanded,
-        JsonLdError::TermIsKeyword => TermExpansionFailure::Keyword,
-        JsonLdError::ExpandedTermNotIri(_) => TermExpansionFailure::NotAnIri,
+        JsonLdError::TypeNotExpanded | JsonLdError::TermNotExpanded => TermExpansionError::NotExpanded,
+        JsonLdError::TermIsKeyword => TermExpansionError::Keyword,
+        JsonLdError::ExpandedTermNotIri(_) => TermExpansionError::NotAnIri,
         JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {
-            TermExpansionFailure::ContextUnavailable
+            TermExpansionError::ContextUnavailable
         }
         JsonLdError::ProtectedContextPreload { .. }
         | JsonLdError::ContextInvalid { .. }
@@ -91,7 +91,7 @@ const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
         | JsonLdError::ContextGraph(_)
         | JsonLdError::Json(_)
         | JsonLdError::ContextText(_)
-        | JsonLdError::ProcessorText(_) => TermExpansionFailure::ContextUnprocessable,
+        | JsonLdError::ProcessorText(_) => TermExpansionError::ContextUnprocessable,
     }
 }
 
@@ -103,7 +103,7 @@ mod tests {
         error::JsonLdError,
         term_expansion::{ContextualExpander, expansion_failure},
     };
-    use andromeda_ngsi_ld_query::term_expander::{TermExpander, TermExpansionFailure};
+    use andromeda_ngsi_ld_query::term_expander::{TermExpander, TermExpansionError};
     use iri_rs::IriBuf;
 
     #[tokio::test]
@@ -122,12 +122,12 @@ mod tests {
 
     #[test]
     fn a_json_ld_failure_is_classified_by_what_went_wrong() {
-        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TermNotExpanded), TermExpansionFailure::NotExpanded);
-        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TypeNotExpanded), TermExpansionFailure::NotExpanded);
+        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TermNotExpanded), TermExpansionError::NotExpanded);
+        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TypeNotExpanded), TermExpansionError::NotExpanded);
         let not_an_iri = IriBuf::new("not an iri".to_owned()).expect_err("no scheme");
         pretty_assertions::assert_eq!(
             expansion_failure(&JsonLdError::ContextUrlNotIri(not_an_iri)),
-            TermExpansionFailure::ContextUnprocessable
+            TermExpansionError::ContextUnprocessable
         );
     }
 }

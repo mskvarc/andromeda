@@ -83,8 +83,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
             instance_selection::InstanceSelection,
@@ -97,7 +97,7 @@ mod tests {
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 
-    fn compiled(q: &str, geo: Option<GeoQuery>, scope: Option<&str>) -> CompiledTemporalQuery {
+    fn compiled(q: &str, geo: Option<CompiledGeoQuery>, scope: Option<&str>) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn one_column_per_leaf_in_leaf_order() {
-        let geo = GeoQuery {
+        let geo = CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
@@ -160,7 +160,7 @@ mod tests {
     /// alone, the Scope in effect being the latest across every part.
     #[test]
     fn a_split_leaf_reads_inside_the_window_only() {
-        let geo = GeoQuery {
+        let geo = CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),

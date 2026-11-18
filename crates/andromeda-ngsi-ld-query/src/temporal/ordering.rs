@@ -1,13 +1,15 @@
 //! How a temporal query orders the entities it matched (clause 5.7.4).
 
 use crate::{
-    error::QueryError,
     ordering::{
-        collation::IcuCollation,
-        parameters::OrderingParameters,
+        icu_collation::IcuCollation,
+        ordering_direction::OrderingDirection,
+        ordering_parameters::OrderingParameters,
         sort_direction::SortDirection,
-        term::{OrderDirection, OrderTerm, RawOrderTarget},
+        written_ordering_target::WrittenOrderingTarget,
+        written_ordering_term::WrittenOrderingTerm,
     },
+    query_error::QueryError,
 };
 use typed_builder::TypedBuilder;
 
@@ -22,7 +24,7 @@ use typed_builder::TypedBuilder;
 /// expand and no reference geometry, which is what separates this from the
 /// entity query's [`ResultOrdering`].
 ///
-/// [`ResultOrdering`]: crate::ordering::compiled::ResultOrdering
+/// [`ResultOrdering`]: crate::ordering::result_ordering::ResultOrdering
 #[derive(Debug, Clone, PartialEq, Eq, TypedBuilder)]
 pub struct TemporalEntityOrdering {
     /// Which way the entity identifiers run.
@@ -71,25 +73,29 @@ impl TemporalEntityOrdering {
 }
 
 /// Reject an ordering term clause 5.7.4.3 does not admit on a temporal query.
-fn check_term(term: &OrderTerm) -> Result<(), QueryError> {
-    match RawOrderTarget::classify(&term.attr) {
-        RawOrderTarget::Id => {}
-        RawOrderTarget::Type | RawOrderTarget::Scope | RawOrderTarget::CreatedAt | RawOrderTarget::ModifiedAt | RawOrderTarget::Attribute(_) => {
+fn check_term(term: &WrittenOrderingTerm) -> Result<(), QueryError> {
+    match WrittenOrderingTarget::classify(&term.path) {
+        WrittenOrderingTarget::Id => {}
+        WrittenOrderingTarget::Type
+        | WrittenOrderingTarget::Scope
+        | WrittenOrderingTarget::CreatedAt
+        | WrittenOrderingTarget::ModifiedAt
+        | WrittenOrderingTarget::Attribute(_) => {
             // clone: the ordering parameters are borrowed and the refusal outlives them
-            return Err(QueryError::TemporalOrderingMember(Box::new(term.attr.clone())));
+            return Err(QueryError::TemporalOrderingMember(Box::new(term.path.clone())));
         }
     }
     match term.direction {
-        OrderDirection::Asc | OrderDirection::Desc => Ok(()),
-        direction @ (OrderDirection::DistAsc | OrderDirection::DistDesc) => Err(QueryError::TemporalOrderingDirection(direction)),
+        OrderingDirection::Asc | OrderingDirection::Desc => Ok(()),
+        direction @ (OrderingDirection::DistAsc | OrderingDirection::DistDesc) => Err(QueryError::TemporalOrderingDirection(direction)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
-        ordering::{collation::IcuCollation, parameters::OrderingParameters, sort_direction::SortDirection},
+        ordering::{icu_collation::IcuCollation, ordering_parameters::OrderingParameters, sort_direction::SortDirection},
+        query_error::QueryError,
         temporal::ordering::TemporalEntityOrdering,
     };
     use pretty_assertions::assert_eq;

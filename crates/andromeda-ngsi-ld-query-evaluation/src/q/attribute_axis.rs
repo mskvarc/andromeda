@@ -241,12 +241,13 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::{
+        attribute_path::AttributePath,
         language_matching::LanguageMatching,
-        path::{AttrPath, QueryPath},
-        predicate::Predicate,
+        parser::value_path::parse_attribute_path,
+        query_term::QueryTerm,
         reading::{family_reading::TargetOrigin, term_reading::TermReading},
-        trailing_path::{MemberPath, TrailingPath},
-        value_path::parse_attribute_path,
+        trailing_group::{MemberPath, TrailingGroup},
+        value_path::ValuePath,
     };
     use serde_json::{Value, json};
 
@@ -256,19 +257,19 @@ mod tests {
     }
 
     /// The target values a path resolves to, with their origins.
-    fn targets_along(entity: &Value, path: &AttrPath) -> Vec<(Value, TargetOrigin)> {
+    fn targets_along(entity: &Value, path: &ValuePath) -> Vec<(Value, TargetOrigin)> {
         targets_under(entity, path, LanguageMatching::TagEquality)
     }
 
     /// The reading of the existence term over a local path, its target
     /// language selecting keys by `matching`.
-    fn term_along(path: &AttrPath, matching: LanguageMatching) -> TermReading {
-        TermReading::of(&Predicate::Exists(QueryPath::Local(path.clone())), matching)
+    fn term_along(path: &ValuePath, matching: LanguageMatching) -> TermReading {
+        TermReading::of(&QueryTerm::Exists(AttributePath::Local(path.clone())), matching)
     }
 
     /// The target values a path resolves to under `matching`, with their
     /// origins.
-    fn targets_under(entity: &Value, path: &AttrPath, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
+    fn targets_under(entity: &Value, path: &ValuePath, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
         let entity = FixtureEntity::from_expanded(entity);
         let mut targets = Vec::new();
         any_target(&entity, &term_along(path, matching), NoLinkedEntities, &mut |target| {
@@ -280,9 +281,9 @@ mod tests {
 
     /// A path whose trailing group is the one member `member`, as the client
     /// spelled it.
-    fn bracketed(attribute: &str, member: &str) -> AttrPath {
-        let mut path = AttrPath::simple(name(attribute));
-        path.trailing = Some(TrailingPath::Members(MemberPath::new(vec![name(member)])));
+    fn bracketed(attribute: &str, member: &str) -> ValuePath {
+        let mut path = ValuePath::simple(name(attribute));
+        path.trailing = Some(TrailingGroup::Members(MemberPath::new(vec![name(member)])));
         path
     }
 
@@ -323,16 +324,16 @@ mod tests {
 
     /// The target values one bare attribute path resolves to.
     fn targets_of(entity: &Value, attribute: &str) -> Vec<Value> {
-        targets_along(entity, &AttrPath::simple(name(attribute)))
+        targets_along(entity, &ValuePath::simple(name(attribute)))
             .into_iter()
             .map(|(value, _)| value)
             .collect()
     }
 
     /// A path through the given sub-attribute segments.
-    fn through(attribute: &str, sub_attrs: &[&str]) -> AttrPath {
-        let mut path = AttrPath::simple(name(attribute));
-        path.sub_attrs = sub_attrs.iter().map(|segment| name(segment)).collect();
+    fn through(attribute: &str, sub_attrs: &[&str]) -> ValuePath {
+        let mut path = ValuePath::simple(name(attribute));
+        path.sub_attributes = sub_attrs.iter().map(|segment| name(segment)).collect();
         path
     }
 
@@ -494,13 +495,13 @@ mod tests {
             "https://example.com/myJson": [{"https://uri.etsi.org/ngsi-ld/hasJSON": [{"@value": {"a": {"b": [1, 2]}}, "@type": "@json"}]}]
         });
         let addressed = vec![name("https://example.com/a"), name("https://example.com/b")];
-        let mut path = AttrPath::simple(name("https://example.com/myJson"));
-        path.trailing = Some(TrailingPath::Members(MemberPath {
+        let mut path = ValuePath::simple(name("https://example.com/myJson"));
+        path.trailing = Some(TrailingGroup::Members(MemberPath {
             addressed: addressed.clone(),
             written: vec![name("a"), name("b")],
         }));
         pretty_assertions::assert_eq!(targets_along(&entity, &path), vec![(json!([1, 2]), TargetOrigin::AttributeValue)]);
-        path.trailing = Some(TrailingPath::Members(MemberPath {
+        path.trailing = Some(TrailingGroup::Members(MemberPath {
             addressed,
             written: vec![name("a"), name("b"), name("c")],
         }));

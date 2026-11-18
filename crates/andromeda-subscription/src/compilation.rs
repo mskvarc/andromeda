@@ -17,9 +17,10 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     projection::{
-        compiled::Projection,
-        grammar::{ProjectionList, RawProjectionTerm},
-        term::ProjectionTerm,
+        expanded_projection::ExpandedProjection,
+        expanded_projection_term::ExpandedProjectionTerm,
+        written_projection_list::WrittenProjectionList,
+        written_projection_term::WrittenProjectionTerm,
     },
     temporal::window::TimeInterval,
 };
@@ -159,8 +160,8 @@ pub fn compile_temporal_q(temporal_q: &TemporalQuery, sub_id: &str) -> Option<Co
 /// representation rather than attributes and are kept as written. The terms of
 /// every string of one member form one list.
 #[must_use]
-pub fn notification_projection(notification: &NotificationParams, sub_id: &str) -> Projection {
-    Projection::builder()
+pub fn notification_projection(notification: &NotificationParams, sub_id: &str) -> ExpandedProjection {
+    ExpandedProjection::builder()
         .pick(projection_terms(notification.pick.as_deref().unwrap_or_default(), sub_id))
         .omit(projection_terms(notification.omit.as_deref().unwrap_or_default(), sub_id))
         .build()
@@ -183,18 +184,18 @@ pub fn notification_attributes(notification: &NotificationParams, sub_id: &str) 
 }
 
 /// The compiled terms of one stored `pick` or `omit` member.
-fn projection_terms(lists: &[ProjectionList], sub_id: &str) -> Vec<ProjectionTerm> {
+fn projection_terms(lists: &[WrittenProjectionList], sub_id: &str) -> Vec<ExpandedProjectionTerm> {
     lists.iter().flat_map(|list| compiled_terms(list, sub_id)).collect()
 }
 
 /// The compiled form of stored terms, recursing into each attribute term's
 /// clause 4.21 linked-entity sub-projection.
-fn compiled_terms(terms: &[RawProjectionTerm], sub_id: &str) -> Vec<ProjectionTerm> {
+fn compiled_terms(terms: &[WrittenProjectionTerm], sub_id: &str) -> Vec<ExpandedProjectionTerm> {
     terms
         .iter()
-        .filter_map(|term| match ProjectionTerm::keyword(term.name.as_str()) {
+        .filter_map(|term| match ExpandedProjectionTerm::keyword(term.name.as_str()) {
             Some(keyword) => Some(keyword),
-            None => expanded_attribute(term.name.as_str(), sub_id).map(|iri| ProjectionTerm::Attribute {
+            None => expanded_attribute(term.name.as_str(), sub_id).map(|iri| ExpandedProjectionTerm::Attribute {
                 iri,
                 linked: compiled_terms(&term.linked, sub_id),
             }),
@@ -222,7 +223,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{query::temporal_query::TemporalQuery, subscription::NotificationParams};
     use andromeda_ngsi_ld_query::{
-        projection::{grammar::ProjectionList, term::ProjectionTerm},
+        projection::{expanded_projection_term::ExpandedProjectionTerm, written_projection_list::WrittenProjectionList},
         temporal::window::TimeInterval,
     };
     use iri_rs::IriBuf;
@@ -233,12 +234,12 @@ mod tests {
 
     /// The stored tree of one clause 4.21 string per element.
     fn stored(text: &[&str]) -> serde_json::Value {
-        let lists: Vec<ProjectionList> = text.iter().map(|raw| raw.parse().expect("valid projection list")).collect();
+        let lists: Vec<WrittenProjectionList> = text.iter().map(|raw| raw.parse().expect("valid projection list")).collect();
         serde_json::to_value(lists).expect("serializes")
     }
 
-    fn attribute(iri: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn attribute(iri: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: IriBuf::new(iri.to_owned()).expect("valid IRI"),
             linked,
         }
@@ -256,8 +257,11 @@ mod tests {
 
         let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
 
-        pretty_assertions::assert_eq!(projection.pick, vec![ProjectionTerm::Id, attribute("https://example.com/speed", Vec::new())]);
-        pretty_assertions::assert_eq!(projection.omit, vec![ProjectionTerm::Scope, ProjectionTerm::Type]);
+        pretty_assertions::assert_eq!(
+            projection.pick,
+            vec![ExpandedProjectionTerm::Id, attribute("https://example.com/speed", Vec::new())]
+        );
+        pretty_assertions::assert_eq!(projection.omit, vec![ExpandedProjectionTerm::Scope, ExpandedProjectionTerm::Type]);
     }
 
     /// Clause 4.21: a nested group compiles to the linked sub-projection of
@@ -276,7 +280,7 @@ mod tests {
             vec![attribute(
                 "https://example.com/owner",
                 vec![
-                    ProjectionTerm::Id,
+                    ExpandedProjectionTerm::Id,
                     attribute("https://example.com/employer", vec![attribute("https://example.com/size", Vec::new())])
                 ]
             )]

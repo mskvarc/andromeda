@@ -216,7 +216,7 @@ mod tests {
     use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_model::received::{ReceivedElement, ReceivedEntities};
-    use andromeda_ngsi_ld_query::projection::compiled::Projection;
+    use andromeda_ngsi_ld_query::projection::expanded_projection::ExpandedProjection;
     use andromeda_ngsi_ld_render::{notification_entity::NotificationEntity, structural_projection::StructuralProjection};
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use serde_json::json;
@@ -307,7 +307,7 @@ mod tests {
             .document_entity(&received.document)
             .await
             .expect("the entity compacts");
-        let projection = Projection::default();
+        let projection = ExpandedProjection::default();
         let written = serde_json::to_value(NotificationEntity::relayed(
             &respelled,
             ResponseFormat::Normalized,

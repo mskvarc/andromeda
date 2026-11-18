@@ -11,7 +11,7 @@ use crate::{
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime};
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_representation::{compact_node::CompactNode, value_budget::ValueBudget};
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};

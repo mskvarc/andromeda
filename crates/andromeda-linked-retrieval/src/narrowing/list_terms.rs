@@ -4,8 +4,8 @@
 use crate::keyword::Keyword;
 use andromeda_ngsi_ld_query::projection::{
     attribute_iri_index::AttributeIriIndex,
+    expanded_projection_term::ExpandedProjectionTerm,
     matching::{matching_position, matching_term},
-    term::ProjectionTerm,
 };
 use iri_rs::IriBuf;
 
@@ -13,16 +13,16 @@ use iri_rs::IriBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListTerms<'p> {
     /// Only the named members are kept.
-    Pick(&'p [ProjectionTerm]),
+    Pick(&'p [ExpandedProjectionTerm]),
     /// The named members are removed.
-    Omit(&'p [ProjectionTerm]),
+    Omit(&'p [ExpandedProjectionTerm]),
     /// `pick` and `omit` together: the picked members minus the omitted ones
     /// (clause 4.21 forbids neither beside the other).
     PickAndOmit {
         /// The members kept.
-        pick: &'p [ProjectionTerm],
+        pick: &'p [ExpandedProjectionTerm],
         /// The members then removed.
-        omit: &'p [ProjectionTerm],
+        omit: &'p [ExpandedProjectionTerm],
     },
     /// `attrs` or `notification.attributes`: only the named Attributes are
     /// kept, with `id` and `type`.
@@ -66,9 +66,9 @@ impl<'p> ListTerms<'p> {
     /// Entity Term `key{N}`, as terms of the same kind.
     #[must_use]
     pub fn group(&self, key: &str, index: &AttributeIriIndex) -> Option<ListTerms<'p>> {
-        let group = |terms: &'p [ProjectionTerm]| {
+        let group = |terms: &'p [ExpandedProjectionTerm]| {
             matching_term(key, terms, index)
-                .map(ProjectionTerm::linked_terms)
+                .map(ExpandedProjectionTerm::linked_terms)
                 .filter(|group| !group.is_empty())
         };
         match *self {
@@ -114,7 +114,7 @@ impl<'p> ListTerms<'p> {
 mod tests {
     use crate::{keyword::Keyword, narrowing::list_terms::ListTerms};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
 
@@ -130,15 +130,15 @@ mod tests {
         index
     }
 
-    fn leaf(key: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn leaf(key: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(key),
             linked: Vec::new(),
         }
     }
 
-    fn nested(key: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute { iri: iri(key), linked }
+    fn nested(key: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute { iri: iri(key), linked }
     }
 
     #[test]
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn only_a_linked_entity_term_makes_a_list_hold_a_group() {
         assert!(!ListTerms::Pick(&[leaf("name"), leaf("owner")]).holds_a_group());
-        assert!(ListTerms::Omit(&[ProjectionTerm::Type, nested("owner", vec![leaf("name")])]).holds_a_group());
+        assert!(ListTerms::Omit(&[ExpandedProjectionTerm::Type, nested("owner", vec![leaf("name")])]).holds_a_group());
         assert!(!ListTerms::Attributes(&[iri("owner")]).holds_a_group());
     }
 
@@ -184,16 +184,16 @@ mod tests {
     #[test]
     fn the_keyword_rule_follows_the_terms() {
         assert!(!ListTerms::Pick(&[leaf("name")]).keeps_keyword(Keyword::Id));
-        assert!(ListTerms::Pick(&[ProjectionTerm::Id, leaf("name")]).keeps_keyword(Keyword::Id));
-        assert!(!ListTerms::Omit(&[ProjectionTerm::Id]).keeps_keyword(Keyword::Id));
+        assert!(ListTerms::Pick(&[ExpandedProjectionTerm::Id, leaf("name")]).keeps_keyword(Keyword::Id));
+        assert!(!ListTerms::Omit(&[ExpandedProjectionTerm::Id]).keeps_keyword(Keyword::Id));
     }
 
     /// Clause 4.21: `pick` with `omit` keeps the picked members minus the
     /// omitted ones, keywords included.
     #[test]
     fn pick_and_omit_together_keep_the_picked_members_minus_the_omitted_ones() {
-        let pick = [ProjectionTerm::Id, ProjectionTerm::Type, leaf("name"), leaf("email")];
-        let omit = [ProjectionTerm::Type, leaf("email")];
+        let pick = [ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, leaf("name"), leaf("email")];
+        let omit = [ExpandedProjectionTerm::Type, leaf("email")];
         let terms = ListTerms::PickAndOmit { pick: &pick, omit: &omit };
         assert!(terms.returns_attribute("name", &index()));
         assert!(!terms.returns_attribute("email", &index()));
@@ -222,7 +222,7 @@ mod tests {
     /// Only a list naming what is kept orders its attributes.
     #[test]
     fn the_pick_position_follows_the_list_naming_what_is_kept() {
-        let pick = [ProjectionTerm::Id, nested("owner", vec![leaf("name")]), leaf("employer")];
+        let pick = [ExpandedProjectionTerm::Id, nested("owner", vec![leaf("name")]), leaf("employer")];
         let omit = [leaf("owner")];
         assert_eq!(ListTerms::Pick(&pick).pick_position("employer", &index()), Some(2));
         assert_eq!(ListTerms::PickAndOmit { pick: &pick, omit: &omit }.pick_position("owner", &index()), Some(1));

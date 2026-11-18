@@ -25,7 +25,7 @@
 
 use crate::{error::RenderError, stored_geometry::StoredGeometry};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal, true_literal},
     postgis::{exact_dwithin, st_dimension, st_distance, uncached_distance, uncached_dwithin},

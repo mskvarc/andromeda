@@ -16,8 +16,9 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     filter::compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
     projection::{
-        grammar::{ProjectionList, RawProjectionTerm},
-        term::ProjectionTerm,
+        expanded_projection_term::ExpandedProjectionTerm,
+        written_projection_list::WrittenProjectionList,
+        written_projection_term::WrittenProjectionTerm,
     },
 };
 use chrono::Utc;
@@ -54,23 +55,23 @@ fn compacted_selector(compactor: &NameCompaction, mut selector: EntitySelector) 
 
 /// One stored term with every attribute name compacted, at every nesting
 /// level; the clause 4.21 keywords name no attribute and stay as written.
-fn compacted_term(compactor: &NameCompaction, term: RawProjectionTerm) -> RawProjectionTerm {
-    let name = match ProjectionTerm::keyword(term.name.as_str()) {
+fn compacted_term(compactor: &NameCompaction, term: WrittenProjectionTerm) -> WrittenProjectionTerm {
+    let name = match ExpandedProjectionTerm::keyword(term.name.as_str()) {
         Some(_) => term.name,
         None => compactor.compact_attr_iri(term.name.as_str()).parse().unwrap_or(term.name),
     };
-    RawProjectionTerm {
+    WrittenProjectionTerm {
         name,
         linked: term.linked.into_iter().map(|linked| compacted_term(compactor, linked)).collect(),
     }
 }
 
 /// The stored projection lists of `pick` or `omit` in the reader's terms.
-fn compacted_projection(compactor: &NameCompaction, lists: Vec<ProjectionList>) -> Vec<ProjectionList> {
+fn compacted_projection(compactor: &NameCompaction, lists: Vec<WrittenProjectionList>) -> Vec<WrittenProjectionList> {
     lists
         .into_iter()
         .map(|list| {
-            Vec::<RawProjectionTerm>::from(list)
+            Vec::<WrittenProjectionTerm>::from(list)
                 .into_iter()
                 .map(|term| compacted_term(compactor, term))
                 .collect::<Vec<_>>()

@@ -19,7 +19,7 @@
 //! `omit=R{N}` keeps `R` and gives the target `omit N`.
 
 use crate::{keyword::Keyword, narrowing::list_terms::ListTerms};
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection::ExpandedProjection};
 use iri_rs::IriBuf;
 
 /// The clause 4.21 list one entity of a joined payload is narrowed by.
@@ -40,9 +40,9 @@ impl<'p> ListInForce<'p> {
     /// or else its `attrs`, which the request validation keeps from being
     /// combined.
     #[must_use]
-    pub fn of(projection: Option<&'p Projection>, attrs: &'p [IriBuf]) -> ListInForce<'p> {
+    pub fn of(projection: Option<&'p ExpandedProjection>, attrs: &'p [IriBuf]) -> ListInForce<'p> {
         let terms = match projection {
-            Some(Projection { pick, omit }) if !pick.is_empty() && !omit.is_empty() => ListTerms::PickAndOmit { pick, omit },
+            Some(ExpandedProjection { pick, omit }) if !pick.is_empty() && !omit.is_empty() => ListTerms::PickAndOmit { pick, omit },
             Some(projection) if !projection.pick.is_empty() => ListTerms::Pick(&projection.pick),
             Some(projection) if !projection.omit.is_empty() => ListTerms::Omit(&projection.omit),
             Some(_) | None if !attrs.is_empty() => ListTerms::Attributes(attrs),
@@ -107,7 +107,11 @@ mod tests {
         narrowing::{list::ListInForce, list_terms::ListTerms},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{
+        attribute_iri_index::AttributeIriIndex,
+        expanded_projection::ExpandedProjection,
+        expanded_projection_term::ExpandedProjectionTerm,
+    };
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
 
@@ -123,20 +127,20 @@ mod tests {
         index
     }
 
-    fn leaf(key: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn leaf(key: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(key),
             linked: Vec::new(),
         }
     }
 
-    fn nested(key: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute { iri: iri(key), linked }
+    fn nested(key: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute { iri: iri(key), linked }
     }
 
     #[test]
     fn a_request_list_without_a_linked_entity_term_reaches_the_payload() {
-        let pick = Projection::builder().pick(vec![leaf("name"), leaf("owner")]).build();
+        let pick = ExpandedProjection::builder().pick(vec![leaf("name"), leaf("owner")]).build();
         assert_eq!(ListInForce::of(Some(&pick), &[]), ListInForce::Payload(ListTerms::Pick(&pick.pick)));
         let attrs = [iri("name")];
         assert_eq!(ListInForce::of(None, &attrs), ListInForce::Payload(ListTerms::Attributes(&attrs)));
@@ -144,19 +148,22 @@ mod tests {
 
     #[test]
     fn a_request_list_holding_a_linked_entity_term_addresses_its_roots() {
-        let pick = Projection::builder()
-            .pick(vec![ProjectionTerm::Id, nested("owner", vec![leaf("name")])])
+        let pick = ExpandedProjection::builder()
+            .pick(vec![ExpandedProjectionTerm::Id, nested("owner", vec![leaf("name")])])
             .build();
         assert_eq!(ListInForce::of(Some(&pick), &[]), ListInForce::Addressed(ListTerms::Pick(&pick.pick)));
-        let omit = Projection::builder()
-            .omit(vec![ProjectionTerm::Type, nested("owner", vec![leaf("name")])])
+        let omit = ExpandedProjection::builder()
+            .omit(vec![ExpandedProjectionTerm::Type, nested("owner", vec![leaf("name")])])
             .build();
         assert_eq!(ListInForce::of(Some(&omit), &[]), ListInForce::Addressed(ListTerms::Omit(&omit.omit)));
     }
 
     #[test]
     fn a_request_naming_pick_and_omit_narrows_by_both() {
-        let projection = Projection::builder().pick(vec![leaf("name"), leaf("email")]).omit(vec![leaf("email")]).build();
+        let projection = ExpandedProjection::builder()
+            .pick(vec![leaf("name"), leaf("email")])
+            .omit(vec![leaf("email")])
+            .build();
         assert_eq!(
             ListInForce::of(Some(&projection), &[]),
             ListInForce::Payload(ListTerms::PickAndOmit {
@@ -168,14 +175,14 @@ mod tests {
 
     #[test]
     fn a_request_states_its_projection_before_its_attrs() {
-        let projection = Projection::builder().omit(vec![leaf("email")]).build();
+        let projection = ExpandedProjection::builder().omit(vec![leaf("email")]).build();
         let attrs = [iri("name")];
         assert_eq!(
             ListInForce::of(Some(&projection), &attrs),
             ListInForce::Payload(ListTerms::Omit(&projection.omit))
         );
         assert_eq!(
-            ListInForce::of(Some(&Projection::default()), &attrs),
+            ListInForce::of(Some(&ExpandedProjection::default()), &attrs),
             ListInForce::Payload(ListTerms::Attributes(&attrs))
         );
     }
@@ -215,7 +222,7 @@ mod tests {
             ListInForce::Addressed(ListTerms::Pick(&pick)).through("manager", &index()),
             ListInForce::Unrestricted
         );
-        let omit = [ProjectionTerm::Type, nested("owner", vec![leaf("name")])];
+        let omit = [ExpandedProjectionTerm::Type, nested("owner", vec![leaf("name")])];
         assert_eq!(
             ListInForce::Addressed(ListTerms::Omit(&omit)).through("manager", &index()),
             ListInForce::Unrestricted
@@ -248,7 +255,7 @@ mod tests {
     #[test]
     fn the_keyword_rule_follows_the_group() {
         let without = [nested("owner", vec![leaf("name")])];
-        let with = [nested("owner", vec![ProjectionTerm::Id, leaf("name")])];
+        let with = [nested("owner", vec![ExpandedProjectionTerm::Id, leaf("name")])];
         assert!(
             !ListInForce::Addressed(ListTerms::Pick(&without))
                 .through("owner", &index())

@@ -7,7 +7,7 @@
 //! cannot call it: the compile entry takes the decision as this trait, and
 //! every pipeline hands it the engine's implementation.
 
-use crate::filter::expression::Expr;
+use crate::filter::Filter;
 
 /// Admits or refuses the Linked Entity hops of one `q` filter for the
 /// operation a pipeline runs.
@@ -24,5 +24,5 @@ pub trait FilterHopAdmission: Sync {
     ///
     /// Returns the [`FilterHopAdmission::Refusal`] of a hop the operation does
     /// not admit.
-    fn admit_hops(&self, filter: &Expr) -> Result<(), Self::Refusal>;
+    fn admit_hops(&self, filter: &Filter) -> Result<(), Self::Refusal>;
 }

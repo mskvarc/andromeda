@@ -57,7 +57,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+    geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
     standing_instant::StandingInstant,
 };
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
@@ -89,7 +89,7 @@ const MATCHED_ALIAS: &str = "geo_matched";
 ///
 /// Returns [`RenderError`] exactly as [`restriction`] does.
 pub fn any_location_instance(
-    geo: &GeoQuery,
+    geo: &CompiledGeoQuery,
     rows: &EntityRowRefs,
     default_location: &DefaultLocationNarrowing,
     location_key: Option<AttributeNameKey>,
@@ -114,7 +114,7 @@ pub fn any_location_instance(
 ///
 /// Returns [`RenderError`] exactly as [`restriction`] does.
 pub fn location_matches(
-    geo: &GeoQuery,
+    geo: &CompiledGeoQuery,
     rows: &EntityRowRefs,
     default_location: &DefaultLocationNarrowing,
     location_key: Option<AttributeNameKey>,
@@ -134,7 +134,7 @@ pub fn location_matches(
 /// # Errors
 ///
 /// Returns [`RenderError`] exactly as [`restriction`] does.
-pub fn location_probe(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Option<AttributeNameKey>) -> Result<Condition, RenderError> {
+pub fn location_probe(geo: &CompiledGeoQuery, rows: &EntityRowRefs, location_key: Option<AttributeNameKey>) -> Result<Condition, RenderError> {
     let hoisted = default_instance_probe(geo, rows)?;
     let named = location_key.map(|key| dataset_instance_probe(geo, rows, key)).transpose()?;
     Ok(Condition::any().add(SeaExpr::exists(hoisted)).add_option(named.map(SeaExpr::exists)))
@@ -153,7 +153,11 @@ fn matched_in_key_order(matching: SelectStatement) -> SelectStatement {
 
 /// The entities whose hoisted default instance meets `geo`, or `None` when an
 /// index already established that none does.
-fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: &DefaultLocationNarrowing) -> Result<Option<SelectStatement>, RenderError> {
+fn default_instance_arm(
+    geo: &CompiledGeoQuery,
+    rows: &EntityRowRefs,
+    default_location: &DefaultLocationNarrowing,
+) -> Result<Option<SelectStatement>, RenderError> {
     let search = Alias::new(DEFAULT_ALIAS);
     let mut arm = Query::select();
     let indexing = match default_location {
@@ -185,7 +189,7 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
 
 /// `SELECT 1` when the hoisted default instance of the entity `rows` names
 /// meets `geo`, read by its key.
-fn default_instance_probe(geo: &GeoQuery, rows: &EntityRowRefs) -> Result<SelectStatement, RenderError> {
+fn default_instance_probe(geo: &CompiledGeoQuery, rows: &EntityRowRefs) -> Result<SelectStatement, RenderError> {
     let search = Alias::new(DEFAULT_ALIAS);
     let mut probe = Query::select();
     probe
@@ -201,7 +205,7 @@ fn default_instance_probe(geo: &GeoQuery, rows: &EntityRowRefs) -> Result<Select
 /// `geo`.
 fn restrict_to_meeting_default_instances(
     scan: &mut SelectStatement,
-    geo: &GeoQuery,
+    geo: &CompiledGeoQuery,
     standing: StandingInstant,
     indexing: BoxIndexing,
 ) -> Result<(), RenderError> {
@@ -222,7 +226,7 @@ fn restrict_to_meeting_default_instances(
 ///
 /// The hoisted instance of an entity whose every instance carries a
 /// `datasetId` is read by both arms, and the entity is answered once.
-fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
+fn dataset_instance_arm(geo: &CompiledGeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
     let instance = Alias::new(INSTANCE_ALIAS);
     let mut arm = Query::select();
     arm.column((instance.clone(), CurrentAttributes::EntityKey)) // clone: the alias qualifies the column and names the relation
@@ -233,7 +237,7 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
 
 /// `SELECT 1` when one of the `location` instances carrying a `datasetId` of
 /// the entity `rows` names meets `geo`, read by its key.
-fn dataset_instance_probe(geo: &GeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
+fn dataset_instance_probe(geo: &CompiledGeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
     let instance = Alias::new(INSTANCE_ALIAS);
     let mut probe = Query::select();
     probe
@@ -249,7 +253,7 @@ fn dataset_instance_probe(geo: &GeoQuery, rows: &EntityRowRefs, location_key: At
 /// `datasetId` that stand at `standing` and meet `geo`.
 fn restrict_to_meeting_dataset_instances(
     scan: &mut SelectStatement,
-    geo: &GeoQuery,
+    geo: &CompiledGeoQuery,
     location_key: AttributeNameKey,
     standing: StandingInstant,
     indexing: BoxIndexing,
@@ -274,8 +278,8 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::geo::{
+        compiled_geo_query::CompiledGeoQuery,
         default_location_narrowing::{DefaultLocationNarrowing, LocationCandidates},
-        query::GeoQuery,
     };
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -286,8 +290,8 @@ mod tests {
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
-    fn geo(georel: GeoRel) -> GeoQuery {
-        GeoQuery {
+    fn geo(georel: GeoRel) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
             geoproperty: LOCATION.parse().expect("valid attribute name"),
@@ -428,7 +432,7 @@ mod tests {
     /// `datasetId` instances are prefiltered by both halves of the envelope.
     #[test]
     fn the_dataset_instance_arm_prefilters_both_sides_of_the_antimeridian() {
-        let geo = GeoQuery {
+        let geo = CompiledGeoQuery {
             georel: near("300"),
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [179.999, -17.0] })).expect("point parses"),
             geoproperty: LOCATION.parse().expect("valid attribute name"),

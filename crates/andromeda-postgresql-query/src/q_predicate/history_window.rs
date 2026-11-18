@@ -41,7 +41,7 @@ use crate::{
     stored_geometry::{BoxIndexing, StoredGeometry},
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
-use andromeda_ngsi_ld_query::{geo::query::GeoQuery, temporal::window::TimeInterval};
+use andromeda_ngsi_ld_query::{geo::compiled_geo_query::CompiledGeoQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::literal::{false_literal, int_literal};
 use andromeda_postgresql_stored_form::{history_grain::HistoryGrain, tombstone::carries_a_value};
@@ -177,7 +177,7 @@ impl HistoryWindow {
     ///
     /// Returns [`RenderError`] when the reference geometry cannot be encoded or
     /// the relation cannot be rendered.
-    pub fn exists_geo(&self, geoproperty: Option<AttributeNameKey>, geo: &GeoQuery) -> Result<Condition, RenderError> {
+    pub fn exists_geo(&self, geoproperty: Option<AttributeNameKey>, geo: &CompiledGeoQuery) -> Result<Condition, RenderError> {
         let Some(geoproperty) = geoproperty else {
             return Ok(Condition::all().add(false_literal()));
         };

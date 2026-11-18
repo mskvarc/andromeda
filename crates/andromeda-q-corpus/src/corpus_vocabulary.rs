@@ -1,9 +1,9 @@
 //! How a corpus term expands, with no JSON-LD processor.
 
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     namespace_expander::NamespaceExpander,
-    term_expander::{TermExpander, TermExpansionFailure},
+    query_error::QueryError,
+    term_expander::{TermExpander, TermExpansionError},
 };
 use andromeda_ngsi_ld_vocabulary::compact_to_expanded;
 use iri_rs::{Iri, IriBuf, iri};
@@ -46,7 +46,7 @@ impl TermExpander for CorpusVocabulary {
     fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
         let core = compact_to_expanded(term).filter(|expanded| expanded.contains("://"));
         ready(match core {
-            Some(expanded) => IriBuf::new(expanded.to_owned()).map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri)),
+            Some(expanded) => IriBuf::new(expanded.to_owned()).map_err(|_| QueryError::TermExpansion(TermExpansionError::NotAnIri)),
             None => CORPUS_NAMESPACE.term_iri(term),
         })
     }

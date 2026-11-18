@@ -9,14 +9,15 @@
 //! two spellings one query.
 
 use crate::{
-    entity_selection::{EntitySelection, EntitySelector},
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector,
     filter::{compiled_filter::CompiledFilter, reading::filter_reading::FilterReading},
-    geo::query::GeoQuery,
+    geo::compiled_geo_query::CompiledGeoQuery,
     pattern::Pattern,
     projection::projected_members::{ProjectedMembers, ScopeRetention},
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
     temporal::compiled::CompiledTemporalQuery,
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use iri_rs::IriBuf;
@@ -69,7 +70,7 @@ pub struct QueryIdentity<'a> {
     /// The `q` filter in normal form.
     q: Option<&'a FilterReading>,
     /// The geo-query, parsed and validated.
-    geo: Option<&'a GeoQuery>,
+    geo: Option<&'a CompiledGeoQuery>,
     /// The scope query.
     scope_q: Option<&'a ScopeQuery>,
     /// The context source filter in normal form.
@@ -128,7 +129,7 @@ enum EntityAxes<'a> {
     /// independent of the order its members are written in (clause 5.2.33).
     Kept(Vec<SelectorIdentity<'a>>),
     /// The type alternatives of every selector, sorted and deduplicated.
-    Excepted(Vec<&'a TypeExpr>),
+    Excepted(Vec<&'a ExpandedTypeSelection>),
 }
 
 /// One entity selector, its identifiers and type alternatives sorted.
@@ -142,15 +143,15 @@ struct SelectorIdentity<'a> {
     /// The clause 4.17 alternatives of the expanded type expression, sorted and
     /// deduplicated, so `type=A|B` and `type=B|A` select alike; empty when the
     /// selector names no type.
-    types: Vec<&'a TypeExpr>,
+    types: Vec<&'a ExpandedTypeSelection>,
 }
 
 /// The order selectors are sorted in, which orders identifiers by their text.
-type SelectorKey<'a> = (Vec<&'a str>, Option<&'a Pattern>, Vec<&'a TypeExpr>);
+type SelectorKey<'a> = (Vec<&'a str>, Option<&'a Pattern>, Vec<&'a ExpandedTypeSelection>);
 
 impl<'a> SelectorIdentity<'a> {
     /// The identity of `selector`.
-    fn of(selector: &'a EntitySelector) -> SelectorIdentity<'a> {
+    fn of(selector: &'a ExpandedEntitySelector) -> SelectorIdentity<'a> {
         let mut ids: Vec<&Identifier> = selector.ids.iter().collect();
         ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
         ids.dedup();
@@ -158,7 +159,7 @@ impl<'a> SelectorIdentity<'a> {
         SelectorIdentity {
             id_pattern: selector.id_pattern.as_ref().filter(|_| ids.is_empty()),
             ids,
-            types: type_alternatives(selector.type_expr.iter()),
+            types: type_alternatives(selector.type_selection.iter()),
         }
     }
 
@@ -183,7 +184,7 @@ impl<'a> EntityAxes<'a> {
                 kept.dedup_by(|left, right| left.key() == right.key());
                 EntityAxes::Kept(kept)
             }
-            IdentifierScope::Excepted => EntityAxes::Excepted(type_alternatives(selectors.iter().filter_map(|selector| selector.type_expr.as_ref()))),
+            IdentifierScope::Excepted => EntityAxes::Excepted(type_alternatives(selectors.iter().filter_map(|selector| selector.type_selection.as_ref()))),
         }
     }
 }
@@ -194,8 +195,8 @@ impl<'a> EntityAxes<'a> {
 /// The selectors of a POST body (clause 5.2.33) are alternatives of one
 /// another, as the operands of a top-level `|` are, so `type=A|B` and a body of
 /// the selectors `A` and `B` select alike.
-fn type_alternatives<'a>(expressions: impl Iterator<Item = &'a TypeExpr>) -> Vec<&'a TypeExpr> {
-    let mut alternatives: Vec<&TypeExpr> = expressions.flat_map(TypeExpr::alternatives).collect();
+fn type_alternatives<'a>(expressions: impl Iterator<Item = &'a ExpandedTypeSelection>) -> Vec<&'a ExpandedTypeSelection> {
+    let mut alternatives: Vec<&ExpandedTypeSelection> = expressions.flat_map(ExpandedTypeSelection::alternatives).collect();
     alternatives.sort_unstable();
     alternatives.dedup();
     alternatives
@@ -242,7 +243,7 @@ impl<'a> QueryIdentity<'a> {
     /// The identity of a retrieval of one entity, which a type selector and an
     /// attribute list alone select (clauses 5.7.1.3 and 5.7.3.3).
     #[must_use]
-    pub fn of_retrieval(entity_type: Option<&'a TypeExpr>, attrs: &'a [IriBuf]) -> QueryIdentity<'a> {
+    pub fn of_retrieval(entity_type: Option<&'a ExpandedTypeSelection>, attrs: &'a [IriBuf]) -> QueryIdentity<'a> {
         QueryIdentity {
             entities: EntityAxes::Excepted(type_alternatives(entity_type.into_iter())),
             attrs: sorted_attrs(attrs),
@@ -267,14 +268,15 @@ impl<'a> QueryIdentity<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
-        geo::query::GeoQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
         query_identity::{IdentifierScope, QueryIdentity},
-        scope::query::ScopeQuery,
-        type_selection::grammar::TypeExpr,
+        scope::scope_query::ScopeQuery,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_architecture_checks::assert_named_snapshot;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
@@ -290,19 +292,19 @@ mod tests {
         format!("urn:ngsi-ld:Vehicle:{number}").parse().expect("a valid identifier")
     }
 
-    fn type_of(name: &str) -> TypeExpr {
-        TypeExpr::Type(iri(name))
+    fn type_of(name: &str) -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(iri(name))
     }
 
-    fn selector(ids: &[u32], pattern: Option<&str>, type_expr: Option<TypeExpr>) -> EntitySelector {
-        EntitySelector::builder()
+    fn selector(ids: &[u32], pattern: Option<&str>, type_expr: Option<ExpandedTypeSelection>) -> ExpandedEntitySelector {
+        ExpandedEntitySelector::builder()
             .ids(ids.iter().copied().map(id).collect())
             .id_pattern(pattern.map(|source| Pattern::parse(source).expect("a valid pattern")))
-            .type_expr(type_expr)
+            .type_selection(type_expr)
             .build()
     }
 
-    fn selecting(selectors: Vec<EntitySelector>) -> EntitySelection {
+    fn selecting(selectors: Vec<ExpandedEntitySelector>) -> EntitySelection {
         EntitySelection::builder().selectors(selectors).build()
     }
 
@@ -324,8 +326,8 @@ mod tests {
         record(selection, IdentifierScope::Excepted)
     }
 
-    fn within(coordinates: &str) -> GeoQuery {
-        GeoQuery {
+    fn within(coordinates: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_str::<Geometry>(&format!(r#"{{"type":"Polygon","coordinates":{coordinates}}}"#)).expect("a polygon"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),
@@ -422,8 +424,8 @@ mod tests {
     /// Clause 4.17: a disjunction of types selects alike in either order.
     #[test]
     fn type_alternatives_written_in_another_order_have_one_identity_when_kept() {
-        let first = selecting(vec![selector(&[1], None, Some(TypeExpr::Or(vec![type_of("A"), type_of("B")])))]);
-        let second = selecting(vec![selector(&[1], None, Some(TypeExpr::Or(vec![type_of("B"), type_of("A")])))]);
+        let first = selecting(vec![selector(&[1], None, Some(ExpandedTypeSelection::Or(vec![type_of("A"), type_of("B")])))]);
+        let second = selecting(vec![selector(&[1], None, Some(ExpandedTypeSelection::Or(vec![type_of("B"), type_of("A")])))]);
         assert_eq!(kept(&first), kept(&second));
     }
 
@@ -432,7 +434,7 @@ mod tests {
     #[test]
     fn two_selectors_and_one_selector_of_a_disjunction_have_one_identity_when_excepted() {
         let two = selecting(vec![selector(&[1], None, Some(type_of("A"))), selector(&[], Some("^urn:"), Some(type_of("B")))]);
-        let one = selecting(vec![selector(&[], None, Some(TypeExpr::Or(vec![type_of("B"), type_of("A")])))]);
+        let one = selecting(vec![selector(&[], None, Some(ExpandedTypeSelection::Or(vec![type_of("B"), type_of("A")])))]);
         assert_eq!(excepted(&two), excepted(&one));
         assert_ne!(kept(&two), kept(&one));
     }
@@ -515,7 +517,7 @@ mod tests {
         let second = selecting(vec![selector(
             &[],
             None,
-            Some(TypeExpr::Type("https://other.example/Vehicle".parse().expect("a valid IRI"))),
+            Some(ExpandedTypeSelection::Type("https://other.example/Vehicle".parse().expect("a valid IRI"))),
         )]);
         assert_ne!(excepted(&first), excepted(&second));
     }
@@ -527,7 +529,7 @@ mod tests {
     fn the_record_of_a_query_is_fixed() {
         let selection = EntitySelection::builder()
             .selectors(vec![
-                selector(&[2, 1], None, Some(TypeExpr::Or(vec![type_of("Car"), type_of("Bus")]))),
+                selector(&[2, 1], None, Some(ExpandedTypeSelection::Or(vec![type_of("Car"), type_of("Bus")]))),
                 selector(&[], Some("^urn:ngsi-ld:Vehicle:.*"), Some(type_of("Truck"))),
             ])
             .attrs(vec![iri("speed"), iri("brand")])
@@ -556,10 +558,11 @@ mod tests {
 
     #[test]
     fn a_retrieval_is_identified_by_its_type_alternatives_and_attributes() {
-        let identity =
-            |entity_type: Option<&TypeExpr>, attrs: &[IriBuf]| QueryIdentity::of_retrieval(entity_type, attrs).record().expect("a writable identity");
-        let union = TypeExpr::Or(vec![type_of("B"), type_of("A")]);
-        let reversed = TypeExpr::Or(vec![type_of("A"), type_of("B")]);
+        let identity = |entity_type: Option<&ExpandedTypeSelection>, attrs: &[IriBuf]| {
+            QueryIdentity::of_retrieval(entity_type, attrs).record().expect("a writable identity")
+        };
+        let union = ExpandedTypeSelection::Or(vec![type_of("B"), type_of("A")]);
+        let reversed = ExpandedTypeSelection::Or(vec![type_of("A"), type_of("B")]);
         assert_eq!(identity(Some(&union), &[iri("y"), iri("x")]), identity(Some(&reversed), &[iri("x"), iri("y")]));
         assert_ne!(identity(Some(&union), &[]), identity(None, &[]));
         assert_ne!(identity(None, &[iri("x")]), identity(None, &[iri("y")]));

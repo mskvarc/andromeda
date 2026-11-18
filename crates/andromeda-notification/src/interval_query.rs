@@ -11,8 +11,9 @@
 use andromeda_ngsi_ld_model::entity_selector::EntitySelector as StoredSelector;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    entity_selection::{EntitySelection, EntitySelector},
-    error::QueryError,
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector,
+    query_error::QueryError,
     standing_instant::StandingInstant,
 };
 use andromeda_subscription::{compiled::CompiledSubscription, entity_filter_set::EntityFilterSet};
@@ -45,12 +46,12 @@ pub(crate) fn interval_query(sub: &CompiledSubscription, at: DateTime<Utc>) -> R
 
 /// A stored selector as a query compiles it, its type the expanded IRIs the
 /// subscription stored.
-fn compiled_selector(selector: &StoredSelector) -> Result<EntitySelector, QueryError> {
+fn compiled_selector(selector: &StoredSelector) -> Result<ExpandedEntitySelector, QueryError> {
     // clone: the query owns its selectors, and the subscription lends its own
-    Ok(EntitySelector::builder()
+    Ok(ExpandedEntitySelector::builder()
         .ids(selector.id.clone().unwrap_or_default())
         .id_pattern(selector.id_pattern.clone())
-        .type_expr(Some(selector.type_.as_expanded()?))
+        .type_selection(Some(selector.type_.as_expanded()?))
         .build())
 }
 
@@ -65,7 +66,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         projection::projected_members::ProjectedMembers,
         standing_instant::StandingInstant,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
@@ -79,17 +80,17 @@ mod tests {
 
     /// The selectors of the query, as the identifiers and the type each
     /// names.
-    fn selected(query: &CompiledEntityQuery) -> Vec<(Vec<Identifier>, Option<TypeExpr>)> {
+    fn selected(query: &CompiledEntityQuery) -> Vec<(Vec<Identifier>, Option<ExpandedTypeSelection>)> {
         query
             .selection
             .selectors
             .iter()
-            .map(|selector| (selector.ids.clone(), selector.type_expr.clone()))
+            .map(|selector| (selector.ids.clone(), selector.type_selection.clone()))
             .collect()
     }
 
-    fn vehicle_type() -> TypeExpr {
-        TypeExpr::Type(IriBuf::new(VEHICLE.to_owned()).expect("valid IRI"))
+    fn vehicle_type() -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(IriBuf::new(VEHICLE.to_owned()).expect("valid IRI"))
     }
 
     /// Clause 5.2.33: the selectors are a union, each read as written, so an

@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::slice;
 use tracing::debug;

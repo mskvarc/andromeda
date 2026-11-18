@@ -11,7 +11,7 @@
 //! parts, each through its own partial index, and merges them. The parts are
 //! disjoint, so a registration is never counted twice.
 
-use andromeda_ngsi_ld_query::geo::{query::GeoQuery, registration_area::RegistrationGeometry};
+use andromeda_ngsi_ld_query::geo::{compiled_geo_query::CompiledGeoQuery, registration_area::RegistrationGeometry};
 use andromeda_postgresql_query::{error::RenderError, geo_predicate::registration_area, stored_geometry::StoredGeometry};
 use andromeda_postgresql_schema::csr::Csr;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
@@ -33,7 +33,7 @@ pub struct GeometryParts {
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when the reference
 /// geometry has no EWKB spelling the store can bind.
-pub fn geometry_parts(geo: &GeoQuery) -> Result<Option<GeometryParts>, RenderError> {
+pub fn geometry_parts(geo: &CompiledGeoQuery) -> Result<Option<GeometryParts>, RenderError> {
     let (written, repaired, reach) = registration_geometry_columns(geo);
     // Clause 4.7.2 stores an invalid geometry as written; the relation judges
     // its repaired form, and the box test reads the box the index keys.
@@ -51,7 +51,7 @@ pub fn geometry_parts(geo: &GeoQuery) -> Result<Option<GeometryParts>, RenderErr
 /// The columns holding the registration geometry a geoquery is matched
 /// against (Table 5.2.9-1): the geometry as written, its repaired form and
 /// its great-circle reach.
-fn registration_geometry_columns(geo: &GeoQuery) -> (Csr, Csr, Csr) {
+fn registration_geometry_columns(geo: &CompiledGeoQuery) -> (Csr, Csr, Csr) {
     match RegistrationGeometry::of(geo) {
         RegistrationGeometry::Location => (Csr::Location, Csr::LocationValid, Csr::LocationReach),
         RegistrationGeometry::ObservationSpace => (Csr::ObservationSpace, Csr::ObservationSpaceValid, Csr::ObservationSpaceReach),
@@ -63,7 +63,7 @@ fn registration_geometry_columns(geo: &GeoQuery) -> (Csr, Csr, Csr) {
 mod tests {
     use crate::csr::geometry_parts::{GeometryParts, geometry_parts};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_query::geo::query::GeoQuery;
+    use andromeda_ngsi_ld_query::geo::compiled_geo_query::CompiledGeoQuery;
     use andromeda_postgresql_schema::csr::Csr;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Condition, PostgresQueryBuilder, Query, SelectStatement};
@@ -71,8 +71,8 @@ mod tests {
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
-    fn query(georel: GeoRel, geoproperty: &str, coordinates: &serde_json::Value) -> GeoQuery {
-        GeoQuery {
+    fn query(georel: GeoRel, geoproperty: &str, coordinates: &serde_json::Value) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses"),
             geoproperty: geoproperty.parse().expect("valid attribute name"),
@@ -90,7 +90,7 @@ mod tests {
         Query::select().column(Csr::Id).from(Csr::Table).cond_where(condition).take()
     }
 
-    fn parts(geo: &GeoQuery) -> (SelectStatement, SelectStatement) {
+    fn parts(geo: &CompiledGeoQuery) -> (SelectStatement, SelectStatement) {
         let GeometryParts { absent, present } = geometry_parts(geo).expect("renders").expect("constrains the geometry");
         (render(absent), render(present))
     }

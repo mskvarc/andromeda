@@ -8,7 +8,7 @@
 //! and nothing else (clause 5.7.4.3). Both reach the same key through here.
 
 use crate::sort_key::{KeyOrder, NullPlacement, SortKey};
-use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
+use andromeda_ngsi_ld_query::ordering::{icu_collation::IcuCollation, sort_direction::SortDirection};
 use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
 use sea_query::{Order, SimpleExpr};
 
@@ -48,7 +48,7 @@ pub fn entity_identifier_key(identifier: SimpleExpr, direction: SortDirection, c
 #[cfg(test)]
 mod tests {
     use crate::entity_ordering::{entity_identifier_key, ordering_collation, sql_order};
-    use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
+    use andromeda_ngsi_ld_query::ordering::{icu_collation::IcuCollation, sort_direction::SortDirection};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, Order, Query, SelectStatement};

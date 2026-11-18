@@ -31,13 +31,13 @@ impl TryFrom<Query> for TemporalQueryParameters {
             .unwrap_or_default()
             .into_iter()
             .map(|selector| WrittenEntitySelector {
-                id: selector.id,
+                ids: selector.id,
                 id_pattern: selector.id_pattern,
-                type_: Some(selector.type_),
+                type_selection: Some(selector.type_),
             })
             .collect();
         let (id, entity_type, id_pattern) = match entity_selectors.as_slice() {
-            [selector] => (selector.id.clone(), selector.type_.clone(), selector.id_pattern.clone()),
+            [selector] => (selector.ids.clone(), selector.type_selection.clone(), selector.id_pattern.clone()),
             [] | [_, _, ..] => (None, None, None),
         };
 

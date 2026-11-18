@@ -8,12 +8,12 @@ use crate::{
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    filter::expression::Expr,
-    geo::input::GeoQueryInput,
-    ordering::parameters::OrderingParameters,
-    projection::grammar::RawProjectionTerm,
-    scope::query::ScopeQuery,
+    dataset_selector::DatasetSelector,
+    filter::Filter,
+    geo::written_geo_query::WrittenGeoQuery,
+    ordering::ordering_parameters::OrderingParameters,
+    projection::written_projection_term::WrittenProjectionTerm,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use serde::{Deserialize, Serialize};
@@ -36,10 +36,10 @@ pub struct Query {
     pub entities: Option<Vec<EntitySelector>>,
     /// Clause-4.9 entity filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Clause-4.10 geo-spatial filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub geo_q: Option<GeoQueryInput>,
+    pub geo_q: Option<WrittenGeoQuery>,
     /// Clause-4.19 scope filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<ScopeQuery>,
@@ -56,7 +56,7 @@ pub struct Query {
         deserialize_with = "projection_term_list::deserialize",
         serialize_with = "projection_term_list::serialize"
     )]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Members retained in each result entity.
     #[serde(
         default,
@@ -64,13 +64,13 @@ pub struct Query {
         deserialize_with = "projection_term_list::deserialize",
         serialize_with = "projection_term_list::serialize"
     )]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Temporal aggregation parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggr_params: Option<AggregationParameters>,
     /// Clause-4.9 filter applied to candidate registrations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// Entity identifiers already encountered during graph traversal.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
     pub contained_by: Option<Vec<Identifier>>,
@@ -131,7 +131,7 @@ pub struct Query {
 /// rendering one of them outside a `Query` needs the same encoding.
 pub mod projection_term_list {
     use crate::query::non_empty_member;
-    use andromeda_ngsi_ld_query::projection::grammar::{ProjectionList, RawProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm};
     use serde::{Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize the array of projection-language strings into the terms
@@ -142,7 +142,7 @@ pub mod projection_term_list {
     /// Returns the deserializer's own error when the member is neither absent
     /// nor an array of strings, and a custom error when one of those strings
     /// does not parse as a clause 4.21 projection list.
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<RawProjectionTerm>>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<WrittenProjectionTerm>>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -150,8 +150,8 @@ pub mod projection_term_list {
             .map(|members| {
                 members
                     .iter()
-                    .map(|member| member.parse::<ProjectionList>().map(Vec::from).map_err(DeserializeError::custom))
-                    .collect::<Result<Vec<Vec<RawProjectionTerm>>, D::Error>>()
+                    .map(|member| member.parse::<WrittenProjectionList>().map(Vec::from).map_err(DeserializeError::custom))
+                    .collect::<Result<Vec<Vec<WrittenProjectionTerm>>, D::Error>>()
                     .map(|groups| groups.into_iter().flatten().collect())
             })
             .transpose()
@@ -162,7 +162,7 @@ pub mod projection_term_list {
     /// # Errors
     ///
     /// Returns the serializer's own error when the member cannot be written.
-    pub fn serialize<S>(value: &Option<Vec<RawProjectionTerm>>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &Option<Vec<WrittenProjectionTerm>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -176,7 +176,7 @@ pub mod projection_term_list {
 #[cfg(test)]
 mod tests {
     use crate::query::body::Query;
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 
     #[test]
     fn the_query_discriminator_is_required_and_exact() {

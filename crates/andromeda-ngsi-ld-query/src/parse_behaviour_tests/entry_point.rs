@@ -2,15 +2,15 @@
 //! and the inputs each is recorded over.
 
 use crate::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     filter::{
-        expression::Expr,
+        Filter,
+        display::serialize_attr_path,
         generated_filters::{query, written_value_path},
-        serialize::serialize_attr_path,
+        parser::value_path::parse_attribute_path,
         target_language::TargetLanguage,
-        value_path::parse_attribute_path,
     },
-    ordering::{collation::IcuCollation, term::OrderTerm},
+    ordering::{icu_collation::IcuCollation, written_ordering_term::WrittenOrderingTerm},
     parse_behaviour_tests::{
         dataset_selector_inputs::DATASET_SELECTOR_INPUTS,
         filter_inputs::{FILTER_INPUTS, PATTERN_INPUTS, TARGET_LANGUAGE_INPUTS, VALUE_PATH_INPUTS, deep_dotted_paths, deep_hops, nested_groups},
@@ -35,16 +35,16 @@ use crate::{
         type_selection_inputs::TYPE_SELECTION_INPUTS,
     },
     pattern::Pattern,
-    projection::grammar::ProjectionList,
+    projection::written_projection_list::WrittenProjectionList,
     scope::{
-        pattern::{ScopeLabel, ScopePattern},
-        query::ScopeQuery,
+        scope_pattern::{ScopeLabel, ScopePattern},
+        scope_query::ScopeQuery,
     },
     temporal::{
         aggregation_period::AggregationPeriod,
-        grouping::{AggregationGrouping, group_key::GroupKey},
+        grouping::{aggregation_grouping::AggregationGrouping, group_key::GroupKey},
     },
-    type_selection::grammar::TypeExprRaw,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use proptest::{
     prelude::BoxedStrategy,
@@ -115,13 +115,13 @@ impl EntryPoint {
     /// What the entry point makes of `text`.
     pub(super) fn outcome(self, text: &str) -> Outcome {
         match self {
-            EntryPoint::Filter => read_and_write_back(text, Expr::from_str, Expr::to_string),
-            EntryPoint::TypeSelection => read_and_write_back(text, TypeExprRaw::from_str, TypeExprRaw::to_string),
+            EntryPoint::Filter => read_and_write_back(text, Filter::from_str, Filter::to_string),
+            EntryPoint::TypeSelection => read_and_write_back(text, WrittenTypeSelection::from_str, WrittenTypeSelection::to_string),
             EntryPoint::ScopeQuery => read_and_write_back(text, ScopeQuery::from_str, ScopeQuery::to_string),
             EntryPoint::ScopePattern => read_and_write_back(text, ScopePattern::parse, ScopePattern::to_string),
             EntryPoint::ScopeLabel => read(text, ScopeLabel::parse),
-            EntryPoint::Projection => read_and_write_back(text, ProjectionList::from_str, ProjectionList::to_string),
-            EntryPoint::Ordering => read_and_write_back(text, OrderTerm::from_str, OrderTerm::to_string),
+            EntryPoint::Projection => read_and_write_back(text, WrittenProjectionList::from_str, WrittenProjectionList::to_string),
+            EntryPoint::Ordering => read_and_write_back(text, WrittenOrderingTerm::from_str, WrittenOrderingTerm::to_string),
             EntryPoint::Collation => read_and_write_back(text, IcuCollation::parse, IcuCollation::to_string),
             EntryPoint::Grouping => read(text, AggregationGrouping::from_str),
             EntryPoint::GroupKey => read(text, GroupKey::parse),

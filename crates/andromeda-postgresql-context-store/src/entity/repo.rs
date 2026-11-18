@@ -14,7 +14,7 @@
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_ngsi_ld_query::ordering::compiled::ResultOrdering;
+use andromeda_ngsi_ld_query::ordering::result_ordering::ResultOrdering;
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_pool::pool_share::{PoolLane, PoolShare};

@@ -1,6 +1,6 @@
 //! Purge modes of the delete-entities-by-query operation (clause 5.6.21).
 
-use crate::dataset::DatasetSelector;
+use crate::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// Which `datasetId` instances a `drop`/`keep` purge removes (clause 4.5.5).

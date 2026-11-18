@@ -150,8 +150,8 @@ impl Operand {
 #[cfg(test)]
 mod tests {
     use crate::filter::{
+        parser::operand::{parse_date, parse_date_time, parse_time},
         reading::operand::Operand,
-        scalar::{parse_date, parse_date_time, parse_time},
     };
     use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
     use pretty_assertions::assert_eq;

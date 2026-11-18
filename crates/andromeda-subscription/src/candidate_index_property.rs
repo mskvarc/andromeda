@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_model::{
     notification::{ChangeOrigin, NotificationTrigger},
     subscription::{SubscriptionStatus, standing::SubscriptionStanding},
 };
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_query::projection::expanded_projection::ExpandedProjection;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use proptest::{
@@ -196,7 +196,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         local_only: false,
         ngsild_conformance: None,
         lang: None,
-        notification_projection: Projection::default(),
+        notification_projection: ExpandedProjection::default(),
     })
 }
 

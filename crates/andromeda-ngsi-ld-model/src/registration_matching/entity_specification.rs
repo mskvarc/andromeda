@@ -7,7 +7,7 @@ use crate::{
     registration::info::RegistrationInfo,
 };
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
 use std::slice;
 
 /// What an entity specification requires of the types a registration names.
@@ -17,7 +17,7 @@ pub enum TypeConstraint<'spec> {
     /// types are not known.
     Any,
     /// The clause 4.17 selector the registered types must satisfy.
-    Selector(&'spec TypeExprRaw),
+    Selector(&'spec WrittenTypeSelection),
     /// The types of one entity: the registered types must name at least one of
     /// them, which is the clause 4.17 alternation of the list.
     OneOf(&'spec [EntityTypeName]),
@@ -131,7 +131,7 @@ mod tests {
         registration_matching::entity_specification::{EntitySpecification, TypeConstraint},
     };
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
     use serde_json::json;
 
     fn uri(value: &str) -> Identifier {
@@ -142,7 +142,7 @@ mod tests {
         value.parse().expect("valid type name")
     }
 
-    fn type_selector(raw: &str) -> TypeExprRaw {
+    fn type_selector(raw: &str) -> WrittenTypeSelection {
         raw.parse().expect("valid type selector")
     }
 

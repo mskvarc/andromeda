@@ -24,11 +24,11 @@ use andromeda_ngsi_ld_lexicon::{
     time::instant_serde,
 };
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    filter::expression::Expr,
-    geo::input::GeoQueryInput,
-    projection::grammar::ProjectionList,
-    scope::query::ScopeQuery,
+    dataset_selector::DatasetSelector,
+    filter::Filter,
+    geo::written_geo_query::WrittenGeoQuery,
+    projection::written_projection_list::WrittenProjectionList,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
@@ -139,14 +139,14 @@ pub struct NotificationParams {
     /// list per projection-language string the subscriber wrote.
     ///
     /// Held, and stored, with every attribute name expanded (clause 5.5.7) as
-    /// the term tree [`ProjectionList`] serializes to; the clause 4.21 text a
+    /// the term tree [`WrittenProjectionList`] serializes to; the clause 4.21 text a
     /// client exchanges is written and read by the subscription service.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pick: Option<Vec<ProjectionList>>,
+    pub pick: Option<Vec<WrittenProjectionList>>,
     /// The clause 4.21 projection removing the members it names, held as
     /// `pick` is.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub omit: Option<Vec<ProjectionList>>,
+    pub omit: Option<Vec<WrittenProjectionList>>,
     /// Join mode for linked entity retrieval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,
@@ -236,17 +236,17 @@ pub struct SubscriptionFilters {
     /// subscription rather than one that silently matches nothing from its
     /// first notification onward.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub geo_q: Option<GeoQueryInput>,
+    pub geo_q: Option<WrittenGeoQuery>,
     /// Scope query expression (clause 4.19).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<ScopeQuery>,
     /// Context source filter expression (clause 4.9), which is a `q` filter
     /// over a registration's own properties.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// The `datasetId`s of the Attribute instances each notification carries,
     /// `@none` naming the default instance (Table 5.2.12-1, clause 4.5.5).
     #[serde(skip_serializing_if = "Option::is_none")]

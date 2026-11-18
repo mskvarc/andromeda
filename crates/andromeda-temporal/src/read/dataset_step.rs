@@ -33,7 +33,7 @@ mod tests {
     use crate::read::dataset_step::DatasetStep;
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         entity_selection::EntitySelection,
         temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };

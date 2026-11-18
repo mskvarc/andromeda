@@ -35,7 +35,7 @@
 use crate::{FederationService, error::FederationError, participating_read::ParticipatingRead};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
+use andromeda_ngsi_ld_query::ordering::ordering_parameters::OrderingParameters;
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use derive_more::IsVariant;
 
@@ -102,7 +102,7 @@ impl FederationService {
 #[cfg(test)]
 mod tests {
     use crate::ordering_admission::{OrderingAdmission, admission_of_participation, admission_without_the_registry};
-    use andromeda_ngsi_ld_query::ordering::{parameters::OrderingParameters, term::OrderTerm};
+    use andromeda_ngsi_ld_query::ordering::{ordering_parameters::OrderingParameters, written_ordering_term::WrittenOrderingTerm};
     use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
     use pretty_assertions::assert_eq;
 
@@ -110,7 +110,7 @@ mod tests {
         OrderingParameters {
             collation: None,
             geometry: None,
-            order_by: vec![raw.parse::<OrderTerm>().expect("a valid ordering term")],
+            order_by: vec![raw.parse::<WrittenOrderingTerm>().expect("a valid ordering term")],
         }
     }
 

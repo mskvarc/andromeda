@@ -1,8 +1,13 @@
 //! Expansion of attribute selection lists through the request's `@context`.
 
 use crate::{
-    error::QueryError,
-    projection::{compiled::Projection, exclusivity::check_member_exclusivity, grammar::RawProjectionTerm, term::ProjectionTerm},
+    projection::{
+        exclusivity::check_member_exclusivity,
+        expanded_projection::ExpandedProjection,
+        expanded_projection_term::ExpandedProjectionTerm,
+        written_projection_term::WrittenProjectionTerm,
+    },
+    query_error::QueryError,
     term_expander::TermExpander,
 };
 use iri_rs::IriBuf;
@@ -29,11 +34,15 @@ pub async fn expand_attrs<S: AsRef<str> + Sync>(raw: &[S], expander: &impl TermE
 /// Returns what [`expand_projection_terms`] returns for either list, and
 /// [`QueryError::ProjectionMemberPickedAndOmitted`] when `pick` and `omit`
 /// name one member.
-pub async fn expand_projection(pick: &[RawProjectionTerm], omit: &[RawProjectionTerm], expander: &impl TermExpander) -> Result<Projection, QueryError> {
+pub async fn expand_projection(
+    pick: &[WrittenProjectionTerm],
+    omit: &[WrittenProjectionTerm],
+    expander: &impl TermExpander,
+) -> Result<ExpandedProjection, QueryError> {
     let pick = expand_projection_terms(pick, expander).await?;
     let omit = expand_projection_terms(omit, expander).await?;
     check_member_exclusivity(&pick, &omit)?;
-    Ok(Projection { pick, omit })
+    Ok(ExpandedProjection { pick, omit })
 }
 
 /// Expands a `pick` / `omit` term list (clause 4.21), keeping the keywords `id`, `type` and `scope` as written and recursing into each term's linked-entity sub-projection.
@@ -44,15 +53,15 @@ pub async fn expand_projection(pick: &[RawProjectionTerm], omit: &[RawProjection
 /// attribute term does not expand, and
 /// [`QueryError::ProjectionKeywordWithLinkedTerm`] when `id`, `type` or `scope`
 /// carries a linked-entity sub-projection.
-pub async fn expand_projection_terms(raw: &[RawProjectionTerm], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
+pub async fn expand_projection_terms(raw: &[WrittenProjectionTerm], expander: &impl TermExpander) -> Result<Vec<ExpandedProjectionTerm>, QueryError> {
     expand_projection_terms_inner(raw, expander).await
 }
 
-/// The boxed future the recursive walk over `RawProjectionTerm::linked` returns; async fns cannot recurse directly because their future type would be infinitely sized.
+/// The boxed future the recursive walk over `WrittenProjectionTerm::linked` returns; async fns cannot recurse directly because their future type would be infinitely sized.
 fn expand_projection_terms_inner<'a, E: TermExpander>(
-    raw: &'a [RawProjectionTerm],
+    raw: &'a [WrittenProjectionTerm],
     expander: &'a E,
-) -> Pin<Box<dyn Future<Output = Result<Vec<ProjectionTerm>, QueryError>> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = Result<Vec<ExpandedProjectionTerm>, QueryError>> + Send + 'a>> {
     Box::pin(async move {
         let mut expanded_terms = Vec::with_capacity(raw.len());
         for term in raw {
@@ -64,19 +73,19 @@ fn expand_projection_terms_inner<'a, E: TermExpander>(
 
 /// Expand one raw term, recursing into its linked-entity sub-projection when
 /// it is an attribute term.
-async fn expand_one_term<E: TermExpander>(term: &RawProjectionTerm, expander: &E) -> Result<ProjectionTerm, QueryError> {
+async fn expand_one_term<E: TermExpander>(term: &WrittenProjectionTerm, expander: &E) -> Result<ExpandedProjectionTerm, QueryError> {
     // Clause 4.21: the keywords name structural members, not attributes, so they have no IRI to expand to and no linked entity to project (`LinkedEntityTerm` only ever follows `AttrName`).
-    if let Some(keyword) = ProjectionTerm::keyword(term.name.as_str()) {
+    if let Some(keyword) = ExpandedProjectionTerm::keyword(term.name.as_str()) {
         return keyword_term(term, keyword);
     }
     let iri = expander.expand_term(term.name.as_str()).await?;
     let linked = expand_projection_terms_inner(&term.linked, expander).await?;
-    Ok(ProjectionTerm::Attribute { iri, linked })
+    Ok(ExpandedProjectionTerm::Attribute { iri, linked })
 }
 
 /// Build the expanded keyword term, rejecting a linked-entity sub-projection
 /// attached to it.
-fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<ProjectionTerm, QueryError> {
+fn keyword_term(term: &WrittenProjectionTerm, expanded: ExpandedProjectionTerm) -> Result<ExpandedProjectionTerm, QueryError> {
     if term.linked.is_empty() {
         Ok(expanded)
     } else {
@@ -89,7 +98,7 @@ fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<Pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{namespace_expander::EXAMPLE_NAMESPACE_TYPED, projection::grammar::ProjectionList};
+    use crate::{namespace_expander::EXAMPLE_NAMESPACE_TYPED, projection::written_projection_list::WrittenProjectionList};
     use pretty_assertions::assert_eq;
     use std::future::ready;
 
@@ -102,8 +111,8 @@ mod tests {
         assert_eq!(rendered, vec!["https://example.com/speed", "https://example.com/colour"]);
     }
 
-    fn leaf(name: &str) -> RawProjectionTerm {
-        RawProjectionTerm {
+    fn leaf(name: &str) -> WrittenProjectionTerm {
+        WrittenProjectionTerm {
             name: name.parse().expect("valid attribute name"),
             linked: Vec::new(),
         }
@@ -120,10 +129,10 @@ mod tests {
         assert_eq!(
             expanded,
             vec![
-                ProjectionTerm::Id,
-                ProjectionTerm::Type,
-                ProjectionTerm::Scope,
-                ProjectionTerm::Attribute {
+                ExpandedProjectionTerm::Id,
+                ExpandedProjectionTerm::Type,
+                ExpandedProjectionTerm::Scope,
+                ExpandedProjectionTerm::Attribute {
                     iri: iri("https://example.com/speed"),
                     linked: Vec::new()
                 },
@@ -134,16 +143,16 @@ mod tests {
     /// Clause 4.21: `observation{temperature}` selects the `observation` relationship together with the `temperature` attribute of the entity it links to.
     #[tokio::test]
     async fn a_linked_entity_term_expands_recursively() {
-        let raw = [RawProjectionTerm {
+        let raw = [WrittenProjectionTerm {
             name: "observation".parse().expect("valid attribute name"),
             linked: vec![leaf("temperature")],
         }];
         let expanded = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
-            vec![ProjectionTerm::Attribute {
+            vec![ExpandedProjectionTerm::Attribute {
                 iri: iri("https://example.com/observation"),
-                linked: vec![ProjectionTerm::Attribute {
+                linked: vec![ExpandedProjectionTerm::Attribute {
                     iri: iri("https://example.com/temperature"),
                     linked: Vec::new()
                 }],
@@ -155,16 +164,16 @@ mod tests {
     /// clause 4.21 keyword variants, not to attribute terms.
     #[tokio::test]
     async fn nested_keywords_expand_to_the_keyword_variants() {
-        let raw = [RawProjectionTerm {
+        let raw = [WrittenProjectionTerm {
             name: "observation".parse().expect("valid attribute name"),
             linked: vec![leaf("id"), leaf("type"), leaf("scope")],
         }];
         let expanded = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
-            vec![ProjectionTerm::Attribute {
+            vec![ExpandedProjectionTerm::Attribute {
                 iri: iri("https://example.com/observation"),
-                linked: vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope],
+                linked: vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope],
             }]
         );
     }
@@ -191,11 +200,11 @@ mod tests {
         ("email", "https://example.com/email"),
     ]);
 
-    fn list(raw: &str) -> Vec<RawProjectionTerm> {
-        raw.parse::<ProjectionList>().map(Vec::from).expect("valid projection list")
+    fn list(raw: &str) -> Vec<WrittenProjectionTerm> {
+        raw.parse::<WrittenProjectionList>().map(Vec::from).expect("valid projection list")
     }
 
-    async fn projected(pick: &str, omit: &str) -> Result<Projection, QueryError> {
+    async fn projected(pick: &str, omit: &str) -> Result<ExpandedProjection, QueryError> {
         expand_projection(&list(pick), &list(omit), &SCHEMA_NAME).await
     }
 
@@ -224,14 +233,14 @@ mod tests {
         let projection = projected("name", "label").await.expect("different members");
         assert_eq!(
             projection.pick,
-            vec![ProjectionTerm::Attribute {
+            vec![ExpandedProjectionTerm::Attribute {
                 iri: iri("https://schema.org/name"),
                 linked: Vec::new()
             }]
         );
         assert_eq!(
             projection.omit,
-            vec![ProjectionTerm::Attribute {
+            vec![ExpandedProjectionTerm::Attribute {
                 iri: iri("https://example.com/name"),
                 linked: Vec::new()
             }]
@@ -241,7 +250,7 @@ mod tests {
     /// Clause 4.21: `LinkedEntityTerm` only ever follows `AttrName`, so `id{a}` is rejected.
     #[tokio::test]
     async fn a_keyword_carrying_a_linked_term_is_rejected() {
-        let raw = [RawProjectionTerm {
+        let raw = [WrittenProjectionTerm {
             name: "id".parse().expect("valid attribute name"),
             linked: vec![leaf("a")],
         }];

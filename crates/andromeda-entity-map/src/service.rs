@@ -263,9 +263,10 @@ mod tests {
         entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestFingerprint},
     };
     use andromeda_ngsi_ld_query::{
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_ngsi_ld_request::{
         follow_up_inputs::{ContextReference, FollowUpInputs},
@@ -373,9 +374,11 @@ mod tests {
     /// The selection of a query for `entity_type` entities, over `ids` and
     /// holding the `q` filter when one is given.
     fn selection(entity_type: &str, ids: &[&str], q: Option<&str>) -> EntitySelection {
-        let selector = EntitySelector::builder()
+        let selector = ExpandedEntitySelector::builder()
             .ids(ids.iter().copied().map(identifier).collect())
-            .type_expr(Some(TypeExpr::Type(format!("https://example.com/{entity_type}").parse().expect("a valid IRI"))))
+            .type_selection(Some(ExpandedTypeSelection::Type(
+                format!("https://example.com/{entity_type}").parse().expect("a valid IRI"),
+            )))
             .build();
         EntitySelection::builder()
             .selectors(vec![selector])

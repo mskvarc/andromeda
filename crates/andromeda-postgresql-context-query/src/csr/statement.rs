@@ -172,12 +172,12 @@ mod tests {
         csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
         cursor::PageCursor,
         filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading},
-        geo::query::GeoQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
         page_window::{PageStart, PageWindow},
         pattern::Pattern,
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
@@ -209,8 +209,8 @@ mod tests {
         serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
-    fn geo_query(geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn geo_query(geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: geoproperty.parse().expect("valid attribute name"),
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn build_with_entity_type() {
         let mut q = empty_query();
-        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
         assert_statement_snapshot!("statement-build-with-entity-type", build(&q).select);
     }
 
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn entity_and_attribute_axes_are_decided_on_the_same_information_row() {
         let mut q = empty_query();
-        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         assert_statement_snapshot!("statement-entity-and-attribute-axes-are-decided-on-the-same-information-row", build(&q).select);
@@ -391,9 +391,9 @@ mod tests {
     #[test]
     fn no_registration_statement_walks_json() {
         let mut q = empty_query();
-        q.entity_type = Some(TypeExpr::And(vec![
-            TypeExpr::Type(iri("https://example.com/Vehicle")),
-            TypeExpr::Type(iri("https://example.com/Boat")),
+        q.entity_type = Some(ExpandedTypeSelection::And(vec![
+            ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
+            ExpandedTypeSelection::Type(iri("https://example.com/Boat")),
         ]));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn every_selective_axis_carries_its_indexed_test() {
         let mut q = empty_query();
-        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         assert_statement_snapshot!("statement-every-selective-axis-carries-its-indexed-test", build(&q).select);
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn a_minimum_distance_only_geo_discovery_is_not_split() {
         let mut q = empty_query();
-        q.geo = Some(GeoQuery {
+        q.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: None,
                 min_distance: Some("100".parse().expect("positive distance")),
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn build_with_multiple_filters() {
         let mut q = empty_query();
-        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:a"]);
         q.attrs = vec![iri("https://example.com/speed")];
         assert_statement_snapshot!("statement-build-with-multiple-filters", build(&q).select);
@@ -636,7 +636,7 @@ mod tests {
             "type": "Polygon",
             "coordinates": [[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]]]
         });
-        q.geo = Some(GeoQuery {
+        q.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(ring).expect("polygon parses"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),

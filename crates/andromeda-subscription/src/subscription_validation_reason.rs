@@ -16,7 +16,7 @@
 use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError};
 use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_model::subscription_member::SubscriptionMember;
-use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
+use andromeda_ngsi_ld_query::{projection::exclusivity::ProjectionConflict, query_error::QueryError};
 use thiserror::Error;
 
 /// Why a subscription request is invalid.

@@ -13,7 +13,7 @@
 //! member carries the expanded name of a described member, which expansion
 //! keeps beside the foreign ones.
 
-use crate::filter::trailing_path::MemberPath;
+use crate::filter::trailing_group::MemberPath;
 use andromeda_ngsi_ld_geometry::geometry_member::GeometryMember;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{BBOX, COORDINATES};
@@ -50,7 +50,7 @@ impl GeometryPath<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{reading::geometry_path::GeometryPath, trailing_path::MemberPath};
+    use crate::filter::{reading::geometry_path::GeometryPath, trailing_group::MemberPath};
     use andromeda_ngsi_ld_geometry::geometry_member::GeometryMember;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use pretty_assertions::assert_eq;

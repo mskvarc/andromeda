@@ -4,7 +4,11 @@
 //! tested on what that walk yields.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, temporal::compiled::CompiledTemporalQuery, type_selection::grammar::TypeExpr};
+use andromeda_ngsi_ld_query::{
+    entity_selection::ConsideredEntities,
+    temporal::compiled::CompiledTemporalQuery,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
+};
 use andromeda_postgresql_query::{
     history_source::{
         HistoryBranch,
@@ -161,11 +165,11 @@ fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryN
     let type_walkable = !selectors.is_empty()
         && selectors.iter().all(|selector| selector.ids.is_empty())
         && (selectors.len() == 1 || selectors.iter().all(|selector| selector.id_pattern.is_none()));
-    let exprs: Option<Vec<&TypeExpr>> = type_walkable
+    let exprs: Option<Vec<&ExpandedTypeSelection>> = type_walkable
         .then(|| {
             selectors
                 .iter()
-                .map(|selector| selector.type_expr.as_ref().filter(|expr| drives(expr)))
+                .map(|selector| selector.type_selection.as_ref().filter(|expr| drives(expr)))
                 .collect()
         })
         .flatten();
@@ -211,7 +215,7 @@ pub fn walks_attribute_holders(compiled: &CompiledTemporalQuery) -> bool {
         && selection
             .selectors
             .iter()
-            .all(|selector| selector.ids.is_empty() && selector.type_expr.is_none())
+            .all(|selector| selector.ids.is_empty() && selector.type_selection.is_none())
 }
 
 /// The dictionary keys of the attributes the request concerns (clause
@@ -242,11 +246,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
-        entity_selection::EntitySelector,
+        expanded_entity_selector::ExpandedEntitySelector,
         page_window::PageWindow,
         pattern::Pattern,
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -267,7 +271,7 @@ mod tests {
     /// Evolution once, in identifier order.
     #[test]
     fn a_type_disjunction_walks_the_merged_ranges_in_identifier_order() {
-        let bus = TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Bus"));
+        let bus = ExpandedTypeSelection::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Bus"));
         let mut names = vehicle_is_known();
         names.types = ResolvedNames::from_pairs([
             (
@@ -279,7 +283,11 @@ mod tests {
                 EntityTypeNameKey::from(4),
             ),
         ]);
-        let compiled = typed(vec![EntitySelector::builder().type_expr(Some(TypeExpr::Or(vec![vehicle(), bus]))).build()]);
+        let compiled = typed(vec![
+            ExpandedEntitySelector::builder()
+                .type_selection(Some(ExpandedTypeSelection::Or(vec![vehicle(), bus])))
+                .build(),
+        ]);
         let statement = built(&compiled, &names);
         assert_statement_snapshot!("evolution-walk-a-type-disjunction-walks-the-merged-ranges-in-identifier-order", statement);
     }
@@ -312,9 +320,9 @@ mod tests {
     #[test]
     fn a_lone_typed_selector_keeps_its_pattern_over_the_walk() {
         let compiled = typed(vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
-                .type_expr(Some(vehicle()))
+                .type_selection(Some(vehicle()))
                 .build(),
         ]);
         let statement = built(&compiled, &vehicle_is_known());
@@ -326,9 +334,9 @@ mod tests {
     #[test]
     fn a_typed_selector_naming_identifiers_keeps_the_catalogue() {
         let compiled = typed(vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:ngsi-ld:Vehicle:1"]))
-                .type_expr(Some(vehicle()))
+                .type_selection(Some(vehicle()))
                 .build(),
         ]);
         let statement = built(&compiled, &vehicle_is_known());
@@ -341,9 +349,9 @@ mod tests {
     #[test]
     fn several_selectors_pairing_types_with_patterns_keep_the_catalogue() {
         let compiled = typed(vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
-                .type_expr(Some(vehicle()))
+                .type_selection(Some(vehicle()))
                 .build(),
             vehicle_selector(),
         ]);
@@ -356,7 +364,9 @@ mod tests {
     fn a_selection_with_an_untyped_selector_keeps_the_catalogue() {
         let compiled = typed(vec![
             vehicle_selector(),
-            EntitySelector::builder().id_pattern(Some(Pattern::parse(".*").expect("valid pattern"))).build(),
+            ExpandedEntitySelector::builder()
+                .id_pattern(Some(Pattern::parse(".*").expect("valid pattern")))
+                .build(),
         ]);
         let statement = built(&compiled, &vehicle_is_known());
         assert_statement_snapshot!("evolution-walk-a-selection-with-an-untyped-selector-keeps-the-catalogue", statement);
@@ -464,7 +474,7 @@ mod tests {
     fn an_attrs_selection_with_an_id_pattern_walks_the_streams_and_keeps_the_pattern() {
         let mut compiled = speed_only();
         compiled.entities.selectors = vec![
-            EntitySelector::builder()
+            ExpandedEntitySelector::builder()
                 .id_pattern(Some(Pattern::parse(".*:7$").expect("valid pattern")))
                 .build(),
         ];
@@ -487,7 +497,7 @@ mod tests {
         assert_statement_snapshot!("evolution-walk-an-attrs-selection-beside-a-type-or-identifiers-keeps-its-own-walk-1", by_type);
 
         let mut identified = speed_only();
-        identified.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
+        identified.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         let by_identifier = built(&identified, &names);
         assert_statement_snapshot!(
             "evolution-walk-an-attrs-selection-beside-a-type-or-identifiers-keeps-its-own-walk-2",

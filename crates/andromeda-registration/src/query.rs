@@ -22,20 +22,16 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{
         compilation::{FilterOptIns, admit_q_filter, compile_q_filter},
-        expansion::expand_csf_expr,
-        path::expanded_attribute_name,
+        expansion::{expand_csf_expr, expanded_attribute_name},
         reading::filter_reading::FilterReading,
         referenced_attributes::referenced_attributes,
     },
-    geo::compile as geo_compile,
+    geo::compilation as geo_compile,
     page_reach::PageReach,
     page_window::PageWindow,
     projection::expansion::expand_attrs,
     temporal::window::TimeInterval,
-    type_selection::{
-        expansion::expand_type_expression,
-        grammar::{TypeExpr, TypeExprRaw},
-    },
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
 };
 use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
 use iri_rs::IriBuf;
@@ -104,7 +100,7 @@ impl RegistrationService {
         let type_selector = compiled
             .entity_type
             .clone()
-            .map(TypeExpr::into_raw)
+            .map(ExpandedTypeSelection::into_raw)
             .transpose()
             .map_err(RegistrationInvariant::ExpandedTypeName)?;
         let mut matched = Vec::with_capacity(scanned.len());
@@ -214,7 +210,7 @@ impl RegistrationService {
 fn registration_matching_the_query(
     registration: ContextSourceRegistration,
     compiled: &CompiledCsrQuery,
-    type_selector: Option<&TypeExprRaw>,
+    type_selector: Option<&WrittenTypeSelection>,
 ) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
     let entity = EntitySpecification {
         types: type_selector.map_or(TypeConstraint::Any, TypeConstraint::Selector),
@@ -249,7 +245,7 @@ mod tests {
     };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::{error::QueryError, page_reach::PageReach, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{page_reach::PageReach, page_window::PageWindow, query_error::QueryError};
     use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
     use iri_rs::{Iri, iri};
     use serde_json::json;

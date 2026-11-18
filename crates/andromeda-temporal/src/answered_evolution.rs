@@ -105,7 +105,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         split_filter::{LeafTruths, SplitFilter},
         temporal::window::{TemporalWindow, TimeInterval},
     };

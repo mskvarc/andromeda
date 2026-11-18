@@ -5,14 +5,14 @@
 //! a filter the round trip changes is answered differently once it has
 //! travelled.
 
-use crate::filter::{expression::Expr, generated_filters::query, parser::parse, serialize::serialize};
+use crate::filter::{Filter, display::serialize, generated_filters::query, parser::parse};
 use proptest::{
     prelude::{prop_assert_eq, proptest},
     test_runner::Config,
 };
 
 /// The filter a client wrote, parsed.
-fn parsed(written: &str) -> Expr {
+fn parsed(written: &str) -> Filter {
     parse(written).unwrap_or_else(|error| panic!("the generator writes only grammatical filters, and {written} is refused: {error}"))
 }
 

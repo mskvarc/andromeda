@@ -53,11 +53,11 @@ pub fn compared_kinds(operand: &Operand, comparison: Comparison) -> impl Iterato
 mod tests {
     use crate::q_predicate::stored_kind::{compared_kinds, stored_target_kinds};
     use andromeda_ngsi_ld_query::filter::{
+        parser::operand::{parse_date, parse_date_time, parse_time},
         reading::{
             operand::{Comparison, Operand},
             target_kind::TargetKind,
         },
-        scalar::{parse_date, parse_date_time, parse_time},
     };
     use andromeda_postgresql_stored_values::value_kind::ValueKind;
     use pretty_assertions::assert_eq;

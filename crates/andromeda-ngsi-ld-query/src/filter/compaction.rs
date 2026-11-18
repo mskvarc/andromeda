@@ -14,13 +14,14 @@
 
 use crate::{
     filter::{
-        expression::Expr,
+        Filter,
+        attribute_path::AttributePath,
         json_key_attributes::JsonKeyAttributes,
+        nested_names::NestedNames,
         operand_coercion::OperandCoercion,
-        path::{AttrPath, QueryPath},
-        predicate::Predicate,
-        trailing_members::TrailingMembers,
-        trailing_path::TrailingPath,
+        query_term::QueryTerm,
+        trailing_group::TrailingGroup,
+        value_path::ValuePath,
     },
     term_compactor::TermCompactor,
 };
@@ -34,9 +35,9 @@ use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 /// expanded compact by the inverse rule (see [`OperandCoercion::Vocabulary`]),
 /// so `expand_q_expr` applied to the result under the same `@context` yields
 /// the expression this was given.
-pub async fn compact_q_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr {
+pub async fn compact_q_expr(expr: Filter, compactor: &impl TermCompactor) -> Filter {
     let json_keys = JsonKeyAttributes::default();
-    let members = TrailingMembers::Terms(&json_keys);
+    let members = NestedNames::Terms(&json_keys);
     map_predicates(expr, &|pred| compact_q_pred(pred, members, compactor)).await
 }
 
@@ -44,7 +45,7 @@ pub async fn compact_q_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr 
 /// holding a vocabulary term, then its attribute axis.
 ///
 /// The operands go first: the member is recognised by its expanded name.
-async fn compact_q_pred(pred: Predicate, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Predicate {
+async fn compact_q_pred(pred: QueryTerm, members: NestedNames<'_>, compactor: &impl TermCompactor) -> QueryTerm {
     let pred = match pred.path().terminal().ending_member() {
         Some((member, _)) if member.holds_vocabulary_term() => OperandCoercion::Vocabulary.compact_operands(pred, compactor).await,
         Some(_) | None => pred,
@@ -56,31 +57,31 @@ async fn compact_q_pred(pred: Predicate, members: TrailingMembers<'_>, compactor
 /// compound-value members as written.
 ///
 /// The inverse of [`crate::filter::expansion::expand_csf_expr`]: the members
-/// address raw JSON keys (see [`TrailingMembers::Verbatim`]), which no
+/// address raw JSON keys (see [`NestedNames::Verbatim`]), which no
 /// `@context` abbreviates.
-pub async fn compact_csf_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr {
-    map_predicates(expr, &|pred| compact_pred_terms(pred, TrailingMembers::Verbatim, compactor)).await
+pub async fn compact_csf_expr(expr: Filter, compactor: &impl TermCompactor) -> Filter {
+    map_predicates(expr, &|pred| compact_pred_terms(pred, NestedNames::Verbatim, compactor)).await
 }
 
 /// Rewrite every leaf predicate of an expression with `handler`, leaving its
 /// boolean structure intact.
-async fn map_predicates<F, Fut>(expr: Expr, handler: &F) -> Expr
+async fn map_predicates<F, Fut>(expr: Filter, handler: &F) -> Filter
 where
-    F: Fn(Predicate) -> Fut + Sync,
-    Fut: Future<Output = Predicate> + Send,
+    F: Fn(QueryTerm) -> Fut + Sync,
+    Fut: Future<Output = QueryTerm> + Send,
 {
     match expr {
-        Expr::And(terms) => Expr::And(map_all_predicates(terms, handler).await),
-        Expr::Or(terms) => Expr::Or(map_all_predicates(terms, handler).await),
-        Expr::Pred(pred) => Expr::Pred(handler(pred).await),
+        Filter::And(terms) => Filter::And(map_all_predicates(terms, handler).await),
+        Filter::Or(terms) => Filter::Or(map_all_predicates(terms, handler).await),
+        Filter::Term(pred) => Filter::Term(handler(pred).await),
     }
 }
 
 /// Rewrite the operands of one boolean node in order.
-async fn map_all_predicates<F, Fut>(terms: Vec<Expr>, handler: &F) -> Vec<Expr>
+async fn map_all_predicates<F, Fut>(terms: Vec<Filter>, handler: &F) -> Vec<Filter>
 where
-    F: Fn(Predicate) -> Fut + Sync,
-    Fut: Future<Output = Predicate> + Send,
+    F: Fn(QueryTerm) -> Fut + Sync,
+    Fut: Future<Output = QueryTerm> + Send,
 {
     let mut rewritten = Vec::with_capacity(terms.len());
     for term in terms {
@@ -91,10 +92,10 @@ where
 
 /// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
 /// own future type.
-fn map_predicates_boxed<'a, F, Fut>(expr: Expr, handler: &'a F) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>>
+fn map_predicates_boxed<'a, F, Fut>(expr: Filter, handler: &'a F) -> Pin<Box<dyn Future<Output = Filter> + Send + 'a>>
 where
-    F: Fn(Predicate) -> Fut + Sync,
-    Fut: Future<Output = Predicate> + Send + 'a,
+    F: Fn(QueryTerm) -> Fut + Sync,
+    Fut: Future<Output = QueryTerm> + Send + 'a,
 {
     Box::pin(map_predicates(expr, handler))
 }
@@ -113,14 +114,14 @@ where
 /// `expand_attrs` is the stored, expanded opt-in list, and the paths it is
 /// matched against are the stored, expanded ones, so this runs before
 /// [`compact_q_expr`] turns those paths back into terms.
-pub async fn revert_expand_values<S: BuildHasher + Sync>(expr: Expr, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Expr {
+pub async fn revert_expand_values<S: BuildHasher + Sync>(expr: Filter, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Filter {
     map_predicates(expr, &|pred| revert_compare_values(pred, expand_attrs, compactor)).await
 }
 
 /// Put the operands of a comparison back in the client's terms when its
 /// attribute opted in via `expandValues`.
-async fn revert_compare_values<S: BuildHasher + Sync>(pred: Predicate, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Predicate {
-    if expand_attrs.contains(pred.path().terminal().attr.as_str()) {
+async fn revert_compare_values<S: BuildHasher + Sync>(pred: QueryTerm, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> QueryTerm {
+    if expand_attrs.contains(pred.path().terminal().attribute.as_str()) {
         return OperandCoercion::ExpandValues.compact_operands(pred, compactor).await;
     }
     pred
@@ -128,24 +129,28 @@ async fn revert_compare_values<S: BuildHasher + Sync>(pred: Predicate, expand_at
 
 /// Compact the attribute axis of a single predicate, keeping its operator and
 /// operand.
-async fn compact_pred_terms(pred: Predicate, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Predicate {
+async fn compact_pred_terms(pred: QueryTerm, members: NestedNames<'_>, compactor: &impl TermCompactor) -> QueryTerm {
     match pred {
-        Predicate::Exists(path) => Predicate::Exists(compact_query_path(path, members, compactor).await),
-        Predicate::Equality { path, membership, rhs } => Predicate::Equality {
+        QueryTerm::Exists(path) => QueryTerm::Exists(compact_query_path(path, members, compactor).await),
+        QueryTerm::Equality { path, membership, value: rhs } => QueryTerm::Equality {
             path: compact_query_path(path, members, compactor).await,
             membership,
-            rhs,
+            value: rhs,
         },
-        Predicate::Ordering { path, op, rhs } => Predicate::Ordering {
+        QueryTerm::Ordering {
+            path,
+            operator: op,
+            value: rhs,
+        } => QueryTerm::Ordering {
             path: compact_query_path(path, members, compactor).await,
-            op,
-            rhs,
+            operator: op,
+            value: rhs,
         },
-        Predicate::MatchPattern { path, pattern } => Predicate::MatchPattern {
+        QueryTerm::MatchPattern { path, pattern } => QueryTerm::MatchPattern {
             path: compact_query_path(path, members, compactor).await,
             pattern,
         },
-        Predicate::NotMatchPattern { path, pattern } => Predicate::NotMatchPattern {
+        QueryTerm::NotMatchPattern { path, pattern } => QueryTerm::NotMatchPattern {
             path: compact_query_path(path, members, compactor).await,
             pattern,
         },
@@ -156,10 +161,10 @@ async fn compact_pred_terms(pred: Predicate, members: TrailingMembers<'_>, compa
 /// linked-entity hop the Relationship as a term and its guard as entity types.
 /// This is the same split [`crate::filter::expansion::expand_query_path`] makes
 /// in the other direction.
-pub async fn compact_query_path(path: QueryPath, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> QueryPath {
+pub async fn compact_query_path(path: AttributePath, members: NestedNames<'_>, compactor: &impl TermCompactor) -> AttributePath {
     match path {
-        QueryPath::Local(local) => QueryPath::Local(compact_attr_path(local, members, compactor).await),
-        QueryPath::Linked {
+        AttributePath::Local(local) => AttributePath::Local(compact_attr_path(local, members, compactor).await),
+        AttributePath::Linked {
             relationship,
             guard_types,
             inner,
@@ -170,7 +175,7 @@ pub async fn compact_query_path(path: QueryPath, members: TrailingMembers<'_>, c
                 compacted_guard.push(compactor.compact_type(guard_type).await);
             }
             let inner = compact_query_path_boxed(*inner, members, compactor).await;
-            QueryPath::Linked {
+            AttributePath::Linked {
                 relationship,
                 guard_types: compacted_guard,
                 inner: Box::new(inner),
@@ -182,10 +187,10 @@ pub async fn compact_query_path(path: QueryPath, members: TrailingMembers<'_>, c
 /// Box-pinned wrapper: the axis walker recurses through hops, and an
 /// `async fn` cannot name its own future type.
 fn compact_query_path_boxed<'a, C: TermCompactor>(
-    path: QueryPath,
-    members: TrailingMembers<'a>,
+    path: AttributePath,
+    members: NestedNames<'a>,
     compactor: &'a C,
-) -> Pin<Box<dyn Future<Output = QueryPath> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = AttributePath> + Send + 'a>> {
     Box::pin(compact_query_path(path, members, compactor))
 }
 
@@ -196,16 +201,16 @@ fn compact_query_path_boxed<'a, C: TermCompactor>(
 /// parsed path carries what the client wrote in both spellings of its
 /// [`MemberPath`], and a compacted path is meant to read as one. A target
 /// language is no term and stays as written.
-pub async fn compact_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> AttrPath {
-    if let Some(TrailingPath::Members(member_path)) = &mut path.trailing {
-        if members.are_terms_under(&path.attr) {
+pub async fn compact_attr_path(mut path: ValuePath, members: NestedNames<'_>, compactor: &impl TermCompactor) -> ValuePath {
+    if let Some(TrailingGroup::Members(member_path)) = &mut path.trailing {
+        if members.are_terms_under(&path.attribute) {
             member_path.addressed = compact_all(&member_path.addressed, compactor).await;
         }
         member_path.written.clone_from(&member_path.addressed); // clone: the written and addressed spellings are separate owned values
     }
-    path.attr = compactor.compact_term(&path.attr).await;
+    path.attribute = compactor.compact_term(&path.attribute).await;
     if members.sub_attributes_are_terms() {
-        path.sub_attrs = compact_all(&path.sub_attrs, compactor).await;
+        path.sub_attributes = compact_all(&path.sub_attributes, compactor).await;
     }
     path
 }
@@ -224,10 +229,10 @@ mod tests {
     use crate::{
         filter::{
             compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
+            display::serialize,
             expansion::{apply_expand_values, expand_csf_expr, expand_q_expr},
             json_key_attributes::JsonKeyAttributes,
             parser,
-            serialize::serialize,
         },
         namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
         term_compactor::TermCompactor,

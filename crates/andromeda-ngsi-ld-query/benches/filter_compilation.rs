@@ -7,7 +7,6 @@
 //! normal form, and the compiled filter that holds them.
 
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{
         compiled_filter::CompiledFilter,
         expansion::expand_q_expr,
@@ -17,6 +16,7 @@ use andromeda_ngsi_ld_query::{
         reading::filter_reading::FilterReading,
     },
     namespace_expander::EXAMPLE_NAMESPACE,
+    query_error::QueryError,
 };
 use criterion::{BatchSize, Criterion};
 use std::{hint::black_box, io};

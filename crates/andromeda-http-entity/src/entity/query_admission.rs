@@ -36,7 +36,7 @@ use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     filter::reading::filter_reading::FilterReading,
-    ordering::parameters::OrderingParameters,
+    ordering::ordering_parameters::OrderingParameters,
     query_identity::{IdentifierScope, QueryIdentity, QueryIdentityError},
 };
 use andromeda_ngsi_ld_request::{

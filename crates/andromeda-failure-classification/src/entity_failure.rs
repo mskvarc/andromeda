@@ -63,7 +63,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::query_error::QueryError;
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use http::StatusCode;

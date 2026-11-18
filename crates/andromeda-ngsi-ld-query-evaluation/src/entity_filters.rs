@@ -38,8 +38,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_filters::EntityFilters,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
     };
     use serde_json::json;
 
@@ -61,8 +61,8 @@ mod tests {
     }
 
     /// Within 1000 metres of the point (`longitude`, `latitude`).
-    fn near(longitude: f64, latitude: f64) -> GeoQuery {
-        GeoQuery {
+    fn near(longitude: f64, latitude: f64) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: "near;maxDistance==1000".parse::<GeoRel>().expect("a clause 4.10 relation"),
             geometry: serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [longitude, latitude]})).expect("a point"),
             geoproperty: LOCATION.parse().expect("an attribute name"),
@@ -70,7 +70,7 @@ mod tests {
     }
 
     /// Whether `x` passes the filters given.
-    fn admits_x(q: Option<&str>, geo: Option<&GeoQuery>, scope: Option<&str>) -> bool {
+    fn admits_x(q: Option<&str>, geo: Option<&CompiledGeoQuery>, scope: Option<&str>) -> bool {
         let q = q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality));
         let scope = scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses"));
         let filters = EntityFilters {

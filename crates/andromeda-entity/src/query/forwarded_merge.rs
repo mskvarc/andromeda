@@ -47,7 +47,7 @@ mod tests {
     use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
-    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -80,8 +80,8 @@ mod tests {
         IriBuf::new(value.to_owned()).expect("valid IRI")
     }
 
-    fn attribute(value: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn attribute(value: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(value),
             linked: Vec::new(),
         }
@@ -98,8 +98,8 @@ mod tests {
     /// drops the `scope` it does not name.
     #[test]
     fn a_pick_narrows_a_merged_entity_to_its_attributes() {
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Id, attribute(NAME)],
+        let projection = ExpandedProjection {
+            pick: vec![ExpandedProjectionTerm::Id, attribute(NAME)],
             omit: Vec::new(),
         };
         let narrowed = EntityQueryService::narrow_merged(merged(), ListInForce::of(Some(&projection), &[]));
@@ -110,7 +110,7 @@ mod tests {
     /// Clause 4.21: an `omit` removes the attribute it names and keeps the rest.
     #[test]
     fn an_omit_removes_its_attribute_from_a_merged_entity() {
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: Vec::new(),
             omit: vec![attribute(LOCATION)],
         };
@@ -131,8 +131,8 @@ mod tests {
     /// the entity.
     #[test]
     fn a_pick_naming_nothing_held_keeps_the_bare_entity() {
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Id],
+        let projection = ExpandedProjection {
+            pick: vec![ExpandedProjectionTerm::Id],
             omit: Vec::new(),
         };
         let narrowed = EntityQueryService::narrow_merged(merged(), ListInForce::of(Some(&projection), &[]));

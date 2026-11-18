@@ -332,7 +332,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
     use andromeda_ngsi_ld_query::{
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         temporal::contributed_entities::{ContributedEntities, ContributedRendering},
     };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;

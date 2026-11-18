@@ -1,7 +1,7 @@
 //! How both indexes are partitioned.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::{IriBuf, iri};
 
@@ -51,11 +51,11 @@ impl SpatialKey {
 /// from the tree anyway would silently narrow the result. The caller falls
 /// back to the store in that case.
 #[must_use]
-pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
+pub fn flatten_or_type_iris(expr: &ExpandedTypeSelection) -> Option<Vec<IriBuf>> {
     match expr {
-        TypeExpr::Wildcard | TypeExpr::And(_) => None,
-        TypeExpr::Type(iri) => Some(vec![iri.clone()]),
-        TypeExpr::Or(children) => {
+        ExpandedTypeSelection::Wildcard | ExpandedTypeSelection::And(_) => None,
+        ExpandedTypeSelection::Type(iri) => Some(vec![iri.clone()]),
+        ExpandedTypeSelection::Or(children) => {
             let mut out = Vec::with_capacity(children.len());
             for child in children {
                 out.extend(flatten_or_type_iris(child)?);
@@ -69,12 +69,12 @@ pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
 mod tests {
     use crate::key::{SpatialKey, flatten_or_type_iris};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::IriBuf;
 
-    fn type_expr(raw: &str) -> TypeExpr {
-        TypeExpr::Type(IriBuf::new(raw.to_owned()).expect("a well-formed IRI"))
+    fn type_expr(raw: &str) -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(IriBuf::new(raw.to_owned()).expect("a well-formed IRI"))
     }
 
     #[test]
@@ -96,21 +96,21 @@ mod tests {
 
     #[test]
     fn an_alternation_flattens_to_every_branch() {
-        let expr = TypeExpr::Or(vec![type_expr("https://example.org/Vehicle"), type_expr("https://example.org/Building")]);
+        let expr = ExpandedTypeSelection::Or(vec![type_expr("https://example.org/Vehicle"), type_expr("https://example.org/Building")]);
         let flattened = flatten_or_type_iris(&expr).expect("flattens");
         pretty_assertions::assert_eq!(flattened.len(), 2);
     }
 
     #[test]
     fn an_intersection_refuses_to_flatten_rather_than_narrowing_the_answer() {
-        let expr = TypeExpr::And(vec![type_expr("https://example.org/Vehicle"), type_expr("https://example.org/Building")]);
+        let expr = ExpandedTypeSelection::And(vec![type_expr("https://example.org/Vehicle"), type_expr("https://example.org/Building")]);
         assert!(flatten_or_type_iris(&expr).is_none());
     }
 
     #[test]
     fn an_intersection_nested_inside_an_alternation_refuses_too() {
-        let nested = TypeExpr::And(vec![type_expr("https://example.org/A"), type_expr("https://example.org/B")]);
-        let expr = TypeExpr::Or(vec![type_expr("https://example.org/Vehicle"), nested]);
+        let nested = ExpandedTypeSelection::And(vec![type_expr("https://example.org/A"), type_expr("https://example.org/B")]);
+        let expr = ExpandedTypeSelection::Or(vec![type_expr("https://example.org/Vehicle"), nested]);
         assert!(flatten_or_type_iris(&expr).is_none());
     }
 }

@@ -44,7 +44,7 @@ use andromeda_ngsi_ld_model::{
     request_body::RequestBody,
     time_interval::TimeInterval,
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use indexmap::IndexMap;
 use mediatype::MediaTypeBuf;
 

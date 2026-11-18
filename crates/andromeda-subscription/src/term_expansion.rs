@@ -22,13 +22,13 @@ use andromeda_ngsi_ld_model::{
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{
         compilation::{AdmittedFilter, compile_q_filter},
         expansion::{expand_attribute_names, expand_csf_expr},
     },
+    query_error::QueryError,
     term_expander::TermExpander,
-    type_selection::{expansion::expand_type_expression, grammar::TypeExpr},
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression},
 };
 use std::mem;
 
@@ -41,7 +41,9 @@ async fn expand_name_list(names: &mut Vec<AttributeName>, expander: &impl TermEx
 /// Expand the type selection of every entity selector in place.
 async fn expand_selector_types(selectors: &mut [EntitySelector], expander: &impl TermExpander) -> Result<(), SubscriptionError> {
     for selector in selectors {
-        selector.type_ = expand_type_expression(&selector.type_, expander).await.and_then(TypeExpr::into_raw)?;
+        selector.type_ = expand_type_expression(&selector.type_, expander)
+            .await
+            .and_then(ExpandedTypeSelection::into_raw)?;
     }
     Ok(())
 }
@@ -140,9 +142,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
-        filter::{language_targeting::LanguageTargeting, serialize::serialize_written_members},
-        term_expander::TermExpansionFailure,
+        filter::{display::serialize_written_members, language_targeting::LanguageTargeting},
+        query_error::QueryError,
+        term_expander::TermExpansionError,
     };
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
@@ -185,7 +187,7 @@ mod tests {
     fn is_not_expanded(result: &Result<SubscriptionRequest, SubscriptionError>) -> bool {
         matches!(
             result,
-            Err(SubscriptionError::Query(QueryError::TermExpansion(TermExpansionFailure::NotExpanded)))
+            Err(SubscriptionError::Query(QueryError::TermExpansion(TermExpansionError::NotExpanded)))
         )
     }
 

@@ -5,7 +5,7 @@
 //! the refusal of a value one of them carries, names the parameter as the
 //! specification spells it rather than echoing whatever the client wrote.
 
-use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
+use andromeda_ngsi_ld_query::ordering::ordering_parameters::OrderingParameters;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 
 /// A query parameter of the NGSI-LD API (clause 6.3 and the resource tables of

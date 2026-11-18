@@ -20,17 +20,17 @@ use crate::snapshot::{SnapshotPriority, SnapshotType};
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{
-        expression::Expr,
+        Filter,
+        attribute_path::AttributePath,
         language_matching::LanguageMatching,
-        path::QueryPath,
         reading::{
             family_reading::{MultiValueReading, TargetOrigin},
             filter_reading::FilterReading,
             term_reading::TermReading,
         },
     },
+    query_error::QueryError,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     q::{
@@ -142,7 +142,7 @@ impl FromStr for SnapshotPurgeFilter {
     type Err = SnapshotQParseError;
 
     fn from_str(raw: &str) -> Result<SnapshotPurgeFilter, SnapshotQParseError> {
-        let expr = raw.parse::<Expr>()?;
+        let expr = raw.parse::<Filter>()?;
         every_path_names_a_member(&expr)?;
         // A Snapshot member holds no languageMap, so no term selects
         // languageMap keys and the matching is the specification's own.
@@ -151,10 +151,10 @@ impl FromStr for SnapshotPurgeFilter {
 }
 
 /// Refuse an expression one of whose Query Terms names no [`SnapshotMember`].
-fn every_path_names_a_member(expr: &Expr) -> Result<(), SnapshotQParseError> {
+fn every_path_names_a_member(expr: &Filter) -> Result<(), SnapshotQParseError> {
     match expr {
-        Expr::And(terms) | Expr::Or(terms) => terms.iter().try_for_each(every_path_names_a_member),
-        Expr::Pred(predicate) => filtered_member(predicate.path()).map(|_member| ()),
+        Filter::And(terms) | Filter::Or(terms) => terms.iter().try_for_each(every_path_names_a_member),
+        Filter::Term(predicate) => filtered_member(predicate.path()).map(|_member| ()),
     }
 }
 
@@ -163,10 +163,10 @@ fn every_path_names_a_member(expr: &Expr) -> Result<(), SnapshotQParseError> {
 /// A member is named by its plain name: a dotted path, a trailing `[...]`
 /// group or a `{...}` hop addresses something inside or beyond a member, which
 /// the Snapshot data type does not have.
-fn filtered_member(path: &QueryPath) -> Result<SnapshotMember, SnapshotQParseError> {
+fn filtered_member(path: &AttributePath) -> Result<SnapshotMember, SnapshotQParseError> {
     match path {
-        QueryPath::Local(local) if local.is_simple() => local.attr.as_str().parse().map_err(|_unknown| SnapshotQParseError::UnknownMember),
-        QueryPath::Local(_) | QueryPath::Linked { .. } => Err(SnapshotQParseError::UnknownMember),
+        AttributePath::Local(local) if local.is_simple() => local.attribute.as_str().parse().map_err(|_unknown| SnapshotQParseError::UnknownMember),
+        AttributePath::Local(_) | AttributePath::Linked { .. } => Err(SnapshotQParseError::UnknownMember),
     }
 }
 
@@ -181,7 +181,7 @@ mod tests {
         snapshot::SnapshotPriority,
         snapshot_filter::{PurgeCandidate, SnapshotPurgeFilter, SnapshotQParseError},
     };
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::query_error::QueryError;
     use pretty_assertions::assert_eq;
 
     /// A Snapshot holding every member the purge filter compares.

@@ -15,7 +15,7 @@ use crate::reassembly_harness::{
     subscribing_source::SubscribingSource,
 };
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
+use andromeda_ngsi_ld_query::projection::written_projection_list::WrittenProjectionList;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use serde_json::{Map, Value, json};
 
@@ -78,7 +78,7 @@ fn ids(entities: &[Value]) -> Vec<&str> {
 
 /// The stored form of a `pick` or `omit`, one list per element.
 fn stored_projection(lists: &[&str]) -> Value {
-    let parsed: Vec<ProjectionList> = lists.iter().map(|raw| raw.parse().expect("a valid projection list")).collect();
+    let parsed: Vec<WrittenProjectionList> = lists.iter().map(|raw| raw.parse().expect("a valid projection list")).collect();
     serde_json::to_value(parsed).expect("the projection serializes")
 }
 

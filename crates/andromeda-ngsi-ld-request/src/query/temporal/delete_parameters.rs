@@ -29,11 +29,11 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    filter::expression::Expr,
+    dataset_selector::DatasetSelector,
+    filter::Filter,
     pattern::Pattern,
-    scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
+    scope::scope_query::ScopeQuery,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -50,14 +50,14 @@ pub struct TemporalDeleteParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]
     pub id_pattern: Option<Pattern>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -67,7 +67,7 @@ pub struct TemporalDeleteParameters {
     /// The context source filter (clause 5.7.4.3); parsed but never forwarded,
     /// because the delete is local-only.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
 
     /// How the window relates to the given instants (clause 4.11 `timerel`).
     #[serde(default, deserialize_with = "deserialize_option_timerel")]

@@ -36,7 +36,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{compaction::compact_q_expr, parser, serialize::serialize},
+        filter::{compaction::compact_q_expr, display::serialize, parser},
         term_compactor::TermCompactor,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::classes;

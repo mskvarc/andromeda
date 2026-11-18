@@ -93,8 +93,8 @@ pub fn lift_comparison(operand: &Operand, stored: SimpleExpr, datatype: SimpleEx
 mod tests {
     use crate::jsonb::lift_comparison;
     use andromeda_ngsi_ld_query::filter::{
+        parser::operand::{parse_date, parse_date_time, parse_time},
         reading::operand::Operand,
-        scalar::{parse_date, parse_date_time, parse_time},
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};

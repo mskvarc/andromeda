@@ -128,12 +128,13 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+        ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
         pattern::Pattern,
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -155,9 +156,9 @@ mod tests {
         }
     }
 
-    fn selector(ty: Option<&str>, pattern: &str) -> EntitySelector {
-        EntitySelector::builder()
-            .type_expr(ty.map(|ty| TypeExpr::Type(IriBuf::new(format!("https://example.com/{ty}")).expect("valid IRI"))))
+    fn selector(ty: Option<&str>, pattern: &str) -> ExpandedEntitySelector {
+        ExpandedEntitySelector::builder()
+            .type_selection(ty.map(|ty| ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.com/{ty}")).expect("valid IRI"))))
             .id_pattern(Some(Pattern::parse(pattern).expect("valid pattern")))
             .build()
     }
@@ -228,9 +229,9 @@ mod tests {
         let mut by_attrs = by_pattern(".*_1196287$");
         by_attrs.selection.attrs = vec![IriBuf::new("https://example.com/headSign".to_string()).expect("valid IRI")];
         let mut ordered = by_pattern(".*_1196287$");
-        ordered.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::ModifiedAt,
-            direction: OrderDirection::Desc,
+        ordered.ordering.terms = vec![CompiledOrderingTerm {
+            target: ExpandedOrderingTarget::ModifiedAt,
+            direction: OrderingDirection::Desc,
             collation: None,
         }];
         let mut paired = by_pattern(".*_1196287$");

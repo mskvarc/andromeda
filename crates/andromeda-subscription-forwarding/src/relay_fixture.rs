@@ -8,7 +8,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedDocument};
 use andromeda_ngsi_ld_model::received::{ReceivedElement, ReceivedEntities};
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_query::projection::expanded_projection::ExpandedProjection;
 use andromeda_ngsi_ld_render::{
     notification_entity::NotificationEntity,
     notified_changes::{HeldAttributes, NotifiedChanges},
@@ -64,7 +64,7 @@ pub(crate) async fn written(
         .document_entity(&received.document)
         .await
         .map_err(|error| error.to_string())?;
-    let projection = Projection::default();
+    let projection = ExpandedProjection::default();
     serde_json::to_value(NotificationEntity::relayed(
         &respelled,
         format,
@@ -97,7 +97,7 @@ pub(crate) async fn relayed_with_changes(engine: &JsonLdEngine, received: &Recei
         .document_entity(received.previous.as_ref().expect("previous values were reported"))
         .await
         .expect("the previous values compact");
-    let projection = Projection::default();
+    let projection = ExpandedProjection::default();
     let changes = NotifiedChanges {
         held: HeldAttributes::Current,
         deleted: None,

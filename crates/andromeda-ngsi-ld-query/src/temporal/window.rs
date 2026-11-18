@@ -1,6 +1,6 @@
 //! The interval of the time axis a query reads.
 
-use crate::error::QueryError;
+use crate::query_error::QueryError;
 use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
 use chrono::{DateTime, Utc};
 use typed_builder::TypedBuilder;
@@ -207,7 +207,7 @@ impl TemporalWindow {
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
+        query_error::QueryError,
         temporal::window::{TemporalWindow, TimeInterval},
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp, time_rel::TimeRel};

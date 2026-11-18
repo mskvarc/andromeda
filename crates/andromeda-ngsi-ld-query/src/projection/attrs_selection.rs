@@ -5,7 +5,7 @@
 //! context alias of the Scope and its expanded IRI name the same Entity member
 //! as the compact term `scope`, so the refusal is decided on the expanded name.
 
-use crate::{error::QueryError, term_expander::TermExpander};
+use crate::{query_error::QueryError, term_expander::TermExpander};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties, keyword};
 use iri_rs::IriBuf;
@@ -74,8 +74,8 @@ fn refused_keyword(name: &AttributeName, admission: AttrsAdmission) -> bool {
 mod tests {
     use super::{AttrsAdmission, expand_attrs_admitted};
     use crate::{
-        error::QueryError,
         namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
+        query_error::QueryError,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;

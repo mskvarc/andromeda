@@ -7,7 +7,7 @@
 //! decides once which of the two applies and every request-side geo-query is
 //! admitted under that decision.
 
-use crate::error::QueryError;
+use crate::query_error::QueryError;
 use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 
 /// Whether the distance band is admitted.
@@ -38,7 +38,7 @@ impl NearDistanceBand {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::QueryError, geo::near_distance_band::NearDistanceBand};
+    use crate::{geo::near_distance_band::NearDistanceBand, query_error::QueryError};
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 
     fn georel(raw: &str) -> GeoRel {

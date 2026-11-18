@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_query::{
     filter::compiled_filter::CompiledFilter,
     temporal::{
         compiled::CompiledTemporalQuery,
-        grouping::{AggregationGrouping, group_key::GroupKey},
+        grouping::{aggregation_grouping::AggregationGrouping, group_key::GroupKey},
     },
 };
 use andromeda_postgresql_query::{
@@ -64,7 +64,7 @@ impl TemporalRepository {
             .iter()
             .flat_map(AggregationGrouping::terms)
             .filter_map(|term| match &term.key {
-                GroupKey::Path(path) => Some(path.attr.as_str()),
+                GroupKey::Path(path) => Some(path.attribute.as_str()),
                 GroupKey::Member(_) => None,
             });
         let attribute_names = projected_attribute_names(

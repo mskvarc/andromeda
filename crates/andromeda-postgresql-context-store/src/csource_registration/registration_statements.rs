@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_model::{
     registration_management::RegistrationManagementInfo,
     time_interval::TimeInterval,
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
 use andromeda_postgresql_seaquery::{
     clock::now,

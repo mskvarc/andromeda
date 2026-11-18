@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_query::{
     filter::{language_targeting::LanguageTargeting, parser::parse},
     page_window::PageWindow,
     pattern::Pattern,
-    scope::query::ScopeQuery,
+    scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest};
 use serde_json::json;

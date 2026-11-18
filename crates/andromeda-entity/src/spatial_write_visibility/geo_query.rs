@@ -14,9 +14,10 @@ use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    entity_selection::{EntitySelection, EntitySelector},
-    geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
-    type_selection::grammar::TypeExpr,
+    entity_selection::EntitySelection,
+    expanded_entity_selector::ExpandedEntitySelector,
+    geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
@@ -84,12 +85,12 @@ pub(super) fn near_origin(id: &str) -> Arc<CompiledEntityQuery> {
 /// [`near_origin`] asked of `ids`, or of every vehicle when there are none.
 pub(super) fn near_origin_among(ids: Vec<Identifier>) -> Arc<CompiledEntityQuery> {
     let selection = EntitySelection {
-        selectors: vec![EntitySelector {
+        selectors: vec![ExpandedEntitySelector {
             ids,
             id_pattern: None,
-            type_expr: Some(TypeExpr::Type(IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI"))),
+            type_selection: Some(ExpandedTypeSelection::Type(IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI"))),
         }],
-        geo: Some(GeoQuery {
+        geo: Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("1000").expect("a positive distance")),
                 min_distance: None,

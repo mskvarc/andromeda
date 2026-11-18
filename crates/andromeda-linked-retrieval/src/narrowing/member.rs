@@ -101,12 +101,12 @@ mod tests {
         },
         test_graph::{Nodes, node},
     };
-    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
 
-    fn size() -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn size() -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: IriBuf::new("https://example.com/size".to_owned()).expect("valid IRI"),
             linked: Vec::new(),
         }
@@ -116,14 +116,14 @@ mod tests {
     fn an_unrestricted_rule_restricts_nothing() {
         let index = AttributeIriIndex::default();
         assert!(MemberRule::new(ListInForce::Unrestricted, &index).restricting().is_none());
-        let pick = [ProjectionTerm::Id];
+        let pick = [ExpandedProjectionTerm::Id];
         assert!(MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index).restricting().is_some());
     }
 
     #[test]
     fn a_pick_writes_only_what_it_names() {
         let index = AttributeIriIndex::default();
-        let pick = [ProjectionTerm::Id];
+        let pick = [ExpandedProjectionTerm::Id];
         let rule = MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index);
         assert_eq!(rule.keyword(Keyword::Id), MemberDecision::Write);
         assert_eq!(rule.keyword(Keyword::Type), MemberDecision::Skip);
@@ -137,7 +137,7 @@ mod tests {
         let pick = [size()];
         let city = node("C", &[]).with_properties(&["name"]);
         assert!(MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index).empties::<Nodes>(&city));
-        let keeping_id = [ProjectionTerm::Id, size()];
+        let keeping_id = [ExpandedProjectionTerm::Id, size()];
         assert!(!MemberRule::new(ListInForce::Payload(ListTerms::Pick(&keeping_id)), &index).empties::<Nodes>(&city));
     }
 }

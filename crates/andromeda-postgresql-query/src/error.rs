@@ -1,6 +1,6 @@
 //! Failures that belong to rendering rather than to the query language.
 
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::query_error::QueryError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 
 /// Errors raised while rendering a compiled query as PostgreSQL.

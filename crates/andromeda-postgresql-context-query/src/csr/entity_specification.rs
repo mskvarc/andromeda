@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
     identifier_axis::IdentifierAxis,
-    type_selection::grammar::TypeExpr,
+    type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
 use andromeda_postgresql_query::type_predicate::{names_condition, names_decide};
 use andromeda_postgresql_schema::csr::RegistrationInformation;
@@ -65,7 +65,7 @@ fn identifier_axis(specification: &ExpandedEntitySpecification<'_>) -> Option<Co
 /// The type axis of a non-wildcard selection: the indexed overlap, and for a
 /// selection that is not a disjunction of names, the residual on rows that
 /// carry types. `None` when the selection admits every row.
-fn type_axis(selection: &TypeExpr) -> Option<Condition> {
+fn type_axis(selection: &ExpandedTypeSelection) -> Option<Condition> {
     let residual = names_condition(selection, &ri_col(RegistrationInformation::EntityTypes))?;
     let named = selection.named_types();
     if named.is_empty() {
@@ -111,7 +111,11 @@ fn some_identifier_matches_registered_pattern(ids: &[&str]) -> SelectStatement {
 mod tests {
     use crate::csr::{entity_specification::row_matches, information_row::ri_col};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::{csr::expanded_entity_specification::ExpandedEntitySpecification, pattern::Pattern, type_selection::grammar::TypeExpr};
+    use andromeda_ngsi_ld_query::{
+        csr::expanded_entity_specification::ExpandedEntitySpecification,
+        pattern::Pattern,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
+    };
     use andromeda_postgresql_schema::csr::RegistrationInformation;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use iri_rs::IriBuf;
@@ -130,7 +134,7 @@ mod tests {
         Query::select().expr(int_literal(1)).cond_where(row).take()
     }
 
-    fn types(selection: &TypeExpr) -> SelectStatement {
+    fn types(selection: &ExpandedTypeSelection) -> SelectStatement {
         render(&ExpandedEntitySpecification {
             entity_type: Some(selection),
             ids: &[],
@@ -142,7 +146,7 @@ mod tests {
     /// so one name is decided by the overlap with the wildcard sentinel.
     #[test]
     fn one_type_is_decided_by_the_indexed_overlap_alone() {
-        let select = types(&TypeExpr::Type(iri("https://example.com/Vehicle")));
+        let select = types(&ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
         assert_statement_snapshot!("entity-specification-one-type-is-decided-by-the-indexed-overlap-alone", select);
     }
 
@@ -151,17 +155,17 @@ mod tests {
     /// row of an item without `entities` matches either.
     #[test]
     fn a_conjunction_needs_every_type_and_a_disjunction_one_of_them() {
-        let conjunction = TypeExpr::And(vec![
-            TypeExpr::Type(iri("https://example.com/Home")),
-            TypeExpr::Type(iri("https://example.com/Vehicle")),
+        let conjunction = ExpandedTypeSelection::And(vec![
+            ExpandedTypeSelection::Type(iri("https://example.com/Home")),
+            ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
         ]);
         assert_statement_snapshot!(
             "entity-specification-a-conjunction-needs-every-type-and-a-disjunction-one-of-them-1",
             types(&conjunction)
         );
-        let disjunction = TypeExpr::Or(vec![
-            TypeExpr::Type(iri("https://example.com/Home")),
-            TypeExpr::Type(iri("https://example.com/Vehicle")),
+        let disjunction = ExpandedTypeSelection::Or(vec![
+            ExpandedTypeSelection::Type(iri("https://example.com/Home")),
+            ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
         ]);
         assert_statement_snapshot!(
             "entity-specification-a-conjunction-needs-every-type-and-a-disjunction-one-of-them-2",
@@ -171,11 +175,11 @@ mod tests {
 
     #[test]
     fn a_nested_selection_keeps_its_boolean_structure_in_the_residual() {
-        let nested = TypeExpr::And(vec![
-            TypeExpr::Type(iri("https://example.com/Home")),
-            TypeExpr::Or(vec![
-                TypeExpr::Type(iri("https://example.com/Vehicle")),
-                TypeExpr::Type(iri("https://example.com/Boat")),
+        let nested = ExpandedTypeSelection::And(vec![
+            ExpandedTypeSelection::Type(iri("https://example.com/Home")),
+            ExpandedTypeSelection::Or(vec![
+                ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
+                ExpandedTypeSelection::Type(iri("https://example.com/Boat")),
             ]),
         ]);
         assert_statement_snapshot!(
@@ -186,7 +190,10 @@ mod tests {
 
     #[test]
     fn a_disjunction_with_the_wildcard_admits_every_row() {
-        let selection = TypeExpr::Or(vec![TypeExpr::Type(iri("https://example.com/Home")), TypeExpr::Wildcard]);
+        let selection = ExpandedTypeSelection::Or(vec![
+            ExpandedTypeSelection::Type(iri("https://example.com/Home")),
+            ExpandedTypeSelection::Wildcard,
+        ]);
         let specification = ExpandedEntitySpecification {
             entity_type: Some(&selection),
             ids: &[],
@@ -254,7 +261,7 @@ mod tests {
 
     #[test]
     fn the_type_and_identifier_axes_are_one_row_condition() {
-        let entity_type = TypeExpr::Type(iri("https://example.com/Vehicle"));
+        let entity_type = ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"));
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
         let select = render(&ExpandedEntitySpecification {
             entity_type: Some(&entity_type),

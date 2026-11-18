@@ -1,6 +1,6 @@
 //! Which way one ordering term sorts (clause 4.23.1).
 
-use crate::ordering::term::OrderDirection;
+use crate::ordering::ordering_direction::OrderingDirection;
 
 /// The two directions a sort key can run in.
 ///
@@ -13,27 +13,27 @@ pub enum SortDirection {
     Descending,
 }
 
-impl From<OrderDirection> for SortDirection {
-    fn from(direction: OrderDirection) -> SortDirection {
+impl From<OrderingDirection> for SortDirection {
+    fn from(direction: OrderingDirection) -> SortDirection {
         match direction {
-            OrderDirection::Asc | OrderDirection::DistAsc => SortDirection::Ascending,
-            OrderDirection::Desc | OrderDirection::DistDesc => SortDirection::Descending,
+            OrderingDirection::Asc | OrderingDirection::DistAsc => SortDirection::Ascending,
+            OrderingDirection::Desc | OrderingDirection::DistDesc => SortDirection::Descending,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::{sort_direction::SortDirection, term::OrderDirection};
+    use crate::ordering::{ordering_direction::OrderingDirection, sort_direction::SortDirection};
     use pretty_assertions::assert_eq;
 
     /// Clause 4.23.1's four sort orders differ in what they measure, not in how
     /// many directions there are.
     #[test]
     fn a_distance_direction_sorts_the_same_way_its_value_counterpart_does() {
-        assert_eq!(SortDirection::from(OrderDirection::Asc), SortDirection::Ascending);
-        assert_eq!(SortDirection::from(OrderDirection::DistAsc), SortDirection::Ascending);
-        assert_eq!(SortDirection::from(OrderDirection::Desc), SortDirection::Descending);
-        assert_eq!(SortDirection::from(OrderDirection::DistDesc), SortDirection::Descending);
+        assert_eq!(SortDirection::from(OrderingDirection::Asc), SortDirection::Ascending);
+        assert_eq!(SortDirection::from(OrderingDirection::DistAsc), SortDirection::Ascending);
+        assert_eq!(SortDirection::from(OrderingDirection::Desc), SortDirection::Descending);
+        assert_eq!(SortDirection::from(OrderingDirection::DistDesc), SortDirection::Descending);
     }
 }

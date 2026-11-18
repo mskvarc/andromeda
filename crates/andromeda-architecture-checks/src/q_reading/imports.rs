@@ -14,7 +14,7 @@ use syn::{
 /// The types whose variants a reading matches on: the syntax tree of a `q`
 /// term and the scalar, operator and polarity types the datatype-mismatch
 /// rules of clause 4.9 are decided on.
-pub(super) const TERM_TYPES: [&str; 5] = ["Predicate", "SetMembership", "OrderingOp", "CompareValue", "Scalar"];
+pub(super) const TERM_TYPES: [&str; 5] = ["QueryTerm", "SetMembership", "OrderingOperator", "EqualityValue", "Scalar"];
 
 /// The watched types another crate of the workspace defines under the same
 /// name, so a source reads the query crate's type only when it imports it from

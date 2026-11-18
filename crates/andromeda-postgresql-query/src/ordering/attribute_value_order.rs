@@ -30,7 +30,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
-    filter::{instance_metadata::InstanceMetadata, path::AttrPath},
+    filter::{instance_metadata::InstanceMetadata, value_path::ValuePath},
     ordering::sort_direction::SortDirection,
     standing_instant::StandingInstant,
 };
@@ -115,7 +115,7 @@ impl AttributeValue {
     /// has. An entity holding none projects no row, which the enclosing left
     /// join reads as "attribute does not exist".
     #[must_use]
-    pub fn lateral(&self, rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
+    pub fn lateral(&self, rows: &EntityRowRefs, path: &ValuePath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
         let source = Alias::new(SOURCE_ALIAS);
         let read = instance_read(rows, path, attributes);
         let (element, member) = ordered_element(path, attributes, rows.standing());
@@ -204,16 +204,16 @@ impl AttributeValue {
 /// The instance of current state `path` orders by, `None` when one of its
 /// names was never recorded, and the member of it the path ends on.
 fn ordered_element(
-    path: &AttrPath,
+    path: &ValuePath,
     attributes: &ResolvedNames<AttributeName>,
     standing: StandingInstant,
 ) -> (Option<ElementPath<'static>>, Option<InstanceMetadata>) {
     let (sub_attributes, member) = match path.ending_member() {
         Some((member, above)) => (above, Some(member)),
-        None => (path.sub_attrs.as_slice(), None),
+        None => (path.sub_attributes.as_slice(), None),
     };
     (
-        ElementPath::of_names(&path.attr, sub_attributes, ProbedRow::Current(standing), attributes),
+        ElementPath::of_names(&path.attribute, sub_attributes, ProbedRow::Current(standing), attributes),
         member,
     )
 }
@@ -222,7 +222,7 @@ fn ordered_element(
 /// `current_attributes`: the row of the attribute with the lowest `ordinal`
 /// that holds the path's target, carrying the element at the end of the path
 /// when there is one.
-fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
+fn instance_read(rows: &EntityRowRefs, path: &ValuePath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
     let mut read = Query::select();
     read.column((Ca, Asterisk))
         .from(rows.table(CurrentAttributes::Table).alias(Ca))
@@ -249,11 +249,7 @@ mod tests {
     use crate::{entity_row_refs::EntityRowRefs, ordering::attribute_value_order::AttributeValue};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{
-            expression::Expr as QueryExpr,
-            parser::parse,
-            path::{AttrPath, QueryPath},
-        },
+        filter::{Filter as QueryExpr, attribute_path::AttributePath, parser::parse, value_path::ValuePath},
         ordering::sort_direction::SortDirection,
     };
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
@@ -267,11 +263,11 @@ mod tests {
         )
     }
 
-    fn path(text: &str) -> AttrPath {
-        let QueryExpr::Pred(pred) = parse(text).expect("a path parses as an existence query") else {
+    fn path(text: &str) -> ValuePath {
+        let QueryExpr::Term(pred) = parse(text).expect("a path parses as an existence query") else {
             panic!("a single predicate");
         };
-        let QueryPath::Local(local) = pred.path() else {
+        let AttributePath::Local(local) = pred.path() else {
             panic!("a local path");
         };
         local.clone()

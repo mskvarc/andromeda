@@ -16,7 +16,7 @@ use crate::{
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm;
+use andromeda_ngsi_ld_query::projection::written_projection_term::WrittenProjectionTerm;
 use serde::Deserialize;
 
 /// Query parameters of Retrieve Context Source Registration.
@@ -25,10 +25,10 @@ use serde::Deserialize;
 pub struct RegistrationRetrieveParams {
     /// Members the registration is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Members the registration drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Clause 4.15 natural-language selection preferences (`lang`).
     #[serde(default)]
     pub lang: Option<LanguageFilter>,

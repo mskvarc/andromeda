@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, entity_system_times::EntitySystemTimes};
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::Utc;
 use std::sync::Arc;

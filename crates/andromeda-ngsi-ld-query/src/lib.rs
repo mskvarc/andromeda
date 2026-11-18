@@ -21,40 +21,36 @@
 //! reader's terms asks a [`term_compactor::TermCompactor`]; the JSON-LD engine
 //! implements both.
 
-pub mod bracket_expression;
 pub mod candidate_filters;
 pub mod comma_separated_list;
 pub mod count_policy;
 pub mod csr;
 pub mod cursor;
-pub mod dataset;
+pub mod dataset_selector;
 pub mod defined_token;
 pub mod entity;
 pub mod entity_filters;
 pub mod entity_selection;
-pub mod error;
+pub mod expanded_entity_selector;
 pub mod filter;
 pub mod geo;
 pub mod identifier_axis;
 #[cfg(any(test, feature = "test-support"))]
 pub mod namespace_expander;
-pub mod non_posix_construct;
 pub mod ordering;
 pub mod page_reach;
 pub mod page_window;
 #[cfg(test)]
 mod parse_behaviour_tests;
 pub mod pattern;
-pub mod portable_pattern;
-pub mod posix_dialect;
 pub mod projection;
+pub mod query_error;
 pub mod query_identity;
 pub mod read_order;
 pub mod scope;
 pub mod selector_compilation;
 pub mod split_filter;
 pub mod standing_instant;
-pub mod subject_start;
 pub mod temporal;
 pub mod term_compactor;
 pub mod term_expander;

@@ -2,7 +2,7 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
-use andromeda_ngsi_ld_query::dataset::{DatasetFilter, DatasetSelector};
+use andromeda_ngsi_ld_query::dataset_selector::{DatasetFilter, DatasetSelector};
 
 /// Retain only the attribute instances whose `datasetId` the caller named, as
 /// [`DatasetFilter::selects`] decides.
@@ -37,7 +37,7 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[Da
 mod tests {
     use crate::query::dataset_filter::filter_entity_by_dataset_id;
     use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
-    use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+    use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use serde_json::{Value, json};
 
     fn selectors(raw: &[&str]) -> Vec<DatasetSelector> {

@@ -25,13 +25,13 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    dataset::DatasetSelector,
-    filter::expression::Expr,
+    dataset_selector::DatasetSelector,
+    filter::Filter,
     pattern::Pattern,
-    projection::grammar::RawProjectionTerm,
-    scope::query::ScopeQuery,
+    projection::written_projection_term::WrittenProjectionTerm,
+    scope::scope_query::ScopeQuery,
     temporal::window::TimeInterval,
-    type_selection::grammar::TypeExprRaw,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -53,7 +53,7 @@ pub struct CsrQueryParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]
@@ -67,11 +67,11 @@ pub struct CsrQueryParameters {
     /// registrations' `RegistrationInfo` like the `attrs` list; it is not
     /// evaluated against the registrations themselves.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// The context source filter (clause 4.9 `csf`), evaluated against the
     /// registrations' own Context Source Properties (clause 5.10.2.4).
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -80,10 +80,10 @@ pub struct CsrQueryParameters {
     pub scope_q: Option<ScopeQuery>,
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Clause-4.15 natural-language selection preferences (`lang`).
     #[serde(default)]
     pub lang: Option<LanguageFilter>,
@@ -205,7 +205,7 @@ impl CsrQueryParameters {
 mod tests {
     use super::*;
     use crate::{params_from_query, query::SharedQueryParams};
-    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_query::query_error::QueryError;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn params_from_query(query: &str) -> CsrQueryParameters {
@@ -315,8 +315,8 @@ mod tests {
         assert!(p.csf.is_some());
         assert!(p.scope_q.is_some());
         pretty_assertions::assert_eq!(p.dataset_ids(), None);
-        pretty_assertions::assert_eq!(p.pick().map(<[RawProjectionTerm]>::len), Some(2));
-        pretty_assertions::assert_eq!(p.omit().map(<[RawProjectionTerm]>::len), Some(1));
+        pretty_assertions::assert_eq!(p.pick().map(<[WrittenProjectionTerm]>::len), Some(2));
+        pretty_assertions::assert_eq!(p.omit().map(<[WrittenProjectionTerm]>::len), Some(1));
         assert!(p.lang.is_some());
         pretty_assertions::assert_eq!(p.geometry_property.as_ref().map(AttributeName::as_str), Some("location"));
     }

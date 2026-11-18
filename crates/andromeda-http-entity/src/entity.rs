@@ -42,7 +42,7 @@ use andromeda_ngsi_ld_model::{
     entity_type::EntityTypeValue,
 };
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::purge::PurgeMode};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, projection::purge::PurgeMode};
 use andromeda_ngsi_ld_render::geometry_selection::GeometrySelection;
 use andromeda_ngsi_ld_request::{
     attribute_deletion::EntityAttributeDeletionParams,

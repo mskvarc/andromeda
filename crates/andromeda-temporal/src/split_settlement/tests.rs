@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_model::temporal::{
     text_annotation::TextAnnotation,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, scope::query::ScopeQuery, split_filter::LeafTruths};
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, scope::scope_query::ScopeQuery, split_filter::LeafTruths};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, linked_resolution_failure::LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;

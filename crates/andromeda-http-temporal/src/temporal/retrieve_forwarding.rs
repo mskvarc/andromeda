@@ -42,7 +42,7 @@ use andromeda_federation::{
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
-use andromeda_ngsi_ld_query::projection::{attrs_selection::AttrsAdmission, compiled::Projection};
+use andromeda_ngsi_ld_query::projection::{attrs_selection::AttrsAdmission, expanded_projection::ExpandedProjection};
 use andromeda_ngsi_ld_request::{
     follow_up_inputs::{ContextReference, FollowUpInputs},
     query::temporal::admitted::AdmittedTemporalRequest,
@@ -66,7 +66,7 @@ pub(crate) struct RetrievedHistory {
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// The request's clause 4.21 projection, which narrows the members the
     /// response writes of the entity.
-    pub(crate) projection: Projection,
+    pub(crate) projection: ExpandedProjection,
     /// The Entity Map the retrieval ran under, when one applies (clause 5.5.14).
     pub(crate) entity_map_uri: Option<Identifier>,
 }

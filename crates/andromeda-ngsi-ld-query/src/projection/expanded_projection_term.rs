@@ -1,0 +1,222 @@
+//! Terms of the `attrs`, `pick` and `omit` selection lists (clause 4.21).
+
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
+use iri_rs::IriBuf;
+
+/// One member of an attribute selection list.
+///
+/// Clause 4.21 lets `pick` and `omit` name three structural members of the
+/// representation alongside attributes. Those three are JSON keys of the
+/// NGSI-LD representation itself, not attributes, so they have no IRI to expand
+/// to and the renderer treats each of them differently from an attribute. The
+/// enum is what stops that distinction from being re-derived by comparing the
+/// term against three string literals wherever it matters.
+///
+/// It displays as the keyword, or as the expanded name of the Attribute.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+pub enum ExpandedProjectionTerm {
+    /// The entity identifier.
+    #[display("id")]
+    Id,
+    /// The entity type.
+    #[display("type")]
+    Type,
+    /// The entity scope.
+    #[display("scope")]
+    Scope,
+    /// One attribute, named by its expanded IRI, together with the
+    /// clause 4.21 linked-entity sub-projection carried inside `{...}`, empty
+    /// when this term selects no linked entity.
+    #[display("{iri}")]
+    Attribute {
+        /// The expanded IRI naming this attribute.
+        iri: IriBuf,
+        /// The sub-projection to apply to the entity this attribute (a
+        /// relationship) links to.
+        linked: Vec<ExpandedProjectionTerm>,
+    },
+}
+
+impl ExpandedProjectionTerm {
+    /// The clause 4.21 keyword term `name` spells, if it spells one.
+    #[must_use]
+    pub fn keyword(name: &str) -> Option<ExpandedProjectionTerm> {
+        match name {
+            keyword::ID_ALIAS => Some(ExpandedProjectionTerm::Id),
+            keyword::TYPE_ALIAS => Some(ExpandedProjectionTerm::Type),
+            compact_properties::SCOPE => Some(ExpandedProjectionTerm::Scope),
+            // `&str` is unbounded, so a catch-all is the only way to close
+            // this match; anything else names an attribute.
+            _ => None,
+        }
+    }
+
+    /// Whether this term names the attribute an entity keys as `key` and whose
+    /// key expands to `expanded`.
+    ///
+    /// Both forms are tested because an entity's attribute map may be keyed by
+    /// a compact term or by an IRI, depending on which side of expansion the
+    /// representation sits on. A keyword term never names an attribute.
+    #[must_use]
+    pub fn matches_attribute(&self, key: &str, expanded: &IriBuf) -> bool {
+        match self {
+            ExpandedProjectionTerm::Attribute { iri, .. } => iri == expanded || iri.as_str() == key,
+            ExpandedProjectionTerm::Id | ExpandedProjectionTerm::Type | ExpandedProjectionTerm::Scope => false,
+        }
+    }
+
+    /// The expanded name of the Attribute this term names; `None` for a
+    /// clause 4.21 keyword.
+    #[must_use]
+    pub const fn attribute_iri(&self) -> Option<&IriBuf> {
+        match self {
+            ExpandedProjectionTerm::Attribute { iri, .. } => Some(iri),
+            ExpandedProjectionTerm::Id | ExpandedProjectionTerm::Type | ExpandedProjectionTerm::Scope => None,
+        }
+    }
+
+    /// Whether this term and `other` name one member of the Entity: the same
+    /// keyword, or Attributes of one expanded name, whichever linked-entity
+    /// sub-projections the two carry.
+    #[must_use]
+    pub fn names_same_member(&self, other: &ExpandedProjectionTerm) -> bool {
+        match (self.attribute_iri(), other.attribute_iri()) {
+            (Some(iri), Some(other_iri)) => iri == other_iri,
+            // A keyword carries nothing beside itself.
+            (None, None) => self == other,
+            (Some(_), None) | (None, Some(_)) => false,
+        }
+    }
+
+    /// The clause 4.21 linked-entity sub-projection carried by this term.
+    ///
+    /// Empty for the clause 4.21 keywords and for an attribute term that
+    /// selects no linked entity.
+    #[must_use]
+    pub fn linked_terms(&self) -> &[ExpandedProjectionTerm] {
+        match self {
+            ExpandedProjectionTerm::Attribute { linked, .. } => linked,
+            ExpandedProjectionTerm::Id | ExpandedProjectionTerm::Type | ExpandedProjectionTerm::Scope => &[],
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn iri(value: &str) -> IriBuf {
+        IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
+    #[test]
+    fn a_keyword_term_never_names_an_attribute() {
+        // Clause 4.21: these select structural members of the
+        // representation, so they cannot select an attribute of the same name.
+        for term in [ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope] {
+            assert!(!term.matches_attribute("id", &iri("https://example.com/id")), "{term:?}");
+        }
+    }
+
+    #[test]
+    fn an_attribute_term_matches_either_the_compact_key_or_its_expansion() {
+        let term = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        };
+        assert!(term.matches_attribute("speed", &iri("https://example.com/speed")));
+        assert!(term.matches_attribute("https://example.com/speed", &iri("urn:unrelated")));
+        assert!(!term.matches_attribute("colour", &iri("https://example.com/colour")));
+    }
+
+    #[test]
+    fn only_the_three_clause_4_21_keywords_spell_a_keyword_term() {
+        assert_eq!(ExpandedProjectionTerm::keyword("id"), Some(ExpandedProjectionTerm::Id));
+        assert_eq!(ExpandedProjectionTerm::keyword("type"), Some(ExpandedProjectionTerm::Type));
+        assert_eq!(ExpandedProjectionTerm::keyword("scope"), Some(ExpandedProjectionTerm::Scope));
+        assert_eq!(ExpandedProjectionTerm::keyword("speed"), None);
+        assert_eq!(ExpandedProjectionTerm::keyword("Id"), None);
+    }
+
+    #[test]
+    fn only_an_attribute_term_names_an_attribute_iri() {
+        let term = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        };
+        assert_eq!(term.attribute_iri(), Some(&iri("https://example.com/speed")));
+        for keyword in [ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope] {
+            assert_eq!(keyword.attribute_iri(), None, "{keyword:?}");
+        }
+    }
+
+    #[test]
+    fn attribute_terms_of_one_expanded_name_name_the_same_member_whatever_they_link() {
+        let plain = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://schema.org/name"),
+            linked: Vec::new(),
+        };
+        let linking = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://schema.org/name"),
+            linked: vec![ExpandedProjectionTerm::Id],
+        };
+        let other = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/name"),
+            linked: Vec::new(),
+        };
+        assert!(plain.names_same_member(&linking));
+        assert!(!plain.names_same_member(&other));
+    }
+
+    #[test]
+    fn a_keyword_names_the_same_member_only_as_itself() {
+        let attribute = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/id"),
+            linked: Vec::new(),
+        };
+        assert!(ExpandedProjectionTerm::Id.names_same_member(&ExpandedProjectionTerm::Id));
+        assert!(!ExpandedProjectionTerm::Id.names_same_member(&ExpandedProjectionTerm::Type));
+        assert!(!ExpandedProjectionTerm::Id.names_same_member(&attribute));
+        assert!(!attribute.names_same_member(&ExpandedProjectionTerm::Id));
+    }
+
+    #[test]
+    fn a_term_displays_as_its_keyword_or_its_expanded_name() {
+        let attribute = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://schema.org/name"),
+            linked: vec![ExpandedProjectionTerm::Id],
+        };
+        assert_eq!(ExpandedProjectionTerm::Scope.to_string(), "scope");
+        assert_eq!(attribute.to_string(), "https://schema.org/name");
+    }
+
+    #[test]
+    fn a_keyword_term_carries_no_linked_terms() {
+        for term in [ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope] {
+            assert!(term.linked_terms().is_empty(), "{term:?}");
+        }
+    }
+
+    #[test]
+    fn a_leaf_attribute_term_carries_no_linked_terms() {
+        let term = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        };
+        assert_eq!(term.linked_terms(), []);
+    }
+
+    #[test]
+    fn an_attribute_term_exposes_its_linked_sub_projection() {
+        let child = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/temperature"),
+            linked: Vec::new(),
+        };
+        let term = ExpandedProjectionTerm::Attribute {
+            iri: iri("https://example.com/observation"),
+            linked: vec![child.clone()],
+        };
+        assert_eq!(term.linked_terms(), &[child]);
+    }
+}

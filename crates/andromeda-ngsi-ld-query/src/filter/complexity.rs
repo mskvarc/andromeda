@@ -13,8 +13,8 @@
 //! stored subscription or a forwarded query.
 
 use crate::{
-    error::QueryError,
-    filter::{expression::Expr, predicate::Predicate, scalar::CompareValue},
+    filter::{Filter, equality_value::EqualityValue, query_term::QueryTerm},
+    query_error::QueryError,
 };
 use std::num::NonZeroUsize;
 
@@ -59,7 +59,7 @@ impl FilterComplexityLimits {
     /// comparisons than `comparisons`, and [`QueryError::QNestedTooDeep`] for
     /// one nesting deeper than `nesting`; clause 5.5.6 answers both with
     /// `TooComplexQuery`.
-    pub fn admit(self, expr: &Expr) -> Result<(), QueryError> {
+    pub fn admit(self, expr: &Filter) -> Result<(), QueryError> {
         let comparisons = comparison_count(expr);
         if comparisons > self.comparisons.get() {
             return Err(QueryError::QTooManyComparisons {
@@ -78,53 +78,53 @@ impl FilterComplexityLimits {
 /// The comparisons `expr` makes: one per Query Term, and one per value of a
 /// value list.
 #[must_use]
-pub fn comparison_count(expr: &Expr) -> usize {
+pub fn comparison_count(expr: &Filter) -> usize {
     match expr {
-        Expr::And(terms) | Expr::Or(terms) => terms.iter().map(comparison_count).sum(),
-        Expr::Pred(predicate) => predicate_comparisons(predicate),
+        Filter::And(terms) | Filter::Or(terms) => terms.iter().map(comparison_count).sum(),
+        Filter::Term(predicate) => predicate_comparisons(predicate),
     }
 }
 
 /// The levels `expr`'s `;` and `|` combinations nest; a lone Query Term nests
 /// none, however many parentheses enclose it.
 #[must_use]
-pub fn nesting_depth(expr: &Expr) -> usize {
+pub fn nesting_depth(expr: &Filter) -> usize {
     match expr {
-        Expr::And(terms) | Expr::Or(terms) => 1 + terms.iter().map(nesting_depth).max().unwrap_or(0),
-        Expr::Pred(_) => 0,
+        Filter::And(terms) | Filter::Or(terms) => 1 + terms.iter().map(nesting_depth).max().unwrap_or(0),
+        Filter::Term(_) => 0,
     }
 }
 
 /// The comparisons one Query Term makes.
-const fn predicate_comparisons(predicate: &Predicate) -> usize {
+const fn predicate_comparisons(predicate: &QueryTerm) -> usize {
     match predicate {
-        Predicate::Equality {
-            rhs: CompareValue::ValueList(values),
+        QueryTerm::Equality {
+            value: EqualityValue::ValueList(values),
             ..
         } => values.len(),
-        Predicate::Exists(_)
-        | Predicate::Equality {
-            rhs: CompareValue::Scalar(_) | CompareValue::Range { .. },
+        QueryTerm::Exists(_)
+        | QueryTerm::Equality {
+            value: EqualityValue::Scalar(_) | EqualityValue::Range { .. },
             ..
         }
-        | Predicate::Ordering { .. }
-        | Predicate::MatchPattern { .. }
-        | Predicate::NotMatchPattern { .. } => 1,
+        | QueryTerm::Ordering { .. }
+        | QueryTerm::MatchPattern { .. }
+        | QueryTerm::NotMatchPattern { .. } => 1,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         filter::{
+            Filter,
             complexity::{FilterComplexityLimits, comparison_count, nesting_depth},
-            expression::Expr,
         },
+        query_error::QueryError,
     };
     use std::num::NonZeroUsize;
 
-    fn filter(q: &str) -> Expr {
+    fn filter(q: &str) -> Filter {
         q.parse().expect("a valid filter")
     }
 

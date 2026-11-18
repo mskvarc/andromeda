@@ -7,8 +7,8 @@
 //! single selector named.
 
 use crate::{
-    entity_selection::EntitySelector,
-    error::QueryError,
+    expanded_entity_selector::ExpandedEntitySelector,
+    query_error::QueryError,
     term_expander::TermExpander,
     type_selection::expansion::expand_type_expression,
     written_entity_selector::WrittenEntitySelector,
@@ -26,18 +26,18 @@ use crate::{
 ///
 /// Reports [`QueryError`] when a selector's type expression has a term that
 /// cannot be expanded through `expander`.
-pub async fn compile_entity_selectors(selectors: &[WrittenEntitySelector], expander: &impl TermExpander) -> Result<Vec<EntitySelector>, QueryError> {
+pub async fn compile_entity_selectors(selectors: &[WrittenEntitySelector], expander: &impl TermExpander) -> Result<Vec<ExpandedEntitySelector>, QueryError> {
     let mut compiled = Vec::with_capacity(selectors.len());
     for selector in selectors {
-        let type_expr = match selector.type_.as_ref() {
+        let type_expr = match selector.type_selection.as_ref() {
             Some(raw) => Some(expand_type_expression(raw, expander).await?),
             None => None,
         };
         compiled.push(
-            EntitySelector::builder()
-                .ids(selector.id.clone().unwrap_or_default())
+            ExpandedEntitySelector::builder()
+                .ids(selector.ids.clone().unwrap_or_default())
                 .id_pattern(selector.id_pattern.clone())
-                .type_expr(type_expr)
+                .type_selection(type_expr)
                 .build(),
         );
     }
@@ -50,7 +50,7 @@ mod tests {
         namespace_expander::NamespaceExpander,
         pattern::Pattern,
         selector_compilation::compile_entity_selectors,
-        type_selection::grammar::{TypeExpr, TypeExprRaw},
+        type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection},
         written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -63,8 +63,8 @@ mod tests {
         text.parse().expect("a valid identifier")
     }
 
-    fn type_iri(name: &str) -> TypeExpr {
-        TypeExpr::Type(EXPANDER.type_iri(name).expect("a type resolves against the namespace"))
+    fn type_iri(name: &str) -> ExpandedTypeSelection {
+        ExpandedTypeSelection::Type(EXPANDER.type_iri(name).expect("a type resolves against the namespace"))
     }
 
     /// Clause 5.2.33: each selector of a union keeps its own identifiers,
@@ -73,13 +73,13 @@ mod tests {
     async fn each_selector_compiles_on_its_own() {
         let selectors = [
             WrittenEntitySelector {
-                id: Some(vec![identifier("urn:ngsi-ld:A:1")]),
-                type_: Some("A".parse::<TypeExprRaw>().expect("a valid type")),
+                ids: Some(vec![identifier("urn:ngsi-ld:A:1")]),
+                type_selection: Some("A".parse::<WrittenTypeSelection>().expect("a valid type")),
                 ..WrittenEntitySelector::default()
             },
             WrittenEntitySelector {
                 id_pattern: Some("^urn:ngsi-ld:B:.*".parse::<Pattern>().expect("a valid pattern")),
-                type_: Some("B|C".parse::<TypeExprRaw>().expect("a valid type")),
+                type_selection: Some("B|C".parse::<WrittenTypeSelection>().expect("a valid type")),
                 ..WrittenEntitySelector::default()
             },
         ];
@@ -88,10 +88,10 @@ mod tests {
         pretty_assertions::assert_eq!(compiled.len(), 2);
         pretty_assertions::assert_eq!(compiled[0].ids, vec![identifier("urn:ngsi-ld:A:1")]);
         pretty_assertions::assert_eq!(compiled[0].id_pattern, None);
-        pretty_assertions::assert_eq!(compiled[0].type_expr, Some(type_iri("A")));
+        pretty_assertions::assert_eq!(compiled[0].type_selection, Some(type_iri("A")));
         pretty_assertions::assert_eq!(compiled[1].ids, Vec::<Identifier>::new());
         pretty_assertions::assert_eq!(compiled[1].id_pattern, selectors[1].id_pattern);
-        pretty_assertions::assert_eq!(compiled[1].type_expr, Some(TypeExpr::Or(vec![type_iri("B"), type_iri("C")])));
+        pretty_assertions::assert_eq!(compiled[1].type_selection, Some(ExpandedTypeSelection::Or(vec![type_iri("B"), type_iri("C")])));
     }
 
     /// Clause 6.4.3.2 leaves `type` optional on a GET query, so a selector

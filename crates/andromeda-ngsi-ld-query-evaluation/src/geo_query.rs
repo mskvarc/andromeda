@@ -2,7 +2,7 @@
 
 use crate::queried_entity::located_entity::LocatedEntity;
 use andromeda_ngsi_ld_geometry::{planar::PlanarGeometry, relation::matches};
-use andromeda_ngsi_ld_query::geo::query::GeoQuery;
+use andromeda_ngsi_ld_query::geo::compiled_geo_query::CompiledGeoQuery;
 
 /// Whether `entity` satisfies `query` (clause 4.10).
 ///
@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 /// the equivalent subscription cannot disagree about a multi-instance
 /// `GeoProperty`. The reference geometry is projected once, and only when
 /// the entity has an instance to compare with it.
-pub fn geo_query_matches<'a, E: LocatedEntity<'a>>(query: &GeoQuery, entity: E) -> bool {
+pub fn geo_query_matches<'a, E: LocatedEntity<'a>>(query: &CompiledGeoQuery, entity: E) -> bool {
     let mut subjects = entity.geo_property_geometries(&query.geoproperty).peekable();
     if subjects.peek().is_none() {
         return false;
@@ -27,7 +27,7 @@ mod tests {
     use crate::{geo_query::geo_query_matches, queried_entity::located_entity::LocatedEntity};
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::geo::query::GeoQuery;
+    use andromeda_ngsi_ld_query::geo::compiled_geo_query::CompiledGeoQuery;
     use serde_json::json;
     use std::borrow::Cow;
 
@@ -59,8 +59,8 @@ mod tests {
     }
 
     /// A `within` query over a small box around `(13.4, 52.5)`.
-    fn within_berlin(geoproperty: &str) -> GeoQuery {
-        GeoQuery {
+    fn within_berlin(geoproperty: &str) -> CompiledGeoQuery {
+        CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(json!({
                 "type": "Polygon",
@@ -99,7 +99,7 @@ mod tests {
     fn an_entity_conveying_no_instance_of_the_target_geoproperty_does_not_match() {
         let entity = entity_with_instances("https://example.com/somethingElse", &[[13.4, 52.5]]);
         assert!(!geo_query_matches(&within_berlin(CUSTOM_GEOPROPERTY), &entity));
-        let disjoint = GeoQuery {
+        let disjoint = CompiledGeoQuery {
             georel: GeoRel::Disjoint,
             ..within_berlin(CUSTOM_GEOPROPERTY)
         };

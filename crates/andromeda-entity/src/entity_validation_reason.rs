@@ -10,7 +10,7 @@ use crate::merge_fragment::MergeFragmentError;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError};
-use andromeda_ngsi_ld_query::ordering::collation::IcuCollation;
+use andromeda_ngsi_ld_query::ordering::icu_collation::IcuCollation;
 use thiserror::Error;
 
 /// Why an entity payload or operation is invalid.

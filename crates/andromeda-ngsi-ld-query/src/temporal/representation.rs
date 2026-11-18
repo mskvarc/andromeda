@@ -1,6 +1,6 @@
 //! How a temporal query renders the instances it selected.
 
-use crate::temporal::{aggregation_period::AggregationPeriod, grouping::AggregationGrouping};
+use crate::temporal::{aggregation_period::AggregationPeriod, grouping::aggregation_grouping::AggregationGrouping};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use typed_builder::TypedBuilder;

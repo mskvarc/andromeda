@@ -11,7 +11,7 @@
 //! window are resolved by the ordinary temporal query machinery and reach the
 //! store as resolved entity identifiers plus this scope.
 
-use crate::{dataset::DatasetFilter, temporal::window::TemporalWindow};
+use crate::{dataset_selector::DatasetFilter, temporal::window::TemporalWindow};
 use iri_rs::IriBuf;
 
 /// Which attributes a temporal history delete removes instances of.
@@ -76,7 +76,7 @@ impl TemporalHistoryDeleteScope {
 #[cfg(test)]
 mod tests {
     use crate::{
-        dataset::DatasetFilter,
+        dataset_selector::DatasetFilter,
         temporal::{
             history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
             window::{TemporalWindow, TimeInterval},

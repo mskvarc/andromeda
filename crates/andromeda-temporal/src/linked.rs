@@ -35,7 +35,7 @@ use andromeda_ngsi_ld_model::temporal::temporal_body::TemporalBody;
 use andromeda_ngsi_ld_query::projection::{
     attribute_iri_index::AttributeIriIndex,
     attrs_selection::{AttrsAdmission, expand_attrs_admitted},
-    compiled::Projection,
+    expanded_projection::ExpandedProjection,
 };
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
@@ -49,7 +49,7 @@ pub struct TemporalLinkedJoin {
     /// What the traversal reached.
     graph: LinkedGraph<TemporalBody>,
     /// The request's clause 4.21 projection, expanded.
-    projection: Projection,
+    projection: ExpandedProjection,
     /// The request's `attrs`, expanded: the `pick` synonym of Tables
     /// 6.18.3.2-1 and 6.19.3.1-1.
     attrs: Vec<IriBuf>,

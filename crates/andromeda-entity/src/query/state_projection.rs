@@ -45,7 +45,7 @@ mod tests {
     use andromeda_linked_retrieval::narrowing::list::ListInForce;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime};
-    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -81,8 +81,8 @@ mod tests {
         IriBuf::new(value.to_owned()).expect("valid IRI")
     }
 
-    fn attribute(value: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute { iri: iri(value), linked }
+    fn attribute(value: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute { iri: iri(value), linked }
     }
 
     fn names(state: &EntityState) -> Vec<&str> {
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn a_pick_keeps_its_attributes_and_drops_an_unnamed_scope() {
         let mut state = state();
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: vec![attribute(NAME, Vec::new()), attribute(OWNER, vec![attribute(NAME, Vec::new())])],
             omit: Vec::new(),
         };
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn an_omit_removes_only_its_bare_terms() {
         let mut state = state();
-        let projection = Projection {
+        let projection = ExpandedProjection {
             pick: Vec::new(),
             omit: vec![attribute(SPEED, Vec::new()), attribute(OWNER, vec![attribute(NAME, Vec::new())])],
         };
@@ -135,17 +135,17 @@ mod tests {
     #[test]
     fn the_scope_keyword_decides_the_scope() {
         let mut omitted = state();
-        let omit_scope = Projection {
+        let omit_scope = ExpandedProjection {
             pick: Vec::new(),
-            omit: vec![ProjectionTerm::Scope],
+            omit: vec![ExpandedProjectionTerm::Scope],
         };
         narrow_state(&mut omitted, ListInForce::of(Some(&omit_scope), &[]));
         assert!(omitted.scope().is_none());
         pretty_assertions::assert_eq!(names(&omitted).len(), 4);
 
         let mut picked = state();
-        let pick_scope = Projection {
-            pick: vec![ProjectionTerm::Scope],
+        let pick_scope = ExpandedProjection {
+            pick: vec![ExpandedProjectionTerm::Scope],
             omit: Vec::new(),
         };
         narrow_state(&mut picked, ListInForce::of(Some(&pick_scope), &[]));
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn an_empty_projection_keeps_everything() {
         let mut state = state();
-        narrow_state(&mut state, ListInForce::of(Some(&Projection::default()), &[]));
+        narrow_state(&mut state, ListInForce::of(Some(&ExpandedProjection::default()), &[]));
         pretty_assertions::assert_eq!(names(&state).len(), 4);
         assert!(state.scope().is_some());
     }

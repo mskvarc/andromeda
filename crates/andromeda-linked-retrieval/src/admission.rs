@@ -38,7 +38,7 @@
 
 use crate::join::traversal_depth;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{filter::expression::Expr, projection::grammar::RawProjectionTerm};
+use andromeda_ngsi_ld_query::{filter::Filter, projection::written_projection_term::WrittenProjectionTerm};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use derive_more::{Display, From};
 use std::num::NonZeroU32;
@@ -133,20 +133,20 @@ pub enum LinkedReference {
 impl LinkedReference {
     /// The projection reference `pick` and `omit` carry, if either nests.
     #[must_use]
-    pub fn of_projection(pick: Option<&[RawProjectionTerm]>, omit: Option<&[RawProjectionTerm]>) -> Option<LinkedReference> {
+    pub fn of_projection(pick: Option<&[WrittenProjectionTerm]>, omit: Option<&[WrittenProjectionTerm]>) -> Option<LinkedReference> {
         let depth = pick
             .unwrap_or_default()
             .iter()
             .chain(omit.unwrap_or_default())
-            .map(RawProjectionTerm::linked_depth)
+            .map(WrittenProjectionTerm::linked_depth)
             .max()?;
         NonZeroU32::new(depth).map(|depth| LinkedReference::Projection { depth })
     }
 
     /// The filter reference `q` carries, if it hops.
     #[must_use]
-    pub fn of_filter(q: Option<&Expr>) -> Option<LinkedReference> {
-        NonZeroU32::new(q.map_or(0, Expr::linked_depth)).map(|depth| LinkedReference::Filter { depth })
+    pub fn of_filter(q: Option<&Filter>) -> Option<LinkedReference> {
+        NonZeroU32::new(q.map_or(0, Filter::linked_depth)).map(|depth| LinkedReference::Filter { depth })
     }
 
     /// The join reference `join` carries, if it retrieves.
@@ -260,9 +260,9 @@ pub fn admit(operation: LinkedOperation, reference: LinkedReference, join: Optio
 #[builder(field_defaults(default = Default::default()))]
 pub struct LinkedRequest<'r> {
     /// The clause 4.21 `pick` terms.
-    pub pick: Option<&'r [RawProjectionTerm]>,
+    pub pick: Option<&'r [WrittenProjectionTerm]>,
     /// The clause 4.21 `omit` terms.
-    pub omit: Option<&'r [RawProjectionTerm]>,
+    pub omit: Option<&'r [WrittenProjectionTerm]>,
     /// The clause 4.5.23 `join`.
     pub join: Option<JoinMode>,
     /// The clause 4.5.23 `joinLevel`.

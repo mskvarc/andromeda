@@ -20,8 +20,8 @@ use crate::{
     csource_registration::{stored_information_error::StoredInformationError, stored_registration_error::StoredRegistrationError},
     error::ContextStoreError,
 };
-use andromeda_ngsi_ld_query::{
-    pattern::Pattern,
+use andromeda_ngsi_ld_query::pattern::{
+    Pattern,
     portable_pattern::{PortablePattern, RenderingRevision},
 };
 use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
@@ -175,7 +175,7 @@ mod tests {
         csource_registration::pattern_forms_refresh::{forms_update_statement, revision_update_statement, stale_patterns_statement},
         statement_text::text_of,
     };
-    use andromeda_ngsi_ld_query::portable_pattern::PortablePattern;
+    use andromeda_ngsi_ld_query::pattern::portable_pattern::PortablePattern;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 

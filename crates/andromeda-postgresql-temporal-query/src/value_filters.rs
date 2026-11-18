@@ -146,17 +146,18 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        entity_selection::{EntitySelection, EntitySelector},
+        entity_selection::EntitySelection,
+        expanded_entity_selector::ExpandedEntitySelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
             instance_selection::InstanceSelection,
             representation::Representation,
             window::{TemporalWindow, TimeInterval},
         },
-        type_selection::grammar::TypeExpr,
+        type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
@@ -201,8 +202,8 @@ mod tests {
             .entities(
                 EntitySelection::builder()
                     .selectors(vec![
-                        EntitySelector::builder()
-                            .type_expr(Some(TypeExpr::Type(IriBuf::new(SENSOR.to_owned()).expect("valid IRI"))))
+                        ExpandedEntitySelector::builder()
+                            .type_selection(Some(ExpandedTypeSelection::Type(IriBuf::new(SENSOR.to_owned()).expect("valid IRI"))))
                             .build(),
                     ])
                     .build(),
@@ -229,7 +230,7 @@ mod tests {
 
     /// `georel=near;maxDistance==2000` around 4.5, 52.5 on `location`.
     fn near(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("2000").expect("positive distance")),
                 min_distance: None,
@@ -242,7 +243,7 @@ mod tests {
 
     /// `georel` with a small square around 4.5, 52.5 on `location`.
     fn area(georel: GeoRel, mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
-        compiled.entities.geo = Some(GeoQuery {
+        compiled.entities.geo = Some(CompiledGeoQuery {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({
                 "type": "Polygon",

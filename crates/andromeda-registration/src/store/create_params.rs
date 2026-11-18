@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
     registration_management::RegistrationManagementInfo,
     time_interval::TimeInterval,
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use mediatype::MediaTypeBuf;

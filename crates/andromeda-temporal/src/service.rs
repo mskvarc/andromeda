@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_query::{
     filter::{compilation::FilterAdmission, language_targeting::LanguageTargeting},
     geo::admission::GeoQueryAdmission,
     page_reach::PageReach,
-    projection::compiled::Projection,
+    projection::expanded_projection::ExpandedProjection,
     temporal::{continuation::TemporalContinuation, instance_page::PageDirection, window::TimeInterval},
 };
 use andromeda_retry::retry_delay::RetryDelay;
@@ -80,7 +80,7 @@ pub struct TemporalReadResult {
     pub range: Option<TemporalRange>,
     /// The request's clause 4.21 projection, expanded, which narrows the
     /// members the response writes of the entity.
-    pub projection: Projection,
+    pub projection: ExpandedProjection,
 }
 
 /// Neutral metadata the HTTP binding builds a temporal `Content-Range` from
@@ -128,7 +128,7 @@ pub struct TemporalQueryResult {
     pub warnings: Vec<TemporalQueryWarning>,
     /// The request's clause 4.21 projection, expanded, which narrows the
     /// members the response writes of every entity.
-    pub projection: Projection,
+    pub projection: ExpandedProjection,
 }
 
 impl TemporalService {

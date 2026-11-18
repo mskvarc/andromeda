@@ -17,7 +17,7 @@
 //! - Beside a `pick`, a bare `omit` term takes its Attribute out of what the
 //!   `pick` keeps.
 
-use crate::projection::{compiled::Projection, term::ProjectionTerm};
+use crate::projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm};
 use iri_rs::IriBuf;
 
 /// The Attributes a response to a request can hold.
@@ -34,18 +34,18 @@ pub enum ReturnedAttributes<'q> {
 impl<'q> ReturnedAttributes<'q> {
     /// The Attributes `projection`, or else `attrs`, lets a response hold.
     #[must_use]
-    pub fn of(projection: &'q Projection, attrs: &'q [IriBuf]) -> ReturnedAttributes<'q> {
+    pub fn of(projection: &'q ExpandedProjection, attrs: &'q [IriBuf]) -> ReturnedAttributes<'q> {
         let bare_omitted: Vec<&IriBuf> = projection
             .omit
             .iter()
             .filter(|term| term.linked_terms().is_empty())
-            .filter_map(ProjectionTerm::attribute_iri)
+            .filter_map(ExpandedProjectionTerm::attribute_iri)
             .collect();
         if !projection.pick.is_empty() {
             let picked = projection
                 .pick
                 .iter()
-                .filter_map(ProjectionTerm::attribute_iri)
+                .filter_map(ExpandedProjectionTerm::attribute_iri)
                 .filter(|iri| !bare_omitted.contains(iri))
                 .collect();
             return ReturnedAttributes::Named(picked);
@@ -62,7 +62,11 @@ impl<'q> ReturnedAttributes<'q> {
 
 #[cfg(test)]
 mod tests {
-    use crate::projection::{compiled::Projection, returned_attributes::ReturnedAttributes, term::ProjectionTerm};
+    use crate::projection::{
+        expanded_projection::ExpandedProjection,
+        expanded_projection_term::ExpandedProjectionTerm,
+        returned_attributes::ReturnedAttributes,
+    };
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
 
@@ -70,15 +74,15 @@ mod tests {
         IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")
     }
 
-    fn attribute(name: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn attribute(name: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(name),
             linked: Vec::new(),
         }
     }
 
-    fn linked(name: &str, inner: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn linked(name: &str, inner: &str) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: iri(name),
             linked: vec![attribute(inner)],
         }
@@ -86,14 +90,14 @@ mod tests {
 
     #[test]
     fn a_request_naming_no_list_returns_every_attribute() {
-        assert_eq!(ReturnedAttributes::of(&Projection::default(), &[]), ReturnedAttributes::Every);
+        assert_eq!(ReturnedAttributes::of(&ExpandedProjection::default(), &[]), ReturnedAttributes::Every);
     }
 
     #[test]
     fn attrs_returns_the_attributes_it_names() {
         let attrs = [iri("a"), iri("b")];
         assert_eq!(
-            ReturnedAttributes::of(&Projection::default(), &attrs),
+            ReturnedAttributes::of(&ExpandedProjection::default(), &attrs),
             ReturnedAttributes::Named(vec![&attrs[0], &attrs[1]])
         );
     }
@@ -102,8 +106,8 @@ mod tests {
     /// returned; the keywords name no Attribute.
     #[test]
     fn a_pick_returns_its_attributes_and_the_relationship_of_a_linked_entity_term() {
-        let projection = Projection::builder()
-            .pick(vec![ProjectionTerm::Id, attribute("a"), linked("owner", "name")])
+        let projection = ExpandedProjection::builder()
+            .pick(vec![ExpandedProjectionTerm::Id, attribute("a"), linked("owner", "name")])
             .build();
         assert_eq!(
             ReturnedAttributes::of(&projection, &[]),
@@ -113,22 +117,24 @@ mod tests {
 
     #[test]
     fn a_pick_of_keywords_alone_returns_no_attribute() {
-        let projection = Projection::builder().pick(vec![ProjectionTerm::Id, ProjectionTerm::Type]).build();
+        let projection = ExpandedProjection::builder()
+            .pick(vec![ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type])
+            .build();
         assert_eq!(ReturnedAttributes::of(&projection, &[]), ReturnedAttributes::Named(Vec::new()));
     }
 
     /// Clause 4.21: `omit=R{N}` removes `N` inside the Linked Entity, not `R`.
     #[test]
     fn an_omit_returns_every_attribute_but_its_bare_terms() {
-        let projection = Projection::builder()
-            .omit(vec![ProjectionTerm::Type, attribute("a"), linked("owner", "name")])
+        let projection = ExpandedProjection::builder()
+            .omit(vec![ExpandedProjectionTerm::Type, attribute("a"), linked("owner", "name")])
             .build();
         assert_eq!(ReturnedAttributes::of(&projection, &[]), ReturnedAttributes::AllBut(vec![&iri("a")]));
     }
 
     #[test]
     fn beside_a_pick_a_bare_omit_takes_its_attribute_out() {
-        let projection = Projection::builder()
+        let projection = ExpandedProjection::builder()
             .pick(vec![attribute("a"), attribute("b"), linked("owner", "name")])
             .omit(vec![attribute("b"), linked("owner", "name")])
             .build();

@@ -4,7 +4,7 @@ use crate::{federation_invariant::FederationInvariant, federation_operation_unsu
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting};
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, query_error::QueryError};
 use andromeda_registration::error::RegistrationError;
 use std::time::Duration;
 use thiserror::Error;

@@ -144,8 +144,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
-        geo::query::GeoQuery,
-        scope::query::ScopeQuery,
+        geo::compiled_geo_query::CompiledGeoQuery,
+        scope::scope_query::ScopeQuery,
         split_filter::SplitFilter,
         temporal::window::{TemporalWindow, TimeInterval},
     };
@@ -240,7 +240,7 @@ mod tests {
             )))
             .build();
         let within_berlin = EntitySelection::builder()
-            .geo(Some(GeoQuery {
+            .geo(Some(CompiledGeoQuery {
                 georel: GeoRel::Within,
                 geometry: serde_json::from_value::<Geometry>(json!({
                     "type": "Polygon",

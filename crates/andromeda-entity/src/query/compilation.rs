@@ -14,13 +14,15 @@ use andromeda_ngsi_ld_query::{
         expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
-        trailing_members::TrailingMembers,
+        nested_names::NestedNames,
     },
-    geo::{compile as geo_compile, query::GeoQuery, reference_budget::admit_reference_geometry},
+    geo::{compilation as geo_compile, compiled_geo_query::CompiledGeoQuery, reference_budget::admit_reference_geometry},
     ordering::{
-        compiled::ResultOrdering,
-        geometry::OrderingGeometry,
-        term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
+        compiled_ordering_term::CompiledOrderingTerm,
+        expanded_ordering_target::ExpandedOrderingTarget,
+        ordering_geometry::OrderingGeometry,
+        result_ordering::ResultOrdering,
+        written_ordering_target::WrittenOrderingTarget,
     },
     projection::{
         attrs_selection::{AttrsAdmission, expand_attrs_admitted},
@@ -156,7 +158,7 @@ impl EntityQueryService {
     /// Returns the query error of the compilation, and the `TooComplexQuery`
     /// of clause 5.5.6 for a reference geometry larger than the broker
     /// resolves.
-    async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, EntityError> {
+    async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<CompiledGeoQuery>, EntityError> {
         Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context), self.geo_admission).await?)
     }
 }
@@ -179,27 +181,27 @@ async fn compile_order_terms(
     json_keys: &JsonKeyAttributes,
     expander: &impl TermExpander,
     language_targeting: LanguageTargeting,
-) -> Result<Vec<CompiledOrderTerm>, EntityError> {
+) -> Result<Vec<CompiledOrderingTerm>, EntityError> {
     // Parsed and validated at the query boundary (clause 4.23).
     let collation = params.ordering.collation.clone();
     let mut compiled = Vec::new();
     for term in &params.ordering.order_by {
-        let target = match RawOrderTarget::classify(&term.attr) {
-            RawOrderTarget::Id => OrderTarget::Id,
-            RawOrderTarget::Type => OrderTarget::Type,
-            RawOrderTarget::Scope => OrderTarget::Scope,
+        let target = match WrittenOrderingTarget::classify(&term.path) {
+            WrittenOrderingTarget::Id => ExpandedOrderingTarget::Id,
+            WrittenOrderingTarget::Type => ExpandedOrderingTarget::Type,
+            WrittenOrderingTarget::Scope => ExpandedOrderingTarget::Scope,
             // The system timestamps read their own columns and carry no IRI
             // to expand, so they pass through like `id`/`type`/`scope`.
-            RawOrderTarget::CreatedAt => OrderTarget::CreatedAt,
-            RawOrderTarget::ModifiedAt => OrderTarget::ModifiedAt,
+            WrittenOrderingTarget::CreatedAt => ExpandedOrderingTarget::CreatedAt,
+            WrittenOrderingTarget::ModifiedAt => ExpandedOrderingTarget::ModifiedAt,
             // clone: expansion rewrites the path it consumes, and the cached
             // request parameters stay immutable across compilations.
-            RawOrderTarget::Attribute(path) => {
+            WrittenOrderingTarget::Attribute(path) => {
                 language_targeting.admit_path(path)?;
-                OrderTarget::Attribute(expand_attr_path(path.clone(), TrailingMembers::Terms(json_keys), expander).await?)
+                ExpandedOrderingTarget::Attribute(expand_attr_path(path.clone(), NestedNames::Terms(json_keys), expander).await?)
             }
         };
-        compiled.push(CompiledOrderTerm {
+        compiled.push(CompiledOrderingTerm {
             target,
             direction: term.direction,
             collation: collation.clone(), // clone: every term carries its own copy of the query's collation
@@ -244,9 +246,9 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
-        error::QueryError,
         filter::language_targeting::LanguageTargeting,
-        ordering::term::OrderTarget,
+        ordering::expanded_ordering_target::ExpandedOrderingTarget,
+        query_error::QueryError,
     };
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
@@ -296,7 +298,13 @@ mod tests {
             .ordering
             .terms
             .first()
-            .and_then(|term| if let OrderTarget::Attribute(path) = &term.target { Some(path) } else { None })
+            .and_then(|term| {
+                if let ExpandedOrderingTarget::Attribute(path) = &term.target {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
             .expect("the first term orders by an attribute");
         path.members()
             .expect("the path addresses a member")

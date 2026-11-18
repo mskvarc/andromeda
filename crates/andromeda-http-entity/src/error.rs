@@ -23,7 +23,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::{error::QueryError, query_identity::QueryIdentityError};
+use andromeda_ngsi_ld_query::{query_error::QueryError, query_identity::QueryIdentityError};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::{error::ParameterError, fragment_entity_id::FragmentEntityIdError};
 use andromeda_posted_query::error::PostedQueryError;

@@ -10,7 +10,7 @@
 //! built it. Coordinates given as JSON were counted with the request, and are
 //! read into a geometry when the request is decoded.
 
-use crate::{error::QueryError, geo::reference_budget::admit_reference_geometry};
+use crate::{geo::reference_budget::admit_reference_geometry, query_error::QueryError};
 use andromeda_ngsi_ld_geometry::{
     coordinates_member::CoordinatesMember,
     geometry::Geometry,
@@ -113,7 +113,7 @@ pub enum ReferenceCoordinates<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::QueryError, geo::reference_geometry::ReferenceGeometry};
+    use crate::{geo::reference_geometry::ReferenceGeometry, query_error::QueryError};
     use andromeda_ngsi_ld_geometry::{
         geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit},
         geometry_type::GeometryType,

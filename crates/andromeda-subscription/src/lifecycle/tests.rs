@@ -36,10 +36,10 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
-    error::QueryError,
     filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
+    query_error::QueryError,
 };
 use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use async_trait::async_trait;

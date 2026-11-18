@@ -49,7 +49,7 @@ use andromeda_ngsi_ld_query::filter::{
         term_reading::Test,
         value_test::{ComplementScope, ValueTest},
     },
-    trailing_path::MemberPath,
+    trailing_group::MemberPath,
 };
 use andromeda_ngsi_ld_vocabulary::{expanded::properties::BBOX, keyword};
 use andromeda_postgresql_seaquery::{

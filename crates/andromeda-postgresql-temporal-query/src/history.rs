@@ -20,7 +20,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetFilter,
+    dataset_selector::DatasetFilter,
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget},
 };
 use andromeda_postgresql_query::{
@@ -238,9 +238,9 @@ mod tests {
     use crate::history::build_temporal_history_query;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         entity_selection::EntitySelection,
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
         temporal::{
             aggregation_period::AggregationPeriod,
             compiled::CompiledTemporalQuery,

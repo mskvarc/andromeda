@@ -2,7 +2,7 @@
 //! (clause 4.5.19).
 
 use crate::{
-    error::QueryError,
+    query_error::QueryError,
     temporal::{period_grid::PeriodGrid, window::TimeInterval},
 };
 use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;
@@ -134,7 +134,7 @@ pub mod optional {
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
+        query_error::QueryError,
         temporal::{aggregation_period::AggregationPeriod, period_grid::PeriodGrid, window::TimeInterval},
     };
     use pretty_assertions::assert_eq;

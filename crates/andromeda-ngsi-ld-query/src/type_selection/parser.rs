@@ -12,7 +12,7 @@
 //! names, so `Home;Vehicle`, `((Home;Vehicle))` and `(Building|House)` are all
 //! outside the language and refused.
 
-use crate::{error::QueryError, type_selection::grammar::TypeExprRaw};
+use crate::{query_error::QueryError, type_selection::written_type_selection::WrittenTypeSelection};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use std::iter;
 
@@ -26,13 +26,13 @@ use std::iter;
 /// [`QueryError::TypeExprUnexpected`] for a character the clause 4.17 grammar
 /// does not admit at its position, and [`QueryError::TypeExprInvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
-pub fn parse(input: &str) -> Result<TypeExprRaw, QueryError> {
+pub fn parse(input: &str) -> Result<WrittenTypeSelection, QueryError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(QueryError::TypeExprEmpty);
     }
     if trimmed == "*" {
-        return Ok(TypeExprRaw::Wildcard);
+        return Ok(WrittenTypeSelection::Wildcard);
     }
 
     let mut parser = Parser::new(trimmed);
@@ -76,7 +76,7 @@ impl<'a> Parser<'a> {
     ///
     /// A single operand is returned as itself rather than wrapped in a
     /// one-element `Or`.
-    fn parse_entity_types(&mut self) -> Result<TypeExprRaw, QueryError> {
+    fn parse_entity_types(&mut self) -> Result<WrittenTypeSelection, QueryError> {
         let first = self.parse_or_entity_type()?;
         if !matches!(self.peek(), Some('|' | ',')) {
             return Ok(first);
@@ -86,16 +86,16 @@ impl<'a> Parser<'a> {
             self.advance();
             terms.push(self.parse_or_entity_type()?);
         }
-        Ok(TypeExprRaw::Or(terms))
+        Ok(WrittenTypeSelection::Or(terms))
     }
 
     /// Parses `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`.
     ///
     /// A parenthesised group with a single name is that name.
-    fn parse_or_entity_type(&mut self) -> Result<TypeExprRaw, QueryError> {
+    fn parse_or_entity_type(&mut self) -> Result<WrittenTypeSelection, QueryError> {
         self.skip_whitespace();
         if self.peek() != Some('(') {
-            return self.parse_type_name().map(TypeExprRaw::Type);
+            return self.parse_type_name().map(WrittenTypeSelection::Type);
         }
         self.advance();
         let first = self.parse_type_name()?;
@@ -110,9 +110,11 @@ impl<'a> Parser<'a> {
         self.advance();
         self.skip_whitespace();
         if rest.is_empty() {
-            return Ok(TypeExprRaw::Type(first));
+            return Ok(WrittenTypeSelection::Type(first));
         }
-        Ok(TypeExprRaw::And(iter::once(first).chain(rest).map(TypeExprRaw::Type).collect()))
+        Ok(WrittenTypeSelection::And(
+            iter::once(first).chain(rest).map(WrittenTypeSelection::Type).collect(),
+        ))
     }
 
     /// Parses one `EntityType`: a clause 4.6.2 name or a URI.
@@ -154,12 +156,12 @@ const fn is_type_char(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
-        type_selection::{grammar::TypeExprRaw, parser::parse},
+        query_error::QueryError,
+        type_selection::{parser::parse, written_type_selection::WrittenTypeSelection},
     };
 
-    fn t(name: &str) -> TypeExprRaw {
-        TypeExprRaw::Type(name.parse().expect("valid type name"))
+    fn t(name: &str) -> WrittenTypeSelection {
+        WrittenTypeSelection::Type(name.parse().expect("valid type name"))
     }
 
     #[test]
@@ -171,25 +173,28 @@ mod tests {
     #[test]
     fn parse_or_with_pipe() {
         let expr = parse("Building|House").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("Building"), t("House"),]));
+        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
     }
 
     #[test]
     fn parse_or_with_comma() {
         let expr = parse("Building,House").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("Building"), t("House"),]));
+        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
     }
 
     #[test]
     fn parse_parenthesised_conjunction() {
         let expr = parse("(Home;Vehicle)").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::And(vec![t("Home"), t("Vehicle"),]));
+        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]));
     }
 
     #[test]
     fn parse_mixed_and_or_with_grouping() {
         let expr = parse("(Home;Vehicle)|Motorhome").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![TypeExprRaw::And(vec![t("Home"), t("Vehicle"),]), t("Motorhome"),]));
+        pretty_assertions::assert_eq!(
+            expr,
+            WrittenTypeSelection::Or(vec![WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]), t("Motorhome"),])
+        );
     }
 
     #[test]
@@ -255,6 +260,6 @@ mod tests {
     #[test]
     fn multiple_or_terms() {
         let expr = parse("A|B|C").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("A"), t("B"), t("C"),]));
+        pretty_assertions::assert_eq!(expr, WrittenTypeSelection::Or(vec![t("A"), t("B"), t("C"),]));
     }
 }

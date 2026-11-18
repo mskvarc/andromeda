@@ -13,7 +13,7 @@ use crate::{pagination::page_size::PageSizeExceeded, query_narrowing::LocalScope
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_linked_retrieval::admission::{AdmissionError, LinkedMember, LinkedOperation, ReachingMember};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict, temporal::grouping::GroupingParseError};
+use andromeda_ngsi_ld_query::{projection::exclusivity::ProjectionConflict, query_error::QueryError, temporal::grouping::grouping_error::GroupingError};
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentationError;
 use thiserror::Error;
 
@@ -188,7 +188,7 @@ pub enum ParameterError {
     AggrGroupByWithoutGroupedValues,
     /// `aggrGroupBy` did not parse as the extension grouping grammar.
     #[error("invalid aggrGroupBy: {0}")]
-    AggrGroupByInvalid(#[source] GroupingParseError),
+    AggrGroupByInvalid(#[source] GroupingError),
     /// An `aggrGroupBy` key named an attribute that is also an aggregation
     /// target (grouping extension).
     ///

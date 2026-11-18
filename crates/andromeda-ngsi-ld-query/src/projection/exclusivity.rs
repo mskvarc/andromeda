@@ -2,7 +2,7 @@
 //!
 //! `pick` reduces an Entity "down to only contain the specified Entity members" and `omit` removes them. No clause forbids naming both, and Tables 6.4.3.2-1 and 6.5.3.1-1 define them side by side, so a request carrying both keeps the picked members minus the omitted ones. A member named in both is the one combination that contradicts itself: its pick can select nothing, so the request is input data that does not meet the requirements of the operation and is refused. Clause 5.5.7 makes every name in the two lists a term of the request `@context`, so whether two names are one member is decided on their expansions: `name` and `https://schema.org/name` are one member under a context mapping the one to the other, and two short names are two members unless they expand alike. `attrs` (`attributes` in a Subscription) is by definition redundant with `pick`: Tables 6.4.3.2-1 and 5.2.14.1-1 call it "A synonym for pick, except that id, type, scope are not allowed. Deprecated"; combining it with either is refused on presence alone. The rules are the same wherever the three members appear: on the URL of an entity query, an entity retrieval or a temporal query, and inside the `notification` of a Subscription (Table 5.2.14.1-1) or of a Context Source Registration Subscription (clause 5.11.2.3, which takes the clause 5.2.12 data type unchanged).
 
-use crate::{error::QueryError, projection::term::ProjectionTerm};
+use crate::{projection::expanded_projection_term::ExpandedProjectionTerm, query_error::QueryError};
 use thiserror::Error;
 
 /// Whether a request supplied one of the projection selectors.
@@ -67,7 +67,7 @@ pub const fn check_projection_exclusivity(selectors: ProjectionSelectors) -> Res
 /// # Errors
 ///
 /// Returns [`QueryError::ProjectionMemberPickedAndOmitted`] naming the first member `omit` removes from what `pick` selects.
-pub fn check_member_exclusivity(pick: &[ProjectionTerm], omit: &[ProjectionTerm]) -> Result<(), QueryError> {
+pub fn check_member_exclusivity(pick: &[ExpandedProjectionTerm], omit: &[ExpandedProjectionTerm]) -> Result<(), QueryError> {
     match first_member_in_both(pick, omit) {
         Some(member) => Err(QueryError::ProjectionMemberPickedAndOmitted {
             member: member.clone(), // clone: the refusal outlives the projection it was found in
@@ -79,7 +79,7 @@ pub fn check_member_exclusivity(pick: &[ProjectionTerm], omit: &[ProjectionTerm]
 /// The first member `omit` removes from what `pick` selects at the same level.
 ///
 /// A bare `omit` term removes the member itself. An `omit` term carrying a `{...}` group removes members inside the linked entity and leaves the Relationship (clause 4.21 `LinkedEntityTerm`), so it contradicts `pick` only where the pick of that Relationship carries a group naming the same members.
-fn first_member_in_both<'t>(pick: &'t [ProjectionTerm], omit: &'t [ProjectionTerm]) -> Option<&'t ProjectionTerm> {
+fn first_member_in_both<'t>(pick: &'t [ExpandedProjectionTerm], omit: &'t [ExpandedProjectionTerm]) -> Option<&'t ExpandedProjectionTerm> {
     omit.iter().find_map(|omitted| {
         pick.iter().filter(|picked| picked.names_same_member(omitted)).find_map(|picked| {
             if omitted.linked_terms().is_empty() {
@@ -94,11 +94,11 @@ fn first_member_in_both<'t>(pick: &'t [ProjectionTerm], omit: &'t [ProjectionTer
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         projection::{
             exclusivity::{Presence, ProjectionConflict, ProjectionSelectors, check_member_exclusivity, check_projection_exclusivity},
-            term::ProjectionTerm,
+            expanded_projection_term::ExpandedProjectionTerm,
         },
+        query_error::QueryError,
     };
     use iri_rs::IriBuf;
     use std::slice;
@@ -107,18 +107,18 @@ mod tests {
         check_projection_exclusivity(ProjectionSelectors { pick, omit, attrs })
     }
 
-    fn attribute(iri: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
+    fn attribute(iri: &str, linked: Vec<ExpandedProjectionTerm>) -> ExpandedProjectionTerm {
+        ExpandedProjectionTerm::Attribute {
             iri: IriBuf::new(iri.to_owned()).expect("valid IRI"),
             linked,
         }
     }
 
-    fn leaf(iri: &str) -> ProjectionTerm {
+    fn leaf(iri: &str) -> ExpandedProjectionTerm {
         attribute(iri, Vec::new())
     }
 
-    fn picked_and_omitted(pick: &[ProjectionTerm], omit: &[ProjectionTerm]) -> Option<ProjectionTerm> {
+    fn picked_and_omitted(pick: &[ExpandedProjectionTerm], omit: &[ExpandedProjectionTerm]) -> Option<ExpandedProjectionTerm> {
         match check_member_exclusivity(pick, omit) {
             Ok(()) => None,
             Err(QueryError::ProjectionMemberPickedAndOmitted { member }) => Some(member),
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_keyword_named_in_both_is_refused() {
-        for keyword in [ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope] {
+        for keyword in [ExpandedProjectionTerm::Id, ExpandedProjectionTerm::Type, ExpandedProjectionTerm::Scope] {
             assert_eq!(picked_and_omitted(slice::from_ref(&keyword), slice::from_ref(&keyword)), Some(keyword));
         }
     }

@@ -21,13 +21,13 @@ impl TryFrom<Query> for EntityQueryParameters {
             .unwrap_or_default()
             .into_iter()
             .map(|selector| WrittenEntitySelector {
-                id: selector.id,
+                ids: selector.id,
                 id_pattern: selector.id_pattern,
-                type_: Some(selector.type_),
+                type_selection: Some(selector.type_),
             })
             .collect();
         let (id, entity_type, id_pattern) = match entity_selectors.as_slice() {
-            [selector] => (selector.id.clone(), selector.type_.clone(), selector.id_pattern.clone()),
+            [selector] => (selector.ids.clone(), selector.type_selection.clone(), selector.id_pattern.clone()),
             [] | [_, _, ..] => (None, None, None),
         };
 
@@ -71,7 +71,7 @@ impl TryFrom<Query> for EntityQueryParameters {
 mod tests {
     use crate::query::entity::parameters::EntityQueryParameters;
     use andromeda_ngsi_ld_model::query::body::Query;
-    use andromeda_ngsi_ld_query::projection::grammar::RawProjectionTerm;
+    use andromeda_ngsi_ld_query::projection::written_projection_term::WrittenProjectionTerm;
 
     #[test]
     fn every_applicable_query_member_survives_body_conversion() {
@@ -143,7 +143,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].name.as_str(), "observation");
         pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["temperature"]);
         pretty_assertions::assert_eq!(terms[1].name.as_str(), "name");
-        assert_eq!(terms[1].linked, [] as [RawProjectionTerm; 0]);
+        assert_eq!(terms[1].linked, [] as [WrittenProjectionTerm; 0]);
     }
 
     #[test]

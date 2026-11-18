@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_model::registration::{
     context_source_property_document::{ContextSourcePropertyMembers, DeclaredDateTime, DeclaredTimeInterval},
     operation::CsrOperation,
 };
-use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
+use andromeda_ngsi_ld_query::pattern::portable_pattern::RenderingRevision;
 use andromeda_postgresql_encoding::ewkb_binding::{geometry_bytes, reach_bytes};
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{cast::cast, external_arguments::ExternalArguments, pg_type::PostgresType};

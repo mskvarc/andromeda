@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::Tempora
 use andromeda_ngsi_ld_model::temporal::{temporal_body::TemporalBody, temporal_entity::TemporalEntity, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
-    projection::{attrs_selection::AttrsAdmission, grammar::ProjectionList},
+    projection::{attrs_selection::AttrsAdmission, written_projection_list::WrittenProjectionList},
 };
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::{
@@ -490,7 +490,9 @@ async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:C")])]);
     let mut params = flat_join(1);
     params.format = Some(WrittenValue::Supported(TemporalFormat::TemporalValues));
-    params.pick = Some(Vec::from("id,linksTo{reading}".parse::<ProjectionList>().expect("valid projection list")));
+    params.pick = Some(Vec::from(
+        "id,linksTo{reading}".parse::<WrittenProjectionList>().expect("valid projection list"),
+    ));
 
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
     let joined = joined(&service(broker), &roots, &params).await;
@@ -507,7 +509,7 @@ async fn a_nested_omit_narrows_the_resolved_target() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
     let mut params = flat_join(1);
-    params.omit = Some(Vec::from("linksTo{reading}".parse::<ProjectionList>().expect("valid projection list")));
+    params.omit = Some(Vec::from("linksTo{reading}".parse::<WrittenProjectionList>().expect("valid projection list")));
 
     let joined = joined(&service(broker), &roots, &params).await;
 

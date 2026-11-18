@@ -7,7 +7,7 @@ use crate::{
     test_graph::{Node, Nodes, graph, index, node, term},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, expanded_projection_term::ExpandedProjectionTerm};
 use pretty_assertions::assert_eq;
 use std::num::NonZeroU32;
 
@@ -34,7 +34,7 @@ fn written<'g>(graph: &'g LinkedGraph<Node>, list: ListInForce<'g>, index: &'g A
         .collect()
 }
 
-fn leaf(key: &str) -> ProjectionTerm {
+fn leaf(key: &str) -> ExpandedProjectionTerm {
     term(key, Vec::new())
 }
 
@@ -72,7 +72,7 @@ fn the_pick_list_orders_the_encounters_of_one_entity() {
 #[test]
 fn a_relationship_the_list_removes_reaches_nothing() {
     let (graph, index) = (building(), keys());
-    let pick = [ProjectionTerm::Id, term("owner", vec![leaf("name")])];
+    let pick = [ExpandedProjectionTerm::Id, term("owner", vec![leaf("name")])];
     let reached: Vec<&str> = written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index)
         .into_iter()
         .map(|(id, _)| id)
@@ -86,7 +86,7 @@ fn a_relationship_the_list_removes_reaches_nothing() {
 #[test]
 fn a_group_reaches_only_the_entity_its_relationship_links_to() {
     let (graph, index) = (building(), keys());
-    let pick = [ProjectionTerm::Id, term("owner", vec![leaf("name"), leaf("employer")])];
+    let pick = [ExpandedProjectionTerm::Id, term("owner", vec![leaf("name"), leaf("employer")])];
     let group = [leaf("name"), leaf("employer")];
     assert_eq!(
         written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
@@ -102,7 +102,7 @@ fn a_group_reaches_only_the_entity_its_relationship_links_to() {
 #[test]
 fn a_nested_omit_leaves_every_unaddressed_entity_whole() {
     let (graph, index) = (building(), keys());
-    let omit = [ProjectionTerm::Type, term("owner", vec![leaf("name")])];
+    let omit = [ExpandedProjectionTerm::Type, term("owner", vec![leaf("name")])];
     let name = [leaf("name")];
     assert_eq!(
         written(&graph, ListInForce::Addressed(ListTerms::Omit(&omit)), &index),
@@ -118,7 +118,7 @@ fn a_nested_omit_leaves_every_unaddressed_entity_whole() {
 #[test]
 fn a_bare_term_passes_its_list_down() {
     let (graph, index) = (building(), keys());
-    let pick = [ProjectionTerm::Id, leaf("name"), leaf("owner")];
+    let pick = [ExpandedProjectionTerm::Id, leaf("name"), leaf("owner")];
     assert_eq!(
         written(&graph, ListInForce::Payload(ListTerms::Pick(&pick)), &index),
         vec![("urn:ngsi-ld:T:P", ListInForce::Payload(ListTerms::Pick(&pick)))]

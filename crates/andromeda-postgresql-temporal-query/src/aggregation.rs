@@ -430,7 +430,7 @@ mod tests {
     }
 
     fn grouped(methods: Vec<AggrMethod>, period: Option<&str>, aggr_group_by: &str) -> CompiledTemporalQuery {
-        use andromeda_ngsi_ld_query::temporal::grouping::AggregationGrouping;
+        use andromeda_ngsi_ld_query::temporal::grouping::aggregation_grouping::AggregationGrouping;
         CompiledTemporalQuery::builder()
             .entities(EntitySelection::builder().build())
             .window(TemporalWindow::builder().timeproperty(TimeProp::Observed).build())

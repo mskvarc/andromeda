@@ -4,10 +4,7 @@
 //! against registrations exactly as it matches an explicit `attrs` list, so a
 //! consumer needs the filter's attribute footprint without evaluating it.
 
-use crate::filter::{
-    expression::Expr,
-    path::{AttrPath, QueryPath},
-};
+use crate::filter::{Filter, attribute_path::AttributePath, value_path::ValuePath};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// The top-level attribute every predicate of `expr` addresses, in first-seen
@@ -18,7 +15,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// evaluation the predicate reads, and the attribute a context source would
 /// have to hold for the hop to begin.
 #[must_use]
-pub fn referenced_attributes(expr: &Expr) -> Vec<&AttributeName> {
+pub fn referenced_attributes(expr: &Filter) -> Vec<&AttributeName> {
     let mut names = Vec::new();
     collect(expr, &mut names);
     names
@@ -26,10 +23,10 @@ pub fn referenced_attributes(expr: &Expr) -> Vec<&AttributeName> {
 
 /// Walk `expr`, pushing each predicate's top-level attribute the first time it
 /// is seen.
-fn collect<'expr>(expr: &'expr Expr, names: &mut Vec<&'expr AttributeName>) {
+fn collect<'expr>(expr: &'expr Filter, names: &mut Vec<&'expr AttributeName>) {
     match expr {
-        Expr::And(terms) | Expr::Or(terms) => terms.iter().for_each(|term| collect(term, names)),
-        Expr::Pred(pred) => {
+        Filter::And(terms) | Filter::Or(terms) => terms.iter().for_each(|term| collect(term, names)),
+        Filter::Term(pred) => {
             let name = top_level_attribute(pred.path());
             if !names.contains(&name) {
                 names.push(name);
@@ -39,10 +36,10 @@ fn collect<'expr>(expr: &'expr Expr, names: &mut Vec<&'expr AttributeName>) {
 }
 
 /// The attribute of the entity under evaluation that an axis starts from.
-const fn top_level_attribute(path: &QueryPath) -> &AttributeName {
+const fn top_level_attribute(path: &AttributePath) -> &AttributeName {
     match path {
-        QueryPath::Local(AttrPath { attr, .. }) => attr,
-        QueryPath::Linked { relationship, .. } => relationship,
+        AttributePath::Local(ValuePath { attribute: attr, .. }) => attr,
+        AttributePath::Linked { relationship, .. } => relationship,
     }
 }
 

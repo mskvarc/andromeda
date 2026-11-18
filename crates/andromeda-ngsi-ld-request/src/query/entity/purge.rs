@@ -36,15 +36,15 @@ use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::Filter
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     filter::{
+        Filter,
         compilation::{AdmittedFilter, FilterAdmission, admit_q_filter},
-        expression::Expr,
     },
-    ordering::parameters::OrderingParameters,
+    ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
-    scope::query::ScopeQuery,
-    type_selection::grammar::TypeExprRaw,
+    scope::scope_query::ScopeQuery,
+    type_selection::written_type_selection::WrittenTypeSelection,
 };
 use serde::Deserialize;
 
@@ -58,7 +58,7 @@ pub struct PurgeEntitiesParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]
@@ -68,7 +68,7 @@ pub struct PurgeEntitiesParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -77,7 +77,7 @@ pub struct PurgeEntitiesParameters {
     pub scope_q: Option<ScopeQuery>,
     /// The context source filter (clause 4.9 `csf`).
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// The `GeoProperty` Table 6.4.3.3-1 names for a `GeoJSON` representation
     /// (`geometryProperty`).
     #[serde(rename = "geometryProperty")]

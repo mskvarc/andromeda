@@ -75,8 +75,8 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    error::QueryError,
     page_window::{PageStart, PageWindow},
+    query_error::QueryError,
 };
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingExceeded;
 use andromeda_ngsi_ld_request::query::entity::{admitted::AdmittedEntityQuery, operation::EntityQueryOperation, parameters::EntityQueryParameters};

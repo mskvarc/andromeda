@@ -33,7 +33,7 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{dataset::DatasetFilter, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetFilter, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_query::{
     dataset_predicate::dataset_condition,
     error::RenderError,
@@ -233,7 +233,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        dataset::DatasetSelector,
+        dataset_selector::DatasetSelector,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         temporal::{
             compiled::CompiledTemporalQuery,

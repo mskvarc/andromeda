@@ -8,7 +8,12 @@
 //! wherever they are held, so an entity query, a split query and a
 //! Subscription hand the same filters to one admission.
 
-use crate::{entity_selection::EntitySelection, filter::compiled_filter::CompiledFilter, geo::query::GeoQuery, scope::query::ScopeQuery};
+use crate::{
+    entity_selection::EntitySelection,
+    filter::compiled_filter::CompiledFilter,
+    geo::compiled_geo_query::CompiledGeoQuery,
+    scope::scope_query::ScopeQuery,
+};
 
 /// The value, geo and scope filters an entity is selected by, each absent when
 /// the query or Subscription carries none.
@@ -17,7 +22,7 @@ pub struct EntityFilters<'q> {
     /// The `q` filter (clause 4.9), compiled.
     pub q: Option<&'q CompiledFilter>,
     /// The geo-query (clause 4.10).
-    pub geo: Option<&'q GeoQuery>,
+    pub geo: Option<&'q CompiledGeoQuery>,
     /// The scope query (clause 4.19).
     pub scope: Option<&'q ScopeQuery>,
 }
@@ -40,7 +45,7 @@ mod tests {
         entity_filters::EntityFilters,
         entity_selection::EntitySelection,
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
-        scope::query::ScopeQuery,
+        scope::scope_query::ScopeQuery,
     };
 
     #[test]

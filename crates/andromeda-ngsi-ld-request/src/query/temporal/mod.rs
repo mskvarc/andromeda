@@ -36,18 +36,18 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
-    filter::expression::Expr,
-    ordering::parameters::OrderingParameters,
+    filter::Filter,
+    ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
-    projection::grammar::RawProjectionTerm,
-    scope::query::ScopeQuery,
+    projection::written_projection_term::WrittenProjectionTerm,
+    scope::scope_query::ScopeQuery,
     temporal::{
         aggregation_period::{AggregationPeriod, optional},
         window::TimeInterval,
     },
-    type_selection::grammar::TypeExprRaw,
+    type_selection::written_type_selection::WrittenTypeSelection,
     written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -94,7 +94,7 @@ pub struct TemporalQueryParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<TypeExprRaw>,
+    pub entity_type: Option<WrittenTypeSelection>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]
@@ -111,7 +111,7 @@ pub struct TemporalQueryParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter expression (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub q: Option<Expr>,
+    pub q: Option<Filter>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -170,10 +170,10 @@ pub struct TemporalQueryParameters {
 
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
 
     /// Whether the response carries the temporal evolution of the entities it
     /// links to, and how (clause 4.5.23 `join`, applied to the temporal API).
@@ -223,7 +223,7 @@ pub struct TemporalQueryParameters {
     /// the temporal query is forwarded to and propagated unchanged into any
     /// discovery it triggers (clause 5.7.4.4).
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
-    pub csf: Option<Expr>,
+    pub csf: Option<Filter>,
     /// Attributes whose `q` values are expanded against the context (`expandValues`).
     #[serde(rename = "expandValues")]
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
@@ -298,7 +298,7 @@ impl TemporalQueryParameters {
     /// also decide which instances are read.
     pub fn select_only(&mut self, entities: Vec<Identifier>) {
         for selector in &mut self.entity_selectors {
-            selector.id = Some(entities.clone()); // clone: each selector of the union holds its own copy of the list
+            selector.ids = Some(entities.clone()); // clone: each selector of the union holds its own copy of the list
         }
         self.id = Some(entities);
     }
@@ -333,9 +333,9 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
-        error::QueryError,
-        filter::serialize::serialize_attr_path,
+        filter::display::serialize_attr_path,
         projection::exclusivity::ProjectionConflict,
+        query_error::QueryError,
         temporal::window::TimeInterval,
         written_entity_selector::WrittenEntitySelector,
     };
@@ -354,7 +354,7 @@ mod tests {
         let listed: Vec<Identifier> = vec!["urn:ngsi-ld:Vehicle:A".parse().expect("a valid identifier")];
         params.select_only(listed.clone());
         pretty_assertions::assert_eq!(params.id.as_ref(), Some(&listed));
-        assert!(params.entity_selectors.iter().all(|selector| selector.id.as_ref() == Some(&listed)));
+        assert!(params.entity_selectors.iter().all(|selector| selector.ids.as_ref() == Some(&listed)));
         assert!(params.entity_type.is_some() && params.id_pattern.is_some() && params.q.is_some());
         let admitted = params.admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE);
         assert!(admitted.is_ok(), "{admitted:?}");
@@ -1016,7 +1016,7 @@ mod tests {
     fn a_wildcard_among_several_body_selectors_refuses_local_false() {
         const WINDOW: &str = "timerel=after&timeAt=2024-01-01T00:00:00Z";
         let selector = |selection: &str| WrittenEntitySelector {
-            type_: Some(selection.parse().expect("a valid type selector")),
+            type_selection: Some(selection.parse().expect("a valid type selector")),
             ..WrittenEntitySelector::default()
         };
         for operation in [TemporalQueryOperation::Query, TemporalQueryOperation::EntityMap] {

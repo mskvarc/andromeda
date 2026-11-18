@@ -312,7 +312,7 @@ impl FederationService {
                 context,
                 RegistrationSelection {
                     selectors: &[WrittenEntitySelector {
-                        id: Some(vec![entity_id.clone()]),
+                        ids: Some(vec![entity_id.clone()]),
                         ..WrittenEntitySelector::default()
                     }],
                     reach,

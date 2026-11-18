@@ -46,9 +46,9 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
 };
 use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
+    dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
-    projection::grammar::RawProjectionTerm,
+    projection::written_projection_term::WrittenProjectionTerm,
     temporal::aggregation_period::{AggregationPeriod, optional},
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -81,10 +81,10 @@ pub struct TemporalRetrieveParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<RawProjectionTerm>>,
+    pub pick: Option<Vec<WrittenProjectionTerm>>,
     /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<RawProjectionTerm>>,
+    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]

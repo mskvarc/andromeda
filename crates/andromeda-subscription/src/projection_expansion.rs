@@ -6,9 +6,10 @@ use crate::error::SubscriptionError;
 use andromeda_ngsi_ld_query::{
     projection::{
         exclusivity::check_member_exclusivity,
+        expanded_projection_term::ExpandedProjectionTerm,
         expansion::expand_projection_terms,
-        grammar::{ProjectionList, RawProjectionTerm},
-        term::ProjectionTerm,
+        written_projection_list::WrittenProjectionList,
+        written_projection_term::WrittenProjectionTerm,
     },
     term_expander::TermExpander,
 };
@@ -26,8 +27,8 @@ use andromeda_ngsi_ld_query::{
 /// Returns [`SubscriptionError::Query`] when a name does not expand to a usable
 /// attribute name, or when `pick` and `omit` name one member.
 pub(crate) async fn expand_notification_projection(
-    pick: Option<&mut [ProjectionList]>,
-    omit: Option<&mut [ProjectionList]>,
+    pick: Option<&mut [WrittenProjectionList]>,
+    omit: Option<&mut [WrittenProjectionList]>,
     expander: &impl TermExpander,
 ) -> Result<(), SubscriptionError> {
     let pick = expand_projection_lists(pick.unwrap_or_default(), expander).await?;
@@ -37,11 +38,11 @@ pub(crate) async fn expand_notification_projection(
 
 /// Replace each list with its expansion, answering every term the lists of
 /// one member expand to.
-async fn expand_projection_lists(lists: &mut [ProjectionList], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, SubscriptionError> {
+async fn expand_projection_lists(lists: &mut [WrittenProjectionList], expander: &impl TermExpander) -> Result<Vec<ExpandedProjectionTerm>, SubscriptionError> {
     let mut member_terms = Vec::new();
     for list in lists {
         let terms = expand_projection_terms(list, expander).await?;
-        *list = terms.iter().map(RawProjectionTerm::try_from).collect::<Result<Vec<_>, _>>()?.into();
+        *list = terms.iter().map(WrittenProjectionTerm::try_from).collect::<Result<Vec<_>, _>>()?.into();
         member_terms.extend(terms);
     }
     Ok(member_terms)
@@ -50,13 +51,13 @@ async fn expand_projection_lists(lists: &mut [ProjectionList], expander: &impl T
 #[cfg(test)]
 mod tests {
     use crate::{error::SubscriptionError, projection_expansion::expand_notification_projection};
-    use andromeda_ngsi_ld_query::{error::QueryError, namespace_expander::EXAMPLE_NAMESPACE, projection::grammar::ProjectionList};
+    use andromeda_ngsi_ld_query::{namespace_expander::EXAMPLE_NAMESPACE, projection::written_projection_list::WrittenProjectionList, query_error::QueryError};
 
-    fn lists(raw: &[&str]) -> Vec<ProjectionList> {
+    fn lists(raw: &[&str]) -> Vec<WrittenProjectionList> {
         raw.iter().map(|list| list.parse().expect("valid projection list")).collect()
     }
 
-    async fn expanded(pick: &[&str], omit: &[&str]) -> Result<(Vec<ProjectionList>, Vec<ProjectionList>), SubscriptionError> {
+    async fn expanded(pick: &[&str], omit: &[&str]) -> Result<(Vec<WrittenProjectionList>, Vec<WrittenProjectionList>), SubscriptionError> {
         let mut pick = lists(pick);
         let mut omit = lists(omit);
         expand_notification_projection(Some(&mut pick), Some(&mut omit), &EXAMPLE_NAMESPACE).await?;

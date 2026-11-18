@@ -5,6 +5,6 @@
 //! of it; how a pattern is spelled against a store's own path type belongs to
 //! that backend.
 
-pub mod pattern;
-pub mod pattern_fault;
-pub mod query;
+pub mod scope_pattern;
+pub mod scope_query;
+pub mod scope_query_error;

@@ -63,7 +63,7 @@ mod tests {
     use crate::{parameter_failure::classify_parameter_error, query_failure::classify_query_error};
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_query::filter::{complexity::FilterComplexityLimits, expression::Expr, language_targeting::LanguageTargeting};
+    use andromeda_ngsi_ld_query::filter::{Filter, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting};
     use andromeda_ngsi_ld_request::{error::ParameterError, pagination::page_size::PageSizeExceeded};
     use pretty_assertions::assert_eq;
     use std::num::NonZeroUsize;
@@ -79,9 +79,11 @@ mod tests {
             NonZeroUsize::new(2).expect("a positive comparison limit"),
             NonZeroUsize::new(1).expect("a positive nesting limit"),
         );
-        let too_many = limits.admit(&"a==1,2,3".parse::<Expr>().expect("a filter")).expect_err("too many comparisons");
-        let too_deep = limits.admit(&"a;(b|c)".parse::<Expr>().expect("a filter")).expect_err("nested too deep");
-        let tagged: Expr = "name[en-GB]==\"x\"".parse().expect("a filter");
+        let too_many = limits
+            .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
+            .expect_err("too many comparisons");
+        let too_deep = limits.admit(&"a;(b|c)".parse::<Filter>().expect("a filter")).expect_err("nested too deep");
+        let tagged: Filter = "name[en-GB]==\"x\"".parse().expect("a filter");
         let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
         let expected = [
             NgsiLdErrorType::TooComplexQuery,
@@ -95,7 +97,9 @@ mod tests {
             assert_eq!(wrapped.error_type(), error_type);
         }
         let comparisons = classify_parameter_error(&ParameterError::Query(
-            limits.admit(&"a==1,2,3".parse::<Expr>().expect("a filter")).expect_err("too many comparisons"),
+            limits
+                .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
+                .expect_err("too many comparisons"),
         ));
         assert!(comparisons.detail().contains("3 comparisons"), "{}", comparisons.detail());
     }

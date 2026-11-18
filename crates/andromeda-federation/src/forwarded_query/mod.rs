@@ -246,6 +246,24 @@ struct RegistrationForwarding<'a, 'n> {
 }
 
 impl RegistrationForwarding<'_, '_> {
+    /// The part of one selector of the client's union (clause 5.2.33) that an
+    /// information block covers, or `None` when it covers none of the entities
+    /// that selector asked for (clause 4.3.6.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`BlockSelection::of`].
+    async fn selection(&self, selector: &WrittenEntitySelector, block: &RegistrationInfo) -> Result<Option<BlockSelection>, FederationError> {
+        BlockSelection::of(
+            block,
+            selector.ids.as_deref(),
+            selector.id_pattern.as_ref(),
+            selector.type_selection.as_ref(),
+            self.names,
+        )
+        .await
+    }
+
     /// The forwarded query one information block produces for one selector of
     /// the client's union (clause 5.2.33), or `None` when the block covers none
     /// of the entities or attributes that selector asked for (clause 4.3.6.3).
@@ -259,9 +277,7 @@ impl RegistrationForwarding<'_, '_> {
         let mut query = ForwardedQuery::default();
         match self.client {
             ClientQuery::EntityQuery(params) => {
-                let Some(selection) =
-                    BlockSelection::of(block, selector.id.as_deref(), selector.id_pattern.as_ref(), selector.type_.as_ref(), self.names).await?
-                else {
+                let Some(selection) = self.selection(selector, block).await? else {
                     return Ok(None);
                 };
                 query.push_selection(selection);
@@ -316,9 +332,7 @@ impl RegistrationForwarding<'_, '_> {
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
             ClientQuery::TemporalQuery(params) => {
-                let Some(selection) =
-                    BlockSelection::of(block, selector.id.as_deref(), selector.id_pattern.as_ref(), selector.type_.as_ref(), self.names).await?
-                else {
+                let Some(selection) = self.selection(selector, block).await? else {
                     return Ok(None);
                 };
                 query.push_selection(selection);
@@ -741,7 +755,7 @@ mod tests {
 
     fn typed(raw: &str) -> WrittenEntitySelector {
         WrittenEntitySelector {
-            type_: Some(raw.parse().expect("valid type expression")),
+            type_selection: Some(raw.parse().expect("valid type expression")),
             ..WrittenEntitySelector::default()
         }
     }
@@ -795,7 +809,7 @@ mod tests {
     async fn a_selector_pairs_its_identifier_with_its_own_type() {
         let reg = registration(&json!([{"entities": [{"type": DEVICE, "id": VEHICLE_X}]}]));
         let query = union_query(vec![WrittenEntitySelector {
-            id: Some(vec![uri(VEHICLE_X)]),
+            ids: Some(vec![uri(VEHICLE_X)]),
             ..typed("Vehicle")
         }]);
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;

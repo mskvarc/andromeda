@@ -20,7 +20,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
 };
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_query::{error::QueryError, query_identity::QueryIdentityError};
+use andromeda_ngsi_ld_query::{query_error::QueryError, query_identity::QueryIdentityError};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_posted_query::error::PostedQueryError;
