@@ -129,17 +129,17 @@ impl<E: RTreeObject<Envelope = AABB<[f64; 2]>>> PackedRTree<E> {
 }
 
 impl<E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed> PackedRTree<E> {
-    /// Remove one entry of the object `id` indexed under `envelope`, if the
-    /// tree holds one.
+    /// Remove one entry of the object `id` whose box has its lower corner at
+    /// `corner`, if the tree holds one.
     ///
     /// The entry's leaf leaves the tree and returns under the box of the
     /// entries it keeps, or stays out once it keeps none.
-    pub fn remove(&mut self, id: &<E as Indexed>::Id, envelope: &AABB<[f64; 2]>) {
-        let Some(leaf) = self.leaves.remove_with_selection_function(LeafHolding { id, envelope }) else {
+    pub fn remove(&mut self, id: &<E as Indexed>::Id, corner: [f64; 2]) {
+        let Some(leaf) = self.leaves.remove_with_selection_function(LeafHolding { id, corner }) else {
             return;
         };
         let mut kept = leaf.entries.into_vec();
-        if let Some(position) = kept.iter().position(|entry| entry.id() == id && entry.envelope() == *envelope) {
+        if let Some(position) = kept.iter().position(|entry| starts_at(entry, id, corner)) {
             kept.swap_remove(position);
         }
         if !kept.is_empty() {
@@ -205,25 +205,36 @@ fn midpoint<E: RTreeObject<Envelope = AABB<[f64; 2]>>>(entry: &E, axis: usize) -
     entry.envelope().center()[axis]
 }
 
-/// Selects the leaf holding an entry of one object under one box.
+/// Whether `entry` belongs to the object `id` and its box has its lower corner
+/// at `corner`.
 ///
-/// Two entries of an object that share a partition and a box are
-/// interchangeable here: an object's entries in a partition always leave
-/// together, so whichever is found first is one of the leaving ones.
-struct LeafHolding<'a, E: RTreeObject + Indexed> {
-    /// The object the entry belongs to.
-    id: &'a <E as Indexed>::Id,
-    /// The box the entry was indexed under.
-    envelope: &'a E::Envelope,
+/// The corner is read off the entry itself when the entry is placed, so the
+/// entry's own corner matches it bit for bit, and no tolerance is wanted.
+fn starts_at<E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed>(entry: &E, id: &<E as Indexed>::Id, corner: [f64; 2]) -> bool {
+    entry.id() == id && entry.envelope().lower().map(f64::to_bits) == corner.map(f64::to_bits)
 }
 
-impl<E: RTreeObject + Indexed> SelectionFunction<Leaf<E>> for LeafHolding<'_, E> {
-    fn should_unpack_parent(&self, envelope: &E::Envelope) -> bool {
-        envelope.contains_envelope(self.envelope)
+/// Selects the leaf holding an entry of one object by the lower corner of the
+/// entry's box.
+///
+/// Every box on the way down to the entry holds that corner. Two entries of an
+/// object that share a partition and a corner are interchangeable here: an
+/// object's entries in a partition always leave together, so whichever is
+/// found first is one of the leaving ones.
+struct LeafHolding<'a, E: Indexed> {
+    /// The object the entry belongs to.
+    id: &'a <E as Indexed>::Id,
+    /// The lower corner of the entry's box.
+    corner: [f64; 2],
+}
+
+impl<E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed> SelectionFunction<Leaf<E>> for LeafHolding<'_, E> {
+    fn should_unpack_parent(&self, envelope: &AABB<[f64; 2]>) -> bool {
+        envelope.contains_point(&self.corner)
     }
 
     fn should_unpack_leaf(&self, leaf: &Leaf<E>) -> bool {
-        leaf.envelope.contains_envelope(self.envelope) && leaf.entries.iter().any(|entry| entry.id() == self.id && entry.envelope() == *self.envelope)
+        leaf.envelope.contains_point(&self.corner) && leaf.entries.iter().any(|entry| starts_at(entry, self.id, self.corner))
     }
 }
 
@@ -236,20 +247,20 @@ mod tests {
     use pretty_assertions::assert_eq;
     use rstar::{AABB, Envelope, RTreeObject};
 
-    /// A point named by a number.
+    /// A box named by a number.
     #[derive(Debug, Clone, PartialEq)]
     struct Marker {
-        /// The number naming the point.
+        /// The number naming the box.
         id: u32,
-        /// Longitude and latitude.
-        at: [f64; 2],
+        /// The box, a point when its corners meet.
+        envelope: AABB<[f64; 2]>,
     }
 
     impl RTreeObject for Marker {
         type Envelope = AABB<[f64; 2]>;
 
         fn envelope(&self) -> AABB<[f64; 2]> {
-            AABB::from_point(self.at)
+            self.envelope
         }
     }
 
@@ -261,16 +272,22 @@ mod tests {
         }
     }
 
-    /// Marker `id`, scattered over the globe by its number.
+    /// Marker `id`, scattered over the globe by its number: a point, or a box
+    /// up to a degree and a half wide.
     fn marker(id: u32) -> Marker {
+        let lower = [f64::from(id * 37 % 360) - 180.0, f64::from(id * 53 % 170) - 85.0];
+        let width = f64::from(id % 4) * 0.5;
         Marker {
             id,
-            at: [f64::from(id * 37 % 360) - 180.0, f64::from(id * 53 % 170) - 85.0],
+            envelope: AABB::from_corners(lower, [lower[0] + width, lower[1] + width]),
         }
     }
 
     fn at(id: u32, longitude: f64, latitude: f64) -> Marker {
-        Marker { id, at: [longitude, latitude] }
+        Marker {
+            id,
+            envelope: AABB::from_point([longitude, latitude]),
+        }
     }
 
     fn leaves(tree: &PackedRTree<Marker>) -> Vec<&Leaf<Marker>> {
@@ -309,7 +326,7 @@ mod tests {
         let mut tree = PackedRTree::bulk_load((0..1000).map(marker).collect());
         let mut held: Vec<Marker> = (0..1000).map(marker).collect();
         for gone in held.iter().filter(|entry| entry.id % 3 == 0) {
-            tree.remove(&gone.id, &gone.envelope());
+            tree.remove(&gone.id, gone.envelope.lower());
         }
         held.retain(|entry| entry.id % 3 != 0);
         for id in 1000..1500 {
@@ -362,7 +379,7 @@ mod tests {
         let mut tree = PackedRTree::default();
         tree.insert(at(1, 0.0, 0.0));
         tree.insert(at(2, 5.0, 5.0));
-        tree.remove(&2, &AABB::from_point([5.0, 5.0]));
+        tree.remove(&2, [5.0, 5.0]);
         assert_eq!(leaves(&tree).len(), 1);
         assert_eq!(leaves(&tree)[0].envelope, AABB::from_point([0.0, 0.0]));
     }
@@ -371,27 +388,48 @@ mod tests {
     fn removing_the_last_entry_of_a_leaf_drops_the_leaf() {
         let mut tree = PackedRTree::default();
         tree.insert(at(1, 3.0, 4.0));
-        tree.remove(&1, &AABB::from_point([3.0, 4.0]));
+        tree.remove(&1, [3.0, 4.0]);
         assert_eq!(leaves(&tree).len(), 0);
     }
 
     #[test]
-    fn removing_an_entry_under_another_box_leaves_the_tree_as_it_is() {
+    fn removing_an_entry_at_another_corner_leaves_the_tree_as_it_is() {
         let mut tree = PackedRTree::default();
         tree.insert(at(1, 3.0, 4.0));
-        tree.remove(&1, &AABB::from_point([4.0, 3.0]));
-        tree.remove(&2, &AABB::from_point([3.0, 4.0]));
-        assert_eq!(ids(tree.iter()), vec![1]);
+        tree.insert(Marker {
+            id: 2,
+            envelope: AABB::from_corners([1.0, 1.0], [5.0, 5.0]),
+        });
+        tree.remove(&1, [4.0, 3.0]);
+        tree.remove(&2, [3.0, 4.0]);
+        tree.remove(&2, [5.0, 5.0]);
+        assert_eq!(ids(tree.iter()), vec![1, 2]);
     }
 
     #[test]
-    fn entries_of_one_object_under_one_box_leave_one_at_a_time() {
+    fn a_box_is_removed_by_its_lower_corner() {
+        let mut tree = PackedRTree::default();
+        tree.insert(Marker {
+            id: 1,
+            envelope: AABB::from_corners([1.0, 1.0], [5.0, 5.0]),
+        });
+        tree.insert(at(2, 1.0, 1.0));
+        tree.remove(&1, [1.0, 1.0]);
+        assert_eq!(ids(tree.iter()), vec![2]);
+        assert_eq!(leaves(&tree)[0].envelope, AABB::from_point([1.0, 1.0]));
+    }
+
+    #[test]
+    fn entries_of_one_object_at_one_corner_leave_one_at_a_time() {
         let mut tree = PackedRTree::default();
         tree.insert(at(1, 3.0, 4.0));
-        tree.insert(at(1, 3.0, 4.0));
-        tree.remove(&1, &AABB::from_point([3.0, 4.0]));
+        tree.insert(Marker {
+            id: 1,
+            envelope: AABB::from_corners([3.0, 4.0], [6.0, 8.0]),
+        });
+        tree.remove(&1, [3.0, 4.0]);
         assert_eq!(ids(tree.iter()), vec![1]);
-        tree.remove(&1, &AABB::from_point([3.0, 4.0]));
+        tree.remove(&1, [3.0, 4.0]);
         assert_eq!(ids(tree.iter()), Vec::<u32>::new());
     }
 }

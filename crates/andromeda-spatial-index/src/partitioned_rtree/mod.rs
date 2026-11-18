@@ -8,9 +8,10 @@
 //! method; everything structural lives here so the two cannot drift apart.
 //!
 //! The tree holds the only copy of an entry. The back-index records, per entry,
-//! the partition and the envelope the tree finds it under, and shares the
+//! the partition and the corner of the box the tree finds it by, and shares the
 //! partition's key, so an object costs the back-index an identifier and a few
-//! words however large its geometry is.
+//! words however large its geometry is. The record of an object of one entry
+//! lives in its map slot, with no allocation of its own.
 //!
 //! Every mutation of one object is applied partition by partition, and within a
 //! partition the object's outgoing entries leave and its incoming entries arrive
@@ -35,7 +36,11 @@ mod placement;
 
 use crate::{
     key::SpatialKey,
-    partitioned_rtree::{packed_rtree::PackedRTree, partition::Partition, placement::Placement},
+    partitioned_rtree::{
+        packed_rtree::PackedRTree,
+        partition::Partition,
+        placement::{Placement, Placements},
+    },
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use parking_lot::RwLock;
@@ -91,8 +96,9 @@ struct Bucket<E: RTreeObject + Indexed> {
 
 /// What one mutation does to one partition.
 struct PartitionChange<E: RTreeObject> {
-    /// The envelopes of the object's entries that leave the partition.
-    leaving: Vec<E::Envelope>,
+    /// The lower corners of the boxes of the object's entries that leave the
+    /// partition.
+    leaving: Vec<[f64; 2]>,
     /// The object's entries that arrive in the partition.
     arriving: Vec<E>,
 }
@@ -118,7 +124,7 @@ where
     /// One tree per partition.
     buckets: DashMap<SpatialKey, Arc<Bucket<E>>>,
     /// Where each object's entries currently sit.
-    placements: DashMap<<E as Indexed>::Id, Vec<Placement<E>>>,
+    placements: DashMap<<E as Indexed>::Id, Placements>,
     /// Monotonic clock stamping every mutation, so a rebuild can tell which
     /// objects have changed since its snapshot was read.
     clock: AtomicU64,
@@ -188,7 +194,7 @@ where
     /// [`PartitionedRTree::replace`] that settles the change removes whichever
     /// no longer holds.
     pub fn augment(&self, id: <E as Indexed>::Id, incoming: Vec<(SpatialKey, Vec<E>)>) {
-        let installed = self.transition(&id, Vec::new(), incoming);
+        let installed = self.transition(&id, Placements::default(), incoming);
         self.install_placements(id, installed);
     }
 
@@ -248,12 +254,11 @@ where
                 // clone: the installed entries are consumed by the next loop, so the record takes its own copy of the identifier
                 self.rewrite_record(id.clone(), |placements| placements.retain(|placement| *placement.key != key));
             }
-            for (id, envelope) in rebuilt.installed {
+            for (id, corner) in rebuilt.installed {
                 self.rewrite_record(id, |placements| {
-                    placements.reserve_exact(1);
                     placements.push(Placement {
                         key: Arc::clone(&bucket.key),
-                        envelope,
+                        corner,
                     });
                 });
             }
@@ -261,27 +266,16 @@ where
     }
 
     /// Detach an object's back-index entries that `outgoing` selects.
-    fn take_placements(&self, id: &<E as Indexed>::Id, outgoing: impl Fn(&Placement<E>) -> bool) -> Vec<Placement<E>> {
+    fn take_placements(&self, id: &<E as Indexed>::Id, outgoing: impl Fn(&Placement) -> bool) -> Placements {
         let Some(mut placements) = self.placements.get_mut(id) else {
-            return Vec::new();
+            return Placements::default();
         };
-        placements.value_mut().extract_if(.., |placement| outgoing(placement)).collect()
+        placements.value_mut().split_off(outgoing)
     }
 
     /// Record an object's new back-index entries.
-    ///
-    /// A record is held at exactly its length: almost every object has one
-    /// entry, and a growth reserve on each of a million records would outweigh
-    /// the entries themselves.
-    fn install_placements(&self, id: <E as Indexed>::Id, installed: Vec<Placement<E>>) {
-        self.rewrite_record(id, |placements| {
-            if placements.is_empty() {
-                *placements = installed;
-            } else {
-                placements.reserve_exact(installed.len());
-                placements.extend(installed);
-            }
-        });
+    fn install_placements(&self, id: <E as Indexed>::Id, installed: Placements) {
+        self.rewrite_record(id, |placements| placements.append(installed));
     }
 
     /// Rewrite an object's back-index record, keyed from now on by `id`, and
@@ -291,7 +285,7 @@ where
     /// as the key keeps an identifier shared by reference count held once,
     /// rather than once by the record and again by the entries that replaced
     /// the ones the record was keyed from.
-    fn rewrite_record(&self, id: <E as Indexed>::Id, rewrite: impl FnOnce(&mut Vec<Placement<E>>)) {
+    fn rewrite_record(&self, id: <E as Indexed>::Id, rewrite: impl FnOnce(&mut Placements)) {
         match self.placements.entry(id) {
             Entry::Occupied(mut record) => {
                 let mut placements = mem::take(record.get_mut());
@@ -303,7 +297,7 @@ where
                 }
             }
             Entry::Vacant(record) => {
-                let mut placements = Vec::new();
+                let mut placements = Placements::default();
                 rewrite(&mut placements);
                 if !placements.is_empty() {
                     record.insert(placements);
@@ -315,16 +309,16 @@ where
     /// Move one object from `outgoing` to `incoming`, partition by partition,
     /// each partition under one write lock, returning the placements the
     /// incoming entries now occupy.
-    fn transition(&self, id: &<E as Indexed>::Id, outgoing: Vec<Placement<E>>, incoming: Vec<(SpatialKey, Vec<E>)>) -> Vec<Placement<E>> {
+    fn transition(&self, id: &<E as Indexed>::Id, outgoing: Placements, incoming: Vec<(SpatialKey, Vec<E>)>) -> Placements {
         let generation = self.next_generation();
         let mut changes: HashMap<Arc<SpatialKey>, PartitionChange<E>> = HashMap::new();
         for placement in outgoing {
-            changes.entry(placement.key).or_default().leaving.push(placement.envelope);
+            changes.entry(placement.key).or_default().leaving.push(placement.corner);
         }
         for (key, entries) in incoming {
             changes.entry(Arc::new(key)).or_default().arriving.extend(entries);
         }
-        let mut installed = Vec::new();
+        let mut installed = Placements::default();
         for (key, PartitionChange { leaving, arriving }) in changes {
             let bucket = if arriving.is_empty() {
                 let Some(bucket) = self.existing(&key) else {
@@ -334,15 +328,14 @@ where
             } else {
                 self.bucket(&key)
             };
-            installed.reserve_exact(arriving.len());
             let mut partition = bucket.partition.write();
-            for envelope in &leaving {
-                partition.tree.remove(id, envelope);
+            for corner in leaving {
+                partition.tree.remove(id, corner);
             }
             for entry in arriving {
                 installed.push(Placement {
                     key: Arc::clone(&bucket.key),
-                    envelope: entry.envelope(),
+                    corner: entry.envelope().lower(),
                 });
                 partition.tree.insert(entry);
             }
@@ -378,14 +371,23 @@ mod tests {
     use crate::{
         entity::entry::SpatialEntry,
         key::SpatialKey,
-        partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking},
+        partitioned_rtree::{
+            Indexed,
+            PartitionedRTree,
+            WriteTracking,
+            placement::{Placement, Placements},
+        },
     };
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
+    use andromeda_ngsi_ld_geometry::{
+        form::{GeometryForm, PolygonRings},
+        linear_ring::LinearRing,
+        position::Position,
+    };
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, identifier_spelling::IdentifierSpelling};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
     use rstar::RTreeObject;
-    use std::{collections::HashMap, ptr};
+    use std::{collections::HashMap, ptr, sync::Arc};
 
     fn uri(raw: &str) -> IdentifierSpelling {
         IdentifierSpelling::from(&raw.parse::<Identifier>().expect("a well-formed URI"))
@@ -408,6 +410,14 @@ mod tests {
         SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::from(iri!("https://example.org/B")),
+            "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+        )
+    }
+
+    fn key_c() -> SpatialKey {
+        SpatialKey::new(
+            TenantRef::UnnamedDefault,
+            IriBuf::from(iri!("https://example.org/C")),
             "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         )
     }
@@ -562,10 +572,17 @@ mod tests {
         pretty_assertions::assert_eq!(located(&index, &key_a()), vec![("urn:ngsi-ld:X:1".to_owned(), [5.0, 5.0])]);
     }
 
-    /// A million objects with one entry each: a growth reserve on every record
-    /// would cost more than the records.
+    /// The placements the back-index holds for `id`, which must be several.
+    fn listed(index: &PartitionedRTree<SpatialEntry>, id: &str) -> Vec<(SpatialKey, [f64; 2])> {
+        let record = index.placements.get(&uri(id)).expect("the object is indexed");
+        let Placements::Several(held) = record.value() else {
+            panic!("{id} has several placements");
+        };
+        held.iter().map(|placement| ((*placement.key).clone(), placement.corner)).collect()
+    }
+
     #[test]
-    fn a_back_index_record_holds_exactly_its_entries() {
+    fn an_object_of_one_entry_holds_its_record_in_its_map_slot() {
         let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
         let snapshot_generation = index.current_generation();
         index.replace(uri("urn:ngsi-ld:X:live"), vec![(key_a(), vec![entry("urn:ngsi-ld:X:live", 0.0, 0.0)])]);
@@ -574,10 +591,96 @@ mod tests {
             HashMap::from([(key_b(), vec![entry("urn:ngsi-ld:X:seeded", 1.0, 1.0)])]),
             snapshot_generation,
         );
-        for id in ["urn:ngsi-ld:X:live", "urn:ngsi-ld:X:seeded"] {
-            let placements = index.placements.get(&uri(id)).expect("the object is indexed");
-            pretty_assertions::assert_eq!((placements.len(), placements.capacity()), (1, 1), "{id}");
+        for (id, key, corner) in [("urn:ngsi-ld:X:live", key_a(), [0.0, 0.0]), ("urn:ngsi-ld:X:seeded", key_b(), [1.0, 1.0])] {
+            let record = index.placements.get(&uri(id)).expect("the object is indexed");
+            pretty_assertions::assert_eq!(*record.value(), Placements::One(Placement { key: Arc::new(key), corner }), "{id}");
         }
+    }
+
+    #[test]
+    fn an_entity_of_three_types_holds_all_three_placements() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        index.replace(
+            uri("urn:ngsi-ld:X:1"),
+            vec![
+                (key_a(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+                (key_b(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+                (key_c(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+            ],
+        );
+        let held = listed(&index, "urn:ngsi-ld:X:1");
+        pretty_assertions::assert_eq!(held.len(), 3);
+        for key in [key_a(), key_b(), key_c()] {
+            assert!(held.contains(&(key.clone(), [1.0, 1.0])), "{key:?}");
+            pretty_assertions::assert_eq!(count(&index, &key), 1);
+        }
+    }
+
+    #[test]
+    fn moving_an_entity_from_three_partitions_to_one_shrinks_its_record_back_into_its_map_slot() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let id = uri("urn:ngsi-ld:X:1");
+        index.replace(
+            id.clone(),
+            vec![
+                (key_a(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+                (key_b(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+                (key_c(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+            ],
+        );
+        index.replace(id.clone(), vec![(key_b(), vec![entry("urn:ngsi-ld:X:1", 4.0, 4.0)])]);
+        let record = index.placements.get(&id).expect("the object is indexed");
+        pretty_assertions::assert_eq!(
+            *record.value(),
+            Placements::One(Placement {
+                key: Arc::new(key_b()),
+                corner: [4.0, 4.0]
+            })
+        );
+        pretty_assertions::assert_eq!(count(&index, &key_a()), 0);
+        pretty_assertions::assert_eq!(count(&index, &key_c()), 0);
+        pretty_assertions::assert_eq!(located(&index, &key_b()), vec![("urn:ngsi-ld:X:1".to_owned(), [4.0, 4.0])]);
+    }
+
+    #[test]
+    fn a_rebuild_records_every_partition_it_seeds_an_entity_in() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let snapshot_generation = index.current_generation();
+        index.rebuild(
+            |_| true,
+            HashMap::from([
+                (key_a(), vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)]),
+                (key_b(), vec![entry("urn:ngsi-ld:X:1", 2.0, 2.0)]),
+            ]),
+            snapshot_generation,
+        );
+        let held = listed(&index, "urn:ngsi-ld:X:1");
+        pretty_assertions::assert_eq!(held.len(), 2);
+        assert!(held.contains(&(key_a(), [1.0, 1.0])));
+        assert!(held.contains(&(key_b(), [2.0, 2.0])));
+        index.remove(&uri("urn:ngsi-ld:X:1"));
+        pretty_assertions::assert_eq!(count(&index, &key_a()), 0);
+        pretty_assertions::assert_eq!(count(&index, &key_b()), 0);
+    }
+
+    #[test]
+    fn replacing_a_box_removes_it_by_its_corner() {
+        let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new(WriteTracking::Recorded);
+        let id = uri("urn:ngsi-ld:X:1");
+        let square = GeometryForm::Polygon(PolygonRings::new(vec![
+            LinearRing::try_new(
+                [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0), (1.0, 1.0)]
+                    .into_iter()
+                    .map(|(x, y)| Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
+                    .collect(),
+            )
+            .expect("a test ring is closed"),
+        ]));
+        let shape = SpatialEntry::new(id.clone(), &square).expect("a polygon has a bounding rectangle");
+        index.replace(id.clone(), vec![(key_a(), vec![shape, entry("urn:ngsi-ld:X:1", 1.0, 1.0)])]);
+        pretty_assertions::assert_eq!(count(&index, &key_a()), 2);
+        index.replace(id, vec![(key_a(), vec![entry("urn:ngsi-ld:X:1", 5.0, 5.0)])]);
+        pretty_assertions::assert_eq!(located(&index, &key_a()), vec![("urn:ngsi-ld:X:1".to_owned(), [5.0, 5.0])]);
     }
 
     #[test]
