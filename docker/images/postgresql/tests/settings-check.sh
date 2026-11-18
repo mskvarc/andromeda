@@ -231,6 +231,16 @@ if [ "$license" = timescale ]; then
 else
 	expect 'the apache edition ships no TimescaleDB Toolkit' "$toolkit_version" ''
 fi
+# Creating an extension loads its library, which fails on a missing symbol when
+# the package was built against a later PostgreSQL minor release.
+extensions=(postgis pg_repack)
+if [ "$license" = timescale ]; then
+	extensions+=(timescaledb_toolkit)
+fi
+for extension in "${extensions[@]}"; do
+	expect "$extension loads at the version the image ships" \
+		"$(sql limits-2g "CREATE EXTENSION IF NOT EXISTS $extension; SELECT extversion = default_version FROM pg_extension JOIN pg_available_extensions ON name = extname WHERE extname = '$extension'" 2>&1)" t
+done
 expect 'pg_stat_statements.max' "$(sql limits-2g 'SHOW pg_stat_statements.max')" 20000
 expect 'autovacuum_naptime overrides the tuner' "$(sql limits-2g 'SHOW autovacuum_naptime')" 1min
 policy_keys="$(docker exec "$prefix-limits-2g" sed -n 's/^\([a-z_.]*\) = .*/\1/p' /etc/postgresql/andromeda.conf.d/10-andromeda.conf)"
