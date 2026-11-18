@@ -43,18 +43,24 @@ pub enum StatementPlanning {
     Generic,
 }
 
+/// A transaction whose every statement is planned with the values bound to
+/// it, whatever the server, database or role sets.
+#[must_use]
+pub fn planned_with_bound_values() -> TransactionStart {
+    TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_custom_plan")
+}
+
 impl StatementPlanning {
     /// The transaction a statement planned this way runs in, whatever the
     /// server, database or role sets; `None` when it runs on the pool as it
     /// comes.
     #[must_use]
     pub fn transaction(self) -> Option<TransactionStart> {
-        let custom_plans = || TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_custom_plan");
         let generic_plans = || TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_generic_plan");
         match self {
             StatementPlanning::Cached => None,
-            StatementPlanning::BoundValues => Some(custom_plans()),
-            StatementPlanning::GatedBranches => Some(custom_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
+            StatementPlanning::BoundValues => Some(planned_with_bound_values()),
+            StatementPlanning::GatedBranches => Some(planned_with_bound_values().with_local(Setting::MaxParallelWorkersPerGather, "0")),
             StatementPlanning::GenericGatedBranches => Some(generic_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
             StatementPlanning::Generic => Some(generic_plans()),
         }
