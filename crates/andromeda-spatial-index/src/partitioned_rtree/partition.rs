@@ -1,8 +1,8 @@
 //! One partition of the tree: its R-tree, the write records a rebuild
 //! respects, and the rebuild itself.
 
-use crate::partitioned_rtree::Indexed;
-use rstar::{RTree, RTreeObject};
+use crate::partitioned_rtree::{Indexed, packed_rtree::PackedRTree};
+use rstar::{AABB, RTreeObject};
 use std::{
     collections::{HashMap, HashSet},
     mem,
@@ -13,7 +13,7 @@ use std::{
 #[derive(Debug)]
 pub(super) struct Partition<E: RTreeObject + Indexed> {
     /// The R-tree of this partition's geometries.
-    pub(super) tree: RTree<E>,
+    pub(super) tree: PackedRTree<E>,
     /// The generation of the latest live mutation of each object in this
     /// partition (an insertion or a removal) recorded only under
     /// [`WriteTracking::Recorded`](crate::partitioned_rtree::WriteTracking::Recorded).
@@ -25,7 +25,7 @@ pub(super) struct Partition<E: RTreeObject + Indexed> {
 impl<E: RTreeObject + Indexed> Default for Partition<E> {
     fn default() -> Partition<E> {
         Partition {
-            tree: RTree::new(),
+            tree: PackedRTree::default(),
             written: HashMap::new(),
         }
     }
@@ -39,7 +39,7 @@ pub(super) struct RebuiltPartition<E: RTreeObject + Indexed> {
     pub(super) departed: HashSet<<E as Indexed>::Id>,
 }
 
-impl<E: RTreeObject + Indexed> Partition<E> {
+impl<E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed> Partition<E> {
     /// Rebuild this partition from its snapshot, keeping every object written
     /// live after `snapshot_generation`.
     ///
@@ -58,7 +58,7 @@ impl<E: RTreeObject + Indexed> Partition<E> {
         let mut kept: Vec<E> = Vec::new();
         {
             let installed_ids: HashSet<&<E as Indexed>::Id> = entries.iter().map(Indexed::id).collect();
-            for entry in mem::take(tree) {
+            for entry in mem::take(tree).into_entries() {
                 if live.contains(entry.id()) {
                     kept.push(entry);
                 } else if !installed_ids.contains(entry.id()) {
@@ -70,7 +70,7 @@ impl<E: RTreeObject + Indexed> Partition<E> {
         let installed = entries.iter().map(|entry| (entry.id().clone(), entry.envelope())).collect();
         entries.reserve_exact(kept.len());
         entries.extend(kept);
-        *tree = RTree::bulk_load(entries);
+        *tree = PackedRTree::bulk_load(entries);
         written.retain(|_, generation| *generation > snapshot_generation);
         // A burst of live writes leaves capacity behind that the records no longer use.
         written.shrink_to_fit();

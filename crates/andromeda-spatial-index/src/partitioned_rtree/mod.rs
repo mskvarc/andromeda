@@ -29,19 +29,17 @@
 //!   stale reading; every caller in the broker already applies one object's
 //!   changes in commit order, one at a time.
 
+pub mod packed_rtree;
 mod partition;
 mod placement;
 
 use crate::{
     key::SpatialKey,
-    partitioned_rtree::{
-        partition::Partition,
-        placement::{EntryOf, Placement},
-    },
+    partitioned_rtree::{packed_rtree::PackedRTree, partition::Partition, placement::Placement},
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use parking_lot::RwLock;
-use rstar::{RTree, RTreeObject};
+use rstar::{AABB, RTreeObject};
 use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
@@ -130,7 +128,7 @@ where
 
 impl<E> PartitionedRTree<E>
 where
-    E: RTreeObject + Indexed,
+    E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed,
 {
     /// An empty tree.
     #[must_use]
@@ -206,7 +204,7 @@ where
     }
 
     /// Read one partition's tree under its lock, if the partition exists.
-    pub fn read_partition<R>(&self, key: &SpatialKey, read: impl FnOnce(&RTree<E>) -> R) -> Option<R> {
+    pub fn read_partition<R>(&self, key: &SpatialKey, read: impl FnOnce(&PackedRTree<E>) -> R) -> Option<R> {
         let bucket = self.existing(key)?;
         let partition = bucket.partition.read();
         Some(read(&partition.tree))
@@ -339,7 +337,7 @@ where
             installed.reserve_exact(arriving.len());
             let mut partition = bucket.partition.write();
             for envelope in &leaving {
-                partition.tree.remove_with_selection_function(EntryOf { id, envelope });
+                partition.tree.remove(id, envelope);
             }
             for entry in arriving {
                 installed.push(Placement {
@@ -415,7 +413,7 @@ mod tests {
     }
 
     fn count(index: &PartitionedRTree<SpatialEntry>, key: &SpatialKey) -> usize {
-        index.read_partition(key, rstar::RTree::size).unwrap_or(0)
+        index.read_partition(key, |tree| tree.iter().count()).unwrap_or(0)
     }
 
     fn located(index: &PartitionedRTree<SpatialEntry>, key: &SpatialKey) -> Vec<(String, [f64; 2])> {
