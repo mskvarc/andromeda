@@ -198,7 +198,7 @@ pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {
     compiled.entities.selectors = vec![
         ExpandedEntitySelector::builder()
             .type_selection(ty.map(|ty| ExpandedTypeSelection::Type(iri(&format!("https://uri.etsi.org/ngsi-ld/default-context/{ty}")))))
-            .id_pattern(Some(Pattern::parse(raw).expect("valid pattern")))
+            .id_pattern(Some(raw.parse::<Pattern>().expect("valid pattern")))
             .build(),
     ];
     compiled
@@ -208,7 +208,7 @@ pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {
 /// [`sensors`].
 pub(super) fn scope_query(raw: &str) -> CompiledTemporalQuery {
     let mut compiled = sensors();
-    compiled.entities.scope_q = Some(ScopeQuery::parse(raw).expect("valid scope query"));
+    compiled.entities.scope_q = Some(raw.parse::<ScopeQuery>().expect("valid scope query"));
     compiled
 }
 

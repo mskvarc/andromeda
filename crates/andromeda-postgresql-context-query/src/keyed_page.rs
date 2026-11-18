@@ -191,7 +191,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         page_window::PageWindow,
         scope::scope_query::ScopeQuery,
         type_selection::expanded_type_selection::ExpandedTypeSelection,
@@ -216,7 +216,7 @@ mod tests {
 
     fn query(q: &str) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
+        query.selection.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("valid q"), LanguageMatching::TagEquality));
         query
     }
 
@@ -615,7 +615,7 @@ mod tests {
     fn scope_q_beside_a_keyed_term_is_tested_on_each_walked_entity() {
         let mut query = failing_beside_attrs(&["Sensor"]);
         query.selection.attrs = Vec::new();
-        query.selection.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+        query.selection.scope_q = Some("/Madrid/#".parse::<ScopeQuery>().expect("valid scope query"));
         let built = build_query(&ContextTarget::Live, &query, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
         assert_statement_snapshot!("keyed-page-scope-q-beside-a-keyed-term-is-tested-on-each-walked-entity", built.select);
     }

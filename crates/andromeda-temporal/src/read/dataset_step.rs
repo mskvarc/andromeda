@@ -54,7 +54,7 @@ mod tests {
             .build();
         compiled.instances.dataset_id_filter = selectors
             .iter()
-            .map(|selector| DatasetSelector::parse(selector).expect("a valid dataset selector"))
+            .map(|selector| selector.parse::<DatasetSelector>().expect("a valid dataset selector"))
             .collect();
         compiled
     }

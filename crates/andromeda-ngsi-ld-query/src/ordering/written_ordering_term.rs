@@ -1,13 +1,7 @@
 //! An `orderBy` term (clause 4.23) as the client wrote it: a value path or keyword, and a direction.
 
 use crate::{
-    filter::{
-        display::serialize_attr_path,
-        parser::value_path::parse_attribute_path,
-        target_language::LanguageSelector,
-        trailing_group::TrailingGroup,
-        value_path::ValuePath,
-    },
+    filter::{target_language::LanguageSelector, trailing_group::TrailingGroup, value_path::ValuePath},
     ordering::{ordering_direction::OrderingDirection, ordering_error::OrderingError},
 };
 use serde::{Deserialize, Serialize};
@@ -35,7 +29,7 @@ impl FromStr for WrittenOrderingTerm {
             }
             None => (raw, OrderingDirection::Asc),
         };
-        let attr = parse_attribute_path(member).map_err(OrderingError::Path)?;
+        let attr = member.parse::<ValuePath>().map_err(OrderingError::Path)?;
         if attr.trailing == Some(TrailingGroup::AllLanguages) {
             return Err(OrderingError::LanguageSuppression);
         }
@@ -58,7 +52,7 @@ impl TryFrom<String> for WrittenOrderingTerm {
 // non-default directions with the clause-4.23 separator.
 impl fmt::Display for WrittenOrderingTerm {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let member = serialize_attr_path(&self.path);
+        let member = self.path.to_string();
         match self.direction {
             OrderingDirection::Asc => formatter.write_str(&member),
             OrderingDirection::Desc | OrderingDirection::DistAsc | OrderingDirection::DistDesc => {

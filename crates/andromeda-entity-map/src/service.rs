@@ -265,7 +265,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use andromeda_ngsi_ld_request::{
@@ -382,7 +382,7 @@ mod tests {
             .build();
         EntitySelection::builder()
             .selectors(vec![selector])
-            .q(q.map(|text| CompiledFilter::new(parse(text).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)))
+            .q(q.map(|text| CompiledFilter::new(text.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality)))
             .build()
     }
 

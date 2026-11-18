@@ -243,7 +243,7 @@ mod tests {
     /// with an `id` matches when the pattern matches it.
     #[test]
     fn the_pattern_test_names_the_identifier_sentinel_beside_the_match_on_the_trigram_indexed_column() {
-        let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
+        let pattern = "urn:ngsi-ld:Fleet.*".parse::<Pattern>().expect("valid pattern");
         let select = statement(entity_id_pattern_candidate(&pattern));
         assert_statement_snapshot!(
             "preselect-the-pattern-test-names-the-identifier-sentinel-beside-the-match-on-the-trigram-indexed-column",
@@ -255,7 +255,7 @@ mod tests {
     /// reaches PostgreSQL with every option applied.
     #[test]
     fn the_pattern_test_matches_the_portable_restatement_not_the_written_pattern() {
-        let pattern = Pattern::parse("(?i)urn:ngsi-ld:fleet.*").expect("valid pattern");
+        let pattern = "(?i)urn:ngsi-ld:fleet.*".parse::<Pattern>().expect("valid pattern");
         let select = statement(entity_id_pattern_candidate(&pattern));
         assert_statement_snapshot!("preselect-the-pattern-test-matches-the-portable-restatement-not-the-written-pattern", select);
     }

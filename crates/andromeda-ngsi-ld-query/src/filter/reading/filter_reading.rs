@@ -156,7 +156,6 @@ mod tests {
         attribute_path::AttributePath,
         instance_metadata::InstanceMetadata,
         language_matching::LanguageMatching,
-        parser::parse,
         reading::{filter_reading::FilterReading, terminal::Terminal},
         trailing_group::{MemberPath, TrailingGroup},
     };
@@ -165,17 +164,17 @@ mod tests {
 
     /// The reading the executions run for `q`.
     fn normal(q: &str) -> FilterReading {
-        FilterReading::of(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+        FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
     }
 
     /// `q` lowered term for term, before normal form.
     fn lowered(q: &str) -> FilterReading {
-        FilterReading::lowered(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+        FilterReading::lowered(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
     }
 
     /// The sub-attributes and the terminal of the one term a `csf` reads.
     fn context_source_term(csf: &str) -> (Vec<String>, Terminal) {
-        let FilterReading::Term(term) = FilterReading::of_context_source_filter(&parse(csf).expect("a clause 4.9 filter")) else {
+        let FilterReading::Term(term) = FilterReading::of_context_source_filter(&csf.parse::<Filter>().expect("a clause 4.9 filter")) else {
             panic!("one term");
         };
         (
@@ -314,7 +313,7 @@ mod tests {
     /// member read two keys of a `JsonProperty`.
     #[test]
     fn equalities_over_two_written_spellings_of_one_member_are_never_joined() {
-        let mut expr = parse("a[city_name]==1|a[city_name]==2").expect("a filter");
+        let mut expr = "a[city_name]==1|a[city_name]==2".parse::<Filter>().expect("a filter");
         let Filter::Or(terms) = &mut expr else {
             panic!("a disjunction");
         };

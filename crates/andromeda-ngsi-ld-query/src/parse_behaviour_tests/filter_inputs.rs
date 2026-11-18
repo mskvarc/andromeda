@@ -2,7 +2,7 @@
 //! `ValuePath`, a bracket's target language and a pattern operand, and the
 //! inputs built at the ceilings a filter holds.
 
-use crate::filter::{complexity::WRITTEN_NESTING_CEILING, parser::value_path::MAX_SUB_ATTRIBUTE_DEPTH};
+use crate::filter::complexity::{MAX_SUB_ATTRIBUTE_DEPTH, WRITTEN_NESTING_CEILING};
 
 /// `q` filters covering every operator, operand form and structural character
 /// of clause 4.9, the lexical rules that decide between them, and the

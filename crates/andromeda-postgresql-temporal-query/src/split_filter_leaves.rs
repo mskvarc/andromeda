@@ -82,7 +82,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         scope::scope_query::ScopeQuery,
         temporal::{
@@ -101,9 +101,9 @@ mod tests {
         CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
-                    .q(Some(CompiledFilter::new(parser::parse(q).expect("q parses"), LanguageMatching::TagEquality)))
+                    .q(Some(CompiledFilter::new(q.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality)))
                     .geo(geo)
-                    .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses")))
+                    .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("scopeQ parses")))
                     .build(),
             )
             .window(

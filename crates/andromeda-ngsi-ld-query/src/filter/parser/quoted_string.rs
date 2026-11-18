@@ -8,9 +8,8 @@
 //! character instead would make `q=name=="aé"` match the literal
 //! `au00e9`, and would silently accept escapes the grammar does not define.
 
-use crate::filter::filter_error::FilterError;
+use crate::filter::{filter_error::FilterError, unicode_escape_error::UnicodeEscapeError};
 use andromeda_ngsi_ld_number::held_text::admit_held_text;
-use derive_more::Display;
 
 /// The number of hexadecimal digits RFC 8259 requires after `\u`.
 const UNICODE_ESCAPE_DIGITS: usize = 4;
@@ -27,20 +26,6 @@ const HIGH_SURROGATE_START: u16 = 0xD800;
 
 /// The last code unit of the UTF-16 high-surrogate range.
 const HIGH_SURROGATE_END: u16 = 0xDBFF;
-
-/// Why a `\u` escape did not name a Unicode scalar value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
-pub enum UnicodeEscapeError {
-    /// Fewer than four hexadecimal digits followed the `\u` introducer.
-    #[display("`\\u` was not followed by four hexadecimal digits")]
-    NotFourHexDigits,
-    /// A high surrogate was not completed by a `\u` low surrogate.
-    #[display("a high surrogate was not completed by a low surrogate")]
-    UnpairedHighSurrogate,
-    /// A low surrogate appeared with no high surrogate before it.
-    #[display("a low surrogate appeared without a preceding high surrogate")]
-    UnpairedLowSurrogate,
-}
 
 /// Find the end of a double-quoted literal and return its body verbatim.
 ///
@@ -62,7 +47,7 @@ pub enum UnicodeEscapeError {
 /// # Errors
 ///
 /// Returns [`FilterError::UnterminatedString`] when the literal is left open.
-pub fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usize), FilterError> {
+pub(super) fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usize), FilterError> {
     let mut body = String::new();
     let mut cursor = start + 1;
     loop {
@@ -108,7 +93,7 @@ pub fn scan_quoted_literal(chars: &[char], start: usize) -> Result<(String, usiz
 /// [`FilterError::UnterminatedString`] for a trailing lone backslash, and
 /// [`FilterError::UnholdableCharacter`] for a literal whose escapes spell a character
 /// the broker cannot hold.
-pub fn decode_quoted_str(body: &str) -> Result<String, FilterError> {
+pub(super) fn decode_quoted_string(body: &str) -> Result<String, FilterError> {
     let chars: Vec<char> = body.chars().collect();
     let mut literal = String::new();
     let mut cursor = 0;
@@ -230,7 +215,7 @@ mod tests {
     fn scan(input: &str) -> Result<(String, usize), FilterError> {
         let chars: Vec<char> = input.chars().collect();
         let (body, next) = scan_quoted_literal(&chars, 0)?;
-        Ok((decode_quoted_str(&body)?, next))
+        Ok((decode_quoted_string(&body)?, next))
     }
 
     fn scanned(input: &str) -> String {
@@ -354,7 +339,7 @@ mod tests {
             let quoted: Vec<char> = format!("\"{pattern}\"").chars().collect();
             let (body, _) = scan_quoted_literal(&quoted, 0).expect("a pattern is lexically a quoted literal");
             pretty_assertions::assert_eq!(body, pattern);
-            assert!(decode_quoted_str(&body).is_err(), "{pattern} is not a well-formed JSON string");
+            assert!(decode_quoted_string(&body).is_err(), "{pattern} is not a well-formed JSON string");
         }
     }
 
@@ -365,7 +350,7 @@ mod tests {
         let chars: Vec<char> = r#""say \"hi\"" rest"#.chars().collect();
         let (body, next) = scan_quoted_literal(&chars, 0).expect("a well-formed quoted literal");
         pretty_assertions::assert_eq!(body, r#"say \"hi\""#);
-        pretty_assertions::assert_eq!(decode_quoted_str(&body).expect("eight escapes"), r#"say "hi""#);
+        pretty_assertions::assert_eq!(decode_quoted_string(&body).expect("eight escapes"), r#"say "hi""#);
         pretty_assertions::assert_eq!(chars[next], ' ');
     }
 
@@ -381,7 +366,7 @@ mod tests {
     /// so the literal is refused rather than compared.
     #[test]
     fn an_escape_spelling_u0000_is_refused() {
-        assert!(matches!(decode_quoted_str(r"a\u0000b"), Err(FilterError::UnholdableCharacter(_))));
-        pretty_assertions::assert_eq!(decode_quoted_str(r"\\u0000").expect("an escaped reverse solidus"), r"\u0000");
+        assert!(matches!(decode_quoted_string(r"a\u0000b"), Err(FilterError::UnholdableCharacter(_))));
+        pretty_assertions::assert_eq!(decode_quoted_string(r"\\u0000").expect("an escaped reverse solidus"), r"\u0000");
     }
 }

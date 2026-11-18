@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601
 use andromeda_ngsi_ld_query::{
     comma_separated_list::{ListedMemberKind, parse_listed},
     dataset_selector::DatasetSelector,
-    filter::{Filter, parser},
+    filter::Filter,
     geo::{geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
     pattern::Pattern,
     projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
@@ -152,7 +152,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parser::parse(&value).map_err(DeserializeError::custom)).transpose()
+    raw.map(|value| value.parse::<Filter>().map_err(DeserializeError::custom)).transpose()
 }
 
 /// Deserialize an optional comma-separated list of NGSI-LD attribute names.

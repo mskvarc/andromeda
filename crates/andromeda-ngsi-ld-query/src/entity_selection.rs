@@ -170,7 +170,7 @@ mod tests {
     use crate::{
         entity_selection::{ConsideredEntities, EntitySelection},
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
@@ -215,7 +215,7 @@ mod tests {
     /// no entity, which is itself an identifier constraint.
     #[test]
     fn dropping_the_identifier_narrowing_leaves_the_other_filters_alone() {
-        let pattern = Pattern::parse("^urn:").expect("valid pattern");
+        let pattern = "^urn:".parse::<Pattern>().expect("valid pattern");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
                 ExpandedEntitySelector::builder()
@@ -241,11 +241,14 @@ mod tests {
             .selectors(vec![
                 ExpandedEntitySelector::builder()
                     .ids(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")])
-                    .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
+                    .id_pattern(Some("^urn:".parse::<Pattern>().expect("valid pattern")))
                     .build(),
             ])
             .attrs(vec![speed.clone()])
-            .q(Some(CompiledFilter::new(parse("speed>10").expect("q parses"), LanguageMatching::TagEquality)))
+            .q(Some(CompiledFilter::new(
+                "speed>10".parse::<Filter>().expect("q parses"),
+                LanguageMatching::TagEquality,
+            )))
             .geo(Some(CompiledGeoQuery {
                 georel: GeoRel::Within,
                 geometry: serde_json::from_value::<Geometry>(serde_json::json!({
@@ -255,7 +258,7 @@ mod tests {
                 .expect("polygon parses"),
                 geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
             }))
-            .scope_q(Some(ScopeQuery::parse("/Madrid").expect("scopeQ parses")))
+            .scope_q(Some("/Madrid".parse::<ScopeQuery>().expect("scopeQ parses")))
             .considered(ConsideredEntities::NoEntity)
             .build();
         selection.without_split_filters();
@@ -277,11 +280,14 @@ mod tests {
         let mut selection = EntitySelection::builder()
             .selectors(vec![
                 ExpandedEntitySelector::builder()
-                    .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
+                    .id_pattern(Some("^urn:".parse::<Pattern>().expect("valid pattern")))
                     .build(),
             ])
             .attrs(vec![speed.clone()])
-            .q(Some(CompiledFilter::new(parse("speed>10").expect("q parses"), LanguageMatching::TagEquality)))
+            .q(Some(CompiledFilter::new(
+                "speed>10".parse::<Filter>().expect("q parses"),
+                LanguageMatching::TagEquality,
+            )))
             .considered(ConsideredEntities::NoEntity)
             .projected_members(ProjectedMembers::AnyOf {
                 attributes: vec![speed],

@@ -136,7 +136,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         page_window::PageWindow,
         scope::scope_query::ScopeQuery,
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn stage1_includes_scope_q_filter() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/Gardens").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/Madrid/Gardens".parse::<ScopeQuery>().expect("valid scope query"));
         let statement = built(&compiled, &QueryNames::default());
         assert_statement_snapshot!("entity-conditions-stage1-includes-scope-q-filter", statement);
     }
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn scope_history_over_the_queue_correlates_on_the_identifier() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/Madrid".parse::<ScopeQuery>().expect("valid scope query"));
         let statement = built(&compiled, &QueryNames::default());
         assert_statement_snapshot!("entity-conditions-scope-history-over-the-queue-correlates-on-the-identifier", statement);
     }
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
+        compiled.entities.scope_q = Some("(/A;/B),/C".parse::<ScopeQuery>().expect("valid scope query"));
         let statement = built(&compiled, &QueryNames::default());
         assert_statement_snapshot!("entity-conditions-stage1-scope-q-with-or-and-semantics", statement);
     }
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn temporal_scope_q_between() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/A").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/A".parse::<ScopeQuery>().expect("valid scope query"));
         compiled.window.interval = TimeInterval::Between {
             from: instant("2024-01-01T00:00:00Z"),
             to: instant("2024-06-01T00:00:00Z"),
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn temporal_scope_q_compound() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
+        compiled.entities.scope_q = Some("(/A;/B),/C".parse::<ScopeQuery>().expect("valid scope query"));
         compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
         let statement = built(&compiled, &QueryNames::default());
         assert_statement_snapshot!("entity-conditions-temporal-scope-q-compound", statement);
@@ -245,7 +245,7 @@ mod tests {
         compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">100").unwrap(),
+            "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         compiled.entities.geo = Some(CompiledGeoQuery {
@@ -253,7 +253,7 @@ mod tests {
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/Madrid".parse::<ScopeQuery>().expect("valid scope query"));
         compiled
     }
 
@@ -301,7 +301,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">100").unwrap(),
+            "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -315,7 +315,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">100").unwrap(),
+            "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let count = built_count(&compiled, &speed_and_address());
@@ -329,7 +329,7 @@ mod tests {
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\"==1").unwrap(),
+            "\"https://example.com/speed\"==1".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -343,7 +343,7 @@ mod tests {
     fn the_terms_of_an_or_share_one_windowed_existential() {
         let mut compiled = minimal_compiled();
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">100|\"https://example.com/speed\"<10").unwrap(),
+            "\"https://example.com/speed\">100|\"https://example.com/speed\"<10".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -354,7 +354,7 @@ mod tests {
     fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
         let mut compiled = minimal_compiled();
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/never-written\">50").unwrap(),
+            "\"https://example.com/never-written\">50".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &QueryNames::default());
@@ -384,7 +384,7 @@ mod tests {
     fn a_q_predicate_on_a_compound_value_reads_the_value_object() {
         let mut compiled = minimal_compiled();
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap(),
+            "\"https://example.com/address\"[city]==\"Berlin\"".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -424,7 +424,7 @@ mod tests {
         for (index, q) in queries.into_iter().enumerate() {
             let mut compiled = minimal_compiled();
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-            compiled.entities.q = Some(CompiledFilter::new(parser::parse(q).expect("parse q"), LanguageMatching::TagEquality));
+            compiled.entities.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("parse q"), LanguageMatching::TagEquality));
             let statement = built(&compiled, &speed_address_and_their_sub_attributes());
             let name = format!("entity-conditions-no-temporal-statement-rebuilds-a-history-instance-document-{}", index + 1);
             assert_statement_snapshot!(name, statement);

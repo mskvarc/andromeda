@@ -54,7 +54,7 @@ mod tests {
         q::hop_steps::{hop_steps, linked_paths},
         queried_entity::expanded_fixture::FixtureEntity,
     };
-    use andromeda_ngsi_ld_query::filter::{attribute_path::AttributePath, parser::parse};
+    use andromeda_ngsi_ld_query::filter::{Filter, attribute_path::AttributePath};
     use serde_json::json;
 
     /// An entity whose `a` Relationship names X through one instance and Y
@@ -76,7 +76,9 @@ mod tests {
 
     #[test]
     fn hop_steps_pair_each_object_with_the_rest_of_its_path() {
-        let expr = parse("\"https://example.com/a\"{\"https://example.com/b\"{\"https://example.com/c\"}}==1").expect("parses");
+        let expr = "\"https://example.com/a\"{\"https://example.com/b\"{\"https://example.com/c\"}}==1"
+            .parse::<Filter>()
+            .expect("parses");
         let paths = linked_paths(&expr);
         let entity = entity();
         let steps = hop_steps(&entity, &paths);
@@ -91,9 +93,11 @@ mod tests {
 
     #[test]
     fn an_expression_without_a_hop_takes_no_step() {
-        let expr = parse("\"https://example.com/a\"==\"urn:x\";\"https://example.com/p\"").expect("parses");
+        let expr = "\"https://example.com/a\"==\"urn:x\";\"https://example.com/p\""
+            .parse::<Filter>()
+            .expect("parses");
         pretty_assertions::assert_eq!(linked_paths(&expr), Vec::<&AttributePath>::new());
-        let through_property = parse("\"https://example.com/p\"{\"https://example.com/c\"}").expect("parses");
+        let through_property = "\"https://example.com/p\"{\"https://example.com/c\"}".parse::<Filter>().expect("parses");
         let entity = entity();
         pretty_assertions::assert_eq!(
             hop_steps(&entity, &linked_paths(&through_property)),

@@ -378,7 +378,6 @@ mod tests {
             attribute_path::AttributePath,
             compiled_filter::CompiledFilter,
             language_matching::LanguageMatching,
-            parser,
             query_term::{OrderingOperator, QueryTerm},
             scalar::Scalar,
             value_path::ValuePath,
@@ -526,7 +525,7 @@ mod tests {
     fn a_q_filter_probes_inside_the_page_and_the_heads_are_read_outside_it() {
         let mut q = empty_query();
         q.selection.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/temperature\"!=1").expect("valid q"),
+            "\"https://example.com/temperature\"!=1".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let built = build(&q, &temperature_is_known());
@@ -725,7 +724,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .id_pattern(Some(Pattern::parse("urn:ngsi-ld:Vehicle:.*").unwrap()))
+                .id_pattern(Some("urn:ngsi-ld:Vehicle:.*".parse::<Pattern>().unwrap()))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -881,7 +880,7 @@ mod tests {
     fn build_with_q_existence() {
         let mut q = empty_query();
         q.selection.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/temperature\"").unwrap(),
+            "\"https://example.com/temperature\"".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         let built = build(&q, &temperature_is_known());
@@ -1061,7 +1060,7 @@ mod tests {
         q.ordering.terms = vec![CompiledOrderingTerm {
             target: ExpandedOrderingTarget::Attribute(ValuePath::simple("https://example.com/name".parse().expect("valid attribute name"))),
             direction: OrderingDirection::Asc,
-            collation: Some(IcuCollation::parse("und-u-ks-identic").expect("valid collation")),
+            collation: Some("und-u-ks-identic".parse::<IcuCollation>().expect("valid collation")),
         }];
         let built = build(&q, &known_types());
         assert_statement_snapshot!("entity-build-with-order-by-collation", built.select);
@@ -1369,7 +1368,7 @@ mod tests {
     #[test]
     fn scope_complex_generates_mixed() {
         let mut q = empty_query();
-        q.selection.scope_q = Some(ScopeQuery::parse("(/A;/B),/C/#").expect("valid scope query"));
+        q.selection.scope_q = Some("(/A;/B),/C/#".parse::<ScopeQuery>().expect("valid scope query"));
         let built = build(&q, &known_types());
         assert_statement_snapshot!("entity-scope-complex-generates-mixed", built.select);
     }

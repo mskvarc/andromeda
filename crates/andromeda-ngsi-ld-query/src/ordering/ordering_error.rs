@@ -3,7 +3,7 @@
 //! order by.
 
 use crate::{
-    filter::{display::serialize_attr_path, filter_error::FilterError, value_path::ValuePath},
+    filter::{filter_error::FilterError, value_path::ValuePath},
     geo::reference_budget::ReferenceBudgetError,
     ordering::{icu_collation::IcuCollationError, ordering_direction::OrderingDirection},
 };
@@ -35,7 +35,7 @@ pub enum OrderingError {
     /// Clause 5.7.4.4: "If the ordering parameter is present and refers an
     /// entity name other than "id", then an error of type `BadRequestData`
     /// shall be raised."
-    #[error("a temporal query can only be ordered by the Entity member id, not by '{}'", serialize_attr_path(.0))]
+    #[error("a temporal query can only be ordered by the Entity member id, not by '{0}'")]
     TemporalMember(Box<ValuePath>),
     /// A temporal query's `orderBy` asked for a distance ordering.
     ///

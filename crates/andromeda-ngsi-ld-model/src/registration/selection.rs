@@ -118,7 +118,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         dataset_selector::DatasetSelector,
-        filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
+        filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
         scope::scope_query::ScopeQuery,
     };
     use serde_json::{Value, json};
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn a_declared_scope_filter_admits_only_a_registration_whose_scope_it_matches() {
-        let madrid = ScopeQuery::parse("/Madrid/#").expect("a valid scope query");
+        let madrid = "/Madrid/#".parse::<ScopeQuery>().expect("a valid scope query");
         let filters = RegistrationFilters {
             scope: ScopeFilter::DeclaredScope(&madrid),
             ..NONE
@@ -193,7 +193,7 @@ mod tests {
     /// Scopes cannot.
     #[test]
     fn a_possible_scope_filter_admits_a_matching_or_an_unscoped_registration() {
-        let madrid = ScopeQuery::parse("/Madrid/#").expect("a valid scope query");
+        let madrid = "/Madrid/#".parse::<ScopeQuery>().expect("a valid scope query");
         let filters = RegistrationFilters {
             scope: ScopeFilter::PossibleScope(&madrid),
             ..NONE
@@ -239,7 +239,9 @@ mod tests {
     #[test]
     fn a_context_source_filter_reads_the_mode_and_the_added_properties() {
         let exclusive = FilterReading::of(
-            &parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").expect("the filter parses"),
+            &"\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\""
+                .parse::<Filter>()
+                .expect("the filter parses"),
             LanguageMatching::TagEquality,
         );
         let filters = RegistrationFilters { csf: Some(&exclusive), ..NONE };
@@ -247,7 +249,7 @@ mod tests {
         assert!(!filters.admits(&registration(&json!({"mode": "inclusive"}))).expect("admission decides"));
 
         let gold = FilterReading::of(
-            &parse("\"https://example.org/tier\"==\"gold\"").expect("the filter parses"),
+            &"\"https://example.org/tier\"==\"gold\"".parse::<Filter>().expect("the filter parses"),
             LanguageMatching::TagEquality,
         );
         let filters = RegistrationFilters { csf: Some(&gold), ..NONE };

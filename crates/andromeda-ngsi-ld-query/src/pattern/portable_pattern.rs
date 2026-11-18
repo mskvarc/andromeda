@@ -303,7 +303,7 @@ mod tests {
 
     /// The restatement a pattern binds into the store.
     fn portable(raw: &str) -> String {
-        Pattern::parse(raw)
+        raw.parse::<Pattern>()
             .unwrap_or_else(|error| panic!("{raw} is admitted: {error:?}"))
             .portable()
             .as_str()

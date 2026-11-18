@@ -115,7 +115,7 @@ impl<'q> Gathered<'q> {
                     .collect::<Result<_, _>>()?;
             }
             ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<WrittenTypeSelection>().map_err(QueryError::from)?),
-            ForwardedParameter::IdPattern => self.selection.id_pattern = Some(Pattern::parse(value).map_err(QueryError::from)?),
+            ForwardedParameter::IdPattern => self.selection.id_pattern = Some(value.parse::<Pattern>().map_err(QueryError::from)?),
             ForwardedParameter::Limit | ForwardedParameter::Offset | ForwardedParameter::Options => self.uri.push((parameter, value)),
             ForwardedParameter::Attrs => self.attrs = Some(attribute_names(value)?),
             ForwardedParameter::Q => self.q = Some(value.parse::<Filter>().map_err(QueryError::from)?),
@@ -130,7 +130,7 @@ impl<'q> Gathered<'q> {
                 self.dataset_id = Some(
                     value
                         .split(',')
-                        .map(DatasetSelector::parse)
+                        .map(str::parse::<DatasetSelector>)
                         .collect::<Result<_, _>>()
                         .map_err(QueryError::from)?,
                 );

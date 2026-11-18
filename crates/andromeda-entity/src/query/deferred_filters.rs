@@ -76,7 +76,7 @@ impl EntityQueryService {
                 (version, document)
             })
             .collect();
-        let linked = self.linked_states_of(target, &documents, filters.q.map(CompiledFilter::expr)).await?;
+        let linked = self.linked_states_of(target, &documents, filters.q.map(CompiledFilter::filter)).await?;
         Ok(documents
             .into_iter()
             .filter(|(_, document)| entity_filters_admit(filters, document, &linked))
@@ -122,9 +122,9 @@ mod tests {
     use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
     use andromeda_ngsi_ld_query::{
         filter::{
+            Filter,
             compilation::{AdmittedFilter, admit_q_filter},
             language_targeting::LanguageTargeting,
-            parser::parse,
         },
         scope::scope_query::ScopeQuery,
     };
@@ -134,7 +134,7 @@ mod tests {
     /// The filter `q` writes, admitted for Query Entities under no join.
     fn admitted(q: &str) -> AdmittedFilter {
         let hops = FilterHops::new(LinkedOperation::QueryEntities, None, None);
-        admit_q_filter::<ParameterError, _>(&parse(q).expect("q parses"), service().filter_admission(), &hops).expect("the filter is admitted")
+        admit_q_filter::<ParameterError, _>(&q.parse::<Filter>().expect("q parses"), service().filter_admission(), &hops).expect("the filter is admitted")
     }
 
     /// A merged Vehicle `id` whose `speed` is `speed`, in the scope `/Madrid`.
@@ -177,7 +177,7 @@ mod tests {
     async fn the_deferred_filters_keep_the_merged_entities_they_admit() {
         let deferred = DeferredSplitFilters {
             q: Some(admitted("\"https://example.com/speed\">50")),
-            scope_q: Some(ScopeQuery::parse("/Madrid").expect("scopeQ parses")),
+            scope_q: Some("/Madrid".parse::<ScopeQuery>().expect("scopeQ parses")),
             ..DeferredSplitFilters::default()
         };
         pretty_assertions::assert_eq!(kept_of_two_vehicles(deferred).await, ["urn:ngsi-ld:Vehicle:fast"]);
@@ -186,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn a_scope_query_no_merged_entity_meets_keeps_none() {
         let deferred = DeferredSplitFilters {
-            scope_q: Some(ScopeQuery::parse("/Paris").expect("scopeQ parses")),
+            scope_q: Some("/Paris".parse::<ScopeQuery>().expect("scopeQ parses")),
             ..DeferredSplitFilters::default()
         };
         pretty_assertions::assert_eq!(kept_of_two_vehicles(deferred).await, Vec::<String>::new());

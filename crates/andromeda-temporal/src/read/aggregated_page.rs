@@ -321,7 +321,7 @@ mod tests {
     /// `totalCount` over `period` (none for the whole range) in `interval`,
     /// paged by 19 periods.
     fn aggregated(period: &str, interval: TimeInterval) -> CompiledTemporalQuery {
-        let period = AggregationPeriod::parse(period).expect("a valid period");
+        let period = AggregationPeriod::of_parameter(period).expect("a valid period");
         let page = match period {
             Some(_) => InstancePage::Periods {
                 budget: PeriodBudget {

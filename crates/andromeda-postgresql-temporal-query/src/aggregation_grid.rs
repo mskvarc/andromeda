@@ -185,7 +185,7 @@ mod tests {
     use sea_query::{Alias, Expr, Query, SelectStatement};
 
     fn grid(period: &str) -> AggregationGrid {
-        let period = AggregationPeriod::parse(period).expect("a valid period").expect("a non-zero period");
+        let period = AggregationPeriod::of_parameter(period).expect("a valid period").expect("a non-zero period");
         AggregationGrid::new(period, cast(Expr::val("2026-03-15T00:00:00Z"), PostgresType::Timestamptz))
     }
 

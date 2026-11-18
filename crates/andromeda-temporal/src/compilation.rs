@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_query::{
     filter::{
         compilation::{FilterOptIns, compile_q_filter},
         compiled_filter::CompiledFilter,
-        expansion::expand_attr_path,
+        expansion::expand_value_path,
         json_key_attributes::JsonKeyAttributes,
         nested_names::NestedNames,
     },
@@ -246,12 +246,14 @@ async fn compile_grouping(
     let (true, Some(raw)) = (format.is_grouped(), params.aggr_group_by.as_deref()) else {
         return Ok(None);
     };
-    let grouping = AggregationGrouping::parse(raw).map_err(|error| TemporalError::Request(ParameterError::AggrGroupByInvalid(error)))?;
+    let grouping = raw
+        .parse::<AggregationGrouping>()
+        .map_err(|error| TemporalError::Request(ParameterError::AggrGroupByInvalid(error)))?;
     let mut expanded_terms = Vec::with_capacity(grouping.terms().len());
     for term in grouping.0 {
         let key = match term.key {
             GroupKey::Member(member) => GroupKey::Member(member),
-            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, NestedNames::Terms(json_keys), expander).await?),
+            GroupKey::Path(path) => GroupKey::Path(expand_value_path(path, NestedNames::Terms(json_keys), expander).await?),
         };
         expanded_terms.push(GroupingTerm { key, bucket: term.bucket });
     }
@@ -403,7 +405,7 @@ mod tests {
 
     /// An hour, the period these aggregated reads bucket by.
     fn hourly() -> Option<AggregationPeriod> {
-        AggregationPeriod::parse("PT1H").expect("a valid period")
+        AggregationPeriod::of_parameter("PT1H").expect("a valid period")
     }
 
     /// Clause 6.3.10: without `lastN` the read pages forwards, at the default

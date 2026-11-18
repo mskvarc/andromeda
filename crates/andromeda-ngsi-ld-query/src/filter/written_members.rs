@@ -5,7 +5,7 @@
 //! stored structured value, while a `LanguageProperty`'s target language and a
 //! raw JSON key are read in the spelling the client wrote. The expanded filter
 //! holds both, and its clause 4.9 text holds only the first; the text
-//! [`serialize_written_members`](crate::filter::display::serialize_written_members)
+//! [`Filter::written_member_text`]
 //! renders holds the second, and this module joins the two again.
 
 use crate::filter::{Filter, trailing_group::TrailingGroup};
@@ -13,7 +13,7 @@ use crate::filter::{Filter, trailing_group::TrailingGroup};
 impl Filter {
     /// This expression, each trailing member's written spelling read from
     /// `written`: the same filter rendered by
-    /// [`serialize_written_members`](crate::filter::display::serialize_written_members)
+    /// [`Filter::written_member_text`]
     /// and parsed back.
     ///
     /// The two are one filter in two spellings, so their Query Terms pair up in
@@ -40,24 +40,18 @@ impl Filter {
 #[cfg(test)]
 mod tests {
     use crate::{
-        filter::{
-            Filter,
-            display::{serialize, serialize_written_members},
-            expansion::expand_q_expr,
-            json_key_attributes::JsonKeyAttributes,
-            parser::parse,
-        },
+        filter::{Filter, expansion::expand_filter, json_key_attributes::JsonKeyAttributes},
         namespace_expander::EXAMPLE_NAMESPACE,
     };
 
     /// The filter as a store reads it back: the expanded text, joined with the
     /// written spelling of its members.
     async fn persisted_round_trip(q: &str) -> Filter {
-        let expanded = expand_q_expr(parse(q).expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
+        let expanded = expand_filter(q.parse::<Filter>().expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
             .await
             .expect("expands");
-        let addressed: Filter = serialize(&expanded).parse().expect("the expanded text parses");
-        let written: Filter = serialize_written_members(&expanded).parse().expect("the written text parses");
+        let addressed: Filter = expanded.to_string().parse().expect("the expanded text parses");
+        let written: Filter = expanded.written_member_text().parse().expect("the written text parses");
         addressed.with_written_members(&written)
     }
 
@@ -66,7 +60,7 @@ mod tests {
     #[tokio::test]
     async fn every_term_keeps_its_members_in_both_spellings() {
         let expr = persisted_round_trip("speed>1;(address[city]==\"Berlin\"|name[en]==\"Door\")").await;
-        let rendered = (serialize(&expr), serialize_written_members(&expr));
+        let rendered = (expr.to_string(), expr.written_member_text());
         pretty_assertions::assert_eq!(
             rendered,
             (
@@ -79,11 +73,13 @@ mod tests {
     /// A written text naming other terms leaves the expression as it is.
     #[test]
     fn a_written_text_of_another_shape_changes_nothing() {
-        let expanded = parse("\"https://example.com/name\"[\"https://example.com/en\"]==\"Door\"").expect("parses");
-        let other = parse("a==1;b==2").expect("parses");
+        let expanded = "\"https://example.com/name\"[\"https://example.com/en\"]==\"Door\""
+            .parse::<Filter>()
+            .expect("parses");
+        let other = "a==1;b==2".parse::<Filter>().expect("parses");
         pretty_assertions::assert_eq!(
-            serialize_written_members(&expanded.clone().with_written_members(&other)),
-            serialize_written_members(&expanded)
+            expanded.clone().with_written_members(&other).written_member_text(),
+            expanded.written_member_text()
         );
     }
 }

@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::{
     filter::{
         compilation::{FilterOptIns, compile_q_filter},
         compiled_filter::CompiledFilter,
-        expansion::expand_attr_path,
+        expansion::expand_value_path,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
         nested_names::NestedNames,
@@ -200,7 +200,7 @@ async fn compile_order_terms(
             // request parameters stay immutable across compilations.
             WrittenOrderingTarget::Attribute(path) => {
                 language_targeting.admit_path(path).map_err(QueryError::from)?;
-                ExpandedOrderingTarget::Attribute(expand_attr_path(path.clone(), NestedNames::Terms(json_keys), expander).await?)
+                ExpandedOrderingTarget::Attribute(expand_value_path(path.clone(), NestedNames::Terms(json_keys), expander).await?)
             }
         };
         compiled.push(CompiledOrderingTerm {

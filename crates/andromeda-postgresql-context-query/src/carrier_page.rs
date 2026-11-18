@@ -136,7 +136,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
         type_selection::expanded_type_selection::ExpandedTypeSelection,
@@ -272,7 +272,7 @@ mod tests {
     fn an_attrs_selection_filtered_further_keeps_the_plain_page() {
         let mut filtered = by_attrs(&["headSign"]);
         filtered.selection.q = Some(CompiledFilter::new(
-            parse("\"https://example.com/temperature\"!=1").expect("valid q"),
+            "\"https://example.com/temperature\"!=1".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let mut ordered = by_attrs(&["headSign"]);

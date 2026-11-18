@@ -205,7 +205,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         page_window::PageWindow,
         scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
@@ -221,7 +221,9 @@ mod tests {
     fn a_q_filter_takes_no_step_of_its_own() {
         let mut compiled = opened(sensors());
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99").expect("valid q"),
+            "\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99"
+                .parse::<Filter>()
+                .expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let stage1 = build_stage1_entity_ids(
@@ -242,7 +244,7 @@ mod tests {
     #[test]
     fn the_identifier_pattern_takes_precedence_over_the_scope_paths() {
         let mut compiled = id_pattern(Some("Sensor"), ".*:0123.*");
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/city/moved1".parse::<ScopeQuery>().expect("valid scope query"));
         let statement = recorded_stage1(&compiled).select;
         assert_statement_snapshot!("candidate-step-the-identifier-pattern-takes-precedence-over-the-scope-paths", statement);
     }
@@ -250,7 +252,7 @@ mod tests {
     #[test]
     fn the_scope_paths_take_precedence_over_the_geometry_extents() {
         let mut compiled = near_query(4.5, "2000");
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/city/moved1".parse::<ScopeQuery>().expect("valid scope query"));
         let statement = recorded_stage1(&compiled).select;
         assert_statement_snapshot!("candidate-step-the-scope-paths-take-precedence-over-the-geometry-extents", statement);
     }
@@ -260,7 +262,7 @@ mod tests {
         let mut compiled = sensors();
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::After(instant("2026-10-18T03:00:00Z"));
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/city/moved1".parse::<ScopeQuery>().expect("valid scope query"));
         let statement = recorded_stage1(&compiled).select;
         assert_statement_snapshot!("candidate-step-another-step-takes-precedence-over-the-window", statement);
     }

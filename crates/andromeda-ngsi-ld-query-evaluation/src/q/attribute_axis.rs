@@ -243,7 +243,6 @@ mod tests {
     use andromeda_ngsi_ld_query::filter::{
         attribute_path::AttributePath,
         language_matching::LanguageMatching,
-        parser::value_path::parse_attribute_path,
         query_term::QueryTerm,
         reading::{family_reading::TargetOrigin, term_reading::TermReading},
         trailing_group::{MemberPath, TrailingGroup},
@@ -524,7 +523,9 @@ mod tests {
 
     /// The strings `name[<language>]` reads under `matching`.
     fn read_language(language: &str, matching: LanguageMatching) -> Vec<Value> {
-        let path = parse_attribute_path(&format!("\"https://example.com/name\"[{language}]")).expect("a target language");
+        let path = format!("\"https://example.com/name\"[{language}]")
+            .parse::<ValuePath>()
+            .expect("a target language");
         targets_under(&multilingual(), &path, matching).into_iter().map(|(value, _)| value).collect()
     }
 
@@ -561,7 +562,7 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "en-GB", "@value": "Lift"}]
             }]
         }));
-        let english = parse_attribute_path("\"https://example.com/name\"[en]").expect("a path");
+        let english = "\"https://example.com/name\"[en]".parse::<ValuePath>().expect("a path");
         assert!(!addresses_element(
             &entity,
             &term_along(&english, LanguageMatching::TagEquality),
@@ -583,7 +584,7 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://example.com/en-GB": [{"@value": "x"}]}]
             }]
         });
-        let path = parse_attribute_path("\"https://example.com/address\"[en-GB]").expect("a path");
+        let path = "\"https://example.com/address\"[en-GB]".parse::<ValuePath>().expect("a path");
         pretty_assertions::assert_eq!(targets_along(&entity, &path), Vec::new());
     }
 }

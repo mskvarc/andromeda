@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn a_split_read_selects_its_registrations_by_no_scope_query() -> Result<(), QueryError> {
-        let madrid = ScopeQuery::parse("/Madrid")?;
+        let madrid = "/Madrid".parse::<ScopeQuery>()?;
         pretty_assertions::assert_eq!(SplitEntities::Split.registration_scope_query(Some(&madrid)), None);
         pretty_assertions::assert_eq!(SplitEntities::Complete.registration_scope_query(Some(&madrid)), Some(&madrid));
         pretty_assertions::assert_eq!(SplitEntities::Complete.registration_scope_query(None), None);

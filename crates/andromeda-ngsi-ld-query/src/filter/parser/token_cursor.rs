@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// Cursor over a tokenised clause 4.9 expression.
 #[derive(Debug)]
-pub struct TokenCursor<'a> {
+pub(super) struct TokenCursor<'a> {
     /// The token stream being consumed.
     tokens: &'a [Token],
     /// Index of the next token to consume.
@@ -26,7 +26,7 @@ pub struct TokenCursor<'a> {
 impl<'a> TokenCursor<'a> {
     /// Start at the beginning of a token stream.
     #[must_use]
-    pub const fn new(tokens: &'a [Token]) -> TokenCursor<'a> {
+    pub(super) const fn new(tokens: &'a [Token]) -> TokenCursor<'a> {
         TokenCursor { tokens, position: 0 }
     }
 
@@ -35,18 +35,18 @@ impl<'a> TokenCursor<'a> {
     /// The borrow is of the token stream, not of the cursor, so a caller may
     /// hold the token while it advances past it.
     #[must_use]
-    pub fn peek(&self) -> Option<&'a Token> {
+    pub(super) fn peek(&self) -> Option<&'a Token> {
         self.tokens.get(self.position)
     }
 
     /// The token `offset` positions ahead without consuming anything.
     #[must_use]
-    pub fn peek_ahead(&self, offset: usize) -> Option<&'a Token> {
+    pub(super) fn peek_ahead(&self, offset: usize) -> Option<&'a Token> {
         self.tokens.get(self.position + offset)
     }
 
     /// Consume and return the next token.
-    pub fn advance(&mut self) -> Option<&'a Token> {
+    pub(super) fn advance(&mut self) -> Option<&'a Token> {
         let token = self.tokens.get(self.position);
         if token.is_some() {
             self.position += 1;
@@ -56,13 +56,13 @@ impl<'a> TokenCursor<'a> {
 
     /// Whether every token has been consumed.
     #[must_use]
-    pub const fn is_exhausted(&self) -> bool {
+    pub(super) const fn is_exhausted(&self) -> bool {
         self.position >= self.tokens.len()
     }
 
     /// How many tokens have been consumed.
     #[must_use]
-    pub const fn position(&self) -> usize {
+    pub(super) const fn position(&self) -> usize {
         self.position
     }
 
@@ -70,7 +70,7 @@ impl<'a> TokenCursor<'a> {
     ///
     /// Used where a production has already read the token through
     /// [`TokenCursor::peek_ahead`] and only needs the cursor moved past it.
-    pub const fn skip(&mut self) {
+    pub(super) const fn skip(&mut self) {
         self.position += 1;
     }
 
@@ -80,7 +80,7 @@ impl<'a> TokenCursor<'a> {
     ///
     /// Returns [`FilterError::Expected`] when the stream holds something else,
     /// or nothing at all.
-    pub fn expect(&mut self, expected: &Token) -> Result<(), FilterError> {
+    pub(super) fn expect(&mut self, expected: &Token) -> Result<(), FilterError> {
         if self.peek() == Some(expected) {
             self.advance();
             Ok(())
@@ -94,7 +94,7 @@ impl<'a> TokenCursor<'a> {
 
     /// What stands where a token was required.
     #[must_use]
-    pub fn found(&self) -> Found {
+    pub(super) fn found(&self) -> Found {
         Found::of(self.peek())
     }
 
@@ -103,7 +103,7 @@ impl<'a> TokenCursor<'a> {
     /// # Errors
     ///
     /// Returns [`FilterError::Expected`] when the next token carries no name.
-    pub fn parse_ident(&mut self) -> Result<&'a str, FilterError> {
+    pub(super) fn parse_ident(&mut self) -> Result<&'a str, FilterError> {
         match self.advance() {
             Some(Token::Ident(text) | Token::QuotedStr(text)) => Ok(text.as_str()),
             other => Err(FilterError::Expected {
@@ -120,7 +120,7 @@ impl<'a> TokenCursor<'a> {
     /// Returns [`FilterError::Expected`] when the next token carries no name,
     /// and [`FilterError::InvalidAttributeName`] when the name it carries is
     /// outside the clause 4.6.2 grammar.
-    pub fn parse_attribute_name(&mut self) -> Result<AttributeName, FilterError> {
+    pub(super) fn parse_attribute_name(&mut self) -> Result<AttributeName, FilterError> {
         attribute_name(self.parse_ident()?)
     }
 }
@@ -135,6 +135,6 @@ impl<'a> TokenCursor<'a> {
 ///
 /// Returns [`FilterError::InvalidAttributeName`] when the name is outside that
 /// grammar.
-pub fn attribute_name(raw: &str) -> Result<AttributeName, FilterError> {
+pub(super) fn attribute_name(raw: &str) -> Result<AttributeName, FilterError> {
     raw.parse().map_err(FilterError::InvalidAttributeName)
 }

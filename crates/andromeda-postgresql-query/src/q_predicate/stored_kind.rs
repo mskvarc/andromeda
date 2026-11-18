@@ -52,12 +52,10 @@ pub fn compared_kinds(operand: &Operand, comparison: Comparison) -> impl Iterato
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::stored_kind::{compared_kinds, stored_target_kinds};
-    use andromeda_ngsi_ld_query::filter::{
-        parser::operand::{parse_date, parse_date_time, parse_time},
-        reading::{
-            operand::{Comparison, Operand},
-            target_kind::TargetKind,
-        },
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, date_time::NgsiLdDateTime, time_of_day::NgsiLdTime};
+    use andromeda_ngsi_ld_query::filter::reading::{
+        operand::{Comparison, Operand},
+        target_kind::TargetKind,
     };
     use andromeda_postgresql_stored_values::value_kind::ValueKind;
     use pretty_assertions::assert_eq;
@@ -102,17 +100,17 @@ mod tests {
             compared_kinds(&Operand::Boolean(true), Comparison::Equality).collect::<Vec<_>>(),
             [ValueKind::Boolean, ValueKind::DeclaredBoolean]
         );
-        let instant = parse_date_time("2024-01-01T00:00:00Z").expect("a date-time");
+        let instant = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a date-time").get();
         assert_eq!(
             compared_kinds(&Operand::DateTime(instant), Comparison::Order).collect::<Vec<_>>(),
             [ValueKind::DateTime]
         );
-        let date = parse_date("2024-01-01").expect("a date");
+        let date = "2024-01-01".parse::<NgsiLdDate>().expect("a date").get();
         assert_eq!(
             compared_kinds(&Operand::Date(date), Comparison::Equality).collect::<Vec<_>>(),
             [ValueKind::Date]
         );
-        let time = parse_time("12:00:00Z").expect("a time");
+        let time = "12:00:00Z".parse::<NgsiLdTime>().expect("a time").get();
         assert_eq!(compared_kinds(&Operand::Time(time), Comparison::Order).collect::<Vec<_>>(), [ValueKind::Time]);
     }
 }

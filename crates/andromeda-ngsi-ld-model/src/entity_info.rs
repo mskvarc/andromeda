@@ -34,7 +34,7 @@ impl EntityTypeSelection {
 
     /// The selection as a clause 4.17 expression: the one name, or the
     /// alternation of the several.
-    pub fn as_type_expression(&self) -> WrittenTypeSelection {
+    pub fn as_type_selection(&self) -> WrittenTypeSelection {
         match self {
             EntityTypeSelection::Single(name) => WrittenTypeSelection::Type(name.clone()),
             EntityTypeSelection::Several(names) => WrittenTypeSelection::Or(names.iter().cloned().map(WrittenTypeSelection::Type).collect()),
@@ -125,9 +125,9 @@ mod tests {
     fn a_selection_names_every_type_and_reads_as_their_alternation() {
         let several: EntityTypeSelection = serde_json::from_value(json!(["Vehicle", "Car"])).expect("parses");
         pretty_assertions::assert_eq!(several.names().len(), 2);
-        pretty_assertions::assert_eq!(several.as_type_expression().to_string(), "Vehicle,Car");
+        pretty_assertions::assert_eq!(several.as_type_selection().to_string(), "Vehicle,Car");
         let single: EntityTypeSelection = serde_json::from_value(json!("Vehicle")).expect("parses");
-        pretty_assertions::assert_eq!(single.as_type_expression().to_string(), "Vehicle");
+        pretty_assertions::assert_eq!(single.as_type_selection().to_string(), "Vehicle");
     }
 
     #[test]

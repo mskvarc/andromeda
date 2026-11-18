@@ -233,7 +233,7 @@ mod tests {
         cursor::PageCursor,
         dataset_selector::DatasetSelector,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         ordering::{icu_collation::IcuCollation, sort_direction::SortDirection},
         page_window::{PageStart, PageWindow},
@@ -324,10 +324,10 @@ mod tests {
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
             compiled.instances.dataset_id_filter = selectors
                 .iter()
-                .map(|selector| DatasetSelector::parse(selector).expect("a valid dataset selector"))
+                .map(|selector| selector.parse::<DatasetSelector>().expect("a valid dataset selector"))
                 .collect();
             compiled.entities.q = Some(CompiledFilter::new(
-                parser::parse("\"https://example.com/speed\">100").unwrap(),
+                "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
                 LanguageMatching::TagEquality,
             ));
             compiled.entities.geo = Some(CompiledGeoQuery {
@@ -365,7 +365,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.ordering = Some(TemporalEntityOrdering {
             direction: SortDirection::Ascending,
-            collation: Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")),
+            collation: Some("de-u-co-phonebk".parse::<IcuCollation>().expect("valid collation")),
         });
         let statement = built(&compiled, &QueryNames::default());
         assert_statement_snapshot!("stage1-a-requested-ordering-collates-the-identifier-key", statement);

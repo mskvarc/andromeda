@@ -335,7 +335,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection},
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser, value_path::ValuePath},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
         geo::compiled_geo_query::CompiledGeoQuery,
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         pattern::Pattern,
@@ -426,7 +426,7 @@ mod tests {
     fn a_q_filter_joins_nothing() {
         let mut filtered = empty_query();
         filtered.selection.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">1").expect("valid q"),
+            "\"https://example.com/speed\">1".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         assert_statement_snapshot!("entity-relations-a-q-filter-joins-nothing", from_clause(relations(&filtered)));
@@ -439,7 +439,7 @@ mod tests {
         let mut geo = empty_query();
         geo.selection.geo = Some(within_point());
         let mut scope = empty_query();
-        scope.selection.scope_q = Some(ScopeQuery::parse("/a").expect("valid scope query"));
+        scope.selection.scope_q = Some("/a".parse::<ScopeQuery>().expect("valid scope query"));
         let mut by_type = empty_query();
         by_type.ordering.terms = vec![term(ExpandedOrderingTarget::Type, OrderingDirection::Asc)];
         let mut by_distance = empty_query();
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn a_pattern_keeps_the_walk_and_the_wildcard_or_no_entity_does_not() {
         let mut patterned = typed_query();
-        patterned.selection.selectors[0].id_pattern = Some(Pattern::parse("urn:a.*").expect("valid pattern"));
+        patterned.selection.selectors[0].id_pattern = Some("urn:a.*".parse::<Pattern>().expect("valid pattern"));
         assert!(matches!(relations(&patterned).source, RowSource::TypeMembers { .. }));
 
         let mut wildcard = empty_query();
@@ -529,7 +529,7 @@ mod tests {
     fn a_walked_statement_joins_on_the_walks_key() {
         let mut query = typed_query();
         query.selection.q = Some(CompiledFilter::new(
-            parser::parse("\"https://example.com/speed\">1").expect("valid q"),
+            "\"https://example.com/speed\">1".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
@@ -669,7 +669,7 @@ mod tests {
         let mut untyped = empty_query();
         untyped.selection.attrs = speed();
         let mut scoped = typed_query();
-        scoped.selection.scope_q = Some(ScopeQuery::parse("/a").expect("valid scope query"));
+        scoped.selection.scope_q = Some("/a".parse::<ScopeQuery>().expect("valid scope query"));
         for query in [by_type, untyped, scoped] {
             assert_eq!(relations(&query).search, Demand::Joined, "{query:?}");
             assert_eq!(relations(&query).walked(&query).search, Demand::NotJoined, "{query:?}");

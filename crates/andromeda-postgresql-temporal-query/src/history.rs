@@ -413,7 +413,7 @@ mod tests {
     /// membership test.
     #[test]
     fn dataset_id_none_selects_the_default_instance() {
-        let selectors = |raw: &[&str]| -> Vec<DatasetSelector> { raw.iter().map(|entry| DatasetSelector::parse(entry).expect("valid")).collect() };
+        let selectors = |raw: &[&str]| -> Vec<DatasetSelector> { raw.iter().map(|entry| entry.parse::<DatasetSelector>().expect("valid")).collect() };
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
@@ -436,7 +436,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.representation.format = TemporalFormat::AggregatedValues;
         compiled.representation.aggr_methods = vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max];
-        compiled.representation.aggr_period_duration = AggregationPeriod::parse("PT1H").expect("valid period");
+        compiled.representation.aggr_period_duration = AggregationPeriod::of_parameter("PT1H").expect("valid period");
         let statement = statement_of(&compiled);
         assert_statement_snapshot!("history-build-aggregation-query-with-period", statement);
     }
@@ -459,7 +459,7 @@ mod tests {
         let scoped_on = |axis: TimeProp| {
             let mut scoped = minimal_compiled();
             scoped.window.timeproperty = axis;
-            scoped.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+            scoped.entities.scope_q = Some("/Madrid/#".parse::<ScopeQuery>().expect("valid scope query"));
             statement_of(&scoped)
         };
         let unscoped_on = |axis: TimeProp| {
@@ -672,7 +672,7 @@ mod tests {
             let mut compiled = minimal_compiled();
             compiled.representation.format = TemporalFormat::AggregatedValues;
             compiled.representation.aggr_methods = vec![AggrMethod::Sum];
-            compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
+            compiled.representation.aggr_period_duration = AggregationPeriod::of_parameter(period).expect("valid period");
             compiled.instances.page = page;
             build_temporal_history_query(
                 &HistoryBranch::live_recorded(),

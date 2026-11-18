@@ -175,7 +175,7 @@ fn scope_row(path: &str, observed: &str) -> TemporalHistoryRow {
 fn scope_query(scope_q: &str) -> AdmittedTemporalRequest {
     admitted(TemporalQueryParameters {
         q: None,
-        scope_q: Some(ScopeQuery::parse(scope_q).expect("a valid scopeQ")),
+        scope_q: Some(scope_q.parse::<ScopeQuery>().expect("a valid scopeQ")),
         ..split_params(ABOVE_50)
     })
 }

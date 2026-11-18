@@ -355,7 +355,7 @@ mod tests {
     fn only_a_value_geo_or_scope_filter_is_decided_after_aggregation() {
         assert!(!carries_split_filters(&TemporalQueryParameters::default()));
         let scoped = TemporalQueryParameters {
-            scope_q: Some(ScopeQuery::parse("/Madrid").expect("a valid scopeQ")),
+            scope_q: Some("/Madrid".parse::<ScopeQuery>().expect("a valid scopeQ")),
             ..TemporalQueryParameters::default()
         };
         assert!(carries_split_filters(&scoped));

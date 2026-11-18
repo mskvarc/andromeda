@@ -147,7 +147,7 @@ mod tests {
     }
 
     fn pattern(raw: &str) -> Pattern {
-        Pattern::parse(raw).expect("valid pattern")
+        raw.parse::<Pattern>().expect("valid pattern")
     }
 
     fn entity_info(value: serde_json::Value) -> EntityInfo {

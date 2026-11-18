@@ -1,13 +1,11 @@
 //! Comparison operands of a `q` predicate (clause 4.9).
 
-use crate::filter::{
-    filter_error::FilterError,
-    parser::operand::{parse_date, parse_date_time, parse_time},
-    quoting::Quoting,
-};
+use crate::filter::{filter_error::FilterError, quoting::Quoting};
 use andromeda_ngsi_ld_lexicon::time::{
     date::NgsiLdDate,
+    date_time::NgsiLdDateTime,
     rendering::{instant_text, time_of_day_text},
+    time_of_day::NgsiLdTime,
     value::TimeValueForm,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
@@ -62,20 +60,29 @@ impl Scalar {
     ///
     /// # Errors
     ///
-    /// Returns [`FilterError::InvalidDateTime`], [`FilterError::InvalidDate`] or
-    /// [`FilterError::InvalidTime`] when a bare literal is written in that
-    /// clause 4.6.3 form but is not a well-formed value of it, and
-    /// [`FilterError::BareWord`] when a bare literal is in no clause 4.6.3 form
-    /// and is no `URI`.
+    /// Returns [`FilterError::InvalidDateTime`] when a bare literal in the
+    /// clause 4.6.3 `DateTime` form is not one (a numeric zone offset in place of
+    /// the mandatory `Z`, or a fraction longer than six digits),
+    /// [`FilterError::InvalidDate`] when a bare literal in the `Date` form is
+    /// not one (its components "shall appear in the string; reduced
+    /// representations are not permitted"), [`FilterError::InvalidTime`] when a
+    /// bare literal in the `Time` form is not one (written without the mandatory
+    /// `Z` designator, or carrying a numeric offset, since the clause states that
+    /// the string "shall not contain expressions of the difference between local
+    /// time and UTC"), and [`FilterError::BareWord`] when a bare literal is in no
+    /// clause 4.6.3 form and is no `URI`.
     pub fn from_literal(raw: &str, quoting: Quoting) -> Result<Scalar, FilterError> {
         if quoting == Quoting::Quoted {
             return Ok(Scalar::Str(raw.to_string()));
         }
         match TimeValueForm::of(raw) {
             None => Scalar::bare_word(raw),
-            Some(TimeValueForm::DateTime) => Ok(Scalar::DateTime(parse_date_time(raw)?)),
-            Some(TimeValueForm::Date) => Ok(Scalar::Date(parse_date(raw)?)),
-            Some(TimeValueForm::Time) => Ok(Scalar::Time(parse_time(raw)?)),
+            Some(TimeValueForm::DateTime) => raw
+                .parse::<NgsiLdDateTime>()
+                .map(|instant| Scalar::DateTime(instant.get()))
+                .map_err(FilterError::InvalidDateTime),
+            Some(TimeValueForm::Date) => raw.parse::<NgsiLdDate>().map(|date| Scalar::Date(date.get())).map_err(FilterError::InvalidDate),
+            Some(TimeValueForm::Time) => raw.parse::<NgsiLdTime>().map(|time| Scalar::Time(time.get())).map_err(FilterError::InvalidTime),
         }
     }
 
@@ -118,16 +125,11 @@ impl Scalar {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        filter_error::FilterError,
-        parser::operand::{parse_date, parse_date_time, parse_time},
-        quoting::Quoting,
-        scalar::Scalar,
-    };
-    use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
+    use crate::filter::{filter_error::FilterError, quoting::Quoting, scalar::Scalar};
+    use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, rendering::instant_text, time_of_day::NgsiLdTime};
 
     fn date_time(raw: &str) -> Scalar {
-        Scalar::DateTime(parse_date_time(raw).expect("valid date-time"))
+        Scalar::DateTime(raw.parse::<NgsiLdDateTime>().expect("valid date-time").get())
     }
 
     #[test]
@@ -147,35 +149,35 @@ mod tests {
     fn a_date_time_scalar_is_parsed_once_at_filter_parse_time() {
         // Clause 4.6.3: a date-time operand is an RFC 3339 date-time, so it is
         // resolved to an instant here rather than re-read on every rendering.
-        let parsed = parse_date_time("2017-12-24T12:00:00Z").expect("valid date-time");
+        let parsed = "2017-12-24T12:00:00Z".parse::<NgsiLdDateTime>().expect("valid date-time").get();
         assert_eq!(instant_text(parsed), "2017-12-24T12:00:00Z");
     }
 
     #[test]
     fn an_unparseable_date_time_operand_is_rejected() {
-        let error = parse_date_time("2017-13-45").expect_err("must reject");
+        let error = Scalar::from_literal("2017-13-45T12:00:00Z", Quoting::Bare).expect_err("must reject");
         assert!(matches!(error, FilterError::InvalidDateTime { .. }), "got {error:?}");
     }
 
     #[test]
     fn an_unparseable_date_operand_is_rejected() {
-        let error = parse_date("2017-13-45").expect_err("must reject");
+        let error = Scalar::from_literal("2017-13-45", Quoting::Bare).expect_err("must reject");
         assert!(matches!(error, FilterError::InvalidDate { .. }), "got {error:?}");
     }
 
     #[test]
     fn an_unparseable_time_operand_is_rejected() {
-        let error = parse_time("25:99:99Z").expect_err("must reject");
+        let error = Scalar::from_literal("25:99:99Z", Quoting::Bare).expect_err("must reject");
         assert!(matches!(error, FilterError::InvalidTime { .. }), "got {error:?}");
     }
 
     /// Clause 4.9's grammar defines `dateTime` and `time` as values "as mandated by clause 4.6.3", and clause 4.6.3 requires the literal `Z` designator for `DateTime` and states that a `Time` string "shall not contain expressions of the difference between local time and UTC". A filter operand carrying a numeric offset is refused.
     #[test]
     fn an_offset_bearing_operand_is_rejected_rather_than_normalised() {
-        let date_time_error = parse_date_time("2017-12-24T13:00:00+01:00").expect_err("a numeric offset is forbidden");
+        let date_time_error = Scalar::from_literal("2017-12-24T13:00:00+01:00", Quoting::Bare).expect_err("a numeric offset is forbidden");
         assert!(matches!(date_time_error, FilterError::InvalidDateTime { .. }), "got {date_time_error:?}");
 
-        let time_error = parse_time("13:00:00+01:00").expect_err("a numeric offset is forbidden");
+        let time_error = Scalar::from_literal("13:00:00+01:00", Quoting::Bare).expect_err("a numeric offset is forbidden");
         assert!(matches!(time_error, FilterError::InvalidTime { .. }), "got {time_error:?}");
     }
 
@@ -187,8 +189,8 @@ mod tests {
     fn a_comma_decimal_separator_names_the_same_operand_as_a_decimal_point() {
         assert_eq!(date_time("2024-01-01T00:00:00,250Z"), date_time("2024-01-01T00:00:00.250Z"));
         assert_eq!(
-            parse_time("12:00:00,250Z").expect("the comma compatibility form"),
-            parse_time("12:00:00.250Z").expect("the canonical form")
+            "12:00:00,250Z".parse::<NgsiLdTime>().expect("the comma compatibility form").get(),
+            "12:00:00.250Z".parse::<NgsiLdTime>().expect("the canonical form").get()
         );
     }
 
@@ -196,10 +198,10 @@ mod tests {
     /// a maximum of six".
     #[test]
     fn a_fraction_beyond_six_digits_is_rejected() {
-        let date_time_error = parse_date_time("2024-01-01T00:00:00.1234567Z").expect_err("seven digits exceeds the maximum");
+        let date_time_error = Scalar::from_literal("2024-01-01T00:00:00.1234567Z", Quoting::Bare).expect_err("seven digits exceeds the maximum");
         assert!(matches!(date_time_error, FilterError::InvalidDateTime { .. }), "got {date_time_error:?}");
 
-        let time_error = parse_time("12:00:00.1234567Z").expect_err("seven digits exceeds the maximum");
+        let time_error = Scalar::from_literal("12:00:00.1234567Z", Quoting::Bare).expect_err("seven digits exceeds the maximum");
         assert!(matches!(time_error, FilterError::InvalidTime { .. }), "got {time_error:?}");
     }
 
@@ -300,11 +302,11 @@ mod tests {
         assert_eq!(date_time("2024-01-01T00:00:00Z").literal_text(), "2024-01-01T00:00:00Z");
         assert_eq!(date_time("2024-01-01T00:00:00.123456Z").literal_text(), "2024-01-01T00:00:00.123456Z");
         assert_eq!(
-            Scalar::Time(parse_time("12:00:00.250Z").expect("a fractional time of day")).literal_text(),
+            Scalar::Time("12:00:00.250Z".parse::<NgsiLdTime>().expect("a fractional time of day").get()).literal_text(),
             "12:00:00.250Z"
         );
         assert_eq!(
-            Scalar::Time(parse_time("12:00:00Z").expect("a whole-second time of day")).literal_text(),
+            Scalar::Time("12:00:00Z".parse::<NgsiLdTime>().expect("a whole-second time of day").get()).literal_text(),
             "12:00:00Z"
         );
     }

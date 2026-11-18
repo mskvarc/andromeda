@@ -148,7 +148,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         scope::scope_query::ScopeQuery,
         temporal::{
@@ -222,7 +222,7 @@ mod tests {
     /// `q=temperature>99`.
     fn rare_q(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse(&format!("\"{TEMPERATURE}\">99")).expect("q parses"),
+            format!("\"{TEMPERATURE}\">99").parse::<Filter>().expect("q parses"),
             LanguageMatching::TagEquality,
         ));
         compiled
@@ -257,7 +257,7 @@ mod tests {
 
     /// `scopeQ=/city/moved1`.
     fn moved(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
+        compiled.entities.scope_q = Some("/city/moved1".parse::<ScopeQuery>().expect("valid scope query"));
         compiled
     }
 

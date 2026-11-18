@@ -7,6 +7,6 @@
 
 pub mod expanded_type_selection;
 pub mod expansion;
-pub mod parser;
+mod parser;
 pub mod type_selection_error;
 pub mod written_type_selection;

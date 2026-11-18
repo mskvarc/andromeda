@@ -10,8 +10,6 @@
 //! `Scalar`; the only thing they need from JSON-LD is a
 //! [`TermExpander`].
 
-#[cfg(test)]
-use crate::filter::parser;
 use crate::{
     filter::{
         Filter,
@@ -31,26 +29,6 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
-/// Parse and expand a `q` filter expression, as the tests of this crate state
-/// one.
-///
-/// Returns `None` when `q` is absent or empty.
-///
-/// # Errors
-///
-/// Returns a `Q*` variant of [`QueryError`] when the expression is outside the
-/// clause 4.9 grammar, and [`QueryError::TermExpansion`],
-/// [`QueryError::TermNotAnIri`] or [`FilterError::InvalidAttributeName`] when a
-/// term does not expand to a usable attribute name.
-#[cfg(test)]
-pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Filter>, QueryError> {
-    let Some(q_str) = q.map(str::trim).filter(|trimmed| !trimmed.is_empty()) else {
-        return Ok(None);
-    };
-    let expr = parser::parse(q_str)?;
-    Ok(Some(expand_q_expr(expr, json_keys, expander).await?))
-}
-
 /// Recursively expand attribute terms in a `q` expression.
 ///
 /// Every attribute path (main attribute plus sub-attributes) in the expression
@@ -64,7 +42,7 @@ pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttr
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
-pub async fn expand_q_expr(expr: Filter, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Filter, QueryError> {
+pub async fn expand_filter(expr: Filter, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Filter, QueryError> {
     let members = NestedNames::Terms(json_keys);
     walk_predicates(expr, &|pred| expand_q_pred(pred, members, expander)).await
 }
@@ -92,7 +70,7 @@ async fn expand_q_pred(pred: QueryTerm, members: NestedNames<'_>, expander: &imp
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
-pub async fn expand_csf_expr(expr: Filter, expander: &impl TermExpander) -> Result<Filter, QueryError> {
+pub async fn expand_context_source_filter(expr: Filter, expander: &impl TermExpander) -> Result<Filter, QueryError> {
     walk_predicates(expr, &|pred| expand_pred_terms(pred, NestedNames::Verbatim, expander)).await
 }
 
@@ -150,9 +128,9 @@ where
 /// Expand the attribute path of a single predicate.
 async fn expand_pred_terms(pred: QueryTerm, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
     match pred {
-        QueryTerm::Exists(path) => Ok(QueryTerm::Exists(expand_query_path(path, members, expander).await?)),
+        QueryTerm::Exists(path) => Ok(QueryTerm::Exists(expand_attribute_path(path, members, expander).await?)),
         QueryTerm::Equality { path, membership, value: rhs } => Ok(QueryTerm::Equality {
-            path: expand_query_path(path, members, expander).await?,
+            path: expand_attribute_path(path, members, expander).await?,
             membership,
             value: rhs,
         }),
@@ -161,16 +139,16 @@ async fn expand_pred_terms(pred: QueryTerm, members: NestedNames<'_>, expander: 
             operator: op,
             value: rhs,
         } => Ok(QueryTerm::Ordering {
-            path: expand_query_path(path, members, expander).await?,
+            path: expand_attribute_path(path, members, expander).await?,
             operator: op,
             value: rhs,
         }),
         QueryTerm::MatchPattern { path, pattern } => Ok(QueryTerm::MatchPattern {
-            path: expand_query_path(path, members, expander).await?,
+            path: expand_attribute_path(path, members, expander).await?,
             pattern,
         }),
         QueryTerm::NotMatchPattern { path, pattern } => Ok(QueryTerm::NotMatchPattern {
-            path: expand_query_path(path, members, expander).await?,
+            path: expand_attribute_path(path, members, expander).await?,
             pattern,
         }),
     }
@@ -188,9 +166,9 @@ async fn expand_pred_terms(pred: QueryTerm, members: NestedNames<'_>, expander: 
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
 /// [`FilterError::InvalidAttributeName`] when a segment, a hop's Relationship or
 /// one of its guard types does not expand to a usable attribute name.
-pub async fn expand_query_path(path: AttributePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<AttributePath, QueryError> {
+pub async fn expand_attribute_path(path: AttributePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<AttributePath, QueryError> {
     match path {
-        AttributePath::Local(local) => Ok(AttributePath::Local(expand_attr_path(local, members, expander).await?)),
+        AttributePath::Local(local) => Ok(AttributePath::Local(expand_value_path(local, members, expander).await?)),
         AttributePath::Linked {
             relationship,
             guard_types,
@@ -201,7 +179,7 @@ pub async fn expand_query_path(path: AttributePath, members: NestedNames<'_>, ex
             for guard_type in &guard_types {
                 expanded_guard.push(expanded_attribute_name(&expander.expand_type(guard_type.as_str()).await?)?);
             }
-            let inner = expand_query_path_boxed(*inner, members, expander).await?;
+            let inner = expand_attribute_path_boxed(*inner, members, expander).await?;
             Ok(AttributePath::Linked {
                 relationship,
                 guard_types: expanded_guard,
@@ -213,7 +191,7 @@ pub async fn expand_query_path(path: AttributePath, members: NestedNames<'_>, ex
 
 /// Box-pinned wrapper: the axis walker recurses through hops, and an `async fn`
 /// cannot name its own future type.
-fn expand_query_path_boxed<'a, E: TermExpander>(
+fn expand_attribute_path_boxed<'a, E: TermExpander>(
     path: AttributePath,
     members: NestedNames<'a>,
     expander: &'a E,
@@ -221,7 +199,7 @@ fn expand_query_path_boxed<'a, E: TermExpander>(
 where
     AttributePath: 'a,
 {
-    Box::pin(expand_query_path(path, members, expander))
+    Box::pin(expand_attribute_path(path, members, expander))
 }
 
 /// Expand an attribute path (main attribute and, when `members` makes them
@@ -235,7 +213,7 @@ where
 /// [`FilterError::InvalidAttributeName`] when the attribute, one of its
 /// sub-attributes or one of its compound-value members does not expand to a
 /// usable attribute name.
-pub async fn expand_attr_path(mut path: ValuePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<ValuePath, QueryError> {
+pub async fn expand_value_path(mut path: ValuePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<ValuePath, QueryError> {
     path.attribute = expanded_attribute_name(&expander.expand_term(path.attribute.as_str()).await?)?;
     if members.sub_attributes_are_terms() {
         path.sub_attributes = expand_attribute_names(&path.sub_attributes, expander).await?;
@@ -347,12 +325,10 @@ mod tests {
         filter::{
             Filter,
             attribute_path::AttributePath,
-            display::serialize,
             equality_value::EqualityValue,
-            expansion::{apply_expand_values, expand_attribute_names, expand_csf_expr, expand_json_keys, expand_q_expr, expand_q_expression},
+            expansion::{apply_expand_values, expand_attribute_names, expand_context_source_filter, expand_filter, expand_json_keys},
             filter_error::FilterError,
             json_key_attributes::JsonKeyAttributes,
-            parser,
             query_term::{OrderingOperator, QueryTerm},
             scalar::Scalar,
             value_path::ValuePath,
@@ -388,12 +364,22 @@ mod tests {
         }
     }
 
+    /// Parses and expands a `q` filter expression, `None` when `q` is absent or
+    /// blank.
+    async fn parse_and_expand(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Filter>, QueryError> {
+        let Some(q_str) = q.map(str::trim).filter(|trimmed| !trimmed.is_empty()) else {
+            return Ok(None);
+        };
+        let filter = q_str.parse::<Filter>()?;
+        Ok(Some(expand_filter(filter, json_keys, expander).await?))
+    }
+
     /// Clause 4.9 reads a trailing path as an ECMA 262 `MemberExpression`, so
     /// a member the `@context` maps to a JSON-LD keyword is the member of its
     /// own name, while an attribute so mapped still names no attribute.
     #[tokio::test]
     async fn a_member_mapped_to_a_keyword_is_read_as_written() {
-        let expanded = expand_q_expression(Some("location[type]==\"Point\""), &JsonKeyAttributes::default(), &KeywordTypeExpander)
+        let expanded = parse_and_expand(Some("location[type]==\"Point\""), &JsonKeyAttributes::default(), &KeywordTypeExpander)
             .await
             .expect("expands")
             .expect("present");
@@ -405,7 +391,7 @@ mod tests {
             Some(vec!["type"])
         );
         assert!(matches!(
-            expand_q_expression(Some("type==\"Point\""), &JsonKeyAttributes::default(), &KeywordTypeExpander).await,
+            parse_and_expand(Some("type==\"Point\""), &JsonKeyAttributes::default(), &KeywordTypeExpander).await,
             Err(QueryError::TermExpansion(TermExpansionError::Keyword))
         ));
     }
@@ -431,13 +417,13 @@ mod tests {
     #[tokio::test]
     async fn an_empty_filter_expands_to_nothing() {
         assert!(
-            expand_q_expression(None, &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+            parse_and_expand(None, &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
                 .await
                 .expect("no filter")
                 .is_none()
         );
         assert!(
-            expand_q_expression(Some("   "), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+            parse_and_expand(Some("   "), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
                 .await
                 .expect("blank filter")
                 .is_none()
@@ -446,7 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_path_segment_of_every_predicate_is_expanded() {
-        let expanded = expand_q_expression(
+        let expanded = parse_and_expand(
             Some("speed>50;temperature.observedAt<2024-01-01T00:00:00Z"),
             &JsonKeyAttributes::default(),
             &CORE_MEMBER_EXPANDER,
@@ -475,7 +461,7 @@ mod tests {
     /// silently stop matching every entity.
     #[tokio::test]
     async fn a_hop_expands_its_relationship_as_a_term_and_its_guard_as_entity_types() {
-        let expanded = expand_q_expression(
+        let expanded = parse_and_expand(
             Some("isParkedIn{Building,Store:category}==\"x\""),
             &JsonKeyAttributes::default(),
             &CORE_MEMBER_EXPANDER,
@@ -505,11 +491,11 @@ mod tests {
 
     #[tokio::test]
     async fn nested_hops_are_expanded_at_every_level() {
-        let expanded = expand_q_expression(Some("outer{inner{zone}}==\"north\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expanded = parse_and_expand(Some("outer{inner{zone}}==\"north\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");
-        let rendered = parser::parse(&serialize(&expanded)).expect("reparses");
+        let rendered = expanded.to_string().parse::<Filter>().expect("reparses");
         assert_eq!(rendered, expanded, "an expanded traversal must round-trip");
         assert_eq!(path_of(&expanded).attribute.as_str(), "https://example.com/zone");
     }
@@ -529,7 +515,7 @@ mod tests {
     /// value.
     #[tokio::test]
     async fn an_expanded_opt_in_list_keys_an_expanded_filter() {
-        let expr = expand_q_expression(Some("colour==\"red\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expr = parse_and_expand(Some("colour==\"red\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");
@@ -548,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn expand_values_rewrites_only_the_named_attributes() {
-        let expr = parser::parse("colour==\"red\";label==\"red\"").expect("parses");
+        let expr = "colour==\"red\";label==\"red\"".parse::<Filter>().expect("parses");
         let opted_in = opted_in(&["colour"]);
         let expanded = apply_expand_values(expr, &opted_in, &CORE_MEMBER_EXPANDER).await.expect("expands");
         let Filter::And(terms) = expanded else {
@@ -563,7 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn expand_values_leaves_non_string_operands_alone() {
-        let expr = parser::parse("speed==10..20").expect("parses");
+        let expr = "speed==10..20".parse::<Filter>().expect("parses");
         let opted_in = opted_in(&["speed"]);
         let expanded = apply_expand_values(expr, &opted_in, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
@@ -577,7 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn expand_values_rewrites_the_string_members_of_a_value_list() {
-        let expr = parser::parse("colour==\"red\",\"blue\"").expect("parses");
+        let expr = "colour==\"red\",\"blue\"".parse::<Filter>().expect("parses");
         let opted_in = opted_in(&["colour"]);
         let expanded = apply_expand_values(expr, &opted_in, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
@@ -603,7 +589,7 @@ mod tests {
             "gender==Male",
             "tier==gold",
         ] {
-            let error = parser::parse(q).expect_err("a bare word is no value");
+            let error = q.parse::<Filter>().expect_err("a bare word is no value");
             assert!(matches!(error, FilterError::BareWord), "{q}: {error:?}");
         }
     }
@@ -614,9 +600,13 @@ mod tests {
     #[tokio::test]
     async fn expand_values_expands_a_quoted_word_to_the_uri_it_names() {
         let opted_in = opted_in(&["gender"]);
-        let list = apply_expand_values(parser::parse("gender==\"Male\",\"Female\"").expect("parses"), &opted_in, &CORE_MEMBER_EXPANDER)
-            .await
-            .expect("expands");
+        let list = apply_expand_values(
+            "gender==\"Male\",\"Female\"".parse::<Filter>().expect("parses"),
+            &opted_in,
+            &CORE_MEMBER_EXPANDER,
+        )
+        .await
+        .expect("expands");
         assert_eq!(
             equality_rhs(&list),
             &EqualityValue::ValueList(vec![
@@ -630,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn a_quoted_word_and_a_bare_uri_stand_without_expand_values() {
         for q in ["status==\"active\"", "ref==urn:ngsi-ld:Device:1", "speed>1"] {
-            let expr = parser::parse(q).expect("parses");
+            let expr = q.parse::<Filter>().expect("parses");
             let kept = apply_expand_values(expr.clone(), &HashSet::<AttributeName>::new(), &CORE_MEMBER_EXPANDER)
                 .await
                 .expect("a value");
@@ -641,7 +631,7 @@ mod tests {
     /// JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so a compound-value member has to be expanded through the same `@context` the attribute name is.
     #[tokio::test]
     async fn a_compound_value_member_is_expanded_through_the_context() {
-        let expanded = expand_q_expression(Some("address[city]==\"Berlin\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expanded = parse_and_expand(Some("address[city]==\"Berlin\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");
@@ -660,7 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_member_of_a_nested_compound_path_is_expanded() {
-        let expanded = expand_q_expression(
+        let expanded = parse_and_expand(
             Some("sensor.rawdata[airquality.particulate]==40"),
             &JsonKeyAttributes::default(),
             &CORE_MEMBER_EXPANDER,
@@ -687,15 +677,15 @@ mod tests {
     /// The serialisation writes each member in its addressed spelling, the one
     /// another broker reads, so the filter it reparses to writes the same text
     /// and addresses the same members. The written spelling travels in
-    /// `serialize_written_members` alone.
+    /// `Filter::written_member_text` alone.
     #[tokio::test]
     async fn an_expanded_compound_path_round_trips_through_the_serialisation() {
-        let expanded = expand_q_expression(Some("address[city]==\"Berlin\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expanded = parse_and_expand(Some("address[city]==\"Berlin\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");
-        let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");
-        assert_eq!(serialize(&reparsed), serialize(&expanded));
+        let reparsed = expanded.to_string().parse::<Filter>().expect("reparses");
+        assert_eq!(reparsed.to_string(), expanded.to_string());
         assert_eq!(
             path_of(&reparsed).members().expect("a member path").addressed,
             path_of(&expanded).members().expect("a member path").addressed
@@ -709,11 +699,11 @@ mod tests {
     /// literal object key.
     #[tokio::test]
     async fn a_json_keys_attribute_keeps_its_compound_value_member_literal() {
-        let expr = parser::parse("parkingTickets[value]==\"Overstay 60 minutes\"").expect("parses");
+        let expr = "parkingTickets[value]==\"Overstay 60 minutes\"".parse::<Filter>().expect("parses");
         let declared: JsonKeyAttributes = ["https://example.com/parkingTickets".parse().expect("valid attribute name")]
             .into_iter()
             .collect();
-        let expanded = expand_q_expr(expr, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
+        let expanded = expand_filter(expr, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
         let path = path_of(&expanded);
         assert_eq!(
             path.attribute.as_str(),
@@ -735,9 +725,9 @@ mod tests {
     /// what makes the declaration observable at all.
     #[tokio::test]
     async fn the_same_member_expands_when_no_json_keys_declaration_names_the_attribute() {
-        let expr = parser::parse("parkingTickets[value]==\"Overstay 60 minutes\"").expect("parses");
+        let expr = "parkingTickets[value]==\"Overstay 60 minutes\"".parse::<Filter>().expect("parses");
         let declared: JsonKeyAttributes = ["https://example.com/other".parse().expect("valid attribute name")].into_iter().collect();
-        let expanded = expand_q_expr(expr, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
+        let expanded = expand_filter(expr, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
             path_of(&expanded)
                 .members()
@@ -767,11 +757,11 @@ mod tests {
     /// they keep expanding through the `@context`.
     #[tokio::test]
     async fn a_json_keys_attribute_still_expands_its_ngsi_ld_sub_attributes() {
-        let expr = parser::parse("parkingTickets.observedAt<2024-01-01T00:00:00Z").expect("parses");
+        let expr = "parkingTickets.observedAt<2024-01-01T00:00:00Z".parse::<Filter>().expect("parses");
         let declared: JsonKeyAttributes = ["https://example.com/parkingTickets".parse().expect("valid attribute name")]
             .into_iter()
             .collect();
-        let expanded = expand_q_expr(expr, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
+        let expanded = expand_filter(expr, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
             path_of(&expanded).sub_attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
             vec!["https://example.com/observedAt"]
@@ -784,8 +774,8 @@ mod tests {
     /// sub-properties and trailing members address the literal keys.
     #[tokio::test]
     async fn a_csf_expands_its_property_and_keeps_its_sub_properties_and_trailing_members_verbatim() {
-        let expr = parser::parse("coverage.since[area.region]==\"north\"").expect("parses");
-        let expanded = expand_csf_expr(expr, &CORE_MEMBER_EXPANDER).await.expect("expands");
+        let expr = "coverage.since[area.region]==\"north\"".parse::<Filter>().expect("parses");
+        let expanded = expand_context_source_filter(expr, &CORE_MEMBER_EXPANDER).await.expect("expands");
         let path = path_of(&expanded);
         assert_eq!(path.attribute.as_str(), "https://example.com/coverage");
         assert_eq!(path.sub_attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["since"]);
@@ -807,7 +797,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["area", "region"]
         );
-        let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");
+        let reparsed = expanded.to_string().parse::<Filter>().expect("reparses");
         assert_eq!(reparsed, expanded, "the stored text keeps the members as written");
     }
 
@@ -816,19 +806,19 @@ mod tests {
     /// reading names the member.
     #[tokio::test]
     async fn a_csf_keeps_an_instance_member_term_as_written() {
-        let expanded = expand_csf_expr(parser::parse("tier.unitCode==\"C62\"").expect("parses"), &CORE_MEMBER_EXPANDER)
+        let expanded = expand_context_source_filter("tier.unitCode==\"C62\"".parse::<Filter>().expect("parses"), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands");
         let path = path_of(&expanded);
         assert_eq!(path.sub_attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["unitCode"]);
-        let stored = serialize(&expanded);
+        let stored = expanded.to_string();
         assert!(stored.ends_with(".unitCode==\"C62\""), "{stored}");
-        assert_eq!(parser::parse(&stored).expect("reparses"), expanded);
+        assert_eq!(stored.parse::<Filter>().expect("reparses"), expanded);
     }
 
     #[tokio::test]
     async fn a_pattern_predicate_keeps_its_pattern_while_its_path_expands() {
-        let expanded = expand_q_expression(Some("name~=\"^A.*\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expanded = parse_and_expand(Some("name~=\"^A.*\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");
@@ -852,7 +842,7 @@ mod tests {
             ("reading.objectType==\"Device\"", "https://example.com/types/Device"),
             ("reading.valueType>\"S\"", "https://example.com/types/S"),
         ] {
-            let expanded = expand_q_expression(Some(q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+            let expanded = parse_and_expand(Some(q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
                 .await
                 .expect("expands")
                 .expect("present");
@@ -868,7 +858,7 @@ mod tests {
             };
             assert_eq!(operand, &Scalar::Str(expected.to_owned()), "{q}");
         }
-        let list = expand_q_expression(
+        let list = parse_and_expand(
             Some("reading.objectType==\"Device\",\"Sensor\""),
             &JsonKeyAttributes::default(),
             &CORE_MEMBER_EXPANDER,
@@ -890,18 +880,18 @@ mod tests {
     #[tokio::test]
     async fn an_operand_on_any_other_target_stays_a_literal() {
         for q in ["reading.datasetId==\"urn:ngsi-ld:Dataset:d1\"", "reading.kind==\"String\""] {
-            let expanded = expand_q_expression(Some(q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+            let expanded = parse_and_expand(Some(q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
                 .await
                 .expect("expands")
                 .expect("present");
-            assert_eq!(equality_rhs(&expanded), equality_rhs(&parser::parse(q).expect("parses")), "{q}");
+            assert_eq!(equality_rhs(&expanded), equality_rhs(&q.parse::<Filter>().expect("parses")), "{q}");
         }
     }
 
     /// A pattern is a regular expression, never a term.
     #[tokio::test]
     async fn a_pattern_on_a_value_type_stays_as_written() {
-        let expanded = expand_q_expression(Some("reading.valueType~=\"Str\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expanded = parse_and_expand(Some("reading.valueType~=\"Str\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");
@@ -913,7 +903,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_comparison_operator_survives_expansion() {
-        let expanded = expand_q_expression(Some("speed>=50"), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+        let expanded = parse_and_expand(Some("speed>=50"), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .expect("present");

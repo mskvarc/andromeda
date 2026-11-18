@@ -240,7 +240,7 @@ mod tests {
         query_names::QueryNames,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
     use andromeda_postgresql_schema::{current::Entities, string_value_column::INDEXED_STRING_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
@@ -308,7 +308,7 @@ mod tests {
     }
 
     fn render_under(q: &str, names: &QueryNames, rows: &EntityRowRefs, matching: LanguageMatching) -> SelectStatement {
-        let expr = parse(q).expect("parse q");
+        let expr = q.parse::<Filter>().expect("parse q");
         let condition = compile(&FilterReading::lowered(&expr, matching), &InstanceScan::Current(rows), names);
         Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }

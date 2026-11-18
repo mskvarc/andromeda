@@ -51,7 +51,7 @@ fn compiled_selector(selector: &StoredSelector) -> Result<ExpandedEntitySelector
     Ok(ExpandedEntitySelector::builder()
         .ids(selector.id.clone().unwrap_or_default())
         .id_pattern(selector.id_pattern.clone())
-        .type_selection(Some(selector.type_.as_expanded()?))
+        .type_selection(Some(selector.type_.to_expanded()?))
         .build())
 }
 

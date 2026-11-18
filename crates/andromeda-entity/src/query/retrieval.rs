@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     page_window::PageWindow,
     projection::{expanded_projection::ExpandedProjection, returned_attributes::ReturnedAttributes},
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_expression, written_type_selection::WrittenTypeSelection},
+    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_selection, written_type_selection::WrittenTypeSelection},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
@@ -130,7 +130,7 @@ impl EntityQueryService {
     /// context.
     pub async fn expand_type_selector(&self, selector: &WrittenTypeSelection, context: &ContextSpec) -> Result<ExpandedTypeSelection, EntityError> {
         let prepared = self.engine().prepare_term_context(context);
-        Ok(expand_type_expression(selector, &ContextualExpander::new(self.engine(), &prepared)).await?)
+        Ok(expand_type_selection(selector, &ContextualExpander::new(self.engine(), &prepared)).await?)
     }
 
     /// Select the page `window` selects of a parameterized entity query

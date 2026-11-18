@@ -125,13 +125,13 @@ mod tests {
         let mut paired = opened(id_pattern(Some("Sensor"), ".*:0123.*"));
         paired.entities.selectors.push(
             ExpandedEntitySelector::builder()
-                .id_pattern(Some(Pattern::parse(".*:9.*").expect("valid pattern")))
+                .id_pattern(Some(".*:9.*".parse::<Pattern>().expect("valid pattern")))
                 .build(),
         );
         let mut ordered = id_pattern(None, ".*:0123.*");
         ordered.ordering = Some(TemporalEntityOrdering {
             direction: SortDirection::Ascending,
-            collation: Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")),
+            collation: Some("de-u-co-phonebk".parse::<IcuCollation>().expect("valid collation")),
         });
         let paired = recorded_stage1(&paired).select;
         assert_statement_snapshot!(

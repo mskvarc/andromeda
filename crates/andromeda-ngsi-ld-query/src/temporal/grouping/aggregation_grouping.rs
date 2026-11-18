@@ -8,25 +8,6 @@ use std::str::FromStr;
 pub struct AggregationGrouping(pub Vec<GroupingTerm>);
 
 impl AggregationGrouping {
-    /// Parse a whole `aggrGroupBy` value.
-    ///
-    /// Splits on `,` into terms (outermost first), then each term on `;` into
-    /// a key and an optional bucket.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GroupingError`] when the value is empty, has an empty
-    /// term, names an unknown bucket, buckets a non-temporal key, or carries a
-    /// malformed key path.
-    pub fn parse(raw: &str) -> Result<AggregationGrouping, GroupingError> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err(GroupingError::Empty);
-        }
-        let terms = raw.split(',').map(GroupingTerm::parse).collect::<Result<Vec<_>, _>>()?;
-        Ok(AggregationGrouping(terms))
-    }
-
     /// The grouping terms, outermost first.
     #[must_use]
     pub fn terms(&self) -> &[GroupingTerm] {
@@ -37,8 +18,23 @@ impl AggregationGrouping {
 impl FromStr for AggregationGrouping {
     type Err = GroupingError;
 
+    /// Parse a whole `aggrGroupBy` value.
+    ///
+    /// Splits on `,` into terms (outermost first), then each term on `;` into
+    /// a key and an optional bucket.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GroupingError`] when the value is empty, has an empty
+    /// term, names an unknown bucket, buckets a non-temporal key, or carries a
+    /// malformed key path.
     fn from_str(raw: &str) -> Result<AggregationGrouping, GroupingError> {
-        AggregationGrouping::parse(raw)
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err(GroupingError::Empty);
+        }
+        let terms = raw.split(',').map(str::parse::<GroupingTerm>).collect::<Result<Vec<_>, _>>()?;
+        Ok(AggregationGrouping(terms))
     }
 }
 
@@ -53,7 +49,7 @@ mod tests {
     };
 
     fn parse(raw: &str) -> AggregationGrouping {
-        AggregationGrouping::parse(raw).expect("a well-formed aggrGroupBy value")
+        raw.parse::<AggregationGrouping>().expect("a well-formed aggrGroupBy value")
     }
 
     #[test]
@@ -89,25 +85,25 @@ mod tests {
 
     #[test]
     fn an_unknown_bucket_token_is_rejected() {
-        let error = AggregationGrouping::parse("speed;bogus").expect_err("bogus is no bucket");
+        let error = "speed;bogus".parse::<AggregationGrouping>().expect_err("bogus is no bucket");
         assert!(matches!(error, GroupingError::InvalidBucket(_)), "got {error:?}");
     }
 
     #[test]
     fn a_bucket_on_a_non_temporal_key_is_rejected() {
-        let error = AggregationGrouping::parse("speed;month").expect_err("speed is not temporal");
+        let error = "speed;month".parse::<AggregationGrouping>().expect_err("speed is not temporal");
         assert!(matches!(error, GroupingError::BucketOnNonTemporalKey(_)), "got {error:?}");
-        let error = AggregationGrouping::parse("datasetId;month").expect_err("datasetId is not temporal");
+        let error = "datasetId;month".parse::<AggregationGrouping>().expect_err("datasetId is not temporal");
         assert!(matches!(error, GroupingError::BucketOnNonTemporalKey(_)), "got {error:?}");
     }
 
     #[test]
     fn empty_and_trailing_comma_values_are_rejected() {
-        assert!(matches!(AggregationGrouping::parse(""), Err(GroupingError::Empty)));
-        assert!(matches!(AggregationGrouping::parse("   "), Err(GroupingError::Empty)));
-        assert!(matches!(AggregationGrouping::parse("zone,"), Err(GroupingError::EmptyTerm)));
-        assert!(matches!(AggregationGrouping::parse(",zone"), Err(GroupingError::EmptyTerm)));
-        assert!(matches!(AggregationGrouping::parse("zone,,type"), Err(GroupingError::EmptyTerm)));
+        assert!(matches!("".parse::<AggregationGrouping>(), Err(GroupingError::Empty)));
+        assert!(matches!("   ".parse::<AggregationGrouping>(), Err(GroupingError::Empty)));
+        assert!(matches!("zone,".parse::<AggregationGrouping>(), Err(GroupingError::EmptyTerm)));
+        assert!(matches!(",zone".parse::<AggregationGrouping>(), Err(GroupingError::EmptyTerm)));
+        assert!(matches!("zone,,type".parse::<AggregationGrouping>(), Err(GroupingError::EmptyTerm)));
     }
 
     #[test]

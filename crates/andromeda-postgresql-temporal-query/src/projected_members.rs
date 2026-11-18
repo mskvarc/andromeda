@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn the_dataset_step_bounds_the_instances_that_keep_an_entity() {
         let mut query = compiled(&ExpandedProjection::builder().pick(vec![speed()]).build());
-        query.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
+        query.instances.dataset_id_filter = vec!["urn:ngsi-ld:Dataset:one".parse::<DatasetSelector>().expect("a valid dataset selector")];
         let statement = rendered(&query).expect("a condition");
         assert_statement_snapshot!("projected-members-the-dataset-step-bounds-the-instances-that-keep-an-entity", statement);
     }

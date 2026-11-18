@@ -234,14 +234,14 @@ impl TermMemo {
 mod tests {
     use crate::q::term_memo::{TermInterner, TermMemo};
     use andromeda_ngsi_ld_query::filter::{
+        Filter,
         language_matching::LanguageMatching,
-        parser::parse,
         reading::{filter_reading::FilterReading, term_reading::TermReading},
     };
 
     /// The reading of the one term `q` is.
     fn term(q: &str) -> Box<TermReading> {
-        match FilterReading::of(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality) {
+        match FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality) {
             FilterReading::Term(term) => term,
             FilterReading::All(_) | FilterReading::Any(_) => panic!("{q} is one term"),
         }

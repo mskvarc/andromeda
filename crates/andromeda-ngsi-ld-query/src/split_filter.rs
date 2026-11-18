@@ -283,7 +283,7 @@ fn reading_holds(reading: &FilterReading, truths: &LeafTruths, cursor: &mut usiz
 mod tests {
     use crate::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         scope::scope_query::ScopeQuery,
         split_filter::{FilterLeaf, HopMembers, LeafTruths, SplitFilter},
@@ -309,9 +309,9 @@ mod tests {
 
     fn selection(q: Option<&str>, geo: Option<CompiledGeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q(q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality)))
+            .q(q.map(|raw| CompiledFilter::new(raw.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality)))
             .geo(geo)
-            .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses")))
+            .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("scopeQ parses")))
             .build()
     }
 

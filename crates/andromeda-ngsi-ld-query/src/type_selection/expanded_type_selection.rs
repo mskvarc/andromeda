@@ -82,7 +82,7 @@ impl ExpandedTypeSelection {
     ///
     /// Returns [`TypeSelectionError::InvalidName`] when an expanded leaf IRI
     /// does not satisfy the clause 4.6.2 type-name grammar.
-    pub fn into_raw(self) -> Result<WrittenTypeSelection, TypeSelectionError> {
+    pub fn into_written(self) -> Result<WrittenTypeSelection, TypeSelectionError> {
         match self {
             ExpandedTypeSelection::Wildcard => Ok(WrittenTypeSelection::Wildcard),
             ExpandedTypeSelection::Type(iri) => iri
@@ -92,12 +92,12 @@ impl ExpandedTypeSelection {
                 .map_err(|source| TypeSelectionError::InvalidName { position: 0, source }),
             ExpandedTypeSelection::And(children) => children
                 .into_iter()
-                .map(ExpandedTypeSelection::into_raw)
+                .map(ExpandedTypeSelection::into_written)
                 .collect::<Result<Vec<_>, _>>()
                 .map(WrittenTypeSelection::And),
             ExpandedTypeSelection::Or(children) => children
                 .into_iter()
-                .map(ExpandedTypeSelection::into_raw)
+                .map(ExpandedTypeSelection::into_written)
                 .collect::<Result<Vec<_>, _>>()
                 .map(WrittenTypeSelection::Or),
         }
@@ -121,8 +121,8 @@ mod tests {
             ]),
             ExpandedTypeSelection::Wildcard,
         ]);
-        let stored = expanded.clone().into_raw().expect("every leaf is a type name");
-        pretty_assertions::assert_eq!(stored.as_expanded().expect("every leaf is an IRI"), expanded);
+        let stored = expanded.clone().into_written().expect("every leaf is a type name");
+        pretty_assertions::assert_eq!(stored.to_expanded().expect("every leaf is an IRI"), expanded);
     }
 
     #[test]
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn an_expanded_expression_converts_to_a_raw_tree_with_iri_leaves() {
         let expanded = ExpandedTypeSelection::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
-        let raw = expanded.into_raw().expect("expanded IRIs are valid NGSI-LD names");
+        let raw = expanded.into_written().expect("expanded IRIs are valid NGSI-LD names");
         pretty_assertions::assert_eq!(raw.to_string(), "https://example.com/Building,https://example.com/Tower");
     }
 }

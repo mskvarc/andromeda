@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn an_id_takes_precedence_over_an_id_pattern() {
         let ids = [id("urn:ngsi-ld:A:1")];
-        let pattern = Pattern::parse("^urn:nomatch").expect("valid pattern");
+        let pattern = "^urn:nomatch".parse::<Pattern>().expect("valid pattern");
         let axis = IdentifierAxis::of(&ids, Some(&pattern));
         assert!(matches!(axis, IdentifierAxis::Ids(_)));
         assert!(axis.admits(&id("urn:ngsi-ld:A:1")));
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn a_pattern_alone_constrains_by_pattern() {
-        let pattern = Pattern::parse("^urn:ngsi-ld:A:").expect("valid pattern");
+        let pattern = "^urn:ngsi-ld:A:".parse::<Pattern>().expect("valid pattern");
         let axis = IdentifierAxis::of(&[], Some(&pattern));
         assert!(matches!(axis, IdentifierAxis::Pattern(_)));
         assert!(axis.admits(&id("urn:ngsi-ld:A:9")));

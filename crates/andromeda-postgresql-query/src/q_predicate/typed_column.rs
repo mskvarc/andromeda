@@ -323,10 +323,8 @@ mod tests {
         instance_row::{ElementLevel, InstanceRow},
         typed_column::typed_column_condition,
     };
-    use andromeda_ngsi_ld_query::filter::{
-        parser::operand::{parse_date, parse_time},
-        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation},
-    };
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
+    use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation};
     use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Query, SelectStatement, SimpleExpr};
@@ -504,8 +502,8 @@ mod tests {
 
     #[test]
     fn date_and_time_operands_never_read_the_overflow_column() {
-        let date = parse_date("2024-01-15").expect("a date");
-        let time = parse_time("12:00:00Z").expect("a time");
+        let date = "2024-01-15".parse::<NgsiLdDate>().expect("a date").get();
+        let time = "12:00:00Z".parse::<NgsiLdTime>().expect("a time").get();
         for (scalar_index, operand) in [Operand::Date(date), Operand::Time(time)].into_iter().enumerate() {
             for (op_index, comparator) in [Comparator::Equal, ORDERINGS[0], ORDERINGS[2]].into_iter().enumerate() {
                 assert_statement_snapshot!(
@@ -525,7 +523,7 @@ mod tests {
     /// which its index serves, at every depth.
     #[test]
     fn a_time_operand_compares_one_fixed_width_text_under_its_value_kind() {
-        let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
+        let time = "12:00:00,5Z".parse::<NgsiLdTime>().expect("the comma compatibility form").get();
         for (row_index, row) in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))].into_iter().enumerate() {
             for (op_index, comparator) in [Comparator::Equal, ORDERINGS[0], ORDERINGS[3]].into_iter().enumerate() {
                 assert_statement_snapshot!(
@@ -542,7 +540,7 @@ mod tests {
 
     #[test]
     fn a_date_operand_reads_value_kind_8() {
-        let date = parse_date("2024-01-15").expect("a date");
+        let date = "2024-01-15".parse::<NgsiLdDate>().expect("a date").get();
         let statement = render(current(&Operand::Date(date), Comparator::Equal));
         assert_statement_snapshot!("typed-column-a-date-operand-reads-value-kind-8", statement);
     }

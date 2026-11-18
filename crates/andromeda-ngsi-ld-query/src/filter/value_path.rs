@@ -114,12 +114,12 @@ impl ValuePath {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{Filter, instance_metadata::InstanceMetadata, parser::parse, value_path::ValuePath};
+    use crate::filter::{Filter, instance_metadata::InstanceMetadata, value_path::ValuePath};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
     /// The local path the one Query Term of `q` ends on.
     fn terminal(q: &str) -> ValuePath {
-        match parse(q).expect("a clause 4.9 filter") {
+        match q.parse::<Filter>().expect("a clause 4.9 filter") {
             Filter::Term(predicate) => predicate.path().terminal().clone(),
             other @ (Filter::And(_) | Filter::Or(_)) => panic!("{q} is no single term: {other:?}"),
         }

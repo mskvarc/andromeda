@@ -75,13 +75,13 @@ mod tests {
 
     #[test]
     fn a_named_collation_is_the_one_the_request_asked_for() {
-        let requested = IcuCollation::parse("de-u-co-phonebk").expect("valid collation");
+        let requested = "de-u-co-phonebk".parse::<IcuCollation>().expect("valid collation");
         assert_eq!(ordering_collation(Some(&requested)), PostgresCollation::new("de-u-co-phonebk"));
     }
 
     #[test]
     fn the_identifier_key_collates_and_puts_absent_values_last() {
-        let requested = IcuCollation::parse("de-u-co-phonebk").expect("valid collation");
+        let requested = "de-u-co-phonebk".parse::<IcuCollation>().expect("valid collation");
         assert_statement_snapshot!(
             "entity-ordering-the-identifier-key-collates-and-puts-absent-values-last",
             ordered_by_identifier(Some(&requested), SortDirection::Ascending)

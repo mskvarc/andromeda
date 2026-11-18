@@ -38,7 +38,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// holds anything after its path (a comparison written inside the braces), and
 /// the errors of [`parse_value_path`], the entity-type guard and
 /// [`check_depth`].
-pub fn parse_linked_entity_relation<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<AttributePath, FilterError> {
+pub(super) fn parse_linked_entity_relation<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<AttributePath, FilterError> {
     if cursor.peek() != Some(&Token::LBrace) {
         return parse_value_path(cursor, leading, depth).map(AttributePath::Local);
     }

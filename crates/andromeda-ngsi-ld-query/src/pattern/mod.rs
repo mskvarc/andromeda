@@ -53,29 +53,6 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    /// Compiles and validates a pattern, rejecting one outside the admitted dialect, and renders the restatement the store evaluates.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PatternError::NonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`PatternError::Regex`] when the `regex` crate rejects the pattern, [`PatternError::RepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, and [`PatternError::Translation`] when the pattern cannot be translated for rendering.
-    pub fn parse(pattern: &str) -> Result<Pattern, PatternError> {
-        let restated = restate_bracket_expressions(pattern)?;
-        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store.
-        let compiled = RegexBuilder::new(&restated).dot_matches_new_line(true).build()?;
-        let ast = Parser::new().parse(&restated).map_err(|_| PatternError::RepeatedQuantifier)?;
-        check_posix_dialect(&ast)?;
-        // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
-        let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(&restated, &ast)?;
-        let portable = PortablePattern::render(&hir)?;
-        let subject_start = SubjectStart::of(&hir);
-        Ok(Pattern {
-            source: pattern.into(),
-            compiled,
-            portable,
-            subject_start,
-        })
-    }
-
     /// The pattern as the client wrote it: the wire form, and what a request forwarded to a Context Source carries.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -105,17 +82,36 @@ impl Pattern {
 impl FromStr for Pattern {
     type Err = PatternError;
 
-    fn from_str(raw: &str) -> Result<Pattern, PatternError> {
-        Pattern::parse(raw)
+    /// Compiles and validates a pattern, rejecting one outside the admitted dialect, and renders the restatement the store evaluates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PatternError::NonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`PatternError::Regex`] when the `regex` crate rejects the pattern, [`PatternError::RepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, and [`PatternError::Translation`] when the pattern cannot be translated for rendering.
+    fn from_str(pattern: &str) -> Result<Pattern, PatternError> {
+        let restated = restate_bracket_expressions(pattern)?;
+        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store.
+        let compiled = RegexBuilder::new(&restated).dot_matches_new_line(true).build()?;
+        let ast = Parser::new().parse(&restated).map_err(|_| PatternError::RepeatedQuantifier)?;
+        check_posix_dialect(&ast)?;
+        // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
+        let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(&restated, &ast)?;
+        let portable = PortablePattern::render(&hir)?;
+        let subject_start = SubjectStart::of(&hir);
+        Ok(Pattern {
+            source: pattern.into(),
+            compiled,
+            portable,
+            subject_start,
+        })
     }
 }
 
-// Parsing lives in `Pattern::parse` so borrowed call sites do not allocate; `#[serde(try_from = "String")]` requires this.
+// Parsing lives in `FromStr` so borrowed call sites do not allocate; `#[serde(try_from = "String")]` requires this.
 impl TryFrom<String> for Pattern {
     type Error = PatternError;
 
     fn try_from(raw: String) -> Result<Pattern, PatternError> {
-        Pattern::parse(&raw)
+        raw.parse::<Pattern>()
     }
 }
 
@@ -133,29 +129,29 @@ mod tests {
 
     #[test]
     fn a_pattern_keeps_the_text_the_client_wrote() {
-        let pattern = Pattern::parse("^A.*").expect("valid");
+        let pattern = "^A.*".parse::<Pattern>().expect("valid");
         assert_eq!(pattern.as_str(), "^A.*");
     }
 
     #[test]
     fn an_invalid_regex_pattern_is_rejected_when_the_filter_is_parsed() {
-        let error = Pattern::parse("[").expect_err("must reject");
+        let error = "[".parse::<Pattern>().expect_err("must reject");
         assert!(matches!(error, PatternError::Regex(_)), "got {error:?}");
     }
 
     #[test]
     fn two_patterns_are_equal_exactly_when_their_text_is() {
-        assert_eq!(Pattern::parse("^A.*").unwrap(), Pattern::parse("^A.*").unwrap());
-        assert_ne!(Pattern::parse("^A.*").unwrap(), Pattern::parse("^B.*").unwrap());
+        assert_eq!("^A.*".parse::<Pattern>().unwrap(), "^A.*".parse::<Pattern>().unwrap());
+        assert_ne!("^A.*".parse::<Pattern>().unwrap(), "^B.*".parse::<Pattern>().unwrap());
     }
 
     #[test]
     fn a_pattern_round_trips_through_the_text_the_client_wrote() {
         let raw = "urn:ngsi-ld:Vehicle:.*";
-        let json = serde_json::to_string(&Pattern::parse(raw).expect("valid")).expect("serialises");
+        let json = serde_json::to_string(&raw.parse::<Pattern>().expect("valid")).expect("serialises");
         assert_eq!(json, format!("{raw:?}"));
         let decoded: Pattern = serde_json::from_str(&json).expect("deserialises");
-        assert_eq!(decoded, Pattern::parse(raw).expect("valid"));
+        assert_eq!(decoded, raw.parse::<Pattern>().expect("valid"));
     }
 
     #[test]
@@ -165,7 +161,7 @@ mod tests {
 
     #[test]
     fn a_pattern_matches_anywhere_in_the_subject() {
-        let pattern = Pattern::parse("erc").expect("valid");
+        let pattern = "erc".parse::<Pattern>().expect("valid");
         assert!(pattern.is_match("Mercedes"));
         assert!(!pattern.is_match("BMW"));
     }
@@ -176,15 +172,15 @@ mod tests {
     /// be built to POSIX's reading or one filter means two things.
     #[test]
     fn a_dot_matches_a_newline_as_posix_and_the_store_both_read_it() {
-        assert!(Pattern::parse("a.b").expect("valid").is_match("a\nb"));
-        assert!(Pattern::parse("^a.b$").expect("valid").is_match("a\nb"));
+        assert!("a.b".parse::<Pattern>().expect("valid").is_match("a\nb"));
+        assert!("^a.b$".parse::<Pattern>().expect("valid").is_match("a\nb"));
     }
 
     /// `(?i)` folds by Unicode simple case folding, so the letters of European
     /// languages outside ASCII compare case-insensitively too.
     #[test]
     fn a_case_insensitive_pattern_folds_letters_outside_ascii() {
-        let pattern = Pattern::parse("(?i)^čebela$").expect("valid");
+        let pattern = "(?i)^čebela$".parse::<Pattern>().expect("valid");
         for subject in ["čebela", "Čebela", "ČEBELA"] {
             assert!(pattern.is_match(subject), "{subject}");
         }
@@ -195,7 +191,7 @@ mod tests {
     /// restatement instead.
     #[test]
     fn a_case_insensitive_pattern_keeps_its_text_beside_its_restatement() {
-        let pattern = Pattern::parse("(?i)čer").expect("valid");
+        let pattern = "(?i)čer".parse::<Pattern>().expect("valid");
         assert_eq!(pattern.as_str(), "(?i)čer");
         assert_eq!(pattern.portable().as_str(), "[Čč][Ee][Rr]");
         assert_eq!(serde_json::to_string(&pattern).expect("serialises"), "\"(?i)čer\"");
@@ -206,7 +202,7 @@ mod tests {
     /// default.
     #[test]
     fn an_anchor_holds_to_the_whole_subject_until_multi_line_is_asked_for() {
-        assert!(!Pattern::parse("^b").expect("valid").is_match("a\nb"));
-        assert!(Pattern::parse("(?m)^b").expect("valid").is_match("a\nb"));
+        assert!(!"^b".parse::<Pattern>().expect("valid").is_match("a\nb"));
+        assert!("(?m)^b".parse::<Pattern>().expect("valid").is_match("a\nb"));
     }
 }

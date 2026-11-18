@@ -119,7 +119,7 @@ mod tests {
     }
 
     fn pattern_on_stored(raw: &str, indexes: PatternIndexes) -> SelectStatement {
-        let parsed = Pattern::parse(raw).expect("valid pattern");
+        let parsed = raw.parse::<Pattern>().expect("valid pattern");
         render(pattern(Expr::col(sea_query::Alias::new("stored")), &parsed, indexes))
     }
 

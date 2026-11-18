@@ -303,7 +303,7 @@ mod tests {
     /// not share.
     fn each_is_refused(patterns: &[&str]) {
         for pattern in patterns {
-            let error = Pattern::parse(pattern).expect_err("must be refused");
+            let error = pattern.parse::<Pattern>().expect_err("must be refused");
             assert!(matches!(error, PatternError::NonPosixConstruct { .. }), "{pattern}: got {error:?}");
         }
     }
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn the_case_insensitive_option_is_admitted_set_scoped_and_cleared() {
         for pattern in ["(?i)čer", "(?i:č)er", "(?-i)a", "a(?i)b(?-i)c", "(?-i:a)", "(?im)^a", "(?is)a.b", "(?xi)a b"] {
-            assert!(Pattern::parse(pattern).is_ok(), "{pattern} is admitted");
+            assert!(pattern.parse::<Pattern>().is_ok(), "{pattern} is admitted");
         }
     }
 
@@ -352,7 +352,7 @@ mod tests {
     fn a_repetition_count_above_255_is_refused_and_255_is_admitted() {
         each_is_refused(&["a{256}", "a{256,}", "a{1,256}", "a{300,400}", "(ab){1000}"]);
         for pattern in ["a{255}", "a{0,255}", "a{255,}"] {
-            assert!(Pattern::parse(pattern).is_ok(), "{pattern} is admitted");
+            assert!(pattern.parse::<Pattern>().is_ok(), "{pattern} is admitted");
         }
     }
 
@@ -377,7 +377,9 @@ mod tests {
             ("^[^[=a=]]$", &["b", "="], &["a"]),
             ("^[[a-z]--[aeiou]]$", &["b--a]", "[--e]"], &["b", "a", "b-a]"]),
         ] {
-            let pattern = Pattern::parse(raw).unwrap_or_else(|error| panic!("{raw} is a POSIX.2 extended regular expression: {error:?}"));
+            let pattern = raw
+                .parse::<Pattern>()
+                .unwrap_or_else(|error| panic!("{raw} is a POSIX.2 extended regular expression: {error:?}"));
             for subject in matching {
                 assert!(pattern.is_match(subject), "{raw} must match {subject:?}");
             }
@@ -390,9 +392,9 @@ mod tests {
     /// The store runs the restatement, so it reads the term as the in-memory engine does; the wire form stays the client's text.
     #[test]
     fn an_equivalence_class_keeps_its_text_beside_the_restatement_the_store_runs() {
-        let pattern = Pattern::parse("M[[=e=]]rc").expect("admitted");
+        let pattern = "M[[=e=]]rc".parse::<Pattern>().expect("admitted");
         assert_eq!(pattern.as_str(), "M[[=e=]]rc");
-        assert_eq!(pattern.portable(), Pattern::parse("M[e]rc").expect("admitted").portable());
+        assert_eq!(pattern.portable(), "M[e]rc".parse::<Pattern>().expect("admitted").portable());
     }
 
     /// A multi-character collating element depends on the collating-element table of some locale, and PostgreSQL refuses a malformed or unknown class name.
@@ -441,7 +443,7 @@ mod tests {
             ("^[\\d.]+$", &["1.5", "\u{663}.\u{664}"], &["1,5"]),
             ("^[^\\s]+$", &["čebela"], &["č ebela"]),
         ] {
-            let pattern = Pattern::parse(raw).unwrap_or_else(|error| panic!("{raw} is admitted: {error:?}"));
+            let pattern = raw.parse::<Pattern>().unwrap_or_else(|error| panic!("{raw} is admitted: {error:?}"));
             for subject in matching {
                 assert!(pattern.is_match(subject), "{raw} must match {subject:?}");
             }
@@ -476,7 +478,9 @@ mod tests {
             ("\\Aab", &["abc"], &["xab"]),
             ("urn:ngsi-ld:Vehicle:.*", &["urn:ngsi-ld:Vehicle:A4567"], &["urn:ngsi-ld:Device:1"]),
         ] {
-            let pattern = Pattern::parse(raw).unwrap_or_else(|error| panic!("{raw} is a POSIX.2 extended regular expression: {error:?}"));
+            let pattern = raw
+                .parse::<Pattern>()
+                .unwrap_or_else(|error| panic!("{raw} is a POSIX.2 extended regular expression: {error:?}"));
             for subject in matching {
                 assert!(pattern.is_match(subject), "{raw} must match {subject:?}");
             }
@@ -505,7 +509,7 @@ mod tests {
             "[[:ascii:]]",
             "[a[:digit:]]",
         ] {
-            assert!(Pattern::parse(pattern).is_ok(), "{pattern} is common to both engines");
+            assert!(pattern.parse::<Pattern>().is_ok(), "{pattern} is common to both engines");
         }
     }
 
@@ -513,7 +517,7 @@ mod tests {
     #[test]
     fn a_repetition_applied_to_another_repetition_keeps_its_own_rejection() {
         for pattern in ["a**", "invalid_entity_id_pattern**", "(a+)*+"] {
-            let error = Pattern::parse(pattern).expect_err("must be refused");
+            let error = pattern.parse::<Pattern>().expect_err("must be refused");
             assert!(matches!(error, PatternError::RepeatedQuantifier), "{pattern}: got {error:?}");
         }
     }
@@ -531,7 +535,7 @@ mod tests {
             "^(x[[:^alpha:]])$",
             "(ab)*[]-a]",
         ] {
-            assert!(Pattern::parse(pattern).is_err(), "{pattern} nests a construct only one engine runs");
+            assert!(pattern.parse::<Pattern>().is_err(), "{pattern} nests a construct only one engine runs");
         }
     }
 }

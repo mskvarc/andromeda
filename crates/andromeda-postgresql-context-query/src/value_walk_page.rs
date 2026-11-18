@@ -262,7 +262,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, value_path::ValuePath},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
         ordering::{
             compiled_ordering_term::CompiledOrderingTerm,
             expanded_ordering_target::ExpandedOrderingTarget,
@@ -470,7 +470,7 @@ mod tests {
     fn an_ordering_the_value_index_cannot_serve_keeps_the_plain_page() {
         let mut filtered = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
         filtered.selection.q = Some(CompiledFilter::new(
-            parse("\"https://example.com/speed\"!=1").expect("valid q"),
+            "\"https://example.com/speed\"!=1".parse::<Filter>().expect("valid q"),
             LanguageMatching::TagEquality,
         ));
         let two_terms = vehicles_by(vec![term(SPEED, OrderingDirection::Asc), term(SPEED, OrderingDirection::Desc)]);

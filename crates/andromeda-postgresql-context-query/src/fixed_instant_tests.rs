@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::EntitySelection,
     expanded_entity_selector::ExpandedEntitySelector,
-    filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, value_path::ValuePath},
+    filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
     geo::compiled_geo_query::CompiledGeoQuery,
     ordering::{
         compiled_ordering_term::CompiledOrderingTerm,
@@ -83,7 +83,7 @@ fn query(selection: EntitySelection) -> CompiledEntityQuery {
 fn filtered(q: &str) -> CompiledEntityQuery {
     query(
         EntitySelection::builder()
-            .q(Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality)))
+            .q(Some(CompiledFilter::new(q.parse::<Filter>().expect("valid q"), LanguageMatching::TagEquality)))
             .build(),
     )
 }
@@ -125,7 +125,7 @@ fn vehicles_near() -> CompiledEntityQuery {
 fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
     let mut keyed = vehicles_near();
     keyed.selection.q = Some(CompiledFilter::new(
-        parse(&format!("\"{TEMPERATURE}\"~=\"text-71.*\"")).expect("valid q"),
+        format!("\"{TEMPERATURE}\"~=\"text-71.*\"").parse::<Filter>().expect("valid q"),
         LanguageMatching::TagEquality,
     ));
     vec![
@@ -140,7 +140,7 @@ fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Coun
 /// geo page beside an `attrs` the census bounds.
 fn filter_read_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
     let mut scoped = filtered(&format!("\"{TEMPERATURE}\"~=\"text-71.*\""));
-    scoped.selection.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+    scoped.selection.scope_q = Some("/Madrid/#".parse::<ScopeQuery>().expect("valid scope query"));
     let mut carried = vehicles_near();
     carried.selection.attrs = vec![IriBuf::new(HEAD_SIGN.to_owned()).expect("valid IRI")];
     vec![
@@ -216,7 +216,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
                     .selectors(vec![
                         ExpandedEntitySelector::builder()
                             .type_selection(of_type("StopTime").type_selection)
-                            .id_pattern(Some(Pattern::parse(".*_1196287$").expect("valid pattern")))
+                            .id_pattern(Some(".*_1196287$".parse::<Pattern>().expect("valid pattern")))
                             .build(),
                     ])
                     .build(),

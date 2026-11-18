@@ -78,7 +78,7 @@ impl WrittenTypeSelection {
     }
 
     /// The expression a stored resource holds, read as the IRIs its leaves
-    /// already are: the inverse of [`ExpandedTypeSelection::into_raw`].
+    /// already are: the inverse of [`ExpandedTypeSelection::into_written`].
     ///
     /// A resource stores its type expressions expanded, so every leaf of one
     /// read back is the absolute IRI the request's `@context` expanded it to.
@@ -87,7 +87,7 @@ impl WrittenTypeSelection {
     ///
     /// Returns [`TermExpansionError::NotAnIri`] when a leaf is no absolute IRI,
     /// which an expression expanded before it was stored never holds.
-    pub fn as_expanded(&self) -> Result<ExpandedTypeSelection, TermExpansionError> {
+    pub fn to_expanded(&self) -> Result<ExpandedTypeSelection, TermExpansionError> {
         match self {
             WrittenTypeSelection::Wildcard => Ok(ExpandedTypeSelection::Wildcard),
             WrittenTypeSelection::Type(name) => IriBuf::new(name.as_str().to_owned())
@@ -95,12 +95,12 @@ impl WrittenTypeSelection {
                 .map_err(|_| TermExpansionError::NotAnIri),
             WrittenTypeSelection::And(children) => children
                 .iter()
-                .map(WrittenTypeSelection::as_expanded)
+                .map(WrittenTypeSelection::to_expanded)
                 .collect::<Result<_, _>>()
                 .map(ExpandedTypeSelection::And),
             WrittenTypeSelection::Or(children) => children
                 .iter()
-                .map(WrittenTypeSelection::as_expanded)
+                .map(WrittenTypeSelection::to_expanded)
                 .collect::<Result<_, _>>()
                 .map(ExpandedTypeSelection::Or),
         }
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn a_compact_leaf_is_no_expanded_expression() {
         let compact: WrittenTypeSelection = "Vehicle".parse().expect("valid type expression");
-        assert!(compact.as_expanded().is_err());
+        assert!(compact.to_expanded().is_err());
     }
 
     #[test]

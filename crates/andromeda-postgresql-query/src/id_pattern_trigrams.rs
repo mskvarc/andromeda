@@ -60,7 +60,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern};
 
     fn pattern(raw: &str) -> Pattern {
-        Pattern::parse(raw).expect("valid pattern")
+        raw.parse::<Pattern>().expect("valid pattern")
     }
 
     #[test]

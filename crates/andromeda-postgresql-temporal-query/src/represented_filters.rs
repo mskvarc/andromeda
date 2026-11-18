@@ -96,7 +96,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -157,7 +157,7 @@ mod tests {
 
     fn with_q(q: &str) -> CompiledTemporalQuery {
         let mut compiled = compiled();
-        compiled.entities.q = Some(CompiledFilter::new(parser::parse(q).expect("q parses"), LanguageMatching::TagEquality));
+        compiled.entities.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality));
         compiled
     }
 

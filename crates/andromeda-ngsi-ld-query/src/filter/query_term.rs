@@ -100,7 +100,7 @@ impl OrderingOperator {
     /// The inverse of what the parser consumes, used to serialise a filter back
     /// into query-string form.
     #[must_use]
-    pub const fn ngsi_token(self) -> &'static str {
+    pub const fn spelling(self) -> &'static str {
         match self {
             OrderingOperator::Greater => operator_spelling::GREATER,
             OrderingOperator::GreaterEq => operator_spelling::GREATER_EQ,
@@ -133,7 +133,7 @@ pub enum SetMembership {
 impl SetMembership {
     /// Clause 4.9 token this equality comparison was written as.
     #[must_use]
-    pub const fn ngsi_token(self) -> &'static str {
+    pub const fn spelling(self) -> &'static str {
         match self {
             SetMembership::Within => operator_spelling::EQUAL,
             SetMembership::Outside => operator_spelling::UNEQUAL,
@@ -151,8 +151,8 @@ mod tests {
 
     #[test]
     fn set_membership_writes_the_equality_tokens() {
-        assert_eq!(SetMembership::Within.ngsi_token(), "==");
-        assert_eq!(SetMembership::Outside.ngsi_token(), "!=");
+        assert_eq!(SetMembership::Within.spelling(), "==");
+        assert_eq!(SetMembership::Outside.spelling(), "!=");
     }
 
     #[test]
@@ -164,7 +164,7 @@ mod tests {
             (OrderingOperator::LessEq, OrderRelation::LessOrEqual, "<="),
         ] {
             assert_eq!(op.relation(), relation, "{op:?}");
-            assert_eq!(op.ngsi_token(), token, "{op:?}");
+            assert_eq!(op.spelling(), token, "{op:?}");
         }
     }
 }

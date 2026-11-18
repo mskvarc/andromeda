@@ -26,7 +26,7 @@ use std::iter;
 /// [`TypeSelectionError::UnexpectedCharacter`] for a character the clause 4.17 grammar
 /// does not admit at its position, and [`TypeSelectionError::InvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
-pub fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
+pub(super) fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(TypeSelectionError::Empty);

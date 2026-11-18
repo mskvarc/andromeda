@@ -71,7 +71,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading, value_path::ValuePath},
+        filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading, value_path::ValuePath},
         geo::compiled_geo_query::CompiledGeoQuery,
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
     };
@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn a_filter_a_geo_query_and_an_ordering_each_contribute_their_own_names() {
         let reading = FilterReading::lowered(
-            &parser::parse("\"https://example.com/speed\">1").expect("parse q"),
+            &"\"https://example.com/speed\">1".parse::<Filter>().expect("parse q"),
             LanguageMatching::TagEquality,
         );
         let geo = geo_query("https://example.com/observationPoint");

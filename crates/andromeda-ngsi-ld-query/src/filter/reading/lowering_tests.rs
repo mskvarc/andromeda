@@ -4,7 +4,6 @@ use crate::filter::{
     Filter,
     instance_metadata::InstanceMetadata,
     language_matching::LanguageMatching,
-    parser::parse,
     reading::{
         filter_reading::FilterReading,
         hop::Hop,
@@ -26,7 +25,7 @@ use std::slice;
 
 /// The one term `q` lowers to under `matching`.
 fn term_under(q: &str, matching: LanguageMatching) -> TermReading {
-    match FilterReading::lowered(&parse(q).expect("a clause 4.9 filter"), matching) {
+    match FilterReading::lowered(&q.parse::<Filter>().expect("a clause 4.9 filter"), matching) {
         FilterReading::Term(term) => *term,
         other @ (FilterReading::All(_) | FilterReading::Any(_)) => panic!("{q} lowers to {other:?}"),
     }
@@ -140,7 +139,7 @@ fn a_target_language_only_a_tag_spells_is_a_language_terminal() {
     assert_eq!(
         term("a[en-GB]==\"x\"").terminal(),
         &Terminal::Language {
-            language: TargetLanguage::parse("en-GB").expect("a tag"),
+            language: "en-GB".parse::<TargetLanguage>().expect("a tag"),
             matching: LanguageMatching::TagEquality,
         }
     );
@@ -266,13 +265,18 @@ fn carrying_any_attribute_is_the_reading_of_their_existence_disjunction() {
     assert_eq!(
         FilterReading::carrying_any([name("https://example.com/b"), name("https://example.com/a"), name("https://example.com/b")]),
         FilterReading::of(
-            &parse("\"https://example.com/a\"|\"https://example.com/b\"").expect("a clause 4.9 filter"),
+            &"\"https://example.com/a\"|\"https://example.com/b\""
+                .parse::<Filter>()
+                .expect("a clause 4.9 filter"),
             LanguageMatching::TagEquality
         )
     );
     assert_eq!(
         FilterReading::carrying_any([name("https://example.com/a")]),
-        FilterReading::of(&parse("\"https://example.com/a\"").expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+        FilterReading::of(
+            &"\"https://example.com/a\"".parse::<Filter>().expect("a clause 4.9 filter"),
+            LanguageMatching::TagEquality
+        )
     );
     assert_eq!(FilterReading::carrying_any([]), FilterReading::Any(Vec::new()));
 }

@@ -234,7 +234,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset_selector::DatasetSelector,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         temporal::{
             compiled::CompiledTemporalQuery,
             contributed_entities::{ContributedEntities, ContributedRendering},
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn the_dataset_parameter_narrows_the_candidates_and_the_instances() {
         let mut compiled = after_2024(TimeProp::Observed);
-        compiled.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
+        compiled.instances.dataset_id_filter = vec!["urn:ngsi-ld:Dataset:one".parse::<DatasetSelector>().expect("a valid dataset selector")];
         let statement = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Selected,
@@ -405,7 +405,7 @@ mod tests {
         };
         let mut compiled = after_2024(TimeProp::Observed);
         compiled.entities.q = Some(CompiledFilter::new(
-            parser::parse(&format!("\"{load}\"==\"heavy\"")).expect("q parses"),
+            format!("\"{load}\"==\"heavy\"").parse::<Filter>().expect("q parses"),
             LanguageMatching::TagEquality,
         ));
         compiled.contributed = ContributedEntities::new([truck()], ContributedRendering::Merged);

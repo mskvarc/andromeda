@@ -54,7 +54,7 @@ impl ProvisionedCollations {
     /// no object fails the statement with `collation … does not exist`, so a
     /// conformant request would answer 500.
     ///
-    /// The identifier was accepted by [`IcuCollation::parse`] as a well-formed
+    /// The identifier was accepted by [`IcuCollation`]'s `FromStr` as a well-formed
     /// BCP47 tag whose Unicode keywords are the ones IETF RFC 6067 registers.
     /// Whether ICU holds a collation for the locale itself is asked here, in
     /// the one place that can ask it: the collation is created under strict

@@ -156,7 +156,10 @@ pub fn row_from_pg(row: &PgRow) -> Result<SubscriptionRow, ContextStoreError> {
     let dataset_id = dataset_id_raw
         .map(|ids| {
             ids.iter()
-                .map(|raw| DatasetSelector::parse(raw).map_err(|error| StoredSubscriptionError::DatasetId(Box::new(error))))
+                .map(|raw| {
+                    raw.parse::<DatasetSelector>()
+                        .map_err(|error| StoredSubscriptionError::DatasetId(Box::new(error)))
+                })
                 .collect::<Result<Vec<DatasetSelector>, StoredSubscriptionError>>()
         })
         .transpose()?;
@@ -167,7 +170,7 @@ pub fn row_from_pg(row: &PgRow) -> Result<SubscriptionRow, ContextStoreError> {
     let q = stored_q(row)?;
     let scope_q_raw: Option<String> = row.try_get(Subscriptions::ScopeQ.unquoted())?;
     let scope_q = scope_q_raw
-        .map(|raw| ScopeQuery::parse(&raw).map_err(|error| StoredSubscriptionError::ScopeQ(Box::new(error))))
+        .map(|raw| raw.parse::<ScopeQuery>().map_err(|error| StoredSubscriptionError::ScopeQ(Box::new(error))))
         .transpose()?;
     let csf_raw: Option<String> = row.try_get(Subscriptions::Csf.unquoted())?;
     let csf = csf_raw

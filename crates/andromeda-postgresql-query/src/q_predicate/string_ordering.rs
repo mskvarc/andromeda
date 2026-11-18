@@ -45,10 +45,8 @@ pub fn ordered_string(stored: SimpleExpr, operand: &Operand, comparator: Compara
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::string_ordering::{ordered_string, string_ordering_collation};
-    use andromeda_ngsi_ld_query::filter::{
-        parser::operand::{parse_date, parse_time},
-        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation},
-    };
+    use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
+    use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
     use sea_query::{Alias, Expr, Query, SelectStatement};
 
@@ -96,8 +94,8 @@ mod tests {
     /// order of its own.
     #[test]
     fn a_non_string_operand_is_not_collated() {
-        let date = parse_date("2024-01-15").expect("a date");
-        let time = parse_time("12:00:00Z").expect("a time");
+        let date = "2024-01-15".parse::<NgsiLdDate>().expect("a date").get();
+        let time = "12:00:00Z".parse::<NgsiLdTime>().expect("a time").get();
         for operand in [Operand::Date(date), Operand::Time(time), Operand::Number(1.into()), Operand::Boolean(true)] {
             assert!(
                 string_ordering_collation(&operand, Comparator::Ordered(OrderRelation::Greater)).is_none(),

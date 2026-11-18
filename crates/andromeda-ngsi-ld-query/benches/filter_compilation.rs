@@ -8,12 +8,12 @@
 
 use andromeda_ngsi_ld_query::{
     filter::{
+        Filter,
         compiled_filter::CompiledFilter,
-        expansion::expand_q_expr,
+        expansion::expand_filter,
         filter_error::FilterError,
         json_key_attributes::JsonKeyAttributes,
         language_matching::LanguageMatching,
-        parser::parse,
         reading::filter_reading::FilterReading,
     },
     namespace_expander::EXAMPLE_NAMESPACE,
@@ -58,16 +58,16 @@ enum SetupError {
 /// Run every benchmark, or fail with the reason the fixture cannot be built.
 fn main() -> Result<(), SetupError> {
     let written = hundred_terms();
-    let parsed = parse(&written)?;
+    let parsed = written.parse::<Filter>()?;
     let runtime = Builder::new_current_thread().build()?;
     let json_keys = JsonKeyAttributes::default();
     let mut criterion = Criterion::default().configure_from_args();
     let mut group = criterion.benchmark_group("compile-100-terms");
-    group.bench_function("parse", |bencher| bencher.iter(|| parse(black_box(&written))));
+    group.bench_function("parse", |bencher| bencher.iter(|| black_box(&written).parse::<Filter>()));
     group.bench_function("expand", |bencher| {
-        bencher.iter(|| runtime.block_on(expand_q_expr(black_box(parsed.clone()), &json_keys, &EXAMPLE_NAMESPACE)));
+        bencher.iter(|| runtime.block_on(expand_filter(black_box(parsed.clone()), &json_keys, &EXAMPLE_NAMESPACE)));
     });
-    let expanded = runtime.block_on(expand_q_expr(parsed, &json_keys, &EXAMPLE_NAMESPACE))?;
+    let expanded = runtime.block_on(expand_filter(parsed, &json_keys, &EXAMPLE_NAMESPACE))?;
     let lowered = FilterReading::lowered(&expanded, LanguageMatching::TagEquality);
     group.bench_function("lower", |bencher| {
         bencher.iter(|| FilterReading::lowered(black_box(&expanded), LanguageMatching::TagEquality));

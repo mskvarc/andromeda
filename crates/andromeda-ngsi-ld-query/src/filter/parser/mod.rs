@@ -11,12 +11,12 @@
 //! right-hand-side literals, and [`token_cursor`] the position all of them
 //! advance.
 
-pub mod attribute_path;
-pub mod lexer;
-pub mod operand;
-pub mod quoted_string;
-pub mod token_cursor;
-pub mod value_path;
+mod attribute_path;
+pub(in crate::filter) mod lexer;
+mod operand;
+mod quoted_string;
+mod token_cursor;
+mod value_path;
 
 use crate::filter::{
     Filter,
@@ -31,32 +31,37 @@ use crate::filter::{
     },
     query_term::{OrderingOperator, QueryTerm, SetMembership},
 };
+use std::str::FromStr;
 
-/// Parses an NGSI-LD `q` filter expression string into an AST (clause 4.9).
-///
-/// # Errors
-///
-/// Returns [`FilterError::Empty`] when the input is blank, the tokeniser's
-/// [`FilterError::UnterminatedString`] or [`FilterError::UnexpectedCharacter`] when
-/// it cannot be lexed, and [`FilterError::Expected`],
-/// [`FilterError::UnexpectedToken`], [`FilterError::PathTooDeep`] or
-/// one of the literal-typing variants when it is outside the clause 4.9
-/// grammar, and [`FilterError::NestedTooDeep`] when its parentheses nest past
-/// [`WRITTEN_NESTING_CEILING`].
-pub fn parse(input: &str) -> Result<Filter, FilterError> {
-    if input.trim().is_empty() {
-        return Err(FilterError::Empty);
+impl FromStr for Filter {
+    type Err = FilterError;
+
+    /// Parses an NGSI-LD `q` filter expression string into a tree (clause 4.9).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FilterError::Empty`] when the input is blank, the tokeniser's
+    /// [`FilterError::UnterminatedString`] or [`FilterError::UnexpectedCharacter`] when
+    /// it cannot be lexed, and [`FilterError::Expected`],
+    /// [`FilterError::UnexpectedToken`], [`FilterError::PathTooDeep`] or
+    /// one of the literal-typing variants when it is outside the clause 4.9
+    /// grammar, and [`FilterError::NestedTooDeep`] when its parentheses nest past
+    /// [`WRITTEN_NESTING_CEILING`].
+    fn from_str(input: &str) -> Result<Filter, FilterError> {
+        if input.trim().is_empty() {
+            return Err(FilterError::Empty);
+        }
+        let tokens = tokenize(input)?;
+        let mut cursor = TokenCursor::new(&tokens);
+        let filter = parse_or(&mut cursor, 0)?;
+        if !cursor.is_exhausted() {
+            return Err(FilterError::UnexpectedToken {
+                position: cursor.position(),
+                token: cursor.found(),
+            });
+        }
+        Ok(filter)
     }
-    let tokens = tokenize(input)?;
-    let mut cursor = TokenCursor::new(&tokens);
-    let expr = parse_or(&mut cursor, 0)?;
-    if !cursor.is_exhausted() {
-        return Err(FilterError::UnexpectedToken {
-            position: cursor.position(),
-            token: cursor.found(),
-        });
-    }
-    Ok(expr)
 }
 
 /// Parse a disjunction: `and_expr ('|' and_expr)*`, inside `depth`
@@ -228,12 +233,11 @@ mod tests {
         filter::{
             Filter,
             attribute_path::AttributePath,
-            complexity::WRITTEN_NESTING_CEILING,
-            display::serialize,
+            complexity::{MAX_SUB_ATTRIBUTE_DEPTH, WRITTEN_NESTING_CEILING},
             equality_value::EqualityValue,
             expectation::{Expectation, Found},
             filter_error::FilterError,
-            parser::{lexer::TokenKind, parse, value_path::MAX_SUB_ATTRIBUTE_DEPTH},
+            parser::lexer::TokenKind,
             query_term::{OrderingOperator, QueryTerm, SetMembership},
             scalar::Scalar,
             value_path::ValuePath,
@@ -245,7 +249,7 @@ mod tests {
 
     #[test]
     fn parse_existence() {
-        let expr = parse("temperature").unwrap();
+        let expr = "temperature".parse::<Filter>().unwrap();
         pretty_assertions::assert_eq!(
             expr,
             Filter::Term(QueryTerm::Exists(AttributePath::Local(ValuePath::simple(
@@ -256,7 +260,7 @@ mod tests {
 
     #[test]
     fn parse_equality_number() {
-        let expr = parse("temperature==20").unwrap();
+        let expr = "temperature==20".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { path, membership, value: rhs }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "temperature");
@@ -270,7 +274,7 @@ mod tests {
     #[test]
     fn an_attribute_path_within_the_depth_limit_parses() {
         let at_limit = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH));
-        assert!(parse(&at_limit).is_ok(), "a path at the limit must parse");
+        assert!(at_limit.parse::<Filter>().is_ok(), "a path at the limit must parse");
     }
 
     #[test]
@@ -280,7 +284,7 @@ mod tests {
         // its depth.
         let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
         assert!(
-            matches!(parse(&too_deep), Err(FilterError::PathTooDeep { .. })),
+            matches!(too_deep.parse::<Filter>(), Err(FilterError::PathTooDeep { .. })),
             "an over-deep path must be rejected"
         );
     }
@@ -290,19 +294,22 @@ mod tests {
     #[test]
     fn parentheses_at_the_written_ceiling_parse_and_one_level_deeper_are_too_complex() {
         let grouped = |levels: usize| format!("{}a{}", "(".repeat(levels), ")".repeat(levels));
-        assert!(parse(&grouped(WRITTEN_NESTING_CEILING.get())).is_ok(), "parentheses at the ceiling must parse");
-        let error = parse(&grouped(WRITTEN_NESTING_CEILING.get() + 1)).expect_err("must reject");
+        assert!(
+            grouped(WRITTEN_NESTING_CEILING.get()).parse::<Filter>().is_ok(),
+            "parentheses at the ceiling must parse"
+        );
+        let error = grouped(WRITTEN_NESTING_CEILING.get() + 1).parse::<Filter>().expect_err("must reject");
         assert!(
             matches!(error, FilterError::NestedTooDeep { depth: 65, limit } if limit == WRITTEN_NESTING_CEILING),
             "got {error:?}"
         );
         let unbounded = format!("{}a", "(".repeat(1_000_000));
-        assert!(matches!(parse(&unbounded), Err(FilterError::NestedTooDeep { depth: 65, .. })));
+        assert!(matches!(unbounded.parse::<Filter>(), Err(FilterError::NestedTooDeep { depth: 65, .. })));
     }
 
     #[test]
     fn parse_inequality_string() {
-        let expr = parse("brandName!=\"Mercedes\"").unwrap();
+        let expr = "brandName!=\"Mercedes\"".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { path, membership, value: rhs }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "brandName");
@@ -315,7 +322,7 @@ mod tests {
 
     #[test]
     fn parse_greater_than() {
-        let expr = parse("speed>50").unwrap();
+        let expr = "speed>50".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Ordering {
                 path,
@@ -332,7 +339,7 @@ mod tests {
 
     #[test]
     fn parse_and_expression() {
-        let expr = parse("speed>50;brandName!=\"Mercedes\"").unwrap();
+        let expr = "speed>50;brandName!=\"Mercedes\"".parse::<Filter>().unwrap();
         match expr {
             Filter::And(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
             other @ (Filter::Or(_) | Filter::Term(_)) => panic!("expected And, got {other:?}"),
@@ -341,7 +348,7 @@ mod tests {
 
     #[test]
     fn parse_or_expression() {
-        let expr = parse("speed>50|temperature<10").unwrap();
+        let expr = "speed>50|temperature<10".parse::<Filter>().unwrap();
         match expr {
             Filter::Or(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
             other @ (Filter::And(_) | Filter::Term(_)) => panic!("expected Or, got {other:?}"),
@@ -350,7 +357,7 @@ mod tests {
 
     #[test]
     fn parse_and_takes_precedence_over_or() {
-        let expr = parse("a==1|b==2;c==3").unwrap();
+        let expr = "a==1|b==2;c==3".parse::<Filter>().unwrap();
         match expr {
             Filter::Or(terms) => {
                 pretty_assertions::assert_eq!(terms.len(), 2);
@@ -365,7 +372,7 @@ mod tests {
 
     #[test]
     fn parse_parenthesized_group() {
-        let expr = parse("(speed>50|rpm>3000);brandName==\"Mercedes\"").unwrap();
+        let expr = "(speed>50|rpm>3000);brandName==\"Mercedes\"".parse::<Filter>().unwrap();
         match expr {
             Filter::And(terms) => {
                 pretty_assertions::assert_eq!(terms.len(), 2);
@@ -380,7 +387,7 @@ mod tests {
 
     #[test]
     fn parse_range() {
-        let expr = parse("temperature==10..20").unwrap();
+        let expr = "temperature==10..20".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
                 EqualityValue::Range { min, max } => {
@@ -397,12 +404,12 @@ mod tests {
     /// operator takes a single value.
     #[test]
     fn a_range_after_an_ordering_operator_does_not_parse() {
-        assert!(parse("temperature>10..20").is_err());
+        assert!("temperature>10..20".parse::<Filter>().is_err());
     }
 
     #[test]
     fn parse_value_list() {
-        let expr = parse("color==\"red\",\"blue\",\"green\"").unwrap();
+        let expr = "color==\"red\",\"blue\",\"green\"".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
                 EqualityValue::ValueList(vals) => {
@@ -416,7 +423,7 @@ mod tests {
 
     #[test]
     fn parse_match_pattern() {
-        let expr = parse("brandName~=\"Merc.*\"").unwrap();
+        let expr = "brandName~=\"Merc.*\"".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::MatchPattern { path, pattern }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "brandName");
@@ -428,7 +435,7 @@ mod tests {
 
     #[test]
     fn parse_not_match_pattern() {
-        let expr = parse("brandName!~=\"Merc.*\"").unwrap();
+        let expr = "brandName!~=\"Merc.*\"".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::NotMatchPattern { path, pattern }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "brandName");
@@ -444,17 +451,17 @@ mod tests {
         // literal that has the shape of one but is not a real instant is
         // derivable from no production of the clause 4.9 grammar (`quotedStr`
         // carries the quotes it lacks), and the request is malformed.
-        match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
+        match "observed>=2017-12-24T12:00:00Z".parse::<Filter>().expect("parses") {
             Filter::Term(QueryTerm::Ordering {
                 value: Scalar::DateTime(_), ..
             }) => {}
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected a date-time operand, got {other:?}"),
         }
 
-        let error = parse("observed>=2017-13-45").expect_err("must reject");
+        let error = "observed>=2017-13-45".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::InvalidDate { .. }), "got {error:?}");
 
-        let error = parse("observed>=2017-12-24T99:00:00Z").expect_err("must reject");
+        let error = "observed>=2017-12-24T99:00:00Z".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::InvalidDateTime { .. }), "got {error:?}");
     }
 
@@ -475,9 +482,9 @@ mod tests {
             ),
             ("t!=11:00:00,5Z..13:00:00,5Z", "t!=11:00:00.5Z..13:00:00.5Z"),
         ] {
-            let read = parse(comma).unwrap_or_else(|error| panic!("{comma}: {error}"));
-            let written_with_a_point = parse(point).expect("the decimal point form parses");
-            pretty_assertions::assert_eq!(serialize(&read), serialize(&written_with_a_point), "{comma}");
+            let read = comma.parse::<Filter>().unwrap_or_else(|error| panic!("{comma}: {error}"));
+            let written_with_a_point = point.parse::<Filter>().expect("the decimal point form parses");
+            pretty_assertions::assert_eq!(read.to_string(), written_with_a_point.to_string(), "{comma}");
             pretty_assertions::assert_eq!(read, written_with_a_point, "{comma}");
         }
     }
@@ -488,7 +495,7 @@ mod tests {
     /// the text the write path stored for it.
     #[test]
     fn a_quoted_operand_that_satisfies_no_temporal_form_compares_as_text() {
-        match parse("observed>=\"2017-12-24T99:00:00Z\"").expect("a quotedStr is always derivable") {
+        match "observed>=\"2017-12-24T99:00:00Z\"".parse::<Filter>().expect("a quotedStr is always derivable") {
             Filter::Term(QueryTerm::Ordering { value: Scalar::Str(text), .. }) => {
                 pretty_assertions::assert_eq!(text, "2017-12-24T99:00:00Z");
             }
@@ -501,11 +508,11 @@ mod tests {
     /// `dateTime`.
     #[test]
     fn a_quoted_operand_in_a_temporal_form_is_a_string_and_a_bare_one_that_value() {
-        match parse("observed>=\"2017-12-24T12:00:00Z\"").expect("parses") {
+        match "observed>=\"2017-12-24T12:00:00Z\"".parse::<Filter>().expect("parses") {
             Filter::Term(QueryTerm::Ordering { value: Scalar::Str(_), .. }) => {}
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected a string operand, got {other:?}"),
         }
-        match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
+        match "observed>=2017-12-24T12:00:00Z".parse::<Filter>().expect("parses") {
             Filter::Term(QueryTerm::Ordering {
                 value: Scalar::DateTime(_), ..
             }) => {}
@@ -518,16 +525,16 @@ mod tests {
         // Clause 4.9: the operand of `~=` is a regular expression. An
         // unterminated character class is not one, and the request is rejected
         // rather than turned into a filter that matches nothing.
-        let error = parse("name~=\"[\"").expect_err("must reject");
+        let error = "name~=\"[\"".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::Pattern(PatternError::Regex(_))), "got {error:?}");
 
-        let error = parse("name!~=\"[\"").expect_err("must reject");
+        let error = "name!~=\"[\"".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::Pattern(PatternError::Regex(_))), "got {error:?}");
     }
 
     #[test]
     fn parse_dotted_attr_path() {
-        let expr = parse("temperature.observedAt>=2017-12-24T12:00:00Z").unwrap();
+        let expr = "temperature.observedAt>=2017-12-24T12:00:00Z".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Ordering {
                 path,
@@ -555,7 +562,7 @@ mod tests {
 
     #[test]
     fn parse_compound_value_path() {
-        let expr = parse("address[city]==\"Berlin\"").unwrap();
+        let expr = "address[city]==\"Berlin\"".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "address");
@@ -576,7 +583,7 @@ mod tests {
 
     #[test]
     fn parse_nested_compound_value_path() {
-        let expr = parse("sensor.rawdata[airquality.particulate]==40").unwrap();
+        let expr = "sensor.rawdata[airquality.particulate]==40".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "sensor");
@@ -601,7 +608,7 @@ mod tests {
 
     #[test]
     fn parse_less_equal() {
-        let expr = parse("capacity<=10").unwrap();
+        let expr = "capacity<=10".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Ordering { operator: op, .. }) => {
                 pretty_assertions::assert_eq!(op, OrderingOperator::LessEq);
@@ -612,7 +619,7 @@ mod tests {
 
     #[test]
     fn parse_complex_mixed() {
-        let expr = parse("(temperature>=20;temperature<=25)|capacity<=10").unwrap();
+        let expr = "(temperature>=20;temperature<=25)|capacity<=10".parse::<Filter>().unwrap();
         match expr {
             Filter::Or(terms) => {
                 pretty_assertions::assert_eq!(terms.len(), 2);
@@ -627,7 +634,7 @@ mod tests {
 
     #[test]
     fn parse_uri_equality() {
-        let expr = parse("isParked==\"urn:ngsi-ld:OffStreetParking:Downtown1\"").unwrap();
+        let expr = "isParked==\"urn:ngsi-ld:OffStreetParking:Downtown1\"".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
                 EqualityValue::Scalar(Scalar::Str(s)) => {
@@ -641,7 +648,7 @@ mod tests {
 
     #[test]
     fn parse_negative_number() {
-        let expr = parse("temperature>-5").unwrap();
+        let expr = "temperature>-5".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Ordering { value: rhs, .. }) => match rhs {
                 Scalar::Number(n) => {
@@ -657,7 +664,7 @@ mod tests {
 
     #[test]
     fn parse_float_number() {
-        let expr = parse("temperature==23.5").unwrap();
+        let expr = "temperature==23.5".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { value: rhs, .. }) => match rhs {
                 EqualityValue::Scalar(Scalar::Number(n)) => {
@@ -671,7 +678,7 @@ mod tests {
 
     #[test]
     fn exact_fraction_and_range_failure_are_typed() {
-        let expr = parse("temperature==0.100000000000000005").expect("supported exact number");
+        let expr = "temperature==0.100000000000000005".parse::<Filter>().expect("supported exact number");
         let Filter::Term(QueryTerm::Equality {
             value: EqualityValue::Scalar(Scalar::Number(number)),
             ..
@@ -680,12 +687,12 @@ mod tests {
             panic!("expected numeric equality");
         };
         pretty_assertions::assert_eq!(number.to_string(), "0.100000000000000005");
-        assert!(matches!(parse("temperature==1e-16384"), Err(FilterError::InvalidNumber { .. })));
+        assert!(matches!("temperature==1e-16384".parse::<Filter>(), Err(FilterError::InvalidNumber { .. })));
     }
 
     #[test]
     fn parse_boolean_value() {
-        let expr = parse("active==true").unwrap();
+        let expr = "active==true".parse::<Filter>().unwrap();
         match expr {
             Filter::Term(QueryTerm::Equality { value: rhs, .. }) => {
                 pretty_assertions::assert_eq!(rhs, EqualityValue::Scalar(Scalar::Bool(true)));
@@ -696,13 +703,13 @@ mod tests {
 
     #[test]
     fn error_on_unterminated_string() {
-        let result = parse("name==\"hello");
+        let result = "name==\"hello".parse::<Filter>();
         assert!(result.is_err());
     }
 
     #[test]
     fn error_on_unexpected_token() {
-        let result = parse("==");
+        let result = "==".parse::<Filter>();
         assert!(result.is_err());
     }
 
@@ -743,7 +750,7 @@ mod tests {
         // Clause 4.9 `QueryTerm =/ Attribute equal CompEqualityValue` with
         // `Attribute = LinkedEntityRelation`: the braces close over the path and
         // the comparison follows them (EXAMPLE 13, `sensor{humidity}==40`).
-        let expr = parse("isParkedIn{category}==\"commercial\"").expect("parses");
+        let expr = "isParkedIn{category}==\"commercial\"".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Equality { path, membership, value: rhs } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -763,7 +770,7 @@ mod tests {
     fn a_hop_carrying_two_comma_separated_types_parses_them_as_its_guard() {
         // The clause 4.9 guard production is `*1(EntityType 1*("," EntityType) ":")`,
         // so two or more types followed by a colon constrain the linked entity.
-        let expr = parse("isParkedIn{Building,Store:category}==\"x\"").expect("parses");
+        let expr = "isParkedIn{Building,Store:category}==\"x\"".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -779,7 +786,7 @@ mod tests {
 
     #[test]
     fn hops_nest_and_the_innermost_one_carries_the_comparison() {
-        let expr = parse("a{b{c}}==5").expect("parses");
+        let expr = "a{b{c}}==5".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Equality { path, value: rhs, .. } => {
                 let (outer, outer_guard, inner_path) = hop_of(path);
@@ -799,7 +806,7 @@ mod tests {
 
     #[test]
     fn a_hop_with_no_operator_inside_is_an_existence_check_on_the_linked_entity() {
-        let expr = parse("a{b}").expect("parses");
+        let expr = "a{b}".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Exists(path) => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -831,7 +838,7 @@ mod tests {
             ),
             ("sensor{\"ex:Device\":humidity}==40", "sensor", "ex:Device", "humidity"),
         ] {
-            let expr = parse(q).unwrap_or_else(|error| panic!("{q}: {error}"));
+            let expr = q.parse::<Filter>().unwrap_or_else(|error| panic!("{q}: {error}"));
             let (read_relationship, read_guard, inner) = hop_of(predicate_of(&expr).path());
             pretty_assertions::assert_eq!(
                 (read_relationship, read_guard, local_of(inner).attribute.as_str()),
@@ -844,7 +851,7 @@ mod tests {
     /// The guard of one type opens each hop of a chain, outermost first.
     #[test]
     fn each_hop_of_a_chain_takes_a_guard_of_one_type() {
-        let expr = parse("r{T1:s{T2:a}}==1").expect("parses");
+        let expr = "r{T1:s{T2:a}}==1".parse::<Filter>().expect("parses");
         let (relationship, guard, inner) = hop_of(predicate_of(&expr).path());
         pretty_assertions::assert_eq!((relationship, guard), ("r", vec!["T1"]));
         let (relationship, guard, inner) = hop_of(inner);
@@ -856,7 +863,7 @@ mod tests {
     /// its colon would otherwise end a type guard.
     #[test]
     fn a_quoted_prefixed_name_inside_a_hop_is_an_attribute_name() {
-        let expr = parse("a{\"prefix:name\"}==\"v\"").expect("parses");
+        let expr = "a{\"prefix:name\"}==\"v\"".parse::<Filter>().expect("parses");
         let (relationship, guard, inner) = hop_of(predicate_of(&expr).path());
         pretty_assertions::assert_eq!(relationship, "a");
         assert!(guard.is_empty(), "a quoted name is no guard: {guard:?}");
@@ -868,13 +875,13 @@ mod tests {
     /// attribute, so it is refused and the client quotes what it meant.
     #[test]
     fn a_bare_name_with_two_colons_at_the_head_of_a_hop_is_ambiguous() {
-        let error = parse("rel{ex:Store:category}==\"x\"").expect_err("must reject");
+        let error = "rel{ex:Store:category}==\"x\"".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
     fn a_traversal_predicate_combines_with_a_local_one_through_the_conjunction() {
-        let expr = parse("speed>50;isParkedIn{category}==\"x\"").expect("parses");
+        let expr = "speed>50;isParkedIn{category}==\"x\"".parse::<Filter>().expect("parses");
         match expr {
             Filter::And(terms) => {
                 pretty_assertions::assert_eq!(terms.len(), 2);
@@ -896,7 +903,7 @@ mod tests {
         // Only the final type can carry the guard's terminating colon, because a
         // comma says another type follows. A prefixed type written before the
         // last one is therefore unambiguous and must not be split.
-        let expr = parse("rel{ex:A,Store:category}==\"x\"").expect("parses");
+        let expr = "rel{ex:A,Store:category}==\"x\"".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -916,13 +923,13 @@ mod tests {
         // `category`, or the type `ex` followed by the prefixed attribute
         // `Store:category`. Nothing in the clause 4.9 grammar decides between
         // them, so the request is rejected and the client quotes what it meant.
-        let error = parse("rel{Building,ex:Store:category}==\"x\"").expect_err("must reject");
+        let error = "rel{Building,ex:Store:category}==\"x\"".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
     fn quoting_a_guard_type_resolves_the_ambiguity_its_colons_would_create() {
-        let expr = parse("rel{Building,\"ex:Store\":category}==\"x\"").expect("parses");
+        let expr = "rel{Building,\"ex:Store\":category}==\"x\"".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Equality { path, .. } => {
                 let (_, guard, inner) = hop_of(path);
@@ -937,7 +944,7 @@ mod tests {
 
     #[test]
     fn a_hop_left_unclosed_is_rejected() {
-        let error = parse("a{b").expect_err("must reject");
+        let error = "a{b".parse::<Filter>().expect_err("must reject");
         assert!(
             matches!(
                 error,
@@ -956,7 +963,7 @@ mod tests {
     #[test]
     fn a_comparison_written_inside_the_braces_is_rejected() {
         for written in ["isParkedIn{category==\"commercial\"}", "a{b{c>5}}", "a{b~=\"x\"}"] {
-            let error = parse(written).expect_err("must reject");
+            let error = written.parse::<Filter>().expect_err("must reject");
             assert!(
                 matches!(
                     error,
@@ -972,7 +979,7 @@ mod tests {
 
     #[test]
     fn a_hop_ending_in_a_compound_member_compares_that_member() {
-        let expr = parse("a{b[c.d]}>=1").expect("parses");
+        let expr = "a{b[c.d]}>=1".parse::<Filter>().expect("parses");
         match predicate_of(&expr) {
             QueryTerm::Ordering { path, operator: op, .. } => {
                 let (_, _, inner) = hop_of(path);
@@ -997,7 +1004,7 @@ mod tests {
     #[test]
     fn a_hop_with_nothing_inside_it_is_rejected() {
         // Clause 4.9 requires a `LinkedEntityPath` between the braces.
-        let error = parse("a{}").expect_err("must reject");
+        let error = "a{}".parse::<Filter>().expect_err("must reject");
         assert!(matches!(error, FilterError::Expected { .. }), "got {error:?}");
     }
 
@@ -1006,9 +1013,9 @@ mod tests {
         // A hop compiles to a correlated subquery per level, so an unbounded
         // chain is a denial-of-service vector rather than a legitimate query.
         let chain = |hops: usize| format!("{}z{}", "a{".repeat(hops), "}".repeat(hops));
-        assert!(parse(&chain(MAX_SUB_ATTRIBUTE_DEPTH)).is_ok(), "a chain at the limit must parse");
+        assert!(chain(MAX_SUB_ATTRIBUTE_DEPTH).parse::<Filter>().is_ok(), "a chain at the limit must parse");
         assert!(
-            matches!(parse(&chain(MAX_SUB_ATTRIBUTE_DEPTH + 1)), Err(FilterError::PathTooDeep { .. })),
+            matches!(chain(MAX_SUB_ATTRIBUTE_DEPTH + 1).parse::<Filter>(), Err(FilterError::PathTooDeep { .. })),
             "an over-deep hop chain must be rejected"
         );
     }

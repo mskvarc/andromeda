@@ -171,7 +171,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
         cursor::PageCursor,
-        filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading},
+        filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
         geo::compiled_geo_query::CompiledGeoQuery,
         page_window::{PageStart, PageWindow},
         pattern::Pattern,
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn a_queried_id_pattern_is_evaluated_against_registered_ids_and_admits_registered_patterns() {
         let mut q = empty_query();
-        q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
+        q.id_pattern = Some("urn:ngsi-ld:.*".parse::<Pattern>().unwrap());
         assert_statement_snapshot!(
             "statement-a-queried-id-pattern-is-evaluated-against-registered-ids-and-admits-registered-patterns",
             build(&q).select
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn a_pattern_without_a_type_and_an_attribute_list_must_both_hold_on_the_row() {
         let mut q = empty_query();
-        q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:Fleet.*").unwrap());
+        q.id_pattern = Some("urn:ngsi-ld:Fleet.*".parse::<Pattern>().unwrap());
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
         assert_statement_snapshot!(
@@ -398,7 +398,7 @@ mod tests {
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
-        q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
+        q.scope_q = Some("/Madrid/#".parse::<ScopeQuery>().unwrap());
         q.temporal = Some(
             CompiledCsrTemporalFilter::builder()
                 .interval(TimeInterval::Before(dt("2024-01-01T00:00:00Z")))
@@ -406,7 +406,7 @@ mod tests {
                 .build(),
         );
         let mut pattern_query = empty_query();
-        pattern_query.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
+        pattern_query.id_pattern = Some("urn:ngsi-ld:.*".parse::<Pattern>().unwrap());
         let filtered = build(&q);
         let patterned = build(&pattern_query);
         assert_statement_snapshot!("statement-no-registration-statement-walks-json-1", filtered.select);
@@ -581,7 +581,7 @@ mod tests {
     fn csf_reads_the_context_source_properties_column() {
         let mut q = empty_query();
         q.csf = Some(FilterReading::of(
-            &parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").unwrap(),
+            &"\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"".parse::<Filter>().unwrap(),
             LanguageMatching::TagEquality,
         ));
         assert_statement_snapshot!("statement-csf-reads-the-context-source-properties-column", build(&q).select);
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn a_scope_query_matches_the_stored_label_paths_with_an_lquery() {
         let mut q = empty_query();
-        q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
+        q.scope_q = Some("/Madrid/#".parse::<ScopeQuery>().unwrap());
         assert_statement_snapshot!("statement-a-scope-query-matches-the-stored-label-paths-with-an-lquery", build(&q).select);
     }
 

@@ -101,7 +101,7 @@ pub enum Token {
 /// Returns [`FilterError::UnterminatedString`] when a double-quoted literal is
 /// left open, and [`FilterError::UnexpectedCharacter`] when a character can start no
 /// token of the clause 4.9 grammar.
-pub fn tokenize(input: &str) -> Result<Vec<Token>, FilterError> {
+pub(super) fn tokenize(input: &str) -> Result<Vec<Token>, FilterError> {
     let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
     let mut cursor = 0;
@@ -325,7 +325,7 @@ fn is_uri_char(chars: &[char], index: usize, current: char) -> bool {
 
 /// Whether `text` tokenises back, after `==`, as the one identifier it is.
 #[must_use]
-pub fn is_bare_uri(text: &str) -> bool {
+pub(in crate::filter) fn is_bare_uri(text: &str) -> bool {
     let chars: Vec<char> = text.chars().collect();
     chars.first().is_some_and(|first| first.is_alphabetic())
         && chars.iter().enumerate().all(|(index, current)| is_uri_char(&chars, index, *current))

@@ -166,9 +166,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         filter::{
+            Filter,
             instance_metadata::InstanceMetadata,
             language_matching::LanguageMatching,
-            parser::parse,
             reading::{filter_reading::FilterReading, terminal::Terminal},
         },
         standing_instant::StandingInstant,
@@ -210,7 +210,7 @@ mod tests {
             ..QueryNames::default()
         };
         let condition = compile(
-            &FilterReading::lowered(&parse(q).expect("parse q"), LanguageMatching::TagEquality),
+            &FilterReading::lowered(&q.parse::<Filter>().expect("parse q"), LanguageMatching::TagEquality),
             &InstanceScan::History(&window),
             &names,
         );
