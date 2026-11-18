@@ -1,16 +1,19 @@
 //! Rebuilding the in-memory entity spatial index from a read of the store.
 //!
 //! A rebuild is two phases. The read holds nothing, so geo queries and every
-//! other writer of the index carry on while the store is read. The install
-//! groups the read by partition and bulk-loads every partition, which takes
-//! seconds for millions of entities, so it runs on a blocking worker rather
-//! than on the async runtime.
+//! other writer of the index carry on while the store is read. The store hands
+//! its located entities in a batch at a time, and each entity is placed into
+//! the partitions it occupies as its batch arrives, so the read holds the
+//! entries it built and one batch, never every entity. A read that fails part
+//! way drops what it built and leaves the index as it was. The install
+//! bulk-loads every partition, which takes seconds for millions of entities,
+//! so it runs on a blocking worker rather than on the async runtime.
 
 use crate::{
     error::EntityError,
     port::{
         blocking_executor::{BlockingExecutor, BlockingTask},
-        spatial_snapshot::{ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
+        spatial_snapshot::{ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationSink},
     },
     spatial_placement::LocationPlacement,
 };
@@ -19,7 +22,13 @@ use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
     key::SpatialKey,
 };
-use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    mem,
+    num::NonZeroUsize,
+    sync::{Arc, Mutex, PoisonError},
+    time::Instant,
+};
 use tracing::info;
 
 /// Result of a rebuild pass.
@@ -31,37 +40,92 @@ pub struct RebuildOutcome {
     pub horizon: ChangeHorizon,
 }
 
-/// A read of every located entity, and the index generation captured before
-/// it was taken.
+/// The partitions a rebuild installs, and how many located entities were
+/// placed into them.
+#[derive(Debug, Default)]
+struct Partitions {
+    /// Every partition's entries.
+    entries: HashMap<SpatialKey, Vec<SpatialEntry>>,
+    /// Number of located entities the store's read returned.
+    located_entities: usize,
+}
+
+/// The partitions of a rebuild, filled as the store's read hands its located
+/// entities in.
+///
+/// An entity's types and geometry are dropped once its entries exist. Its
+/// entries keep the geometry's projection and one identifier they share.
+struct PartitionFill {
+    /// Which partitions an entity's location occupies.
+    placement: LocationPlacement,
+    /// The partitions filled so far. A batch is taken in under the lock, by
+    /// whichever thread the store decoded it on.
+    partitions: Mutex<Partitions>,
+}
+
+impl PartitionFill {
+    /// Everything filled so far, leaving the fill empty.
+    fn drain(&self) -> Partitions {
+        mem::take(&mut *self.partitions.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+impl LocationSink for PartitionFill {
+    fn take(&self, locations: Vec<EntityLocation>) {
+        let mut partitions = self.partitions.lock().unwrap_or_else(PoisonError::into_inner);
+        partitions.located_entities = partitions.located_entities.saturating_add(locations.len());
+        for location in locations {
+            let entity_id = Arc::new(location.entity_id);
+            for (key, geometry) in self.placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form)) {
+                partitions
+                    .entries
+                    .entry(key)
+                    .or_default()
+                    .extend(SpatialEntry::new(Arc::clone(&entity_id), geometry));
+            }
+        }
+    }
+}
+
+/// A read of every located entity, placed into the partitions each occupies,
+/// and the index generation captured before it was taken.
 #[derive(Debug)]
 pub struct LocationSnapshot {
     /// The index generation captured before the read. Every write applied to
     /// the index after it keeps its state over the read's.
     generation: u64,
-    /// The store's read.
-    read: LocationRead,
-}
-
-impl LocationSnapshot {
     /// The horizon the store's read was taken at.
-    #[must_use]
-    pub const fn horizon(&self) -> &ChangeHorizon {
-        &self.read.horizon
-    }
+    horizon: ChangeHorizon,
+    /// The partitions the read's located entities occupy.
+    partitions: Partitions,
 }
 
-/// Read every located entity of the store for a rebuild of `index`.
+/// Read every located entity of the store for a rebuild of `index`, placing
+/// each into the partitions `placement` gives it as the store hands it in.
 ///
 /// The generation is captured before the read, so a write applied to the
 /// index while the store is read keeps its state over the read's.
 ///
 /// # Errors
 ///
-/// Reports [`EntityError::Persistence`] when the store cannot be read.
-pub async fn read_location_snapshot(index: &SpatialEntityIndex, source: &dyn EntitySpatialSnapshotSource) -> Result<LocationSnapshot, EntityError> {
+/// Reports [`EntityError::Persistence`] when the store cannot be read. What
+/// the read placed before it failed is dropped.
+pub async fn read_location_snapshot(
+    index: &SpatialEntityIndex,
+    source: &dyn EntitySpatialSnapshotSource,
+    placement: &LocationPlacement,
+) -> Result<LocationSnapshot, EntityError> {
     let generation = index.current_generation();
-    let read = source.locations().await?;
-    Ok(LocationSnapshot { generation, read })
+    let fill = Arc::new(PartitionFill {
+        placement: placement.clone(), // clone: the store takes batches in on threads of its own
+        partitions: Mutex::default(),
+    });
+    let horizon = source.locations(Arc::clone(&fill) as Arc<dyn LocationSink>).await?;
+    Ok(LocationSnapshot {
+        generation,
+        horizon,
+        partitions: fill.drain(),
+    })
 }
 
 /// Rebuild every `location` partition of one tenant's index from `snapshot`,
@@ -82,15 +146,19 @@ pub async fn install_location_snapshot<Held: Send + 'static>(
     executor: &dyn BlockingExecutor,
     held: Held,
 ) -> Result<RebuildOutcome, EntityError> {
-    let LocationSnapshot { generation, read } = snapshot;
+    let LocationSnapshot {
+        generation,
+        horizon,
+        partitions,
+    } = snapshot;
     let outcome = RebuildOutcome {
-        located_entities: read.locations.len(),
-        horizon: read.horizon,
+        located_entities: partitions.located_entities,
+        horizon,
     };
     let install = Install {
         index: Arc::clone(index),
         placement: placement.clone(), // clone: the blocking worker owns everything it reads
-        locations: read.locations,
+        entries: partitions.entries,
         generation,
         held,
     };
@@ -111,7 +179,7 @@ pub async fn rebuild_location_index(
     placement: &LocationPlacement,
     executor: &dyn BlockingExecutor,
 ) -> Result<RebuildOutcome, EntityError> {
-    let snapshot = read_location_snapshot(index, source).await?;
+    let snapshot = read_location_snapshot(index, source, placement).await?;
     install_location_snapshot(index, placement, snapshot, executor, ()).await
 }
 
@@ -119,10 +187,10 @@ pub async fn rebuild_location_index(
 struct Install<Held> {
     /// The index rebuilt.
     index: Arc<SpatialEntityIndex>,
-    /// Which partitions an entity's location occupies.
+    /// The tenant and the geoproperty whose partitions are rebuilt.
     placement: LocationPlacement,
-    /// Every located entity the store's read returned.
-    locations: Vec<EntityLocation>,
+    /// Every partition's entries.
+    entries: HashMap<SpatialKey, Vec<SpatialEntry>>,
     /// The index generation captured before the read.
     generation: u64,
     /// Whatever the caller keeps held until the install has finished.
@@ -134,21 +202,14 @@ impl<Held: Send + 'static> BlockingTask for Install<Held> {
         let Install {
             index,
             placement,
-            locations,
+            entries,
             generation,
             held,
         } = *self;
         let started = Instant::now();
-        let mut partitions: HashMap<SpatialKey, Vec<SpatialEntry>> = HashMap::new();
-        for location in locations {
-            let entity_id = Arc::new(location.entity_id);
-            for (key, geometry) in placement.of(&location.entity_types, location.location.as_ref().map(Geometry::form)) {
-                partitions.entry(key).or_default().extend(SpatialEntry::new(Arc::clone(&entity_id), geometry));
-            }
-        }
-        let partition_count = partitions.len();
-        let total_entries: usize = partitions.values().map(Vec::len).sum();
-        index.rebuild(placement.tenant(), placement.geoproperty(), partitions, generation);
+        let partition_count = entries.len();
+        let total_entries: usize = entries.values().map(Vec::len).sum();
+        index.rebuild(placement.tenant(), placement.geoproperty(), entries, generation);
         drop(held);
         info!(target: "spatial.rebuild", partition_count, total_entries, elapsed_ms = started.elapsed().as_millis(), "spatial index rebuilt the default location geoproperty");
         Ok(())
@@ -159,14 +220,25 @@ impl<Held: Send + 'static> BlockingTask for Install<Held> {
 mod tests {
     use crate::{
         error::EntityError,
-        port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
+        port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead, LocationSink},
         recording_ports::InlineBlockingExecutor,
         spatial_placement::LocationPlacement,
-        spatial_reconciliation::rebuild_location_index,
+        spatial_reconciliation::{read_location_snapshot, rebuild_location_index},
     };
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
+    use andromeda_ngsi_ld_geometry::{
+        form::{GeometryForm, PolygonRings},
+        geo_rel::GeoRel,
+        geometry::Geometry,
+        linear_ring::LinearRing,
+        position::Position,
+    };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_spatial_index::{
-        entity::index::{Admitted, SpatialEntityIndex},
+        entity::{
+            entry::SpatialEntry,
+            index::{Admitted, SpatialEntityIndex},
+        },
         key::SpatialKey,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -175,26 +247,51 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::{collections::HashSet, num::NonZeroUsize, sync::Arc};
 
-    /// A store holding one located vehicle.
-    struct OneVehicle;
+    /// How a [`Stored`] read ends.
+    #[derive(Clone, Copy)]
+    enum ReadEnd {
+        /// The read returns the horizon it was taken at.
+        Completes,
+        /// The store becomes unreachable once the first batch is handed in.
+        FailsAfterTheFirstBatch,
+    }
 
-    impl EntitySpatialSnapshotSource for OneVehicle {
-        fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+    /// A store holding the entities `entities` gives, handing them in `batch` at
+    /// a time.
+    struct Stored {
+        entities: fn() -> Vec<EntityLocation>,
+        batch: usize,
+        end: ReadEnd,
+    }
+
+    impl Stored {
+        fn handing(entities: fn() -> Vec<EntityLocation>, batch: usize) -> Stored {
+            Stored {
+                entities,
+                batch,
+                end: ReadEnd::Completes,
+            }
+        }
+    }
+
+    impl EntitySpatialSnapshotSource for Stored {
+        fn locations<'life0, 'async_trait>(&'life0 self, sink: Arc<dyn LocationSink>) -> BoxFuture<'async_trait, Result<ChangeHorizon, EntityError>>
         where
             'life0: 'async_trait,
             Self: 'async_trait,
         {
-            Box::pin(async {
-                Ok(LocationRead {
-                    locations: vec![EntityLocation {
-                        entity_id: "urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI"),
-                        entity_types: vec!["https://example.org/Vehicle".parse().expect("a well-formed type")],
-                        location: Some(Geometry::new(GeometryForm::Point(
-                            Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"),
-                        ))),
-                    }],
-                    horizon: ChangeHorizon::new(7, vec![5]),
-                })
+            Box::pin(async move {
+                let mut remaining = (self.entities)();
+                while !remaining.is_empty() {
+                    let rest = remaining.split_off(self.batch.min(remaining.len()));
+                    sink.take(remaining);
+                    remaining = rest;
+                    match self.end {
+                        ReadEnd::Completes => {}
+                        ReadEnd::FailsAfterTheFirstBatch => return Err(EntityError::from(PersistenceFailure::Unavailable)),
+                    }
+                }
+                Ok(ChangeHorizon::new(7, vec![5]))
             })
         }
 
@@ -224,26 +321,146 @@ mod tests {
         }
     }
 
+    fn position(longitude: f64, latitude: f64) -> Position {
+        Position::try_new(longitude, latitude, None).expect("a test position lies on the CRS84 axes")
+    }
+
+    fn point(longitude: f64) -> GeometryForm {
+        GeometryForm::Point(position(longitude, 0.0))
+    }
+
+    /// The square two degrees wide centred on `(longitude, 0)`.
+    fn square(longitude: f64) -> GeometryForm {
+        GeometryForm::Polygon(PolygonRings::new(vec![
+            LinearRing::try_new(vec![
+                position(longitude - 1.0, -1.0),
+                position(longitude + 1.0, -1.0),
+                position(longitude + 1.0, 1.0),
+                position(longitude - 1.0, 1.0),
+                position(longitude - 1.0, -1.0),
+            ])
+            .expect("a test square is a closed ring"),
+        ]))
+    }
+
+    fn id(raw: &str) -> Identifier {
+        raw.parse().expect("a well-formed URI")
+    }
+
+    fn located(raw_id: &str, types: &[&str], location: GeometryForm) -> EntityLocation {
+        EntityLocation {
+            entity_id: id(raw_id),
+            entity_types: types.iter().map(|name| name.parse().expect("a well-formed type")).collect(),
+            location: Some(Geometry::new(location)),
+        }
+    }
+
+    /// One vehicle at the origin.
+    fn one_vehicle() -> Vec<EntityLocation> {
+        vec![located("urn:ngsi-ld:Vehicle:stored", &["https://example.org/Vehicle"], point(0.0))]
+    }
+
+    /// A vehicle, a vehicle that is also an asset, and an asset whose other
+    /// type is not expanded, so names no partition a query reads.
+    fn fleet() -> Vec<EntityLocation> {
+        vec![
+            located("urn:ngsi-ld:Vehicle:a", &["https://example.org/Vehicle"], point(10.0)),
+            located(
+                "urn:ngsi-ld:Vehicle:b",
+                &["https://example.org/Vehicle", "https://example.org/Asset"],
+                square(20.0),
+            ),
+            located("urn:ngsi-ld:Asset:c", &["Thing", "https://example.org/Asset"], point(30.0)),
+        ]
+    }
+
+    fn placement() -> LocationPlacement {
+        LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name")
+    }
+
+    fn key(type_iri: &str) -> SpatialKey {
+        SpatialKey::new(
+            TenantRef::UnnamedDefault,
+            IriBuf::new(type_iri.to_owned()).expect("a well-formed IRI"),
+            placement().geoproperty().clone(),
+        )
+    }
+
+    /// The vehicles the index holds within a degree of `(longitude, 0)`.
+    fn vehicles_near(index: &SpatialEntityIndex, longitude: f64) -> Option<HashSet<Identifier>> {
+        index.query(
+            &key("https://example.org/Vehicle"),
+            &GeoRel::Within,
+            &square(longitude),
+            Admitted::Every,
+            usize::MAX,
+        )
+    }
+
     #[tokio::test]
     async fn a_rebuild_seeds_the_scope_with_what_the_store_holds() {
         let index = Arc::new(SpatialEntityIndex::new());
-        let placement = LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name");
-        let key = SpatialKey::new(
-            TenantRef::UnnamedDefault,
-            IriBuf::new("https://example.org/Vehicle".to_owned()).expect("a well-formed IRI"),
-            placement.geoproperty().clone(),
-        );
-        let reference = GeometryForm::Point(Position::try_new(0.0, 0.0, None).expect("a test position lies on the CRS84 axes"));
-        assert!(index.query(&key, &GeoRel::Intersects, &reference, Admitted::Every, usize::MAX).is_none());
+        assert!(vehicles_near(&index, 0.0).is_none());
 
-        let outcome = rebuild_location_index(&index, &OneVehicle, &placement, &InlineBlockingExecutor)
+        let outcome = rebuild_location_index(&index, &Stored::handing(one_vehicle, 1), &placement(), &InlineBlockingExecutor)
             .await
             .expect("the store is readable");
 
         assert_eq!((outcome.located_entities, outcome.horizon), (1, ChangeHorizon::new(7, vec![5])));
+        assert_eq!(vehicles_near(&index, 0.0), Some(HashSet::from([id("urn:ngsi-ld:Vehicle:stored")])));
+    }
+
+    #[tokio::test]
+    async fn a_read_handed_in_batches_fills_the_same_partitions_as_one_collected_batch() {
+        let index = SpatialEntityIndex::new();
+        let collected = read_location_snapshot(&index, &Stored::handing(fleet, usize::MAX), &placement())
+            .await
+            .expect("the store is readable");
+        let ids_in = |entries: &Vec<SpatialEntry>| entries.iter().map(|entry| Identifier::clone(&entry.entity_id)).collect::<Vec<_>>();
+        assert_eq!(collected.partitions.located_entities, 3);
+        assert_eq!(collected.partitions.entries.len(), 2, "the unexpanded type names no partition");
         assert_eq!(
-            index.query(&key, &GeoRel::Intersects, &reference, Admitted::Every, usize::MAX),
-            Some(HashSet::from(["urn:ngsi-ld:Vehicle:stored".parse().expect("a well-formed URI")]))
+            collected.partitions.entries.get(&key("https://example.org/Vehicle")).map(ids_in),
+            Some(vec![id("urn:ngsi-ld:Vehicle:a"), id("urn:ngsi-ld:Vehicle:b")])
+        );
+        assert_eq!(
+            collected.partitions.entries.get(&key("https://example.org/Asset")).map(ids_in),
+            Some(vec![id("urn:ngsi-ld:Vehicle:b"), id("urn:ngsi-ld:Asset:c")])
+        );
+
+        for batch in [1, 2] {
+            let streamed = read_location_snapshot(&index, &Stored::handing(fleet, batch), &placement())
+                .await
+                .expect("the store is readable");
+            assert_eq!(
+                streamed.partitions.located_entities, collected.partitions.located_entities,
+                "batches of {batch}"
+            );
+            assert_eq!(streamed.partitions.entries, collected.partitions.entries, "batches of {batch}");
+            assert_eq!(streamed.horizon, collected.horizon, "batches of {batch}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_that_fails_part_way_leaves_the_index_as_it_was() {
+        let index = Arc::new(SpatialEntityIndex::new());
+        rebuild_location_index(&index, &Stored::handing(one_vehicle, 1), &placement(), &InlineBlockingExecutor)
+            .await
+            .expect("the store is readable");
+        let failing = Stored {
+            entities: fleet,
+            batch: 1,
+            end: ReadEnd::FailsAfterTheFirstBatch,
+        };
+
+        let failed = rebuild_location_index(&index, &failing, &placement(), &InlineBlockingExecutor).await;
+
+        assert!(matches!(failed, Err(EntityError::StoreUnavailable)), "{failed:?}");
+        assert_eq!(vehicles_near(&index, 0.0), Some(HashSet::from([id("urn:ngsi-ld:Vehicle:stored")])));
+        assert_eq!(
+            vehicles_near(&index, 10.0),
+            Some(HashSet::new()),
+            "nothing the failed read handed in is installed"
         );
     }
 }

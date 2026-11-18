@@ -5,7 +5,7 @@ use crate::error::EntityError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use futures::future::BoxFuture;
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, sync::Arc};
 
 /// A cut through the store's commit history, taken by one read. Every change
 /// below it is reflected in that read, and none above it is.
@@ -63,7 +63,8 @@ pub struct EntityLocation {
     pub location: Option<Geometry>,
 }
 
-/// The entity locations one read returned, and the horizon it was read at.
+/// The entity locations one change read returned, and the horizon it was read
+/// at.
 #[derive(Debug)]
 pub struct LocationRead {
     /// The entity locations the read returned.
@@ -83,14 +84,28 @@ pub enum BoundedChangeRead {
     Exceeded,
 }
 
+/// Takes in the located entities of a read of every location, a batch at a
+/// time, as the store decodes them.
+pub trait LocationSink: Send + Sync {
+    /// Take in one batch of located entities.
+    ///
+    /// Taking a batch in costs work in proportion to its size, so a source
+    /// hands each batch in where it decoded it, off the threads requests run
+    /// on.
+    fn take(&self, locations: Vec<EntityLocation>);
+}
+
 /// Reads entity locations without mutating an in-memory index.
 pub trait EntitySpatialSnapshotSource: Send + Sync + 'static {
-    /// Read every live entity that conveys a default `location`, together with
-    /// the horizon the read was taken at.
+    /// Read every live entity that conveys a default `location`, handing them
+    /// to `sink` in batches as the store returns them, and return the horizon
+    /// the read was taken at.
     ///
     /// The read takes as long as the store is large, and no request waits for
-    /// it.
-    fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+    /// it. A batch is handed in as soon as it is decoded, so the read never
+    /// holds every entity at once. A read that fails part way may have handed
+    /// `sink` some of them.
+    fn locations<'life0, 'async_trait>(&'life0 self, sink: Arc<dyn LocationSink>) -> BoxFuture<'async_trait, Result<ChangeHorizon, EntityError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;

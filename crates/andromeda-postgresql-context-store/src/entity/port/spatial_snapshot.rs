@@ -21,11 +21,14 @@
 //! change read would return it again until the counter passed it. A later
 //! write restamps the row with this cluster's identifier.
 //!
-//! A full read and an unbounded change read return a row per located entity
-//! they cover, millions for a large tenant, and are decoded on the blocking
-//! pool, so the decode holds no async worker the tenant's requests run on. A
-//! bounded change read returns at most a few thousand rows and is decoded
-//! inline, where a thread hand-off would cost more than the decode.
+//! A full read returns a row per located entity, millions for a large tenant.
+//! Its rows are fetched as a stream and handed to the sink a batch at a time,
+//! each batch decoded and taken in on the blocking pool, so neither the rows
+//! nor the decoded locations are ever held whole, and the decode holds no async
+//! worker the tenant's requests run on. An unbounded change read returns a row
+//! per entity changed above its horizon and is decoded on the blocking pool in
+//! one piece. A bounded change read returns at most a few thousand rows and is
+//! decoded inline, where a thread hand-off would cost more than the decode.
 
 use crate::{
     entity::{
@@ -37,7 +40,7 @@ use crate::{
 use andromeda_entity::{
     entity_invariant::EntityInvariant,
     error::EntityError,
-    port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
+    port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead, LocationSink},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -54,10 +57,17 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_postgresql_stored_form::names_in_key_order::type_names_of;
 use async_trait::async_trait;
+use futures::{TryStreamExt, stream::TryChunksError};
 use sea_query::{Condition, Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, sync::Arc};
 use tokio::task::spawn_blocking;
 use tracing::{error, warn};
+
+/// How many rows of a full read are decoded and handed to the sink together.
+///
+/// A batch costs one hand-off to the blocking pool, little beside its decode,
+/// and a batch of large polygons stays a few MiB.
+const FULL_READ_BATCH: usize = 1_024;
 
 /// A [`ChangeHorizon`] in the `bigint` form the statement binds it as.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -198,25 +208,74 @@ impl EntityRepository {
     /// Run one location read of every row it covers, and decode the rows on
     /// the blocking pool.
     async fn read_locations(&self, filter: LocationFilter<'_>) -> Result<LocationRead, EntityError> {
-        let rows = self
-            .location_rows(filter)
-            .await
-            .map_err(|error| EntityError::from(persistence_failure(&error)))?;
-        spawn_blocking(move || decode_rows(rows)).await.unwrap_or_else(|failure| {
-            error!(%failure, "decoding a spatial location read did not complete");
-            Err(EntityInvariant::BlockingTaskFailed.into())
-        })
+        let rows = self.location_rows(filter).await.map_err(|error| read_failure(&error))?;
+        on_blocking_pool(move || decode_rows(rows)).await
+    }
+
+    /// Read every located entity, fetching the rows as a stream and handing
+    /// them to `sink` a batch at a time, and return the read's horizon.
+    ///
+    /// Each batch is decoded and taken in on the blocking pool before the next
+    /// is fetched, so the read holds one batch at a time, and the server waits
+    /// on the connection meanwhile.
+    async fn stream_located(&self, sink: Arc<dyn LocationSink>) -> Result<ChangeHorizon, EntityError> {
+        let filter = LocationFilter::Located;
+        let mut transaction = read_transaction(filter).begin_in(&self.pool).await.map_err(|error| read_failure(&error))?;
+        let mut horizon = None;
+        let mut batches = locations_statement(filter)
+            .to_query_as::<LocationRow>()
+            .fetch(&mut *transaction)
+            .try_chunks(FULL_READ_BATCH)
+            .map_err(|TryChunksError(_, error)| read_failure(&error));
+        while let Some(rows) = batches.try_next().await? {
+            let sink = Arc::clone(&sink);
+            let found = on_blocking_pool(move || {
+                let DecodedRows { horizon, locations } = decode_batch(rows)?;
+                sink.take(locations);
+                Ok(horizon)
+            })
+            .await?;
+            if let Some(found) = found {
+                record_horizon(&mut horizon, found)?;
+            }
+        }
+        drop(batches);
+        transaction.commit().await.map_err(|error| read_failure(&error))?;
+        horizon.ok_or_else(|| EntityError::from(contract_broken()))
     }
 }
 
-/// Decode a location read's rows into the read.
-fn decode_rows(rows: Vec<LocationRow>) -> Result<LocationRead, EntityError> {
+/// The failure of a statement that reads locations.
+fn read_failure(error: &sqlx::Error) -> EntityError {
+    EntityError::from(persistence_failure(error))
+}
+
+/// Run `decode` on the blocking pool, so it holds no async worker the tenant's
+/// requests run on.
+async fn on_blocking_pool<T: Send + 'static>(decode: impl FnOnce() -> Result<T, EntityError> + Send + 'static) -> Result<T, EntityError> {
+    spawn_blocking(decode).await.unwrap_or_else(|failure| {
+        error!(%failure, "decoding a spatial location read did not complete");
+        Err(EntityInvariant::BlockingTaskFailed.into())
+    })
+}
+
+/// What some rows of a location read decode to.
+struct DecodedRows {
+    /// The read's horizon, when the rows hold the horizon row.
+    horizon: Option<ChangeHorizon>,
+    /// Every entity the rows hold whose stored form decodes.
+    locations: Vec<EntityLocation>,
+}
+
+/// Decode some rows of a location read, wherever among them the horizon row
+/// falls.
+fn decode_batch(rows: Vec<LocationRow>) -> Result<DecodedRows, EntityError> {
     let mut horizon = None;
     let mut locations = Vec::with_capacity(rows.len());
     for row in rows {
         match row {
             (Some(ceiling), Some(unseen), None, None, None) => {
-                horizon = Some(decode_horizon(ceiling, unseen)?);
+                record_horizon(&mut horizon, decode_horizon(ceiling, unseen)?)?;
             }
             (None, None, Some(identifier), Some(entity_types), location) => {
                 if let Some(location) = decode_location(&identifier, &entity_types, location)? {
@@ -228,8 +287,23 @@ fn decode_rows(rows: Vec<LocationRow>) -> Result<LocationRead, EntityError> {
             }
         }
     }
+    Ok(DecodedRows { horizon, locations })
+}
+
+/// Decode every row of a location read into the read.
+fn decode_rows(rows: Vec<LocationRow>) -> Result<LocationRead, EntityError> {
+    let DecodedRows { horizon, locations } = decode_batch(rows)?;
     let horizon = horizon.ok_or_else(|| EntityError::from(contract_broken()))?;
     Ok(LocationRead { locations, horizon })
+}
+
+/// Keep `found` as the read's horizon. The statement returns one horizon row,
+/// so a second breaks its contract.
+fn record_horizon(horizon: &mut Option<ChangeHorizon>, found: ChangeHorizon) -> Result<(), EntityError> {
+    match horizon.replace(found) {
+        None => Ok(()),
+        Some(_first) => Err(EntityError::from(contract_broken())),
+    }
 }
 
 /// Decode the horizon row's `xmax` and in-progress transactions.
@@ -287,8 +361,8 @@ fn decode_location(identifier: &str, entity_types: &[String], location: Option<V
 
 #[async_trait]
 impl EntitySpatialSnapshotSource for EntityRepository {
-    async fn locations(&self) -> Result<LocationRead, EntityError> {
-        self.read_locations(LocationFilter::Located).await
+    async fn locations(&self, sink: Arc<dyn LocationSink>) -> Result<ChangeHorizon, EntityError> {
+        self.stream_located(sink).await
     }
 
     async fn locations_changed_since(&self, horizon: &ChangeHorizon) -> Result<LocationRead, EntityError> {
@@ -301,7 +375,7 @@ impl EntitySpatialSnapshotSource for EntityRepository {
         let rows = self
             .location_rows(LocationFilter::ChangedSince(&horizon, ChangeBound::AtMost(bound)))
             .await
-            .map_err(|error| EntityError::from(persistence_failure(&error)))?;
+            .map_err(|error| read_failure(&error))?;
         decode_bounded_rows(rows, bound)
     }
 }
@@ -314,6 +388,7 @@ mod tests {
             ChangeBound,
             LocationFilter,
             LocationRow,
+            decode_batch,
             decode_bounded_rows,
             decode_rows,
             locations_statement,
@@ -482,5 +557,21 @@ mod tests {
             decode_rows(vec![vehicle_row("urn:ngsi-ld:Vehicle:a")]),
             Err(EntityError::Persistence(PersistenceFailure::ContractBroken))
         ));
+    }
+
+    #[test]
+    fn a_read_with_two_horizon_rows_breaks_the_contract() {
+        let horizon_row = || (Some(9), Some(Vec::new()), None, None, None);
+        assert!(matches!(
+            decode_rows(vec![horizon_row(), vehicle_row("urn:ngsi-ld:Vehicle:a"), horizon_row()]),
+            Err(EntityError::Persistence(PersistenceFailure::ContractBroken))
+        ));
+    }
+
+    #[test]
+    fn a_batch_without_the_horizon_row_decodes_its_entities_alone() {
+        let decoded = decode_batch(vec![vehicle_row("urn:ngsi-ld:Vehicle:a"), vehicle_row("urn:ngsi-ld:Vehicle:b")]).expect("well-formed rows");
+        assert_eq!(decoded.horizon, None);
+        assert_eq!(decoded.locations.len(), 2);
     }
 }

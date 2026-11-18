@@ -2,12 +2,15 @@
 
 use crate::{
     error::EntityError,
-    port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead},
+    port::spatial_snapshot::{BoundedChangeRead, ChangeHorizon, EntityLocation, EntitySpatialSnapshotSource, LocationRead, LocationSink},
     spatial_write_visibility::geo_query::{VEHICLE_TYPE, point, uri},
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use futures::{channel::oneshot, future::BoxFuture};
-use std::{num::NonZeroUsize, sync::Mutex};
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+};
 
 /// One vehicle row, and the transaction that wrote it.
 #[derive(Clone)]
@@ -159,7 +162,7 @@ impl ReplicatedStore {
 }
 
 impl EntitySpatialSnapshotSource for ReplicatedStore {
-    fn locations<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
+    fn locations<'life0, 'async_trait>(&'life0 self, sink: Arc<dyn LocationSink>) -> BoxFuture<'async_trait, Result<ChangeHorizon, EntityError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait,
@@ -170,7 +173,9 @@ impl EntitySpatialSnapshotSource for ReplicatedStore {
             if let Some(held) = held {
                 let _released = held.await;
             }
-            read
+            let LocationRead { locations, horizon } = read?;
+            sink.take(locations);
+            Ok(horizon)
         })
     }
 
