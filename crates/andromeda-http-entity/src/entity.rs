@@ -114,6 +114,9 @@ pub(crate) mod retrieve;
 pub(crate) mod retrieve_forwarding;
 /// The forwarding of an attribute write, withheld from a local one.
 pub(crate) mod scoped_provision;
+/// What `splitEntities` leaves an entity query's local read, its merge and
+/// its Entity Map to decide.
+pub(crate) mod split_reading;
 /// Attribute collection update handling.
 pub(crate) mod update_attributes;
 /// The clause 5.2.18 `UpdateResult` an attribute write answers with.

@@ -5,6 +5,7 @@
 mod n_qry_prj_0001;
 mod n_qry_prj_0003;
 mod n_qry_prj_0004;
+mod n_qry_prj_0005;
 mod n_qry_prj_9001;
 mod n_qry_prj_9002;
 mod n_qry_prj_9005;

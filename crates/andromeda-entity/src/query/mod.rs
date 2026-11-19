@@ -1,6 +1,9 @@
 //! Reading entities: clause 5.7.2 query, clause 5.6.3 retrieval, and the
 //! compilation that turns request parameters into a query a store can run.
 
+/// The list a query answers its merged Entities by (clauses 4.21, 5.7.2.4
+/// and 5.7.2.5).
+pub mod answer_list;
 /// Expanding, once per request, the attribute member names a response carries.
 pub mod attribute_expansion;
 /// Filtering an entity's attributes down to what the client asked for.
@@ -22,6 +25,8 @@ pub mod forwarded_merge;
 /// Gathering the entity states the hops of an in-memory filter cross into
 /// (clause 4.9).
 pub mod linked_filter_states;
+/// The query a read of the entities this broker holds runs (clause 5.7.2.4).
+pub mod local_read;
 /// The Linked Entities a subscription's `join` reaches from the entities of
 /// one notification (clause 4.5.23).
 pub mod notification_join;

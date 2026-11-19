@@ -8,17 +8,18 @@ use crate::{
     error::SnapshotError,
     executor::{SnapshotExecutor, execution::entity_query_failure, execution_failure::ExecutionFailure, page_outcome::PageOutcome, status::failure_detail},
 };
-use andromeda_entity::port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry};
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_entity::{
+    port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+    query::local_read::LocalRead,
+};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
-use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
 use std::sync::Arc;
 use tracing::warn;
 
 impl SnapshotExecutor {
-    /// One local page of the states `params` selects within `window`, or the
+    /// One local page of the states `read` selects within `window`, or the
     /// result the query ends with when the page cannot be read whole.
     ///
     /// # Errors
@@ -26,22 +27,15 @@ impl SnapshotExecutor {
     /// Returns a transient store failure the page met.
     pub(super) async fn local_page(
         &self,
-        params: &AdmittedEntityQuery,
+        read: LocalRead<'_>,
         window: &PageWindow,
-        context: &ContextSpec,
         snapshot_id: &Identifier,
         index: usize,
     ) -> Result<PageOutcome, SnapshotError> {
-        let query = &self.sources.entity_query;
-        let rows = match query
-            .query_states(
-                &self.sources.live_target,
-                params,
-                window,
-                CountPolicy::Omit,
-                context,
-                query.language_targeting(),
-            )
+        let rows = match self
+            .sources
+            .entity_query
+            .query_states(&self.sources.live_target, read, window, CountPolicy::Omit)
             .await
         {
             Ok((rows, _)) => rows,

@@ -9,9 +9,12 @@
 //! merged onto the local page that holds the same entity, and every source
 //! entity no local page held is captured after the last one.
 //!
-//! Under `splitEntities` the local pages are read without `q`, the geoquery
-//! and `scopeQ`, as the sources are asked without them, and the query decides
-//! on each entity once it is merged (clauses 4.3.6 and 5.7.2.4).
+//! Under `splitEntities`, once a source answered an entity, the local pages
+//! are read without `q`, the geoquery, `scopeQ` and the Attribute list, each
+//! entity whole, as the sources are asked without them, and the query decides
+//! on each entity once it is merged (clauses 4.3.6 and 5.7.2.4). Every
+//! captured entity is reduced to the query's `attrs`, `pick` or `omit`, as
+//! Query Entities answers it (clause 5.7.2.5).
 //!
 //! A local entity is captured as the stored state the query selected, written
 //! into the Snapshot's branch as stored. Only an entity a source also answered
@@ -38,6 +41,7 @@ use crate::{
     executor::{
         SnapshotExecutor,
         captured_page::{CandidateEntity, CaptureSelection},
+        execution::entity_query_failure,
         forwarded_capture::ForwardedCapture,
         page_outcome::PageOutcome,
         pending_sources::PendingSources,
@@ -48,7 +52,7 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, answer_list::AnswerList, local_read::LocalRead};
 use andromeda_failure_classification::{
     forwarding_failure::classify_federation_error,
     parameter_failure::classify_parameter_error,
@@ -73,6 +77,7 @@ use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, ExecutionResultStatus},
 };
 use andromeda_ngsi_ld_query::{
+    candidate_filters::CandidateFilters,
     page_window::{PageStart, PageWindow},
     query_error::QueryError,
 };
@@ -190,15 +195,33 @@ impl SnapshotExecutor {
         let merge_budget = pending.holds_entities().then_some(&budget);
 
         // The sources were asked the query as the Snapshot holds it, so the
-        // split filters are held back only now, from the local read.
+        // split filters are held back only now, from the local read, and only
+        // once a source answered an entity: until then the local entities are
+        // the merged ones, as Query Entities reads them.
         let split = !params.is_local() && self.sources.forwarding.split_entities(params.split_entities) == SplitEntities::Split;
-        let deferred = split.then(|| params.defer_split_filters());
+        let gathered = split && pending.holds_entities();
+        let deferred = gathered.then(|| params.defer_split_filters());
+        let query = &self.sources.entity_query;
+        let local = LocalRead {
+            query: &params,
+            context,
+            language_targeting: query.language_targeting(),
+            filters: if gathered { CandidateFilters::Deferred } else { CandidateFilters::Applied },
+        };
+        let compiled = match query.compile_query_public(&params, context, local.language_targeting).await {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
+                return entity_query_failure(error);
+            }
+        };
         let capture = EntityCapture {
             target,
             snapshot_id,
             index,
             selection: CaptureSelection {
                 deferred,
+                list: AnswerList::of(&compiled),
                 context,
                 dataset_ids: params.dataset_id.as_deref(),
             },
@@ -216,7 +239,7 @@ impl SnapshotExecutor {
         // counts, captured or not.
         let mut local_read = 0_usize;
         loop {
-            let states = match self.local_page(&params, &window, context, snapshot_id, index).await? {
+            let states = match self.local_page(local, &window, snapshot_id, index).await? {
                 PageOutcome::States(states) => states,
                 PageOutcome::Ended(detail) => return Ok(detail),
             };
@@ -247,7 +270,25 @@ impl SnapshotExecutor {
             }
         }
 
-        // The source entities no local page held, merged across sources.
+        if let Some(failure) = self.capture_unclaimed(&capture, pending, ledger).await? {
+            return Ok(failure);
+        }
+        Ok(answered_detail(ledger.captured.len(), &shortfall))
+    }
+
+    /// Capture the source entities no local page held, merged across
+    /// sources, page by page, answering the failure recorded for the query
+    /// when one could not be captured.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transient store failure selecting or writing a page met.
+    async fn capture_unclaimed(
+        &self,
+        capture: &EntityCapture<'_>,
+        pending: PendingSources,
+        ledger: &mut CaptureLedger<'_>,
+    ) -> Result<Option<ExecutionResultDetails>, SnapshotError> {
         let remaining = EntityQueryService::merge_with_forwarded(Vec::new(), pending.answers);
         let mut remaining = remaining.into_iter().peekable();
         while remaining.peek().is_some() {
@@ -256,11 +297,11 @@ impl SnapshotExecutor {
                 .take(self.capture_page_size as usize)
                 .map(|version| CandidateEntity::received(version.state))
                 .collect();
-            if let Some(failure) = self.capture_candidates(&capture, candidates, ledger).await? {
-                return Ok(failure);
+            if let Some(failure) = self.capture_candidates(capture, candidates, ledger).await? {
+                return Ok(Some(failure));
             }
         }
-        Ok(answered_detail(ledger.captured.len(), &shortfall))
+        Ok(None)
     }
 
     /// The query's context source filter and geoquery expanded under `context`,

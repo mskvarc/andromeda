@@ -28,6 +28,7 @@ use crate::{
         query_page::{QueryPage, requested_window},
         query_response::{QueryCollectionMetadata, query_response},
         request_entity_map::{LocalEntitySource, record_map_use},
+        split_reading::SplitReading,
         with_linked_resolution_warnings,
     },
     join::JoinRequest,
@@ -35,7 +36,7 @@ use crate::{
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::{EntityQueryService, entity_versions::VersionRead};
+use andromeda_entity::query::{EntityQueryService, answer_list::AnswerList, entity_versions::VersionRead};
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_failure_classification::result_limit_failure::classify_result_budget_refusal;
 use andromeda_federation::split_entities::SplitEntities;
@@ -49,11 +50,11 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::{page_pointing::PagePointing, unreadable_entity_warning::with_unreadable_entity_warnings};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
-use andromeda_linked_retrieval::{narrowing::list::ListInForce, plan::JoinPlan, typed::TypedEntities};
+use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
+use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, entity_selection::ConsideredEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{geometry_media_type::require_geojson_for_geometry_property, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
@@ -182,7 +183,11 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         let is_local = !target.permits_federation() || query.is_local();
         let split = state.forwarding.split_entities(query.split_entities);
-        let split_entities = !is_local && split == SplitEntities::Split;
+        let candidates = if !is_local && split == SplitEntities::Split {
+            CandidateFilters::Deferred
+        } else {
+            CandidateFilters::Applied
+        };
 
         // Clause 5.5.14: an EntityMap "fixes the Entities to be considered for
         // subsequent requests based on it", so a request left considering none
@@ -206,9 +211,10 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         });
         let forwarded = OptionFuture::from(forwarding.as_ref().map(QueryForwarding::run)).await.transpose()?;
 
-        // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
-        // are decided on the merged entities rather than by any one source.
-        let deferred = split_entities.then(|| query.defer_split_filters());
+        // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery, `scopeQ` and
+        // the Attribute list are decided on the merged entities rather than by
+        // any one holder.
+        let reading = SplitReading::of(&mut query, candidates, forwarded.as_ref());
         let pointing = PagePointing::new(binding.page_pointers(), pagination.context, pagination.query, pagination.pointed);
         let page = QueryPage::of(window, query.count, forwarded.as_ref(), pointing);
 
@@ -220,20 +226,17 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let request_projection = RequestProjection::of(service, &query, &context).await.with_entity_instance(&uri)?;
         let projection = request_projection.projection();
 
-        let targeting = admitted.language.targeting;
-        let local = local_versions(service, &target, &query, &page, &context, targeting, &uri).await?;
+        let local_query = reading.page_read(&query, &context, admitted.language.targeting);
+        let local = local_versions(service, &target, local_query, &page, &uri).await?;
+        let list = request_projection.answer_list();
         let MergedEntities {
             entities,
             warnings,
             contributions,
-        } = merge_contributions(local.versions, forwarded, request_projection.list(), &uri)?;
-        let versions = match deferred {
-            Some(deferred) => service
-                .retain_matching(&target, entities, &deferred, &context, targeting)
-                .await
-                .with_entity_instance(&uri)?,
-            None => entities,
-        };
+        } = merge_contributions(local.versions, forwarded, reading.merge_list(list), &uri)?;
+        let split_entities = reading.is_split();
+        let map_listing = reading.map_listing(local_query);
+        let versions = reading.answered(service, &target, entities, list, local_query, &uri).await?;
         // Clause 6.3.17: a query evaluated by tag equality because a reached
         // source lacks extended filtering says so.
         let warnings = warnings.into_iter().chain(admitted.language.warning).collect::<Vec<_>>();
@@ -262,7 +265,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Table 6.4.3.2-3 and Table 6.23.3.1-1: 201 when an EntityMap has been
         // (re)created.
         let status = if admitted.map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
-        let map_entities = LocalEntitySource::queried(service, &target, &query, &context, targeting, plan.as_ref(), &uri);
+        let map_entities = LocalEntitySource::queried(service, &target, map_listing, plan.as_ref(), &uri);
         let page_matches = split_page_matches(split_survivors, plan.as_ref());
         let entity_map_uri = record_map_use(&state.entity_maps, admitted.map_use, contributions, map_entities, page_matches, &uri).await?;
 
@@ -339,7 +342,7 @@ async fn compacted_page(
 fn merge_contributions(
     local_entities: Vec<ReceivedState>,
     forwarded: Option<ForwardedQueryResults>,
-    list: ListInForce<'_>,
+    list: AnswerList<'_>,
     instance: &HttpUri,
 ) -> Result<MergedEntities, ProblemResponse> {
     match forwarded {

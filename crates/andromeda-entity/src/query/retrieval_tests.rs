@@ -13,6 +13,7 @@ use crate::{
     query::{
         EntityQueryService,
         entity_versions::{VersionRead, held_version},
+        local_read::LocalRead,
         retrieval::RetrievalNarrowing,
     },
     query_outcome::QueryOutcome,
@@ -26,6 +27,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_query::{
+    candidate_filters::CandidateFilters,
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     filter::language_targeting::LanguageTargeting,
@@ -335,20 +337,32 @@ async fn an_entity_the_store_does_not_hold_is_not_found() {
 /// A clause 5.7.2 query over the one-entity store, its page compacted as a
 /// query response writes it.
 async fn query(parameters: &str) -> Vec<Entity> {
+    read_page(parameters, CandidateFilters::Applied).await
+}
+
+/// The local parts a split query `parameters` gathers from the one-entity
+/// store, compacted as a query response writes them.
+async fn gathered(parameters: &str) -> Vec<Entity> {
+    read_page(parameters, CandidateFilters::Deferred).await
+}
+
+/// The page the query `parameters` reads from the one-entity store, held to
+/// `filters`, compacted as a query response writes it.
+async fn read_page(parameters: &str, filters: CandidateFilters) -> Vec<Entity> {
     let service = service();
     let parameters = serde_urlencoded::from_str::<EntityQueryParameters>(parameters)
         .expect("valid query parameters")
         .admit(EntityQueryOperation::Query, service.filter_admission())
         .expect("a query validation admits");
+    let context = context();
+    let read = LocalRead {
+        query: &parameters,
+        context: &context,
+        language_targeting: LanguageTargeting::Specification,
+        filters,
+    };
     let (rows, _) = service
-        .query_states(
-            &ContextTarget::Live,
-            &parameters,
-            &PageWindow::offset(20, 0),
-            CountPolicy::Omit,
-            &context(),
-            LanguageTargeting::Specification,
-        )
+        .query_states(&ContextTarget::Live, read, &PageWindow::offset(20, 0), CountPolicy::Omit)
         .await
         .expect("queried");
     let versions: Vec<_> = rows.into_iter().filter_map(StoredEntry::read).map(held_version).collect();
@@ -357,7 +371,7 @@ async fn query(parameters: &str) -> Vec<Entity> {
         sys_attrs: parameters.parse_options().expect("options").sys_attrs,
         dataset_ids: &[],
     };
-    service.compact_versions(&versions, &read, &context()).await.expect("compacted")
+    service.compact_versions(&versions, &read, &context).await.expect("compacted")
 }
 
 /// Clause 4.8, design defect 9.7: a query page's entity-level `createdAt` and
@@ -379,4 +393,22 @@ async fn a_query_page_without_sys_attrs_carries_no_entity_times() {
     assert!(entities[0].created_at.is_none());
     assert!(entities[0].modified_at.is_none());
     pretty_assertions::assert_eq!(attribute_names(&entities[0]), vec!["name", "speed"]);
+}
+
+/// Clause 4.21: a query page holds each entity reduced to what its `pick`
+/// keeps.
+#[tokio::test]
+async fn a_query_page_reduces_each_entity_to_its_pick() {
+    let entities = query("type=Vehicle&pick=speed").await;
+    pretty_assertions::assert_eq!(attribute_names(&entities[0]), vec!["speed"]);
+}
+
+/// Clause 5.7.2.4: a split query reads each local part whole, and clause
+/// 5.7.2.5 reduces only the aggregated Entity by the `pick` and `attrs`.
+#[tokio::test]
+async fn a_gathered_part_is_read_whole_whatever_the_query_picks_or_lists() {
+    for parameters in ["type=Vehicle&pick=speed", "type=Vehicle&attrs=speed", "type=Vehicle&omit=name"] {
+        let entities = gathered(parameters).await;
+        pretty_assertions::assert_eq!(attribute_names(&entities[0]), vec!["name", "speed"], "{parameters}");
+    }
 }
