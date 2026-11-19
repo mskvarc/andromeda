@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_query::{
         written_projection_list::WrittenProjectionList,
         written_projection_term::WrittenProjectionTerm,
     },
+    type_selection::compaction::compact_type_selection,
 };
 use chrono::Utc;
 use std::collections::HashSet;
@@ -48,11 +49,27 @@ fn compacted_names(compactor: &NameCompaction, names: Vec<AttributeName>) -> Vec
     names.into_iter().map(|name| compacted_name(compactor, name)).collect()
 }
 
-/// A selector whose type is in the reader's terms when the whole selection
-/// text compacts as one type name.
-fn compacted_selector(compactor: &NameCompaction, mut selector: EntitySelector<Written>) -> EntitySelector<Written> {
-    selector.type_ = compactor.compact_type_iri(&selector.type_.to_string()).parse().unwrap_or(selector.type_);
-    selector
+/// A selector whose every type of the stored selection is in the reader's
+/// terms (clause 4.17), a type no term of the `@context` spells staying as
+/// stored. The selector as it stands when the selection cannot be compacted.
+async fn compacted_selector(compactor: &NameCompaction, stored: &EntitySelector<Expanded>, mut spelled: EntitySelector<Written>) -> EntitySelector<Written> {
+    if let Ok(type_) = compact_type_selection(&stored.type_, compactor).await {
+        spelled.type_ = type_;
+    }
+    spelled
+}
+
+/// The entity selectors in the reader's terms.
+async fn compacted_selectors(
+    compactor: &NameCompaction,
+    stored: &[EntitySelector<Expanded>],
+    spelled: Vec<EntitySelector<Written>>,
+) -> Vec<EntitySelector<Written>> {
+    let mut selectors = Vec::with_capacity(spelled.len());
+    for (stored, spelled) in stored.iter().zip(spelled) {
+        selectors.push(compacted_selector(compactor, stored, spelled).await);
+    }
+    selectors
 }
 
 /// A projection term, and the terms linked under it, in the reader's terms. The
@@ -115,10 +132,13 @@ async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spel
         Some(csf) => compacted_csf(compactor, csf, spelled.csf).await,
         None => None,
     };
+    let entities = match (&stored.selection.entities, spelled.entities) {
+        (Some(stored), Some(spelled)) => Some(compacted_selectors(compactor, stored, spelled).await),
+        (None, spelled) => spelled,
+        (Some(_), None) => None,
+    };
     WrittenSubscriptionTerms {
-        entities: spelled
-            .entities
-            .map(|entities| entities.into_iter().map(|selector| compacted_selector(compactor, selector)).collect()),
+        entities,
         watched_attributes: spelled.watched_attributes.map(|names| compacted_names(compactor, names)),
         attributes: spelled.attributes.map(|names| compacted_names(compactor, names)),
         pick: spelled.pick.map(|lists| compacted_projection(compactor, lists)),
@@ -302,6 +322,21 @@ mod tests {
 
         pretty_assertions::assert_eq!(served["entities"], json!([{"type": "Vehicle"}]));
         pretty_assertions::assert_eq!(served["watchedAttributes"], json!(["speed"]));
+    }
+
+    /// Clauses 4.17 and 5.5.7: every type of a stored selection reads back in
+    /// the reader's terms, in a list of alternatives and in a conjunction.
+    #[tokio::test]
+    async fn every_type_of_a_stored_type_selection_is_compacted_into_the_readers_terms() {
+        let served = served(&json!({
+            "entities": [
+                {"type": "https://uri.etsi.org/ngsi-ld/default-context/A,https://uri.etsi.org/ngsi-ld/default-context/B"},
+                {"type": "(https://uri.etsi.org/ngsi-ld/default-context/A;https://uri.etsi.org/ngsi-ld/default-context/B)"}
+            ]
+        }))
+        .await;
+
+        pretty_assertions::assert_eq!(served["entities"], json!([{"type": "A,B"}, {"type": "(A;B)"}]));
     }
 
     /// Clause 5.5.7: each stored projection tree reads back with its attribute
