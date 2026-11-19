@@ -24,6 +24,7 @@ use andromeda_jsonld::{
     compound_context_host::WrapperUse,
     context_subtree::context_subtree,
     engine::{context_document_check::check_context_document, processor::JsonLdEngine},
+    error::JsonLdError,
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
@@ -274,24 +275,14 @@ impl ContextRegistryService {
         let source_url = stored.source_url.ok_or_else(|| ContextRegistryError::MissingSourceUrl {
             identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
         })?;
+        // Clause 5.13.5.4: "in case of any error, the operation ends without
+        // removing the existing @context", so a refused download leaves the
+        // stored row and the in-process copy as they were.
         let downloaded = self
             .engine
             .fetch_remote_context(&source_url)
             .await
-            .map_err(|error| ContextRegistryError::ContextUnavailable {
-                source_url: source_url.clone(), // clone: the error owns this copy, and the original remains for invalidating the previous document.
-                source: Box::new(error),
-            })?;
-        // Clause 5.13.5.4: "If downloading fails, or the downloaded @context is
-        // invalid according to JSON and JSON-LD validation of clause 5.5.4, then
-        // an error of type LdContextNotAvailable shall be raised", and "in case
-        // of any error, the operation ends without removing the existing
-        // @context": the stored row and the in-process copy are left as they
-        // were. The download is validated as Add @context validates a client's
-        // document.
-        if let Err(refusal) = check_context_document(&downloaded.document).await {
-            return Err(ContextRegistryError::InvalidDownload { source_url, refusal });
-        }
+            .map_err(|error| reload_refusal(&source_url, error))?;
         // Clause 5.13.5.4: "the existing @context is replaced with the newly
         // downloaded one." The resolver hands the download back already reduced
         // to its `@context` subtree (clause 5.13.2.3), which is exactly the
@@ -307,6 +298,29 @@ impl ContextRegistryService {
         }
         self.engine.invalidate_context(&source_url).await;
         Ok(())
+    }
+}
+
+/// The refusal of a reload whose download did not yield a valid `@context`.
+///
+/// Clause 5.13.5.4 raises `LdContextNotAvailable` "if downloading fails, or the
+/// downloaded @context is invalid according to JSON and JSON-LD validation of
+/// clause 5.5.4". The download step validates a downloaded document as Add
+/// @context validates a client's, so a document it refuses is the second case
+/// and every other failure the first.
+///
+/// Written as `if let` rather than an exhaustive match because every
+/// [`JsonLdError`] other than a refused document reports a download that
+/// failed.
+fn reload_refusal(source_url: &IriBuf, error: JsonLdError) -> ContextRegistryError {
+    let source_url = source_url.clone(); // clone: the error owns this copy, and the original remains for invalidating the previous document.
+    if let JsonLdError::ContextInvalid { source, .. } = error {
+        ContextRegistryError::InvalidDownload { source_url, refusal: source }
+    } else {
+        ContextRegistryError::ContextUnavailable {
+            source_url,
+            source: Box::new(error),
+        }
     }
 }
 

@@ -388,14 +388,19 @@ impl Loader for HttpContextLoader {
 mod tests {
     use crate::{
         context_cache::{CachedContext, ContextCache, ContextCacheError, StoredDocumentSource},
+        context_fault::ContextFault,
         context_registry::ContextRegistry,
         context_tail::ContextTail,
+        engine::options::RemoteContextFetch,
+        error::JsonLdError,
         hit_counter::HitCounter,
         hosted_context_recognizer::NoHostedContexts,
         loader::{
             cache_lifetime::{CacheLifetime, ResidualLifetime},
+            error::InvalidContextDocument,
             http::HttpContextLoader,
             loader_settings::LoaderSettings,
+            test_origin::{TestOrigin, ok},
         },
         operation_hit_scope::run_in_operation_scope,
         test_documents::{document_value, literal},
@@ -635,6 +640,47 @@ mod tests {
         assert!(
             recorder.puts.lock().expect("mutex not poisoned").is_empty(),
             "an embedded context is not written to the durable cache"
+        );
+    }
+
+    /// Clause 5.5.6 refuses a remote `@context` that is not valid JSON-LD, and
+    /// clause 5.13.1 keeps a Cached copy only to spare later downloads: the
+    /// refused document is written to neither tier, so the next resolution
+    /// downloads it again and reads whatever the origin serves by then.
+    #[tokio::test]
+    async fn a_download_that_is_not_valid_json_ld_is_held_in_neither_tier() {
+        let origin = TestOrigin::start().await;
+        origin
+            .stage("/speed.jsonld", ok("application/ld+json", r#"{"@context": {"speed": 5}}"#, &[]))
+            .await;
+        let recorder = Arc::new(RecordingL2::default());
+        let settings = LoaderSettings {
+            allow_remote: RemoteContextFetch::Allow,
+            ..LoaderSettings::offline()
+        };
+        let loader = HttpContextLoader::new(Arc::new(ContextRegistry::new()), settings, Arc::new(NoHostedContexts))
+            .expect("loader builds")
+            .with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
+        let url = origin.url("/speed.jsonld");
+
+        for _ in 0..2 {
+            let error = loader.load_document(&url).await.expect_err("the document is refused");
+            assert!(
+                matches!(
+                    &error,
+                    JsonLdError::ContextInvalid {
+                        source: InvalidContextDocument::InvalidContext(ContextFault::TermDefinitionKind { .. }),
+                        ..
+                    }
+                ),
+                "{error}"
+            );
+        }
+
+        pretty_assertions::assert_eq!(origin.requests("/speed.jsonld").await, 2, "each resolution downloads the document again");
+        assert!(
+            recorder.puts.lock().expect("mutex not poisoned").is_empty(),
+            "nothing is written to the durable cache"
         );
     }
 
