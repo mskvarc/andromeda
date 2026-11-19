@@ -38,15 +38,16 @@ impl AdmittedEntityQuery {
         self.filter.as_ref()
     }
 
-    /// Take the attribute-reading filters out of the query, leaving it selecting
-    /// on identity alone so every source (and the local read) answers with
-    /// whatever it holds (clause 5.7.2.4).
+    /// Take the value, geo and scope filters out of the query (clause
+    /// 5.7.2.4).
     ///
     /// With `splitEntities` an entity's attributes may be spread across several
     /// context sources, so no single reader can decide whether the entity
     /// matches: `q`, the geoquery and `scopeQ` are held back and evaluated once
-    /// over the merged result. `jsonKeys` leaves with `q`, the filter whose
-    /// term expansion it governs (clause 4.9 EXAMPLE 11), and so does
+    /// over the merged result. The Attribute list and the projection stay, as
+    /// the list the merged entities are answered by. `jsonKeys` leaves with
+    /// `q`, the filter whose term expansion it governs (clause 4.9 EXAMPLE
+    /// 11), and so does
     /// `expandValues`, which governs its operands; with `q` deferred neither
     /// has anything left to say to the local query. The admission of the `q`
     /// leaves with it.

@@ -40,12 +40,19 @@ pub enum ProjectionRemainder {
 /// (clause 4.22), so only the standing ones count.
 #[must_use]
 pub fn state_remainder(state: &EntityState, projection: &ExpandedProjection, now: DateTime<Utc>) -> ProjectionRemainder {
+    remainder_under(state, &ProjectedMembers::of(projection), now)
+}
+
+/// What a projection requiring `members` of an Entity left of `state`, at
+/// `now`, read as [`state_remainder`] reads it.
+#[must_use]
+pub fn remainder_under(state: &EntityState, members: &ProjectedMembers, now: DateTime<Utc>) -> ProjectionRemainder {
     let standing = state
         .attributes()
         .names()
         .filter(|name| state.attribute_stands(name.as_str(), now))
         .map(AttributeName::as_str);
-    if ProjectedMembers::of(projection).admits(standing, state.scope_presence()) {
+    if members.admits(standing, state.scope_presence()) {
         ProjectionRemainder::Members
     } else {
         ProjectionRemainder::Nothing

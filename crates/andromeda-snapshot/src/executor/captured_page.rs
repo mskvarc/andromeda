@@ -5,9 +5,11 @@
 //! local state merged with what the Context Sources answered for it, or an
 //! entity only a source holds, with no instance whose `expiresAt` has passed
 //! (clause 4.22). Under `splitEntities` no reader holds enough of an entity to
-//! decide `q`, the geoquery or `scopeQ`, so they are decided here, on the
-//! whole entity, as Query Entities decides them on its merged result (clauses
-//! 4.3.6 and 5.7.2.4). A `q` term reads every instance of an attribute,
+//! decide `q`, the geoquery, `scopeQ` or the Attribute list, so they are
+//! decided here, on the whole entity, as Query Entities decides them on its
+//! merged result (clauses 4.3.6 and 5.7.2.4). Each entity the query selects is
+//! then reduced to its `attrs`, `pick` or `omit` (clause 5.7.2.5), whatever
+//! holder it came from. A `q` term reads every instance of an attribute,
 //! whatever its `datasetId`, and an instance's `createdAt` and `modifiedAt`
 //! (clause 4.9), so an entity is narrowed to the instances the query selects,
 //! and one a source contributed to is stamped as a write of the capture
@@ -25,13 +27,14 @@ use crate::{
         status::failure_detail,
     },
 };
+use andromeda_entity::query::answer_list::AnswerList;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingExceeded;
 use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
 use chrono::{DateTime, Utc};
-use derive_more::AsRef;
+use derive_more::{AsMut, AsRef};
 
 /// Where the state of a page's entity comes from, which decides how the
 /// branch records it.
@@ -46,9 +49,10 @@ pub(crate) enum StateOrigin {
 }
 
 /// One entity of a captured page, before the query has selected it.
-#[derive(AsRef, Debug)]
+#[derive(AsMut, AsRef, Debug)]
 pub(crate) struct CandidateEntity {
     /// The whole entity the query is decided on.
+    #[as_mut]
     #[as_ref]
     pub(crate) state: EntityState,
     /// Where the state comes from.
@@ -78,6 +82,9 @@ pub(super) struct CaptureSelection<'q> {
     /// The filters `splitEntities` holds back to the whole entities, `None`
     /// when every reader applies the query's filters itself.
     pub(super) deferred: Option<DeferredSplitFilters>,
+    /// The `attrs`, `pick` or `omit` every captured entity is reduced to, as
+    /// Query Entities answers it (clause 5.7.2.5).
+    pub(super) list: AnswerList<'q>,
     /// The context the query is expanded under.
     pub(super) context: &'q ContextSpec,
     /// The datasets the query selects instances of, `None` when it names
@@ -107,14 +114,21 @@ impl SnapshotExecutor {
             Some(deferred) => {
                 let query = &self.sources.entity_query;
                 match query
-                    .retain_matching(&self.sources.live_target, candidates, deferred, selection.context, query.language_targeting())
+                    .answer_gathered(
+                        &self.sources.live_target,
+                        candidates,
+                        deferred,
+                        selection.list,
+                        selection.context,
+                        query.language_targeting(),
+                    )
                     .await
                 {
                     Ok(selected) => selected,
                     Err(error) => return entity_query_failure(error).map(PageOutcome::Ended),
                 }
             }
-            None => candidates,
+            None => selection.list.answered(candidates, captured_at),
         };
         Ok(match branch_states(selected, selection.dataset_ids, capture, captured_at) {
             Ok(states) => PageOutcome::States(states),

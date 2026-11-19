@@ -9,7 +9,7 @@
 
 use crate::error::{EntityHttpClassify, EntityResultExt};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, local_read::LocalRead};
 use andromeda_entity_map::{
     contribution::SourceContribution,
     fingerprint::{FingerprintedRequest, fingerprint_of},
@@ -22,11 +22,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{
-    entity_selection::EntitySelection,
-    filter::{language_targeting::LanguageTargeting, reading::filter_reading::FilterReading},
-    page_window::PageWindow,
-};
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::reading::filter_reading::FilterReading, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     follow_up_inputs::{ContextReference, FollowUpInputs},
@@ -50,12 +46,8 @@ pub(crate) enum LocalEntitySource<'a> {
         service: &'a EntityQueryService,
         /// Live or snapshot branch the query read.
         target: &'a ContextTarget,
-        /// The query, as it ran against the store.
-        query: &'a AdmittedEntityQuery,
-        /// The request's JSON-LD context.
-        context: &'a ContextSpec,
-        /// What the query's target languages could be and how they selected languageMap keys.
-        targeting: LanguageTargeting,
+        /// The query the identifiers are listed by.
+        local: LocalRead<'a>,
         /// The planned clause 4.5.23 join, whose Linked Entities belong to the
         /// same unitary request.
         join: Option<&'a JoinPlan<'a, TypedEntities>>,
@@ -68,24 +60,22 @@ impl<'a> LocalEntitySource<'a> {
     /// The entities one query matched locally, as the map lists them.
     ///
     /// Clause 5.5.14 records every entity the request matched rather than the
-    /// page it answered with, so the listing runs over the query as it went to
-    /// the store, together with the Linked Entities the clause 4.5.23 join
-    /// reached under the same unitary request.
+    /// page it answered with, so the listing runs over `local`, together with
+    /// the Linked Entities the clause 4.5.23 join reached under the same
+    /// unitary request. Under split entities `local` lists every local
+    /// candidate, as each source contributes every entity it answered with
+    /// (clauses 5.7.2.4 and 5.14.4.4).
     pub(crate) const fn queried(
         service: &'a EntityQueryService,
         target: &'a ContextTarget,
-        query: &'a AdmittedEntityQuery,
-        context: &'a ContextSpec,
-        targeting: LanguageTargeting,
+        local: LocalRead<'a>,
         join: Option<&'a JoinPlan<'a, TypedEntities>>,
         instance: &'a HttpUri,
     ) -> LocalEntitySource<'a> {
         LocalEntitySource::Queried {
             service,
             target,
-            query,
-            context,
-            targeting,
+            local,
             join,
             instance,
         }
@@ -115,13 +105,15 @@ impl LocalMapEntities for LocalEntitySource<'_> {
             LocalEntitySource::Queried {
                 service,
                 target,
-                query,
-                context,
-                targeting,
+                local,
                 join,
                 instance,
             } => {
-                let mut compiled = service.compile_query_public(query, context, targeting).await.with_entity_instance(instance)?;
+                let mut compiled = service
+                    .compile_query_public(local.query, local.context, local.language_targeting)
+                    .await
+                    .with_entity_instance(instance)?
+                    .held_to(local.filters);
                 match listing {
                     MapListing::Minted => {}
                     // Clause 4.3.6.7 rechecks the filters of the request the map

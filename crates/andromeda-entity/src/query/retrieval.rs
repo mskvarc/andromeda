@@ -6,6 +6,7 @@ use crate::{
     query::{
         EntityQueryService,
         entity_versions::held_version,
+        local_read::LocalRead,
         projection_remainder::state_remainder,
         state_projection::{keeps_a_standing_attribute, narrow_state},
     },
@@ -18,17 +19,16 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
+    candidate_filters::CandidateFilters,
     count_policy::CountPolicy,
     dataset_selector::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
-    filter::language_targeting::LanguageTargeting,
     name_stage::{Expanded, Written},
     page_window::PageWindow,
     projection::{expanded_projection::ExpandedProjection, returned_attributes::ReturnedAttributes},
     type_selection::{TypeSelection, expansion::expand_type_selection},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -134,12 +134,12 @@ impl EntityQueryService {
         Ok(expand_type_selection(selector, &ContextualExpander::new(self.engine(), &prepared)).await?)
     }
 
-    /// Select the page `window` selects of a parameterized entity query
-    /// (clause 5.7.2) as the stored states it matched, each narrowed to the query's `attrs` and
-    /// clause 4.21 projection and read with its entity-level clause 4.8 system
-    /// times, with the optional clause 6.3.13 count. The query's target
-    /// languages are admitted and select languageMap keys under
-    /// `language_targeting`.
+    /// Select the page `window` selects of the entity query `read` runs
+    /// (clause 5.7.2) as the stored states it matched, each narrowed to the
+    /// query's `attrs` and clause 4.21 projection and read with its
+    /// entity-level clause 4.8 system times, with the optional clause 6.3.13
+    /// count. A read deferring the split filters takes each local part whole
+    /// (clause 5.7.2.4).
     ///
     /// The states are what [`EntityQueryService::compact_versions`] writes:
     /// no expiry (clause 4.22), `datasetId` (clause 4.5.5) or system-time
@@ -151,21 +151,25 @@ impl EntityQueryService {
     /// # Errors
     ///
     /// Reports [`EntityError::JsonLd`] when the request cannot be expanded
-    /// against `context`, [`EntityError::Query`] when the request's filter
+    /// against its context, [`EntityError::Query`] when the request's filter
     /// expressions are not well formed, and [`EntityError::Persistence`] when
     /// the store could not answer the query.
     pub async fn query_states(
         &self,
         target: &ContextTarget,
-        query: &AdmittedEntityQuery,
+        read: LocalRead<'_>,
         window: &PageWindow,
         count: CountPolicy,
-        context: &ContextSpec,
-        language_targeting: LanguageTargeting,
     ) -> Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> = async {
-            let compiled = self.compile_query_cached(query, context, language_targeting).await?;
+            let compiled = self.compile_query_cached(read.query, read.context, read.language_targeting).await?;
+            let compiled = match read.filters {
+                CandidateFilters::Applied => compiled,
+                // The cached compilation is shared, so the deferring read
+                // holds a copy of its own.
+                CandidateFilters::Deferred => Arc::new(Arc::unwrap_or_clone(compiled).held_to(read.filters)),
+            };
             let QueryOutcome { rows, total_count } = self.read_compiled(target, &compiled, window, count).await?;
             Ok((rows, total_count))
         }

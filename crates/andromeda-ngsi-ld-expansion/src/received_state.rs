@@ -28,14 +28,15 @@ use andromeda_ngsi_ld_model::{
     entity::Entity,
     entity_system_times::EntitySystemTimes,
 };
-use derive_more::AsRef;
+use derive_more::{AsMut, AsRef};
 use std::{future::Future, pin::Pin};
 use thiserror::Error;
 
 /// An entity a peer answered with, in the model.
-#[derive(AsRef, Clone, Debug, PartialEq)]
+#[derive(AsMut, AsRef, Clone, Debug, PartialEq)]
 pub struct ReceivedState {
     /// The entity.
+    #[as_mut]
     #[as_ref]
     pub state: EntityState,
     /// Its entity-level system times.

@@ -10,7 +10,10 @@
 //! `pick`, `omit` and `attrs`: with nothing to narrow, a cache lookup that
 //! clones a whole compiled query would be pure waste.
 
-use andromeda_entity::{error::EntityError, query::EntityQueryService};
+use andromeda_entity::{
+    error::EntityError,
+    query::{EntityQueryService, answer_list::AnswerList},
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, projection::expanded_projection::ExpandedProjection};
@@ -55,5 +58,12 @@ impl RequestProjection {
             Some(compiled) => ListInForce::of(Some(&compiled.projection), &compiled.selection.attrs),
             None => ListInForce::Unrestricted,
         }
+    }
+
+    /// The list the request answers its merged entities by, with what an
+    /// entity has to carry to be answered under it (clauses 5.7.2.4 and
+    /// 5.7.2.5).
+    pub(crate) fn answer_list(&self) -> AnswerList<'_> {
+        self.compiled.as_ref().map_or(AnswerList::UNRESTRICTED, AnswerList::of)
     }
 }

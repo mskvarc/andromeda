@@ -12,13 +12,10 @@ use crate::entity::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     port::stored_entry::StoredEntry,
-    query::{EntityQueryService, entity_versions::held_version},
+    query::{EntityQueryService, entity_versions::held_version, local_read::LocalRead},
 };
-use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
-use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
 use axum::http::Uri as HttpUri;
 
 /// The entities this broker holds itself for a query page.
@@ -39,7 +36,9 @@ pub(crate) struct LocalVersions {
 ///
 /// A page the store cut is settled before an entity that does not read back
 /// is taken out of it, so the entity still counts towards whether the
-/// collection continues past the page.
+/// collection continues past the page. A read deferring the split filters
+/// reads the local parts of the aggregated Entities, which the page is cut
+/// from after the merge.
 ///
 /// # Errors
 ///
@@ -47,15 +46,13 @@ pub(crate) struct LocalVersions {
 pub(crate) async fn local_versions(
     service: &EntityQueryService,
     target: &ContextTarget,
-    query: &AdmittedEntityQuery,
+    local: LocalRead<'_>,
     page: &QueryPage,
-    context: &AdmittedContext,
-    targeting: LanguageTargeting,
     instance: &HttpUri,
 ) -> Result<LocalVersions, ProblemResponse> {
     let (local_window, local_count) = page.local_read();
     let (rows, total) = service
-        .query_states(target, query, &local_window, local_count, context, targeting)
+        .query_states(target, local, &local_window, local_count)
         .await
         .with_entity_instance(instance)?;
     let (rows, reach) = page.settle_local(rows);

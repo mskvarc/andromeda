@@ -3,11 +3,16 @@
 //!
 //! With `splitEntities`, an entity's attributes may be spread across several
 //! context sources, so no single source can decide whether the entity matches.
-//! The attribute-reading filters (`q`, the geoquery and `scopeQ`) therefore
-//! stay with the broker: each source answers whatever it holds, and the filters
-//! are applied here, once the local and forwarded entities have been merged.
+//! The attribute-reading filters (`q`, the geoquery, `scopeQ` and the
+//! Attribute list) therefore stay with the broker: each source and the local
+//! read answer whatever they hold, and the filters are applied here, once the
+//! local and forwarded entities have been merged. Only then is each matching
+//! entity reduced by the request's list (clause 5.7.2.5).
 
-use crate::{error::EntityError, query::EntityQueryService};
+use crate::{
+    error::EntityError,
+    query::{EntityQueryService, answer_list::AnswerList},
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, queried::linked_states::LinkedStates};
@@ -28,6 +33,29 @@ use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
 use chrono::Utc;
 
 impl EntityQueryService {
+    /// The merged `entities` of a split query that the query answers, in the
+    /// order they come: each one the `deferred` filters admit, decided on the
+    /// whole merged entity, then reduced to `list`, which holds the Attribute
+    /// list to the merged entity too (clauses 5.7.2.4 and 5.7.2.5).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError::Query`] when `q` or the geoquery cannot be
+    /// compiled against `context`, and the store's [`EntityError`] when the
+    /// entities a hop of `q` links to cannot be read.
+    pub async fn answer_gathered<T: AsRef<EntityState> + AsMut<EntityState> + Send + Sync>(
+        &self,
+        target: &ContextTarget,
+        entities: Vec<T>,
+        deferred: &DeferredSplitFilters,
+        list: AnswerList<'_>,
+        context: &ContextSpec,
+        language_targeting: LanguageTargeting,
+    ) -> Result<Vec<T>, EntityError> {
+        let matching = self.retain_matching(target, entities, deferred, context, language_targeting).await?;
+        Ok(list.answered(matching, Utc::now()))
+    }
+
     /// Keep the merged `entities` the `deferred` filters admit, in the order
     /// they come, each decided on the state it holds.
     ///
@@ -45,7 +73,7 @@ impl EntityQueryService {
     /// Returns [`EntityError::Query`] when `q` or the geoquery cannot be
     /// compiled against `context`, and the store's [`EntityError`] when the
     /// entities a hop of `q` links to cannot be read.
-    pub async fn retain_matching<T: AsRef<EntityState> + Send + Sync>(
+    async fn retain_matching<T: AsRef<EntityState> + Send + Sync>(
         &self,
         target: &ContextTarget,
         entities: Vec<T>,
@@ -114,7 +142,7 @@ async fn compile_deferred_q(admitted: &AdmittedFilter, deferred: &DeferredSplitF
 
 #[cfg(test)]
 mod tests {
-    use crate::query::service_test_double::service;
+    use crate::query::{answer_list::AnswerList, service_test_double::service};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
@@ -122,15 +150,19 @@ mod tests {
     use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
     use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
     use andromeda_ngsi_ld_query::{
+        entity::compiled::CompiledEntityQuery,
+        entity_selection::EntitySelection,
         filter::{
             Filter,
             compilation::{AdmittedFilter, admit_q_filter},
             language_targeting::LanguageTargeting,
         },
         name_stage::Written,
+        projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm, projected_members::ProjectedMembers},
         scope::scope_query::ScopeQuery,
     };
     use andromeda_ngsi_ld_request::{deferred_split_filters::DeferredSplitFilters, error::ParameterError};
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     /// The filter `q` writes, admitted for Query Entities under no join.
@@ -201,5 +233,64 @@ mod tests {
             kept_of_two_vehicles(DeferredSplitFilters::default()).await,
             ["urn:ngsi-ld:Vehicle:fast", "urn:ngsi-ld:Vehicle:slow"]
         );
+    }
+
+    /// The merged entities a query compiled to `compiled` answers of a fast
+    /// and a slow Vehicle under the `deferred` filters.
+    async fn answered_of_two_vehicles(deferred: DeferredSplitFilters, compiled: &CompiledEntityQuery) -> Vec<ReceivedState> {
+        service()
+            .answer_gathered(
+                &ContextTarget::Live,
+                vec![vehicle("urn:ngsi-ld:Vehicle:fast", 80), vehicle("urn:ngsi-ld:Vehicle:slow", 40)],
+                &deferred,
+                AnswerList::of(compiled),
+                &ContextSpec::core_only(),
+                LanguageTargeting::Specification,
+            )
+            .await
+            .expect("the deferred filters compile")
+    }
+
+    /// Clauses 5.7.2.4 and 5.7.2.5: the Scope query reads the merged entity
+    /// before a `pick` leaving out `scope` reduces it.
+    #[tokio::test]
+    async fn a_scope_query_decides_before_a_pick_leaving_out_the_scope() {
+        let speed = ExpandedProjectionTerm::Attribute {
+            iri: IriBuf::new("https://example.com/speed".to_owned()).expect("a valid IRI"),
+            linked: Vec::new(),
+        };
+        let projection = ExpandedProjection::builder().pick(vec![speed]).build();
+        let compiled = CompiledEntityQuery::builder()
+            .selection(EntitySelection::builder().projected_members(ProjectedMembers::of(&projection)).build())
+            .projection(projection)
+            .build();
+        let deferred = DeferredSplitFilters {
+            scope_q: Some("/Madrid".parse::<ScopeQuery>().expect("scopeQ parses")),
+            ..DeferredSplitFilters::default()
+        };
+
+        let answered = answered_of_two_vehicles(deferred, &compiled).await;
+
+        pretty_assertions::assert_eq!(answered.len(), 2);
+        assert!(answered.iter().all(|version| version.state.scope().is_none()), "the pick leaves out the scope");
+    }
+
+    /// Clause 5.7.2.4: a merged entity meeting `q` but holding none of the
+    /// Attributes the list names is no answer.
+    #[tokio::test]
+    async fn a_merged_entity_holding_none_of_the_attrs_is_no_answer() {
+        let compiled = CompiledEntityQuery::builder()
+            .selection(
+                EntitySelection::builder()
+                    .attrs(vec![IriBuf::new("https://example.com/brand".to_owned()).expect("a valid IRI")])
+                    .build(),
+            )
+            .build();
+        let deferred = DeferredSplitFilters {
+            q: Some(admitted("\"https://example.com/speed\">50")),
+            ..DeferredSplitFilters::default()
+        };
+
+        pretty_assertions::assert_eq!(answered_of_two_vehicles(deferred, &compiled).await, Vec::<ReceivedState>::new());
     }
 }

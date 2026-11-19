@@ -74,21 +74,12 @@ async fn local_entity_ids(
     rendering: &CreationRendering<'_>,
 ) -> Result<Vec<Identifier>, ProblemResponse> {
     let uri = rendering.uri;
-    let mut compiled = state
+    let compiled = state
         .entity_query
         .compile_query_public(query, rendering.context, state.entity_query.language_targeting())
         .await
-        .with_entity_map_instance(uri)?;
-    match filters {
-        CandidateFilters::Applied => {}
-        // Clause 5.14.4.4: the split branch selects on the identifier, the id
-        // pattern and the type alone.
-        CandidateFilters::Deferred => {
-            compiled.selection.without_split_filters();
-            compiled.selection.without_attribute_requirement();
-        }
-    }
-    let compiled = compiled;
+        .with_entity_map_instance(uri)?
+        .held_to(filters);
     state
         .entity_query
         .query_ids(&state.live_target, &compiled, window)
