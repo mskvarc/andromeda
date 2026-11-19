@@ -17,12 +17,18 @@ use andromeda_ngsi_ld_query::{
         reading::filter_reading::FilterReading,
     },
     name_stage::Written,
-    namespace_expander::EXAMPLE_NAMESPACE,
+    namespace_expander::NamespaceExpander,
     query_error::QueryError,
 };
 use criterion::{BatchSize, Criterion};
+use iri_rs::iri;
 use std::{hint::black_box, io};
 use tokio::runtime::Builder;
+
+/// Terms expand under the core `@context`'s default vocabulary, as a client's
+/// unmapped terms do, so every expanded name is as long as a real one (48
+/// bytes for `a12`) and too long to be held inline.
+const DEFAULT_VOCABULARY: NamespaceExpander = NamespaceExpander::uniform(iri!("https://uri.etsi.org/ngsi-ld/default-context/"));
 
 /// A filter of a hundred terms over twenty Attributes, every operator among
 /// them, in groups of five joined by `|`.
@@ -66,9 +72,9 @@ fn main() -> Result<(), SetupError> {
     let mut group = criterion.benchmark_group("compile-100-terms");
     group.bench_function("parse", |bencher| bencher.iter(|| black_box(&written).parse::<Filter<Written>>()));
     group.bench_function("expand", |bencher| {
-        bencher.iter(|| runtime.block_on(expand_filter(black_box(parsed.clone()), &json_keys, &EXAMPLE_NAMESPACE)));
+        bencher.iter(|| runtime.block_on(expand_filter(black_box(parsed.clone()), &json_keys, &DEFAULT_VOCABULARY)));
     });
-    let expanded = runtime.block_on(expand_filter(parsed, &json_keys, &EXAMPLE_NAMESPACE))?;
+    let expanded = runtime.block_on(expand_filter(parsed, &json_keys, &DEFAULT_VOCABULARY))?;
     let lowered = FilterReading::lowered(&expanded, LanguageMatching::TagEquality);
     group.bench_function("lower", |bencher| {
         bencher.iter(|| FilterReading::lowered(black_box(&expanded), LanguageMatching::TagEquality));
