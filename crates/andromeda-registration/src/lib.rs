@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_query::{filter::compilation::FilterAdmission, geo::admissi
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
+mod context_source_endpoint;
 mod context_source_properties;
 mod create;
 /// The members of a `ContextSourceRegistration` payload.
