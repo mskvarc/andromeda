@@ -1083,9 +1083,9 @@ consistency = "watermark"
 # starts within seconds of the tenant being loaded and runs while the tenant
 # serves requests. Until it completes, the database evaluates every geo query.
 # Later rebuilds drop entities deleted since and, under `"commit-synchronous"`,
-# bring in writes from other broker processes. Under `"watermark"` a geo query
-# never waits for a rebuild, and the database answers the ones that arrive while
-# it installs what it read.
+# bring in writes from other broker processes. A rebuild loads each partition
+# beside the one in use, so geo queries and writes carry on while it runs and
+# wait only while a partition is swapped in.
 #
 # Must be above zero.
 rebuild_interval = "30m"

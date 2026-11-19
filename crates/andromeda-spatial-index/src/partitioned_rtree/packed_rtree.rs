@@ -129,22 +129,22 @@ impl<E: RTreeObject<Envelope = AABB<[f64; 2]>>> PackedRTree<E> {
 }
 
 impl<E: RTreeObject<Envelope = AABB<[f64; 2]>> + Indexed> PackedRTree<E> {
-    /// Remove one entry of the object `id` whose box has its lower corner at
+    /// Take out one entry of the object `id` whose box has its lower corner at
     /// `corner`, if the tree holds one.
     ///
     /// The entry's leaf leaves the tree and returns under the box of the
     /// entries it keeps, or stays out once it keeps none.
-    pub fn remove(&mut self, id: &<E as Indexed>::Id, corner: [f64; 2]) {
-        let Some(leaf) = self.leaves.remove_with_selection_function(LeafHolding { id, corner }) else {
-            return;
-        };
+    pub fn remove(&mut self, id: &<E as Indexed>::Id, corner: [f64; 2]) -> Option<E> {
+        let leaf = self.leaves.remove_with_selection_function(LeafHolding { id, corner })?;
         let mut kept = leaf.entries.into_vec();
-        if let Some(position) = kept.iter().position(|entry| starts_at(entry, id, corner)) {
-            kept.swap_remove(position);
-        }
+        let removed = kept
+            .iter()
+            .position(|entry| starts_at(entry, id, corner))
+            .map(|position| kept.swap_remove(position));
         if !kept.is_empty() {
             self.leaves.insert(Leaf::of(kept.into_boxed_slice()));
         }
+        removed
     }
 }
 
@@ -382,6 +382,15 @@ mod tests {
         tree.remove(&2, [5.0, 5.0]);
         assert_eq!(leaves(&tree).len(), 1);
         assert_eq!(leaves(&tree)[0].envelope, AABB::from_point([0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_removed_entry_is_handed_back_and_a_missing_one_is_not() {
+        let mut tree = PackedRTree::default();
+        tree.insert(at(1, 3.0, 4.0));
+        assert_eq!(tree.remove(&1, [4.0, 3.0]), None);
+        assert_eq!(tree.remove(&1, [3.0, 4.0]), Some(at(1, 3.0, 4.0)));
+        assert_eq!(tree.remove(&1, [3.0, 4.0]), None);
     }
 
     #[test]

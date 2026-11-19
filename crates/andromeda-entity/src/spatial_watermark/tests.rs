@@ -247,7 +247,7 @@ async fn an_open_transaction_does_not_make_later_catch_ups_re_read_what_they_too
 }
 
 #[tokio::test]
-async fn a_query_arriving_while_a_rebuild_installs_goes_unnarrowed() {
+async fn a_query_arriving_while_a_rebuild_installs_still_narrows() {
     let executor = Arc::new(GatedBlockingExecutor::open());
     let harness = harness(Arc::clone(&executor) as Arc<dyn BlockingExecutor>);
     harness.store.write("urn:ngsi-ld:Vehicle:v", 0.5);
@@ -256,10 +256,8 @@ async fn a_query_arriving_while_a_rebuild_installs_goes_unnarrowed() {
     let mut rebuild = Box::pin(harness.watermark.rebuild());
     assert!(poll!(&mut rebuild).is_pending());
     assert_eq!(executor.queued(), 2, "the install waits for its worker");
-    let reads = harness.store.reads().len();
 
-    assert_eq!(near(&harness.watermark, 0.0).await, None);
-    assert_eq!(harness.store.reads().len(), reads, "a query during an install reads nothing");
+    assert_eq!(near(&harness.watermark, 0.0).await, Some(ids(&["urn:ngsi-ld:Vehicle:v"])));
 
     executor.release();
     rebuild.await.expect("the store is readable");
