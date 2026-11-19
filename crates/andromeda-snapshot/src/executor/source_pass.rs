@@ -10,6 +10,11 @@
 //! Every page of a pass is charged to one budget, and the pass is read whole
 //! before the capture stores any of it, so a refused pass stores nothing.
 //!
+//! The pass holds the pages as the sources answered them until it is settled:
+//! a split query decides its filters over those answers (clause 5.7.4.4).
+//! Settling leaves out the entities the decision dropped, then what an earlier
+//! page or pass captured.
+//!
 //! A forwarding that fails is read as Query Temporal Evolution of Entities
 //! reads it: one this broker's own store failed fails the query, and any other
 //! leaves the capture with the local answer. A source that fails leaves the
@@ -18,7 +23,8 @@
 use crate::executor::{
     SnapshotExecutor,
     execution_failure::ExecutionFailure,
-    source_instance_walk::SourceInstanceWalk,
+    source_instance_walk::{SourceInstanceWalk, refuse_unpositioned},
+    split_verdict::SplitVerdict,
     status::failure_detail,
     temporal_capture::{TemporalCapture, capture_refused},
 };
@@ -27,8 +33,9 @@ use andromeda_failure_classification::{
     result_limit_failure::{classify_instance_budget_refusal, classify_result_budget_refusal},
 };
 use andromeda_federation::{
+    in_effect_probe::InEffectReading,
     operation::ForwardingOperation,
-    outcome::ForwardedTemporalEntities,
+    outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
     request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, SourcePage, SourcePaging, TriggeringRequest},
     result_budget::{ResultBudget, ResultBudgetExceeded},
@@ -36,14 +43,19 @@ use andromeda_federation::{
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
+use andromeda_ngsi_ld_model::{
+    snapshot::ExecutionResultDetails,
+    temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::collections::{HashSet, VecDeque};
 use tracing::warn;
 
 /// Every offset page the sources answered over one window, not yet stored.
 pub(super) struct SourcePass {
-    /// The pages, in the order they were asked for, each trimmed of what an
+    /// The pages, in the order they were asked for, none of them cut short at
+    /// no readable range: as the sources answered them until the pass is
+    /// settled, then each trimmed of what the pass dropped and of what an
     /// earlier page or pass captured.
     pages: VecDeque<Vec<ForwardedTemporalEntities>>,
     /// The budget every page of the pass was charged to.
@@ -63,6 +75,11 @@ impl SourcePass {
             .collect()
     }
 
+    /// The instances of every entity part the pass answers.
+    pub(super) fn answered_documents(&self) -> impl Iterator<Item = &TemporalDocument> {
+        self.answers().flat_map(|answer| answer.entities.iter()).filter_map(TemporalHistory::instances)
+    }
+
     /// Whether a merged collection of `entities` distinct entities fits the
     /// entity limit the pass was charged under (clause 4.12).
     ///
@@ -71,6 +88,20 @@ impl SourcePass {
     /// Returns [`ResultBudgetExceeded::DistinctEntities`] when it does not.
     pub(super) fn admit_collection(&self, entities: usize) -> Result<(), ResultBudgetExceeded> {
         self.budget.admit_collection(u64::try_from(entities).unwrap_or(u64::MAX))
+    }
+
+    /// Leave out of every page the entities `verdict` drops, then, page after
+    /// page, what `walk` says an earlier page or pass captured.
+    ///
+    /// A dropped entity is left out before the walk reads the page, so the
+    /// walk remembers only what the capture stores.
+    pub(super) fn settle(&mut self, verdict: &SplitVerdict, walk: &mut SourceInstanceWalk) {
+        for page in &mut self.pages {
+            for answer in page.iter_mut() {
+                answer.entities.retain(|history| history.id().is_none_or(|entity_id| verdict.keeps(entity_id)));
+            }
+            walk.trim(page);
+        }
     }
 
     /// Take the next page of the pass, `None` once every page was taken.
@@ -96,28 +127,38 @@ impl SourcePass {
 }
 
 impl SnapshotExecutor {
-    /// Ask the sources for every offset page of `params`, each trimmed by
-    /// `walk` of what an earlier page or pass captured, under one budget.
+    /// Ask the sources for every offset page of `params` under one budget.
     ///
     /// # Errors
     ///
     /// Returns the query's failure: the pass exceeds its budget, the
-    /// forwarding failed in this broker's own store, a partial answer cannot be
-    /// read on, or the pages run past the offsets a source can be asked for.
+    /// forwarding failed in this broker's own store, a partial answer names no
+    /// instant to read on from, or the pages run past the offsets a source can
+    /// be asked for.
     pub(super) async fn gather_source_pass(
         &self,
         capture: &TemporalCapture<'_>,
         params: &TemporalQueryParameters,
-        walk: &mut SourceInstanceWalk,
     ) -> Result<SourcePass, ExecutionResultDetails> {
         let budget = ResultBudget::new(self.sources.forwarding.result_limits());
         let mut pages = VecDeque::new();
         let mut offset = 0_u32;
         loop {
-            let mut forwarded = self.forwarded_page(capture, params, offset, &budget).await?;
+            let page = SourcePaging::Page {
+                page: SourcePage {
+                    limit: self.capture_page_size,
+                    offset,
+                },
+                budget: &budget,
+            };
+            let forwarded = self
+                .sources
+                .forwarding
+                .forward_temporal_query(&self.sources.live_target, self.forwarded_request(capture, params, page))
+                .await;
+            let forwarded = forwarded_results(capture, forwarded)?;
+            refuse_unpositioned(&forwarded).map_err(|refusal| capture_refused(capture, &ExecutionFailure::SourceWalkRefused(refusal)))?;
             let page_on = sources_page_on(&forwarded, self.capture_page_size);
-            walk.trim(&mut forwarded)
-                .map_err(|refusal| capture_refused(capture, &ExecutionFailure::SourceWalkRefused(refusal)))?;
             pages.push_back(forwarded);
             if !page_on {
                 return Ok(SourcePass { pages, budget });
@@ -128,56 +169,82 @@ impl SnapshotExecutor {
         }
     }
 
-    /// One offset page of what the registered context sources answer to
-    /// `params`, charged to `budget`.
+    /// What the sources answer the probes for the Scope in force when the
+    /// window of `params` opens (clauses 4.18 and 5.7.4.4), each walked to its
+    /// last page under a budget of its own, as Query Temporal Evolution of
+    /// Entities probes them; none when the query carries no Scope query or its
+    /// window opens where no Scope set before it can be in force.
     ///
     /// # Errors
     ///
-    /// Returns the query's failure when the page exceeds `budget` or the
+    /// Returns the query's failure when a probe exceeds its budget or the
     /// forwarding failed in this broker's own store.
-    async fn forwarded_page(
+    pub(super) async fn in_effect_answers(
         &self,
         capture: &TemporalCapture<'_>,
         params: &TemporalQueryParameters,
-        offset: u32,
-        budget: &ResultBudget,
     ) -> Result<Vec<ForwardedTemporalEntities>, ExecutionResultDetails> {
-        let forwarded = self
-            .sources
-            .forwarding
-            .forward_temporal_query(
-                &self.sources.live_target,
-                ForwardTemporalQueryRequest {
-                    client_query: params,
-                    split: self.sources.forwarding.split_entities(params.split_entities),
-                    context: capture.context,
-                    operation: ForwardingOperation::QueryTemporalEntity,
-                    triggering: TriggeringRequest::default(),
-                    csf: capture.filters.csf(),
-                    geo: capture.filters.geo(),
-                    mode_filter: CsrModeFilter::All,
-                    reach: SourceReach::Every,
-                    entity_map: EntityMapInUse::None,
-                    paging: SourcePaging::Page {
-                        page: SourcePage {
-                            limit: self.capture_page_size,
-                            offset,
-                        },
-                        budget,
-                    },
-                },
-            )
-            .await;
-        match forwarded {
-            Ok(forwarded) => Ok(forwarded.results),
-            Err(QueryForwardingError::TooManyResults(exceeded)) => Err(failure_detail(classify_result_budget_refusal(&exceeded).into_problem())),
-            Err(QueryForwardingError::TooManyInstances(exceeded)) => Err(failure_detail(classify_instance_budget_refusal(&exceeded).into_problem())),
-            Err(QueryForwardingError::Federation(error)) => {
-                warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, error = %error, "Snapshot temporal CSR forwarding failed");
-                match local_federation_failure(&error) {
-                    Some(report) => Err(failure_detail(report.into_problem())),
-                    None => Ok(Vec::new()),
-                }
+        let mut answers = Vec::new();
+        for reading in [InEffectReading::Placed, InEffectReading::Deletion] {
+            let budget = ResultBudget::new(self.sources.forwarding.result_limits());
+            let forwarded = self
+                .sources
+                .forwarding
+                .forward_in_effect_probe(
+                    &self.sources.live_target,
+                    self.forwarded_request(capture, params, SourcePaging::Walk(&budget)),
+                    reading,
+                )
+                .await;
+            answers.extend(forwarded_results(capture, forwarded)?);
+        }
+        Ok(answers)
+    }
+
+    /// The forwarding of `params` to every registration the query reaches,
+    /// read as `paging` says.
+    fn forwarded_request<'r>(
+        &'r self,
+        capture: &'r TemporalCapture<'_>,
+        params: &'r TemporalQueryParameters,
+        paging: SourcePaging<'r>,
+    ) -> ForwardTemporalQueryRequest<'r> {
+        ForwardTemporalQueryRequest {
+            client_query: params,
+            split: self.sources.forwarding.split_entities(params.split_entities),
+            context: capture.context,
+            operation: ForwardingOperation::QueryTemporalEntity,
+            triggering: TriggeringRequest::default(),
+            csf: capture.filters.csf(),
+            geo: capture.filters.geo(),
+            mode_filter: CsrModeFilter::All,
+            reach: SourceReach::Every,
+            entity_map: EntityMapInUse::None,
+            paging,
+        }
+    }
+}
+
+/// What the sources answered a forwarding with.
+///
+/// # Errors
+///
+/// Returns the query's failure when the answers exceed their budget or the
+/// forwarding failed in this broker's own store; any other failure leaves the
+/// capture with no answer.
+fn forwarded_results(
+    capture: &TemporalCapture<'_>,
+    forwarded: Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError>,
+) -> Result<Vec<ForwardedTemporalEntities>, ExecutionResultDetails> {
+    match forwarded {
+        Ok(forwarded) => Ok(forwarded.results),
+        Err(QueryForwardingError::TooManyResults(exceeded)) => Err(failure_detail(classify_result_budget_refusal(&exceeded).into_problem())),
+        Err(QueryForwardingError::TooManyInstances(exceeded)) => Err(failure_detail(classify_instance_budget_refusal(&exceeded).into_problem())),
+        Err(QueryForwardingError::Federation(error)) => {
+            warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, error = %error, "Snapshot temporal CSR forwarding failed");
+            match local_federation_failure(&error) {
+                Some(report) => Err(failure_detail(report.into_problem())),
+                None => Ok(Vec::new()),
             }
         }
     }
@@ -194,19 +261,29 @@ fn sources_page_on(forwarded: &[ForwardedTemporalEntities], page_size: u32) -> b
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::source_pass::{SourcePass, sources_page_on};
+    use crate::executor::{
+        source_instance_walk::SourceInstanceWalk,
+        source_pass::{SourcePass, sources_page_on},
+        split_verdict::SplitVerdict,
+    };
     use andromeda_federation::{
         outcome::ForwardedTemporalEntities,
         result_budget::{ResultBudget, ResultBudgetExceeded, ResultLimits},
     };
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_entity::document::EntityDocument;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
         entity_system_times::EntitySystemTimes,
         registration::forwarding_mode::ForwardingMode,
         temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
     };
+    use andromeda_ngsi_ld_query::temporal::{
+        contributed_entities::{ContributedEntities, ContributedRendering},
+        window::TimeInterval,
+    };
+    use andromeda_temporal::split_settlement::SplitSettlement;
+    use chrono::DateTime;
     use indexmap::IndexMap;
     use std::{collections::VecDeque, num::NonZeroU32};
 
@@ -318,5 +395,34 @@ mod tests {
     fn the_sources_page_on_while_one_of_them_answers_a_full_page() {
         assert!(sources_page_on(&[answer(&[1]), answer(&[1, 2])], 2));
         assert!(!sources_page_on(&[answer(&[1]), answer(&[])], 2));
+    }
+
+    /// Clause 5.7.4.4: a split pass judges the parts its sources answered, so
+    /// they are held as answered until it is settled, and settling leaves out
+    /// every part of an entity the filters dropped.
+    #[test]
+    fn a_settled_pass_leaves_out_the_entities_its_verdict_dropped() {
+        let mut pass = pass(vec![vec![answer(&[1, 2])], vec![answer(&[1, 3])]], 10);
+        pretty_assertions::assert_eq!(pass.answered_documents().count(), 4);
+        let verdict = SplitVerdict::new(
+            ContributedEntities::new([identifier(1), identifier(2), identifier(3)], ContributedRendering::Local),
+            SplitSettlement {
+                retained: [identifier(2), identifier(3)].into_iter().collect(),
+                incomplete: Vec::new(),
+            },
+        );
+        let mut walk = SourceInstanceWalk::new(TimeInterval::After(DateTime::UNIX_EPOCH), TimeProp::Observed, None);
+
+        pass.settle(&verdict, &mut walk);
+
+        let kept = |page: Vec<ForwardedTemporalEntities>| -> Vec<Identifier> {
+            page.iter()
+                .flat_map(|answer| &answer.entities)
+                .filter_map(TemporalHistory::id)
+                .cloned()
+                .collect()
+        };
+        pretty_assertions::assert_eq!(kept(pass.next_page().expect("a first page")), vec![identifier(2)]);
+        pretty_assertions::assert_eq!(kept(pass.next_page().expect("a second page")), vec![identifier(3)]);
     }
 }

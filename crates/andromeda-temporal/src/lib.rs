@@ -16,6 +16,8 @@ pub mod configured_policy;
 /// Typed, durable consequences for queued temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
+/// What a listing of the identifiers a temporal query matches holds them to.
+pub mod candidate_listing;
 mod compilation;
 /// The ways a temporal policy configuration is refused as it is read.
 /// Whether Core API writes add to the Temporal Evolution of an Entity.

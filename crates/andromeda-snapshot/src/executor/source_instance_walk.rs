@@ -112,19 +112,13 @@ impl SourceInstanceWalk {
     /// such a page captured that the page holds nothing new of, then remember
     /// what each answer holds.
     ///
-    /// # Errors
-    ///
-    /// Returns [`WalkRefusal::Unpositioned`] for an answer a page of which was
-    /// cut short at no readable range.
-    pub(crate) fn trim(&mut self, answers: &mut [ForwardedTemporalEntities]) -> Result<(), WalkRefusal> {
-        answers.iter_mut().try_for_each(|answer| {
-            if answer.partial_pages.iter().any(PartialPage::is_unranged) {
-                return Err(WalkRefusal::Unpositioned);
-            }
+    /// Every answer is one [`refuse_unpositioned`] admitted: each partial page
+    /// of it names the instant it was cut at.
+    pub(crate) fn trim(&mut self, answers: &mut [ForwardedTemporalEntities]) {
+        for answer in answers {
             let cut = answer.nearest_range_end(self.direction);
             self.trim_answer(answer.registration_id.as_ref(), &mut answer.entities, cut);
-            Ok(())
-        })
+        }
     }
 
     /// [`SourceInstanceWalk::trim`] for the `entities` one `registration`
@@ -172,6 +166,19 @@ impl SourceInstanceWalk {
         self.interval = interval;
         Ok(Some(interval))
     }
+}
+
+/// Refuse a page of source answers one of which was cut short at no readable
+/// range: it names no instant the rest of its window can be asked from.
+///
+/// # Errors
+///
+/// Returns [`WalkRefusal::Unpositioned`] for such an answer.
+pub(crate) fn refuse_unpositioned(answers: &[ForwardedTemporalEntities]) -> Result<(), WalkRefusal> {
+    if answers.iter().flat_map(|answer| &answer.partial_pages).any(PartialPage::is_unranged) {
+        return Err(WalkRefusal::Unpositioned);
+    }
+    Ok(())
 }
 
 /// The `lastN` a walk in `direction` reads, if any.

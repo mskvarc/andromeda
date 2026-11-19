@@ -1,4 +1,5 @@
 use crate::{
+    candidate_listing::CandidateListing,
     query_reading::QueryReading,
     requested_identifiers::RequestedIdentifiers,
     stub_broker::{StubBroker, admitted, live_target, service_over},
@@ -14,6 +15,7 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
+    temporal::contributed_entities::{ContributedEntities, ContributedRendering},
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest};
 use serde_json::json;
@@ -36,8 +38,9 @@ fn filtered_query() -> AdmittedTemporalRequest {
     })
 }
 
-/// The one selection the stubbed store listed the identifiers under.
-async fn listed_under(filters: CandidateFilters) -> EntitySelection {
+/// The one selection the stubbed store listed the identifiers under, beside
+/// the contributed entities it exempted.
+async fn listed_under(filters: CandidateFilters, contributed: ContributedEntities) -> (EntitySelection, ContributedEntities) {
     let broker = Arc::new(StubBroker::new(iter::empty::<(Identifier, Vec<Identifier>)>()));
     let service = service_over(Arc::clone(&broker), None);
     service
@@ -49,13 +52,16 @@ async fn listed_under(filters: CandidateFilters) -> EntitySelection {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
             },
-            RequestedIdentifiers::Narrow,
-            filters,
+            CandidateListing {
+                identifiers: RequestedIdentifiers::Narrow,
+                filters,
+                contributed,
+            },
         )
         .await
         .expect("the identifiers are listed");
-    let [selection]: [EntitySelection; 1] = broker.listed_selections().try_into().expect("one listing ran");
-    selection
+    let [listing]: [(EntitySelection, ContributedEntities); 1] = broker.listings().try_into().expect("one listing ran");
+    listing
 }
 
 /// Clause 5.14.5.4: under split entities the local candidates are the
@@ -63,7 +69,7 @@ async fn listed_under(filters: CandidateFilters) -> EntitySelection {
 /// and the scope query are left to the requests that run under the map.
 #[tokio::test]
 async fn a_deferred_listing_leaves_the_value_and_scope_filters_out() {
-    let selection = listed_under(CandidateFilters::Deferred).await;
+    let (selection, _) = listed_under(CandidateFilters::Deferred, ContributedEntities::default()).await;
 
     assert!(selection.q.is_none(), "the value filter is left out");
     assert!(selection.scope_q.is_none(), "the scope query is left out");
@@ -77,9 +83,25 @@ async fn a_deferred_listing_leaves_the_value_and_scope_filters_out() {
 /// filter of the query.
 #[tokio::test]
 async fn an_applied_listing_holds_the_entities_to_every_filter() {
-    let selection = listed_under(CandidateFilters::Applied).await;
+    let (selection, _) = listed_under(CandidateFilters::Applied, ContributedEntities::default()).await;
 
     assert!(selection.q.is_some(), "the value filter applies");
     assert!(selection.scope_q.is_some(), "the scope query applies");
     assert!(selection.selectors.iter().any(|selector| selector.id_pattern.is_some()));
+}
+
+/// Clause 5.7.4.4: under split entities the filters of an entity a Context
+/// Source contributed to are decided over its gathered parts, so a listing
+/// keeps every filter for the others and exempts that entity alone.
+#[tokio::test]
+async fn a_listing_exempts_the_contributed_entities_alone_from_the_filters() {
+    let vehicle = "urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("a valid identifier");
+    let contributed = ContributedEntities::new([vehicle], ContributedRendering::Local);
+    let (selection, exempted) = listed_under(CandidateFilters::Applied, contributed.clone()).await;
+
+    assert!(
+        selection.q.is_some() && selection.scope_q.is_some(),
+        "every filter still holds the other entities"
+    );
+    pretty_assertions::assert_eq!(exempted, contributed);
 }

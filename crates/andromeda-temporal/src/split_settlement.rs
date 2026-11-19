@@ -38,6 +38,7 @@ use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
 use andromeda_ngsi_ld_query::{
     projection::attrs_selection::AttrsAdmission,
     split_filter::{LeafTruths, SplitFilter},
+    temporal::contributed_entities::ContributedEntities,
 };
 use andromeda_ngsi_ld_query_evaluation::split_filter::leaf_truths;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
@@ -52,6 +53,17 @@ pub struct SplitSettlement {
     /// The holders of a hop target that could not be read, whose parts the
     /// filters were decided without.
     pub incomplete: Vec<LinkedResolutionFailure>,
+}
+
+impl SplitSettlement {
+    /// Whether the entity `entity_id` stays in the answer of a split query
+    /// whose sources contributed to `contributed`: one no source contributed
+    /// to was decided by the local read, and a contributed one stays only
+    /// when its gathered parts satisfy the filters.
+    #[must_use]
+    pub fn keeps(&self, contributed: &ContributedEntities, entity_id: &Identifier) -> bool {
+        !contributed.contains(entity_id) || self.retained.contains(entity_id)
+    }
 }
 
 /// What the Context Sources answered a split query with.

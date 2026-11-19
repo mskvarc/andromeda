@@ -28,7 +28,12 @@ use andromeda_ngsi_ld_model::temporal::{
     text_annotation::TextAnnotation,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, scope::scope_query::ScopeQuery, split_filter::LeafTruths};
+use andromeda_ngsi_ld_query::{
+    filter::language_targeting::LanguageTargeting,
+    scope::scope_query::ScopeQuery,
+    split_filter::LeafTruths,
+    temporal::contributed_entities::{ContributedEntities, ContributedRendering},
+};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, linked_resolution_failure::LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -566,4 +571,20 @@ async fn the_holders_are_asked_for_the_window_alone() {
             Some(vec!["https://example.com/free".parse::<AttributeName>().expect("a valid attribute IRI")])
         )]
     );
+}
+
+/// Clause 5.7.4.4 decides the filters over the gathered parts only of the
+/// entities a source contributed to: the local read decided every other one,
+/// so the settlement keeps it whatever it retained.
+#[test]
+fn a_settlement_drops_only_the_contributed_entities_it_did_not_retain() {
+    let id = |raw: &str| raw.parse::<Identifier>().expect("a valid identifier");
+    let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")], ContributedRendering::Local);
+    let settlement = SplitSettlement {
+        retained: [id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
+        incomplete: Vec::new(),
+    };
+    assert!(!settlement.keeps(&contributed, &id("urn:ngsi-ld:Vehicle:1")));
+    assert!(settlement.keeps(&contributed, &id("urn:ngsi-ld:Vehicle:2")));
+    assert!(settlement.keeps(&contributed, &id("urn:ngsi-ld:Vehicle:3")));
 }

@@ -34,6 +34,8 @@ mod source_instance_walk;
 mod source_pass;
 /// The failed Context Sources a Snapshot query's answer was given without.
 mod source_shortfall;
+/// Deciding a split temporal capture's filters over the gathered parts of the entities a pass's sources answered.
+mod split_verdict;
 /// Capturing every query into the staging branch, starting over without one that failed after staging.
 mod staged_capture;
 mod status;
@@ -41,6 +43,8 @@ mod status;
 mod temporal_capture;
 /// Recording a failed temporal step of a snapshot query.
 mod temporal_failure;
+/// The local entities a snapshot temporal query captures, page by page.
+mod temporal_local_entities;
 /// Capturing one page of a snapshot temporal query's entities.
 mod temporal_page_capture;
 mod translation;

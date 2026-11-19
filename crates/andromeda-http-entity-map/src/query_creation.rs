@@ -28,7 +28,12 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_http_temporal::extension_gate::TemporalExtensionGate;
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow, projection::attrs_selection::AttrsAdmission};
+use andromeda_ngsi_ld_query::{
+    candidate_filters::CandidateFilters,
+    page_window::PageWindow,
+    projection::attrs_selection::AttrsAdmission,
+    temporal::contributed_entities::ContributedEntities,
+};
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     follow_up_inputs::{ContextReference, FollowUpInputs},
@@ -38,7 +43,7 @@ use andromeda_ngsi_ld_request::{
     },
     query_narrowing::ExecutionScope,
 };
-use andromeda_temporal::{query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
+use andromeda_temporal::{candidate_listing::CandidateListing, query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
 use axum::response::Response;
 use std::sync::Arc;
 
@@ -172,8 +177,11 @@ async fn create_from_temporal_query(
                 context: rendering.context,
                 language_targeting: state.temporal.language_targeting(),
             },
-            RequestedIdentifiers::Narrow,
-            candidate_filters(state.forwarding.split_entities(params.split_entities), params.execution_scope()),
+            CandidateListing {
+                identifiers: RequestedIdentifiers::Narrow,
+                filters: candidate_filters(state.forwarding.split_entities(params.split_entities), params.execution_scope()),
+                contributed: ContributedEntities::default(),
+            },
         )
         .await
         .with_entity_map_instance(rendering.uri)?;

@@ -39,6 +39,7 @@ use andromeda_ngsi_ld_query::{
     filter::{compilation::FilterAdmission, language_targeting::LanguageTargeting},
     geo::near_distance_band::NearDistanceBand,
     split_filter::LeafTruths,
+    temporal::contributed_entities::ContributedEntities,
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -85,8 +86,9 @@ pub(crate) struct StubBroker {
     /// Each entity a merged aggregation ran for, whether its local part joined,
     /// and the types it was named with, in order.
     merged_entities: Mutex<Vec<(Identifier, LocalPart, Vec<EntityTypeName>)>>,
-    /// The entity selections each identifier listing ran under, in order.
-    listed_selections: Mutex<Vec<EntitySelection>>,
+    /// The entity selection each identifier listing ran under, beside the
+    /// contributed entities it exempted, in order.
+    listings: Mutex<Vec<(EntitySelection, ContributedEntities)>>,
     /// How many times a read scope was asked for.
     scope_reads: AtomicUsize,
     /// The page of history an entity reads as in place of its links.
@@ -116,7 +118,7 @@ impl StubBroker {
             aggregated: Vec::new(),
             merged_answers: Mutex::new(Vec::new()),
             merged_entities: Mutex::new(Vec::new()),
-            listed_selections: Mutex::new(Vec::new()),
+            listings: Mutex::new(Vec::new()),
             scope_reads: AtomicUsize::new(0),
             pages: HashMap::new(),
             leaf_truths: HashMap::new(),
@@ -187,10 +189,10 @@ impl StubBroker {
         self.scope_reads.load(Ordering::Relaxed)
     }
 
-    /// The entity selections the identifier listings ran under, in the order
-    /// they ran.
-    pub(crate) fn listed_selections(&self) -> Vec<EntitySelection> {
-        self.listed_selections.lock().expect("the recording lock is never poisoned").clone()
+    /// The entity selection each identifier listing ran under, beside the
+    /// contributed entities it exempted, in the order they ran.
+    pub(crate) fn listings(&self) -> Vec<(EntitySelection, ContributedEntities)> {
+        self.listings.lock().expect("the recording lock is never poisoned").clone()
     }
 
     /// The same graph answering every merged aggregation with `rows`.
