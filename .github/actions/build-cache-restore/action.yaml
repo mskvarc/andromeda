@@ -1,5 +1,5 @@
 name: Build cache restore
-description: Restores the job's cargo registry and target directory from the newest build of the same job, and makes cargo decide by file content which of the restored crates are fresh.
+description: Restores the job's cargo registry and target directory from the newest build of the same job, and dates the checkout so cargo finds exactly the restored crates whose files changed stale.
 
 inputs:
   job:
@@ -58,11 +58,12 @@ runs:
           ${{ steps.key.outputs.other-state }}
         path: ${{ steps.key.outputs.paths }}
 
-    # Cargo compares the content of every file rustc reads with what it compiled, so a fresh checkout's modification
-    # times don't make a restored crate stale, and a changed file is compiled again whatever its time. A build script's
-    # rerun-if-changed paths are still compared by modification time against the script's last run. Every tracked file
-    # and directory is therefore set to a time before any build, and those that differ from the commit the restored
-    # build was made from are set to now, so a build script reruns exactly when one of its inputs changed.
+    # Cargo finds a workspace crate stale when a file it was compiled from, or an input of its build script, is newer
+    # than the crate's last build, and a fresh checkout dates every file now. Every tracked file and directory is
+    # therefore set to a time before any build, and those that differ from the commit the restored build was made from
+    # are set to now, so exactly the crates and build scripts whose inputs changed run again. Registry crates are never
+    # compared by time. When that commit is unknown, every file keeps its checkout time and every workspace crate is
+    # compiled again.
     - name: Prepare the restored build
       shell: bash
       env:
@@ -70,10 +71,6 @@ runs:
         STATE_PREFIX: ${{ steps.key.outputs.state }}
       run: |
         set -euo pipefail
-        {
-          echo "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true"
-          echo "CARGO_BUILD_FINGERPRINT=content"
-        } >> "$GITHUB_ENV"
         if [ -z "$MATCHED" ]; then
           exit 0
         fi
@@ -90,7 +87,7 @@ runs:
         fi
         source="$(cat "$recorded")"
         if ! git cat-file -e "${source}^{commit}" 2> /dev/null && ! git fetch --quiet --no-tags --depth=1 origin "$source"; then
-          echo "::warning::the commit the restored build was made from is gone, so every build script runs again"
+          echo "::warning::the commit the restored build was made from is gone, so every workspace crate is compiled again"
           exit 0
         fi
         git ls-files -z | xargs -0 touch -h -d '2000-01-01T00:00:00Z'
