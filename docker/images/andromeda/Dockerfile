@@ -69,7 +69,7 @@ RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
 RUN mkdir -p /rootfs/etc/andromeda /rootfs/var/lib/andromeda
 
 # glibc and libgcc_s are all the broker links dynamically. No shell, no package manager.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime
 
 COPY --from=builder --chown=10001:10001 /rootfs/ /
 COPY --from=builder /dist/andromeda /usr/local/bin/andromeda
