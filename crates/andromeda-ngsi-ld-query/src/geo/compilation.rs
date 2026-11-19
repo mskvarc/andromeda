@@ -31,18 +31,18 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 /// [`GeoQueryError::InvalidGeoproperty`] when it expands to no usable attribute
 /// name.
 pub async fn compile_geo_query(
-    geo_query: Option<&GeoConstraint<Written>>,
+    geo_constraint: Option<&GeoConstraint<Written>>,
     expander: &impl TermExpander,
     admission: GeoQueryAdmission,
 ) -> Result<Option<CompiledGeoQuery>, QueryError> {
-    let Some(geo_query) = geo_query else {
+    let Some(geo_constraint) = geo_constraint else {
         return Ok(None);
     };
-    admission.near_band.admit(&geo_query.georel).map_err(QueryError::from)?;
-    let geometry = geo_query.reference.admit(admission.limits).map_err(QueryError::from)?;
-    let geoproperty = geo_query.geoproperty.as_ref().map_or(properties::LOCATION, AsRef::<str>::as_ref);
+    admission.near_band.admit(&geo_constraint.georel).map_err(QueryError::from)?;
+    let geometry = geo_constraint.reference.admit(admission.limits).map_err(QueryError::from)?;
+    let geoproperty = geo_constraint.geoproperty.as_ref().map_or(properties::LOCATION, AsRef::<str>::as_ref);
     Ok(Some(CompiledGeoQuery {
-        georel: geo_query.georel.clone(),
+        georel: geo_constraint.georel.clone(),
         geometry,
         geoproperty: AttributeIri::try_from(expander.expand_term(geoproperty).await?)
             .map_err(|too_long| GeoQueryError::InvalidGeoproperty(NgsiLdReferenceError::from(too_long)))?,

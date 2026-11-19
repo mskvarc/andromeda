@@ -16,9 +16,12 @@ use andromeda_ngsi_ld_query::{
 };
 
 /// Expand the `pick` and `omit` lists a notification names, each absent where it
-/// names none, refusing a member
-/// both name once expanded (clause 4.21). Every expanded name is held within
-/// the identifier bound a stored name keeps.
+/// names none, refusing a member both name once expanded (clause 4.21).
+///
+/// Every attribute name expands, at every nesting level, and the clause 4.21
+/// keywords stay as written. The term tree is what the subscription stores,
+/// since an expanded name may hold the separators of the clause 4.21 text, and
+/// every expanded name is held within the identifier bound a stored name keeps.
 ///
 /// # Errors
 ///

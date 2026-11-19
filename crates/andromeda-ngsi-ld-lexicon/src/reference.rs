@@ -20,7 +20,7 @@ pub enum NgsiLdReferenceError {
     /// The reference did not match any supported NGSI-LD compacted or expanded form.
     #[error("a name must be a term, a compact IRI or an absolute IRI")]
     Invalid,
-    /// An expanded name was not an absolute IRI.
+    /// An expanded name that is not an absolute IRI.
     #[error("an expanded name must be an absolute IRI")]
     NotAbsolute,
 }

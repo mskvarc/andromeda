@@ -8,9 +8,9 @@ use crate::{
     error::ContextStoreError,
     json_text::JsonText,
     subscription_store::{
+        member_reading::MemberReading,
         rows::SubscriptionRow,
         status_code::status_of,
-        stored_members::MemberReading,
         stored_subscription_error::StoredSubscriptionError,
         trigger_code::trigger_of,
     },

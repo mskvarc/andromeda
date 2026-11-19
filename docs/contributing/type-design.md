@@ -40,6 +40,22 @@ Production code holds JSON in exactly three forms.
 
 `serde_json::Value`, `serde_json::Map`, `json!`, `serde_json::to_value` and `serde_json::from_value` don't appear in production code. The JSON-LD processor's own tree (`jstrict`, `jsonld_syntax::Value`) is used only inside the engine in `andromeda-jsonld` and inside `andromeda-json-literal`. Tests may use `json!` to build fixtures and to compare parsed bodies. The gate `untyped_json` enforces this with no baseline. A general JSON tree allocates per node, loses member order and can be made arbitrarily deep, so a deep document would become a risk to the process. Keeping JSON typed is also why a JsonProperty comes back exactly as it was written.
 
+## Name stages of the query languages
+
+A query language names attributes and entity types, and a name has two stages. In the written stage it is what the client wrote: a term, a compact IRI or an absolute IRI, checked against the clause 4.6.2 name grammar and held as an `AttributeName` or an `EntityTypeName`. In the expanded stage it is the absolute IRI the `@context` of the request expands it to, held as an `AttributeIri` or an `EntityTypeIri`. An `AttributeIri` stays within the identifier byte bound, so it is always a valid written name too. An `EntityTypeIri` carries no bound, because an expanded type selection is not bounded, so a place that stores or compacts one checks the bound where the written name is needed.
+
+The trees of a language are one type over both stages, generic over the `NameStage` marker `Written` or `Expanded`, and carry no stage in their name: `Filter<S>` (clause 4.9), `TypeSelection<S>` (clause 4.17), `EntityConstraint<S>` (one selector of clause 5.2.33), `GeoConstraint<S>` (clause 4.10) and the `aggrGroupBy` trees. A type with a single stage carries no marker either, except `Compiled`, which names an expanded tree together with what a request admits or derives for it, such as the reference geometry of a geo-query or the collation of an ordering. A language whose written and expanded trees differ in shape, such as a projection list, has one type for each stage and names them `Written` and `Expanded`.
+
+A tree crosses from one stage to the other in three places.
+
+- Expansion turns the written stage into the expanded one through the `@context`: the free functions `expand_filter`, `expand_value_path`, `expand_type_selection` and `expand_entity_constraints`. Each can refuse, because a term may expand to nothing, to something that is no absolute IRI, or to a name past the identifier bound.
+- Compaction turns the expanded stage back into the terms of a reader's `@context`: `compact_filter`, `compact_type_selection` and their relatives. A response is spelled this way, so a client reads its own terms back. A type is compacted leaf by leaf, never as one name for the whole selection.
+- A stored text is checked into the expanded stage. A resource stores a filter or a type selection as its clause 4.9 or 4.17 text, which spells every name as an absolute IRI, and parsing that text yields the written stage because the text says nothing of its stage. `into_expanded` is the check that makes it the expanded stage and refuses a name that is no absolute IRI. `into_written` goes the other way and keeps the IRIs as text.
+
+A stored Subscription holds the expanded stage, so matching never needs the creator's `@context`, and the request it was made from stays in the written stage. A conversion between stages is a free function named `expand_<tree>` or `compact_<tree>` after the tree it takes, or a method named `into_<stage>` when it consumes the tree and `to_<stage>` when it borrows it.
+
+`MemberPath` keeps the client's spelling in both stages. The members after a `.` or inside a trailing `[…]` group are not attribute terms that an expansion could rewrite: a `JsonProperty` value is opaque JSON whose object keys stay as its writer chose them, a `LanguageProperty` target language is a language tag and never a term, and a Context Source Property is the raw JSON its registrant wrote. A member path therefore holds the names the members address and the names the client wrote side by side, and a text that leaves the broker is written from the second, so a forwarded filter reads as it was sent.
+
 ## Derives
 
 A trait that can be derived is derived. Look for the derive before you write an `impl`.

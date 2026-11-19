@@ -43,7 +43,7 @@ impl<S: NameStage> ValuePath<S> {
     ///
     /// The clause 4.23 keywords `id`, `type` and `scope` name structural
     /// members of the entity representation, and the grammar spells each as a
-    /// bare `AttrName`. A path that descends into one of them is therefore an
+    /// bare `AttrName`. A path that descends into one of them is therefore a
     /// value path that happens to start with the keyword's spelling, not the
     /// keyword.
     #[must_use]

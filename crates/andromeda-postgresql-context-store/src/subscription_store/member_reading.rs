@@ -1,6 +1,6 @@
 //! The members of a stored subscription that are read in the expanded stage.
 //!
-//! The broker stores a member only after expanding its names, so a stored name is an absolute IRI. A column that holds a name that is not one was not written by the broker, and the subscription it belongs to can no longer be matched by that member. Reading it does not fail the row: the member is left out, the failure is logged, and the subscription lists the member as unreadable, which the matcher answers by selecting nothing. A column that is no member of its kind at all stays a failure of the row.
+//! The broker stores a member only after expanding its names, so a stored name is an absolute IRI. A column that holds a name that is not one was not written by the broker, and the subscription it belongs to cannot be matched by that member. Reading it does not fail the row: the member is left out, the failure is logged, and the subscription lists the member as unreadable, which the matcher answers by selecting nothing. A column that is no member of its kind at all stays a failure of the row.
 
 use crate::{
     error::ContextStoreError,
@@ -193,7 +193,7 @@ mod tests {
     use crate::{
         json_text::JsonText,
         subscription_store::{
-            stored_members::{StagedColumn, decoded_staged_column},
+            member_reading::{StagedColumn, decoded_staged_column},
             stored_subscription_error::StoredSubscriptionError,
         },
     };

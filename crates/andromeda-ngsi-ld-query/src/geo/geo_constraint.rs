@@ -50,8 +50,8 @@ impl GeoConstraint<Written> {
 
     /// Decode the three wire components at request extraction.
     ///
-    /// Coordinates given as JSON are read into the reference geometry now;
-    /// coordinates encoded as a string (Table 5.2.13-1) are held as written,
+    /// Coordinates given as JSON are read into the reference geometry at
+    /// extraction; coordinates encoded as a string (Table 5.2.13-1) are held as written,
     /// and read when the query is compiled within the broker's limits.
     ///
     /// # Errors
