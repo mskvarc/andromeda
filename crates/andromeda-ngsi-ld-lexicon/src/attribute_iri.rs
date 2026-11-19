@@ -81,15 +81,6 @@ impl FromStr for AttributeIri {
     }
 }
 
-// Hand-written: no derive provides a fallible `TryFrom<String>` that parses.
-impl TryFrom<String> for AttributeIri {
-    type Error = NgsiLdReferenceError;
-
-    fn try_from(value: String) -> Result<AttributeIri, NgsiLdReferenceError> {
-        value.parse()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{

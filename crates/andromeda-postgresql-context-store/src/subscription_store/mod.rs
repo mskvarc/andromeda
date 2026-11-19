@@ -39,6 +39,8 @@ mod json_document;
 pub mod mapper;
 /// The members of a stored subscription that are read in the expanded stage.
 mod member_reading;
+/// The lists of a stored notification told apart as expanded or written.
+mod notification_lists;
 /// The `active_since` and `selected_since` values a subscription write stores.
 mod notifying_columns;
 /// Which periodic subscriptions are owed a notification.

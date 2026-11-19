@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
     subscription::Subscription,
     subscription_presentation::SubscriptionPresentation,
-    written_subscription_terms::WrittenSubscriptionTerms,
+    written_subscription_terms::{WrittenSubscriptionTerms, WrittenTermsError},
 };
 use andromeda_ngsi_ld_query::{
     filter::{
@@ -57,25 +57,35 @@ fn compacted_names(compactor: &NameCompaction, names: Vec<AttributeName>) -> Vec
 
 /// A selector whose every type of the stored selection is in the reader's
 /// terms (clause 4.17), a type no term of the `@context` spells staying as
-/// stored. The selector as it stands when the selection cannot be compacted.
-async fn compacted_selector(compactor: &NameCompaction, stored: &EntitySelector<Expanded>, mut spelled: EntitySelector<Written>) -> EntitySelector<Written> {
-    if let Ok(type_) = compact_type_selection(&stored.type_, compactor).await {
-        spelled.type_ = type_;
-    }
-    spelled
+/// stored.
+///
+/// # Errors
+///
+/// Returns [`WrittenTermsError::Name`] for a type no term abbreviates that is past the bound a written name keeps.
+async fn compacted_selector(
+    compactor: &NameCompaction,
+    stored: &EntitySelector<Expanded>,
+    mut spelled: EntitySelector<Written>,
+) -> Result<EntitySelector<Written>, WrittenTermsError> {
+    spelled.type_ = compact_type_selection(&stored.type_, compactor).await?;
+    Ok(spelled)
 }
 
 /// The entity selectors in the reader's terms.
+///
+/// # Errors
+///
+/// As [`compacted_selector`].
 async fn compacted_selectors(
     compactor: &NameCompaction,
     stored: &[EntitySelector<Expanded>],
     spelled: Vec<EntitySelector<Written>>,
-) -> Vec<EntitySelector<Written>> {
+) -> Result<Vec<EntitySelector<Written>>, WrittenTermsError> {
     let mut selectors = Vec::with_capacity(spelled.len());
     for (stored, spelled) in stored.iter().zip(spelled) {
-        selectors.push(compacted_selector(compactor, stored, spelled).await);
+        selectors.push(compacted_selector(compactor, stored, spelled).await?);
     }
-    selectors
+    Ok(selectors)
 }
 
 /// A projection term, and the terms linked under it, in the reader's terms. The
@@ -106,33 +116,35 @@ fn compacted_projection(compactor: &NameCompaction, lists: Vec<WrittenProjection
 }
 
 /// The stored `q` in the reader's terms, with the `expandValues` coercion
-/// reverted, or as it stands when it cannot be compacted.
+/// reverted.
 ///
 /// The `q` operands `expandValues` coerced are put back. Table 5.2.12-1 makes
 /// that coercion something done "prior to executing the query", so it belongs
 /// to the filter a match runs and not to the Subscription resource: a client
 /// that created `q=status=="active"` with `expandValues=status` reads back the
 /// filter it wrote.
-async fn compacted_q(
-    compactor: &NameCompaction,
-    stored: &Filter<Expanded>,
-    opted_in: &HashSet<AttributeIri>,
-    spelled: Option<Filter<Written>>,
-) -> Option<Filter<Written>> {
+///
+/// # Errors
+///
+/// Returns [`WrittenTermsError::Compaction`] when a guard type has no written name.
+async fn compacted_q(compactor: &NameCompaction, stored: &Filter<Expanded>, opted_in: &HashSet<AttributeIri>) -> Result<Filter<Written>, WrittenTermsError> {
     // clone: reverting consumes the tree and the stored subscription keeps its own
     let reverted = revert_expand_values(stored.clone(), opted_in, compactor).await;
-    compact_filter(reverted, compactor).await.ok().or(spelled)
+    Ok(compact_filter(reverted, compactor).await.map_err(Box::new)?)
 }
 
-/// The stored `csf` in the reader's terms, or as it stands when it cannot be
-/// compacted.
+/// The stored `csf` in the reader's terms.
 ///
 /// No `expandValues` coercion is reverted: `expandValues` names Entity
 /// attributes, while `csf` addresses a registration's Context Source
 /// Properties.
-async fn compacted_csf(compactor: &NameCompaction, stored: &Filter<Expanded>, spelled: Option<Filter<Written>>) -> Option<Filter<Written>> {
+///
+/// # Errors
+///
+/// As [`compacted_q`].
+async fn compacted_csf(compactor: &NameCompaction, stored: &Filter<Expanded>) -> Result<Filter<Written>, WrittenTermsError> {
     // clone: compaction consumes the tree and the stored subscription keeps its own
-    compact_context_source_filter(stored.clone(), compactor).await.ok().or(spelled)
+    Ok(compact_context_source_filter(stored.clone(), compactor).await.map_err(Box::new)?)
 }
 
 /// A geo-query whose geoproperty, when it names one, is in the reader's terms
@@ -147,23 +159,31 @@ fn compacted_geo_q(compactor: &NameCompaction, mut geo_q: GeoConstraint<Written>
 /// Both filters are clause 4.9 expressions whose attribute terms were expanded
 /// when the subscription was written. `scopeQ` is a clause 4.19 scope path and
 /// carries no attribute terms, so it is served as stored.
-async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spelled: WrittenSubscriptionTerms) -> WrittenSubscriptionTerms {
+///
+/// # Errors
+///
+/// Returns the [`WrittenTermsError`] of the first name no term of the `@context` spells that has no written name either.
+async fn compacted_terms(
+    compactor: &NameCompaction,
+    stored: &Subscription,
+    spelled: WrittenSubscriptionTerms,
+) -> Result<WrittenSubscriptionTerms, WrittenTermsError> {
     let filters = &stored.filters;
     let opted_in: HashSet<AttributeIri> = filters.expand_values.iter().flatten().cloned().collect();
     let q = match &filters.q {
-        Some(q) => compacted_q(compactor, q, &opted_in, spelled.q).await,
+        Some(q) => Some(compacted_q(compactor, q, &opted_in).await?),
         None => None,
     };
     let csf = match &filters.csf {
-        Some(csf) => compacted_csf(compactor, csf, spelled.csf).await,
+        Some(csf) => Some(compacted_csf(compactor, csf).await?),
         None => None,
     };
     let entities = match (&stored.selection.entities, spelled.entities) {
-        (Some(stored), Some(spelled)) => Some(compacted_selectors(compactor, stored, spelled).await),
+        (Some(stored), Some(spelled)) => Some(compacted_selectors(compactor, stored, spelled).await?),
         (None, spelled) => spelled,
         (Some(_), None) => None,
     };
-    WrittenSubscriptionTerms {
+    Ok(WrittenSubscriptionTerms {
         entities,
         watched_attributes: spelled.watched_attributes.map(|names| compacted_names(compactor, names)),
         attributes: spelled.attributes.map(|names| compacted_names(compactor, names)),
@@ -174,7 +194,7 @@ async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spel
         csf,
         expand_values: spelled.expand_values.map(|names| compacted_names(compactor, names)),
         json_keys: spelled.json_keys.map(|names| compacted_names(compactor, names)),
-    }
+    })
 }
 
 /// A stored subscription as its reader reads it: the names in the terms of the
@@ -185,7 +205,8 @@ async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spel
 /// # Errors
 ///
 /// Returns [`SubscriptionInvariant::StoredNameNotWritable`] when a stored name
-/// is past the bound a written name keeps, which the store never holds.
+/// is past the bound a written name keeps and no term of the `@context`
+/// abbreviates it, which the store never holds.
 pub(crate) async fn compact_for_response(
     mut subscription: Subscription,
     compactor: &NameCompaction,
@@ -193,7 +214,7 @@ pub(crate) async fn compact_for_response(
     report_expired_status(&mut subscription);
     subscription.delivery.local_only = subscription.delivery.local_only.filter(|local_only| *local_only);
     let spelled = WrittenSubscriptionTerms::try_from(&subscription)?;
-    let terms = compacted_terms(compactor, &subscription, spelled).await;
+    let terms = compacted_terms(compactor, &subscription, spelled).await?;
     Ok(SubscriptionPresentation { subscription, terms })
 }
 

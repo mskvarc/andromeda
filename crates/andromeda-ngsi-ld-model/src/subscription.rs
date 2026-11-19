@@ -10,7 +10,7 @@ use crate::{
     ignored_member,
     key_value_pair::KeyValuePair,
     notification_media_type::NotificationMediaType,
-    stored_members,
+    staged_list,
     subscription::{
         standing::SubscriptionStanding,
         subscription_filters::SubscriptionFilters,
@@ -21,6 +21,7 @@ use crate::{
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
     attribute_iri::AttributeIri,
+    attribute_name::AttributeName,
     constant_string,
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
@@ -28,7 +29,7 @@ use andromeda_ngsi_ld_lexicon::{
     spec_version::SpecVersion,
     time::instant_serde,
 };
-use andromeda_ngsi_ld_query::projection::expanded_projection_list::ExpandedProjectionList;
+use andromeda_ngsi_ld_query::projection::{expanded_projection_list::ExpandedProjectionList, written_projection_list::WrittenProjectionList};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -122,7 +123,7 @@ pub struct Endpoint {
 pub struct NotificationParams {
     /// Attributes to include in notifications; absent means all.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default, deserialize_with = "stored_members::deserialize_skipping_unreadable")]
+    #[serde(default, deserialize_with = "staged_list::deserialize_expanded_list::<AttributeName, _, _>")]
     pub attributes: Option<Vec<AttributeIri>>,
     /// Representation format for notification payloads.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,7 +145,7 @@ pub struct NotificationParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "stored_members::deserialize_skipping_unreadable"
+        deserialize_with = "staged_list::deserialize_expanded_list::<WrittenProjectionList, _, _>"
     )]
     pub pick: Option<Vec<ExpandedProjectionList>>,
     /// The clause 4.21 projection removing the members it names, held as
@@ -152,7 +153,7 @@ pub struct NotificationParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "stored_members::deserialize_skipping_unreadable"
+        deserialize_with = "staged_list::deserialize_expanded_list::<WrittenProjectionList, _, _>"
     )]
     pub omit: Option<Vec<ExpandedProjectionList>>,
     /// Join mode for linked entity retrieval.

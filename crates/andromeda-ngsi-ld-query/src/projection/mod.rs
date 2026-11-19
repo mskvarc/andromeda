@@ -25,6 +25,7 @@ pub mod projected_members;
 pub mod projection_error;
 pub mod purge;
 pub mod returned_attributes;
+mod stored_projection_name;
 pub mod stored_projection_term;
 pub mod written_projection_list;
 pub mod written_projection_term;

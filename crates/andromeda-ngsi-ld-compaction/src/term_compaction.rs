@@ -51,7 +51,12 @@ impl TermCompactor for NameCompaction {
 mod tests {
     use crate::name_compaction::NameCompaction;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_iri::EntityTypeIri};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_iri::AttributeIri,
+        entity_type_iri::EntityTypeIri,
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        reference::NgsiLdReferenceError,
+    };
     use andromeda_ngsi_ld_query::{
         filter::{Filter, compaction::compact_filter},
         name_stage::Written,
@@ -104,6 +109,17 @@ mod tests {
                 .as_str(),
             iri.as_str()
         );
+    }
+
+    /// Clause 4.6.2: when no term abbreviates a type, its IRI is the only name that addresses it, and a name is bounded.
+    #[tokio::test]
+    async fn an_unabbreviated_type_longer_than_a_name_may_be_is_refused() {
+        let compactor = names(&ContextSpec::core_only()).await;
+        let over_long = format!("https://example.com/vocab#{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+
+        let refused = compactor.compact_type(&entity_type(&over_long)).await;
+
+        assert!(matches!(refused, Err(NgsiLdReferenceError::TooLong(_))), "{refused:?}");
     }
 
     /// Clause 5.5.7: a `q` holding the default-context expansion of its terms

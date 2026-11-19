@@ -14,6 +14,7 @@ use crate::{
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
     subscription_context::SubscriptionContext,
+    subscription_invariant::SubscriptionInvariant,
     subscription_validation_reason::SubscriptionValidationReason,
 };
 use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
@@ -30,7 +31,7 @@ use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     request_body::RequestBody,
-    subscription::{Subscription, SubscriptionStatus},
+    subscription::{Subscription, SubscriptionStatus, unreadable_member::UnreadableMember},
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
@@ -593,6 +594,77 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
 #[tokio::test]
 async fn the_empty_fragment_writes_nothing() {
     assert_eq!(written_after_update(json!({}), &ContextSpec::none()).await, None);
+}
+
+/// Update `stored` with `fragment`, answering the outcome and whether the store was asked to write.
+async fn update_outcome(stored: Subscription, fragment: Value) -> (Result<(), SubscriptionError>, bool) {
+    let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+    let written = WrittenContext::default();
+    let store = UpdatingStore {
+        stored,
+        written: Arc::clone(&written),
+        status: WrittenStatus::default(),
+        restart: WrittenRestart::default(),
+    };
+    let service = SubscriptionService::new(
+        Arc::new(store),
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine),
+        None,
+        Arc::new(AcceptingEndpointValidator),
+        filter_admission(),
+    );
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable fragment");
+    let outcome = service
+        .update(
+            &ContextTarget::Live,
+            &uri("urn:ngsi-ld:Subscription:stored"),
+            request,
+            &AdmittedContext::core_only(),
+        )
+        .await;
+    let asked = written.lock().expect("the written context is never poisoned").is_some();
+    (outcome, asked)
+}
+
+/// An entity subscription whose stored `q` the store could not read, so it holds no `q` and selects nothing.
+fn subscription_with_unreadable_q() -> Subscription {
+    let mut stored = subscription_with_chosen_context();
+    stored.unreadable = vec![UnreadableMember::Q];
+    stored
+}
+
+/// Writing the subscription back with the `q` it holds as absent would store no filter, and a subscription that selected nothing would then select every entity of its types, so an update that leaves an unreadable member alone is refused.
+#[tokio::test]
+async fn an_update_that_leaves_an_unreadable_member_alone_is_refused_and_writes_nothing() {
+    let (outcome, asked) = update_outcome(subscription_with_unreadable_q(), json!({"description": "renamed"})).await;
+
+    assert!(
+        matches!(
+            outcome,
+            Err(SubscriptionError::Internal(SubscriptionInvariant::UnreadableMemberKept(UnreadableMember::Q)))
+        ),
+        "{outcome:?}"
+    );
+    assert!(!asked, "the store was not asked to write");
+}
+
+/// Clause 5.5.8: a fragment that sets a member replaces it, so the update that sets the unreadable `q` writes the subscription back.
+#[tokio::test]
+async fn an_update_that_sets_the_unreadable_member_is_accepted() {
+    let (outcome, asked) = update_outcome(subscription_with_unreadable_q(), json!({"q": "speed>1"})).await;
+
+    assert!(outcome.is_ok(), "{outcome:?}");
+    assert!(asked, "the store was asked to write");
+}
+
+/// Clause 5.5.8: the NGSI-LD Null deletes the member, which replaces the unreadable one as well.
+#[tokio::test]
+async fn an_update_that_deletes_the_unreadable_member_is_accepted() {
+    let (outcome, asked) = update_outcome(subscription_with_unreadable_q(), json!({"q": "urn:ngsi-ld:null"})).await;
+
+    assert!(outcome.is_ok(), "{outcome:?}");
+    assert!(asked, "the store was asked to write");
 }
 
 /// The status an update of `fragment` writes to a subscription whose row still

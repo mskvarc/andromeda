@@ -238,6 +238,7 @@ mod tests {
     };
     use chrono::DateTime;
     use iri_rs::IriBuf;
+    use strum::IntoEnumIterator;
 
     fn notification(value: serde_json::Value) -> NotificationParams {
         serde_json::from_value(value).expect("valid notification parameters")
@@ -308,29 +309,30 @@ mod tests {
     }
 
     #[test]
-    fn a_name_that_is_not_an_expanded_iri_is_left_out_of_the_projection() {
+    fn a_projection_list_holding_a_name_that_is_no_expanded_iri_is_read_as_absent_and_no_list_is_kept() {
         let notification = notification(serde_json::json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
             "pick": stored(&["speed", "https://example.com/colour"])
         }));
 
-        let projection = notification_projection(&notification);
-
-        pretty_assertions::assert_eq!(projection.pick.len(), 1);
+        assert!(notification.pick.is_none(), "{notification:?}");
+        pretty_assertions::assert_eq!(notification_projection(&notification).pick.len(), 0);
     }
 
-    /// Table 5.2.14.1-1: `attributes` lists expanded attribute names, and a
-    /// name that is no IRI addresses nothing.
+    /// Table 5.2.14.1-1: `attributes` lists expanded attribute names.
     #[test]
     fn notification_attributes_compile_as_the_pick_synonym() {
         let notification = notification(serde_json::json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
-            "attributes": ["https://example.com/speed", "colour"]
+            "attributes": ["https://example.com/speed", "https://example.com/colour"]
         }));
 
         pretty_assertions::assert_eq!(
             notification_attributes(&notification),
-            vec![IriBuf::new("https://example.com/speed".to_owned()).expect("valid IRI")]
+            vec![
+                IriBuf::new("https://example.com/speed".to_owned()).expect("valid IRI"),
+                IriBuf::new("https://example.com/colour".to_owned()).expect("valid IRI")
+            ]
         );
     }
 
@@ -440,11 +442,60 @@ mod tests {
     }
 
     #[test]
-    fn a_notification_name_that_is_no_absolute_iri_is_left_out_of_the_stored_list() {
+    fn a_notification_attribute_list_holding_a_name_that_is_no_absolute_iri_is_read_as_absent_for_the_store_to_list() {
         let notification = notification(serde_json::json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
             "attributes": ["https://example.com/speed", "colour"]
         }));
-        pretty_assertions::assert_eq!(notification_attributes(&notification).len(), 1);
+        assert!(notification.attributes.is_none(), "{notification:?}");
+        pretty_assertions::assert_eq!(notification_attributes(&notification).len(), 0);
+    }
+
+    #[test]
+    fn a_subscription_whose_notification_attributes_are_unreadable_selects_nothing_whatever_it_listed() {
+        let mut subscription = subscription_with_unreadable_member();
+        subscription.notification = notification(serde_json::json!({
+            "endpoint": {"uri": "https://receiver.example.com/notify"},
+            "attributes": ["bare"]
+        }));
+        subscription.unreadable = vec![UnreadableMember::NotificationAttributes];
+        let at = StoreInstant::new(DateTime::from_timestamp(0, 0).expect("an instant in range"));
+        let stored = StoredSubscription {
+            key: SubscriptionKey::try_from(9).expect("a surrogate key"),
+            subscription,
+            notifying_since: NotifyingSince { active: at, selected: at },
+        };
+
+        let compiled = compile_subscription(&stored, LanguageMatching::default());
+
+        pretty_assertions::assert_eq!(compiled.selectors.len(), 0);
+        assert!(compiled.compiled_q.is_some(), "the filter no entity satisfies stands in");
+        assert!(
+            matches!(compiled.compiled_geo_q, SubscriptionGeoFilter::Unusable),
+            "{:?}",
+            compiled.compiled_geo_q
+        );
+    }
+
+    #[test]
+    fn every_unreadable_member_makes_an_entity_and_a_context_source_subscription_select_nothing() {
+        let at = StoreInstant::new(DateTime::from_timestamp(0, 0).expect("an instant in range"));
+        for member in UnreadableMember::iter() {
+            let mut subscription = subscription_with_unreadable_member();
+            subscription.unreadable = vec![member];
+
+            let stored = StoredSubscription {
+                key: SubscriptionKey::try_from(9).expect("a surrogate key"),
+                subscription: subscription.clone(),
+                notifying_since: NotifyingSince { active: at, selected: at },
+            };
+            let entity = compile_subscription(&stored, LanguageMatching::default());
+            pretty_assertions::assert_eq!(entity.selectors.len(), 0, "{member}");
+            assert!(matches!(entity.compiled_geo_q, SubscriptionGeoFilter::Unusable), "{member}");
+
+            let csource = compile_csource_subscription(&subscription);
+            pretty_assertions::assert_eq!(csource.selectors.len(), 0, "{member}");
+            assert!(matches!(csource.geo_q, SubscriptionGeoFilter::Unusable), "{member}");
+        }
     }
 }

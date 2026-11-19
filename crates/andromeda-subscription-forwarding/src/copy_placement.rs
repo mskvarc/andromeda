@@ -16,6 +16,7 @@ use andromeda_federation::{
     subscription_forward_failure::SubscriptionForwardFailure,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
@@ -65,7 +66,8 @@ fn untouched_claim(origin: ClaimOrigin, failure: &SubscriptionForwardFailure) ->
 
 impl SubscriptionForwardingService {
     /// Place a reduced copy of `subscription` at `registration`'s source, with
-    /// its filters carried as `carriage` and its terms written under `context`.
+    /// its filters carried as `carriage` and its terms written under `context`,
+    /// the `names` of which spell its `q` and `csf`.
     ///
     /// The copy is claimed under a lease and its identifier routed before it is
     /// sent, so a notification the source sends under it the moment it holds it
@@ -93,6 +95,7 @@ impl SubscriptionForwardingService {
         registration: &ContextSourceRegistration,
         carriage: FilterCarriage,
         context: &ContextSpec,
+        names: &NameCompaction,
     ) -> Result<(), SubscriptionForwardingError> {
         if SubscriptionForwardAdmission::of_creation(registration) == SubscriptionForwardAdmission::NotAdvertised {
             debug!(subscription = %subscription.id, registration = %registration.id, "registration does not advertise createSubscription");
@@ -111,7 +114,11 @@ impl SubscriptionForwardingService {
         };
         self.router.register(&remote, &self.tenant).await?;
         // Boxed, since the copy is held across the forward and the request is a wide value.
-        let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage)?.request);
+        let copy = Box::new(
+            ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage, names)
+                .await?
+                .request,
+        );
         let forwarded = self
             .federation
             .forward_subscription(registration, SubscriptionForward::Create { body: &copy, context })

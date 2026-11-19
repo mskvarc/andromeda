@@ -13,7 +13,6 @@ use crate::csr_member::CsrMember;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use andromeda_ngsi_ld_request::error::ParameterError;
-use iri_rs::InvalidIri;
 use thiserror::Error;
 
 /// Why a registration request is invalid.
@@ -66,13 +65,6 @@ pub enum RegistrationValidationReason {
         /// Why the expanded name is not a name.
         #[source]
         source: NgsiLdReferenceError,
-    },
-    /// A `geoproperty` selector did not expand to an IRI.
-    #[error("geoproperty is not an IRI: {source}")]
-    GeopropertyNotIri {
-        /// The expansion failure.
-        #[source]
-        source: InvalidIri<String>,
     },
     /// The discovery query parameters were rejected by the parameter model.
     #[error(transparent)]

@@ -114,4 +114,51 @@ mod tests {
         let kept = serde_json::to_value(names.subscription(&request).await.expect("keeps")).expect("the request writes");
         pretty_assertions::assert_eq!(kept, json!({"watchedAttributes": ["speed"], "q": "speed>10"}));
     }
+
+    /// The `q` of a request forwarded under `naming`, its inbound context being `inbound`, as the document the source reads.
+    async fn forwarded_q(inbound: &ContextSpec, naming: &ContextSpec, rewording: Rewording, q: &str) -> serde_json::Value {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let resolver = TermResolver::new(&engine, inbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, naming, rewording)
+            .await
+            .expect("the forwarding context processes");
+        let request: SubscriptionRequest = serde_json::from_value(json!({ "q": q })).expect("a request");
+        serde_json::to_value(names.subscription(&request).await.expect("rewords")).expect("the request writes")["q"].clone()
+    }
+
+    /// Clause 4.3.6.6: a copy written under the context it was spelled in travels as spelled, and one written under
+    /// another context is expanded with the first and compacted with the second, so a trailing member
+    /// reaches the source as the term the context it reads names, or as the IRI.
+    #[tokio::test]
+    async fn a_trailing_member_of_the_forwarded_q_is_spelled_in_the_context_the_copy_is_written_under() {
+        let inbound = context(&json!({"city": "https://schema.example/city"}));
+        let naming = context(&json!({"town": "https://schema.example/city"}));
+        let q = r#""https://example.org/address"[city]=="Berlin""#;
+
+        pretty_assertions::assert_eq!(
+            forwarded_q(&inbound, &inbound, Rewording::AsInbound, q).await,
+            json!(r#""https://example.org/address"[city]=="Berlin""#)
+        );
+        pretty_assertions::assert_eq!(
+            forwarded_q(&inbound, &naming, Rewording::Reword, q).await,
+            json!(r#""https://example.org/address"[town]=="Berlin""#)
+        );
+    }
+
+    /// Clause 4.9: a member that reads as a `LanguageProperty` target language stays the tag in both paths.
+    #[tokio::test]
+    async fn a_language_tag_member_of_the_forwarded_q_stays_the_tag() {
+        let inbound = ContextSpec::none();
+        let naming = context(&json!({"town": "https://schema.example/city"}));
+        let q = r#""https://example.org/name"[en]=="Door""#;
+
+        pretty_assertions::assert_eq!(
+            forwarded_q(&inbound, &inbound, Rewording::AsInbound, q).await,
+            json!(r#""https://example.org/name"[en]=="Door""#)
+        );
+        pretty_assertions::assert_eq!(
+            forwarded_q(&inbound, &naming, Rewording::Reword, q).await,
+            json!(r#""https://example.org/name"[en]=="Door""#)
+        );
+    }
 }

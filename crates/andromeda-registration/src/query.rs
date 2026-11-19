@@ -37,7 +37,6 @@ use andromeda_ngsi_ld_query::{
     type_selection::{TypeSelection, expansion::expand_type_selection},
 };
 use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
-use iri_rs::IriBuf;
 
 /// The registrations a discovery query answers with, and the pagination it
 /// reports around them (clause 5.10.2).
@@ -156,10 +155,9 @@ impl RegistrationService {
             }
         }
         if let Some(geo) = &geo {
-            let iri = IriBuf::new(geo.geoproperty.as_str().to_owned())
-                .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::GeopropertyNotIri { source }))?;
-            if !attrs.contains(&iri) {
-                attrs.push(iri);
+            let iri = geo.geoproperty.as_iri();
+            if !attrs.contains(iri) {
+                attrs.push(iri.clone()); // clone: the compiled query owns its attribute list
             }
         }
         let csf = match params.csf.clone() {

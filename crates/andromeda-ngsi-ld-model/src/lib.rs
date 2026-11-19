@@ -58,7 +58,7 @@ pub mod snapshot_clone;
 pub mod snapshot_filter;
 pub mod snapshot_input;
 pub mod snapshot_patch;
-pub mod stored_members;
+pub mod staged_list;
 pub mod subscription;
 pub mod subscription_member;
 pub mod subscription_presentation;

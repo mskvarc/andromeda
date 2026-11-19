@@ -14,10 +14,13 @@ use serde_json::json;
 /// term expanded: the sources whose registration has the `tier` "gold".
 const GOLD_TIER: &str = r#""https://uri.etsi.org/ngsi-ld/default-context/tier"=="gold""#;
 
+/// [`GOLD_TIER`] as the copy carries it: the core context a copy without a `jsonldContext` is written under abbreviates `tier`.
+const GOLD_TIER_FORWARDED: &str = r#"tier=="gold""#;
+
 /// Table 5.2.12-1 has the `csf` of an entity subscription "met by Context
 /// Source Registrations describing Context Sources to be used", so the copy
 /// goes to the source registered in the gold tier alone, carrying the `csf`
-/// as the subscription holds it, and to neither the silver one nor the one
+/// spelled in the `@context` the copy is written under, and to neither the silver one nor the one
 /// registered without a tier.
 #[tokio::test]
 async fn a_context_source_filter_places_the_copy_only_at_the_sources_whose_registration_meets_it() {
@@ -37,7 +40,7 @@ async fn a_context_source_filter_places_the_copy_only_at_the_sources_whose_regis
     let [copy] = placed.as_slice() else {
         panic!("one copy is placed at the gold source: {placed:?}");
     };
-    pretty_assertions::assert_eq!(copy["csf"], json!(GOLD_TIER));
+    pretty_assertions::assert_eq!(copy["csf"], json!(GOLD_TIER_FORWARDED));
     pretty_assertions::assert_eq!(silver.placed().await, Vec::<serde_json::Value>::new());
     pretty_assertions::assert_eq!(untiered.placed().await, Vec::<serde_json::Value>::new());
 }

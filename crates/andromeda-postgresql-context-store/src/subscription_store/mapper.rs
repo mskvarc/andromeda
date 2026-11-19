@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_model::{
         standing::SubscriptionStanding,
         subscription_filters::SubscriptionFilters,
         subscription_selection::SubscriptionSelection,
+        unreadable_member::UnreadableMember,
     },
 };
 use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, scope::scope_query::ScopeQuery};
@@ -136,7 +137,12 @@ pub fn row_from_pg(row: &PgRow) -> Result<SubscriptionRow, ContextStoreError> {
         unreadable: Vec::new(),
     };
     let entities = members.entities(row)?;
-    let watched_attributes = members.attribute_iris(row, Subscriptions::WatchedAttributes, StoredSubscriptionError::WatchedAttribute)?;
+    let watched_attributes = members.attribute_iris(
+        row,
+        Subscriptions::WatchedAttributes,
+        StoredSubscriptionError::WatchedAttribute,
+        UnreadableMember::WatchedAttributes,
+    )?;
     let notification_trigger = stored_notification_triggers(row)?;
     let q = members.q(row)?;
     let scope_q_raw: Option<String> = row.try_get(Subscriptions::ScopeQ.unquoted())?;
@@ -144,12 +150,16 @@ pub fn row_from_pg(row: &PgRow) -> Result<SubscriptionRow, ContextStoreError> {
         .map(|raw| raw.parse::<ScopeQuery>().map_err(|error| StoredSubscriptionError::ScopeQ(Box::new(error))))
         .transpose()?;
     let csf = members.csf(row)?;
-    let expand_values = members.attribute_iris(row, Subscriptions::ExpandValues, StoredSubscriptionError::ExpandValue)?;
-    let json_keys = members.attribute_iris(row, Subscriptions::JsonKeys, StoredSubscriptionError::JsonKey)?;
+    let expand_values = members.attribute_iris(
+        row,
+        Subscriptions::ExpandValues,
+        StoredSubscriptionError::ExpandValue,
+        UnreadableMember::ExpandValues,
+    )?;
+    let json_keys = members.attribute_iris(row, Subscriptions::JsonKeys, StoredSubscriptionError::JsonKey, UnreadableMember::JsonKeys)?;
     let geo_q = members.geo_q(row)?;
+    let notification = members.notification(row)?;
     let unreadable = members.unreadable;
-    let notification: NotificationParams =
-        stored_json(row, Subscriptions::Notification, StoredSubscriptionError::Notification)?.ok_or(StoredSubscriptionError::NotificationAbsent)?;
     let lang_raw: Option<String> = row.try_get(Subscriptions::Lang.unquoted())?;
     let lang = lang_raw
         .map(|raw| raw.parse::<LanguageFilter>())
