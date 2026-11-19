@@ -4,7 +4,7 @@
 
 use crate::{
     error::SubscriptionForwardingError,
-    forwarded_claim::{ClaimOrigin, ForwardedClaim},
+    forwarded_claim::{ClaimOrigin, ForwardedClaim, HeldCopy},
     minted_subscription_id::mint_subscription_id,
     reduced_copy::{FilterCarriage, ReducedSubscription},
     service::SubscriptionForwardingService,
@@ -74,8 +74,9 @@ impl SubscriptionForwardingService {
     /// finds both. A claim that took over an abandoned one sends the copy under
     /// the identifier recorded. An answer saying the source holds the copy
     /// settles the claim, under an identifier the source assigned when it
-    /// assigned one. A source refusing the copy as sent releases the claim and
-    /// the route. An error status that depends on the moment it came, and a
+    /// assigned one, and a source that already held the copy holds what an
+    /// earlier send left, which is owed the current receiver. A source
+    /// refusing the copy as sent releases the claim and the route. An error status that depends on the moment it came, and a
     /// forward that never reached the source, release them too when the claim
     /// was recorded with the copy, and leave them to the lease when the claim
     /// was taken over, since an earlier send may have left the copy there. A
@@ -129,7 +130,7 @@ impl SubscriptionForwardingService {
         match failure.remote_effect() {
             RemoteEffect::Present => {
                 debug!(subscription = %subscription.id, registration = %registration.id, %failure, "the source already holds the reduced subscription copy");
-                self.mappings.settle_forwarded(&subscription.id, &registration.id).await
+                self.mappings.settle_forwarded(&subscription.id, &registration.id, HeldCopy::EarlierSend).await
             }
             RemoteEffect::Possible => {
                 warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy got no answer from the source and stays claimed, since the source may hold it; it is sent again once its lease runs out");
@@ -161,7 +162,7 @@ impl SubscriptionForwardingService {
         assigned: &Identifier,
     ) -> Result<(), SubscriptionForwardingError> {
         if assigned == claimed {
-            return self.mappings.settle_forwarded(local, &registration.id).await;
+            return self.mappings.settle_forwarded(local, &registration.id, HeldCopy::AsSent).await;
         }
         self.mappings
             .record_forwarded(

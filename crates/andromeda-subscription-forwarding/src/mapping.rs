@@ -10,7 +10,7 @@
 
 use crate::{
     error::SubscriptionForwardingError,
-    forwarded_claim::{ForwardedClaim, StaleClaim},
+    forwarded_claim::{ForwardedClaim, HeldCopy, StaleClaim},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
@@ -80,11 +80,13 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Settle the claimed copy of `local` at `registration`, now that its
-    /// source holds it, so its lease no longer runs.
+    /// source holds it as `held` says, so its lease no longer runs. A copy an
+    /// earlier send left is owed the current receiver from now.
     fn settle_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         local: &'life1 Identifier,
         registration: &'life2 Identifier,
+        held: HeldCopy,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,

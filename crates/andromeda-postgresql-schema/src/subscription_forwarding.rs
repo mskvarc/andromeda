@@ -13,6 +13,9 @@ pub enum SubscriptionCompanions {
     /// The `subscriptions(subscription_key)` of the minted companion
     /// registration subscription.
     CompanionSubscriptionKey,
+    /// When the companion's update to the current receiver is next due, NULL
+    /// when it notifies that receiver.
+    RedirectDueAt,
 }
 
 /// The tenant-scoped `forwarded_subscriptions` table: the reduced copy of a
@@ -27,6 +30,33 @@ pub enum ForwardedSubscriptions {
     RegistrationId,
     /// The identifier of the copy at the source.
     RemoteSubscriptionId,
+}
+
+/// The tenant-scoped `forwarded_subscription_redirects` table, holding each
+/// settled copy owed the current receiver, with the instant its update is next
+/// due. A copy without a row notifies that receiver.
+#[derive(Iden, Clone, Copy)]
+pub enum ForwardedSubscriptionRedirects {
+    /// Table name: `forwarded_subscription_redirects`
+    Table,
+    /// The `subscriptions(subscription_key)` of the local entity subscription.
+    LocalSubscriptionKey,
+    /// When the copy's update to the current receiver is next due.
+    RedirectDueAt,
+    /// The registration whose source holds the copy.
+    RegistrationId,
+}
+
+/// The tenant-scoped `subscription_receiver` table: the one row naming the
+/// receiver the companions and copies notify, but those owed it.
+#[derive(Iden, Clone, Copy)]
+pub enum SubscriptionReceiver {
+    /// Table name: `subscription_receiver`
+    Table,
+    /// The key that keeps the table to one row.
+    Singleton,
+    /// The receiver adopted last.
+    Receiver,
 }
 
 /// The tenant-scoped `forwarded_subscription_claims` table, holding the
@@ -58,7 +88,14 @@ pub enum ForwardedSubscriptionRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::subscription_forwarding::{ForwardedSubscriptionClaims, ForwardedSubscriptionRoutes, ForwardedSubscriptions, SubscriptionCompanions};
+    use crate::subscription_forwarding::{
+        ForwardedSubscriptionClaims,
+        ForwardedSubscriptionRedirects,
+        ForwardedSubscriptionRoutes,
+        ForwardedSubscriptions,
+        SubscriptionCompanions,
+        SubscriptionReceiver,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -70,6 +107,14 @@ mod tests {
         assert_eq!(ForwardedSubscriptions::Table.to_string(), "forwarded_subscriptions");
         assert_eq!(ForwardedSubscriptions::LocalSubscriptionKey.to_string(), "local_subscription_key");
         assert_eq!(ForwardedSubscriptions::RemoteSubscriptionId.to_string(), "remote_subscription_id");
+        assert_eq!(ForwardedSubscriptionRedirects::Table.to_string(), "forwarded_subscription_redirects");
+        assert_eq!(ForwardedSubscriptionRedirects::LocalSubscriptionKey.to_string(), "local_subscription_key");
+        assert_eq!(ForwardedSubscriptionRedirects::RedirectDueAt.to_string(), "redirect_due_at");
+        assert_eq!(ForwardedSubscriptionRedirects::RegistrationId.to_string(), "registration_id");
+        assert_eq!(SubscriptionCompanions::RedirectDueAt.to_string(), "redirect_due_at");
+        assert_eq!(SubscriptionReceiver::Table.to_string(), "subscription_receiver");
+        assert_eq!(SubscriptionReceiver::Singleton.to_string(), "singleton");
+        assert_eq!(SubscriptionReceiver::Receiver.to_string(), "receiver");
         assert_eq!(ForwardedSubscriptionClaims::Table.to_string(), "forwarded_subscription_claims");
         assert_eq!(ForwardedSubscriptionClaims::LocalSubscriptionKey.to_string(), "local_subscription_key");
         assert_eq!(ForwardedSubscriptionClaims::LeaseUntil.to_string(), "lease_until");

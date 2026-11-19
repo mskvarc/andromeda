@@ -14,6 +14,8 @@ pub(crate) mod held_entities;
 pub(crate) mod inert_ports;
 pub(crate) mod recording_router;
 pub(crate) mod recording_subscriptions;
+mod redirect_scene;
+pub(crate) mod scripted_answers;
 pub(crate) mod scripted_registrations;
 pub(crate) mod stored_forms;
 pub(crate) mod subscribing_source;
@@ -237,6 +239,7 @@ impl ReassemblyScene {
             .subscriptions(subscriptions.clone())
             .csource_subscriptions(Arc::new(csource_subscriptions))
             .mappings(maps.clone())
+            .redirects(maps.clone())
             .router(router.clone())
             .federation(Arc::new(federation))
             .entity_query(Arc::new(entity_query))

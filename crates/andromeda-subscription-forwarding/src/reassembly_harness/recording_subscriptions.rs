@@ -60,6 +60,9 @@ pub(crate) struct RecordingSubscriptions {
     updates_in_flight: AtomicUsize,
     /// The most updates that ran at once.
     most_updates_at_once: AtomicUsize,
+    /// The notification endpoint each update wrote, under the identifier of
+    /// the subscription it updated, in the order the updates came.
+    endpoints_written: Mutex<Vec<(Identifier, String)>>,
 }
 
 impl RecordingSubscriptions {
@@ -73,6 +76,7 @@ impl RecordingSubscriptions {
             hold: DeletionHold::default(),
             updates_in_flight: AtomicUsize::new(0),
             most_updates_at_once: AtomicUsize::new(0),
+            endpoints_written: Mutex::new(Vec::new()),
         }
     }
 
@@ -117,6 +121,18 @@ impl RecordingSubscriptions {
     /// The most updates that ran at once.
     pub(crate) fn most_updates_at_once(&self) -> usize {
         self.most_updates_at_once.load(Ordering::SeqCst)
+    }
+
+    /// The notification endpoint URIs the updates of `id` wrote, in the order
+    /// they came.
+    pub(crate) fn endpoints_written(&self, id: &Identifier) -> Vec<String> {
+        self.endpoints_written
+            .lock()
+            .expect("the written endpoints are never poisoned")
+            .iter()
+            .filter(|(updated, _)| updated == id)
+            .map(|(_, endpoint)| endpoint.clone())
+            .collect()
     }
 
     /// The subscriptions deleted, in the order they were.
@@ -241,17 +257,24 @@ impl SubscriptionStore for RecordingSubscriptions {
 
     /// Counts the updates running at once, and yields once while it runs so
     /// that a second update started beside it can begin before it ends. The
-    /// stored document is left as it was.
+    /// stored document is left as it was, and the notification endpoint the
+    /// update writes is recorded.
     async fn update_subscription(
         &self,
         _target: &ContextTarget,
         id: &Identifier,
-        _fields: &SubscriptionFields<'_>,
+        fields: &SubscriptionFields<'_>,
         _status: SubscriptionStatus,
         _restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
         if !self.holds(id) {
             return Ok(0);
+        }
+        if let Some(notification) = fields.notification {
+            self.endpoints_written
+                .lock()
+                .expect("the written endpoints are never poisoned")
+                .push((id.clone(), notification.endpoint.uri.as_str().to_owned()));
         }
         let running = self.updates_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         self.most_updates_at_once.fetch_max(running, Ordering::SeqCst);

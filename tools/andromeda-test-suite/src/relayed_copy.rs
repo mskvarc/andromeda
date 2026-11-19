@@ -209,8 +209,18 @@ pub async fn placed_copy_id(source: &ContextSource, prefix: &str, entity_type: &
 ///
 /// Returns the failure when the notification identifier or the instant is invalid.
 pub fn notification_body(namespace: &Namespace, copy_id: &SubscriptionId, data: Vec<Entity<Output>>, context: Context) -> Result<String> {
+    notification_body_numbered(namespace, 1, copy_id, data, context)
+}
+
+/// As [`notification_body`], the notification carrying the test's notification number `number`, for a test whose
+/// source sends several.
+///
+/// # Errors
+///
+/// Returns the failure when the notification identifier or the instant is invalid.
+pub fn notification_body_numbered(namespace: &Namespace, number: u32, copy_id: &SubscriptionId, data: Vec<Entity<Output>>, context: Context) -> Result<String> {
     let notification = Notification::builder()
-        .id(namespace.urn_text("Notification", 1).parse::<NotificationId>()?)
+        .id(namespace.urn_text("Notification", number).parse::<NotificationId>()?)
         .subscription_id(copy_id.clone())
         .notified_at("2026-10-06T12:00:00Z".parse()?)
         .data(data)

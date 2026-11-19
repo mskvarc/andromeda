@@ -7,7 +7,8 @@
 //! append intents, every `expiresAt` sweep, clause-5.8.6 and clause-5.11.7
 //! periodic notifications, the clause-5.13.1 invalidation of every
 //! `"Cached"` `@context` whose expiration time has passed, and the clause
-//! 5.8.1.4 copy placements cut off before their source answered. The probe answers
+//! 5.8.1.4 copy placements cut off before their source answered and
+//! companions and copies owed the current receiver. The probe answers
 //! the single earliest instant any of those falls due, over a transient
 //! one-connection pool so it adds no permanent backend and is safe through a
 //! transaction pooler. The pool reaches an established tenant over its request
@@ -36,6 +37,7 @@ use andromeda_postgresql_pool::{pending_work_failure::pending_work_failure, pool
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
 use andromeda_subscription::interval_schedule::{interval_duration, next_interval_due};
+use andromeda_subscription_forwarding::receiver::ReceiverEndpoint;
 use andromeda_tenancy::{
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     tenant_existence::TenantExistence,
@@ -58,13 +60,22 @@ pub struct PostgresPendingWorkProbe {
     /// How long the transient probe pool waits for a connection before it treats
     /// the backend as saturated.
     acquire_timeout: Duration,
+    /// The receiver the distributed subscription side has context sources
+    /// notify, `None` when it does not run.
+    forwarding: Option<ReceiverEndpoint>,
 }
 
 impl PostgresPendingWorkProbe {
-    /// A probe over the given bases and acquire deadline.
+    /// A probe over the given bases and acquire deadline, reading the
+    /// obligations of the distributed subscription side when it notifies
+    /// context sources at `forwarding`.
     #[must_use]
-    pub const fn new(urls: TenantProbeUrls, acquire_timeout: Duration) -> PostgresPendingWorkProbe {
-        PostgresPendingWorkProbe { urls, acquire_timeout }
+    pub const fn new(urls: TenantProbeUrls, acquire_timeout: Duration, forwarding: Option<ReceiverEndpoint>) -> PostgresPendingWorkProbe {
+        PostgresPendingWorkProbe {
+            urls,
+            acquire_timeout,
+            forwarding,
+        }
     }
 }
 
@@ -77,7 +88,7 @@ impl PendingWorkProbe for PostgresPendingWorkProbe {
             .await
             .map_err(|error| pending_work_failure(&error, database))?;
 
-        let earliest = Self::earliest_over(&pool, database).await;
+        let earliest = Self::earliest_over(&pool, database, self.forwarding.as_ref()).await;
         pool.close().await;
         earliest
     }
@@ -93,10 +104,10 @@ impl PostgresPendingWorkProbe {
     /// the contract, the relations the obligation read names are missing or
     /// still being created, and the read would fail or wait on the migration's
     /// locks.
-    async fn earliest_over(pool: &sqlx::PgPool, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
+    async fn earliest_over(pool: &sqlx::PgPool, database: &TenantDatabaseName, forwarding: Option<&ReceiverEndpoint>) -> Result<PendingWork, PendingWorkError> {
         let state = tenant_schema_state(pool).await.map_err(|error| Self::classify_store_error(error, database))?;
         readable(state, database)?;
-        earliest_obligation(pool)
+        earliest_obligation(pool, forwarding)
             .await
             .map(|due| due.map_or(PendingWork::None, PendingWork::DueAt))
             .map_err(|error| Self::classify_store_error(error, database))
@@ -157,9 +168,11 @@ fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(
 
 /// The earliest instant any background obligation of the database behind
 /// `pool` falls due (a durable-queue item, a preparing Snapshot, an
-/// `expiresAt` of any kind, a clause-5.8.6 periodic notification, or the end
-/// of an unsettled subscription copy claim's lease), or `None` when nothing is
-/// outstanding.
+/// `expiresAt` of any kind, a clause-5.8.6 periodic notification, or, while
+/// the distributed subscription side notifies context sources at
+/// `forwarding`, the end of an unsettled subscription copy claim's lease, an
+/// update owed that receiver, or the receiver's adoption), or `None` when
+/// nothing is outstanding.
 ///
 /// One index-backed `SELECT LEAST(...)`, one delivery-queue read per published
 /// Snapshot branch, and the periodic-notification anchors.
@@ -169,8 +182,8 @@ fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(
 /// # Errors
 ///
 /// Returns the classified database failure of either read.
-pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTime>, ContextStoreError> {
-    let queue_due = earliest_queue_due(pool).await?;
+pub async fn earliest_obligation(pool: &sqlx::PgPool, forwarding: Option<&ReceiverEndpoint>) -> Result<Option<SystemTime>, ContextStoreError> {
+    let queue_due = earliest_queue_due(pool, forwarding).await?;
 
     let anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>)> = interval_probe_select().to_query_as().fetch_all(pool).await?;
 
@@ -180,13 +193,14 @@ pub async fn earliest_obligation(pool: &sqlx::PgPool) -> Result<Option<SystemTim
 /// The earliest due instant across the queue and expiry sources, reading the
 /// delivery queue of every branch the delivery drain sweeps.
 ///
-/// The live branch's sources are one statement whose text never changes, and
+/// The live branch's sources are one statement whose text never changes for
+/// the process, and
 /// each published Snapshot branch's delivery queue is a statement of its own,
 /// so a connection plans each once however the Snapshot set churns. A Snapshot
 /// reaped between the branch enumeration and its read has dropped its queue
 /// with its schema, so the missing relation means that branch owes nothing.
-async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>, ContextStoreError> {
-    let mut earliest: Option<DateTime<Utc>> = least_due_select().to_query_scalar().fetch_one(pool).await?;
+async fn earliest_queue_due(pool: &sqlx::PgPool, forwarding: Option<&ReceiverEndpoint>) -> Result<Option<DateTime<Utc>>, ContextStoreError> {
+    let mut earliest: Option<DateTime<Utc>> = least_due_select(forwarding).to_query_scalar().fetch_one(pool).await?;
     for branch in drainable_targets(pool).await? {
         match branch {
             ContextTarget::Live => {}

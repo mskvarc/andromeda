@@ -10,12 +10,13 @@ use crate::{
         background_pacer::BackgroundPacer,
         commit_consequence::RuntimeCommitConsequencePublisher,
         error::TenantAssemblyError,
-        obligation_source::TenantObligations,
+        obligation_source::{ObligationSource, TenantObligations},
         periodic_due::PeriodicDue,
         runtime::BrokerTenantRuntime,
         services::{TenantServiceCollaborators, construct_services},
         spatial::indexed_commits,
         storage::initialize_storage,
+        subscription_services::advertised_receiver,
         tasks::{
             PeriodicPacing,
             TenantSignals,
@@ -54,7 +55,7 @@ use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, tenant
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
 use andromeda_postgresql_context_store::{database_defaults::DatabaseDefaults, tenant_extension_versions::PostgresTenantExtensionVersions};
 use andromeda_postgresql_pool::database_url::DatabaseUrl;
-use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
+use andromeda_subscription_forwarding::{mapping::ForwardedSubscriptionRouter, receiver::ReceiverEndpoint};
 use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::wake_channel};
 use andromeda_tenancy::{error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
 use async_trait::async_trait;
@@ -83,7 +84,7 @@ mod snapshot_services;
 mod snapshot_subscriptions;
 mod spatial;
 mod storage;
-mod subscription_services;
+pub(crate) mod subscription_services;
 mod tasks;
 mod temporal_history;
 mod temporal_intent_task;
@@ -147,6 +148,9 @@ struct TenantFactoryConfig {
     /// The `apiRoot` clients and peers reach the broker at (clause 6.2),
     /// when `server.public_url` configures one.
     public_url: Option<Url>,
+    /// The receiver context sources notify this broker at, below that
+    /// `apiRoot`, `None` when the distributed side of subscriptions is off.
+    receiver: Option<ReceiverEndpoint>,
     /// The default tenant's alias in effect, from which each tenant's alias
     /// in the `Via` chain follows (Table 5.2.40-1).
     source_alias: ContextSourceAlias,
@@ -171,6 +175,7 @@ impl TenantFactoryConfig {
             extensions: config.extensions,
             link_field: config.http.link_field,
             public_url: config.server.public_url.clone(),
+            receiver: advertised_receiver(&config.server),
             source_alias,
         }
     }
@@ -271,10 +276,8 @@ async fn build_tenant_state(
     // One pacer for every background pass the tenant runs, created before the
     // first of them is registered, so one obligation read decides for all of
     // them while the tenant is quiet.
-    let pacer = Arc::new(BackgroundPacer::new(
-        config.expiry.sweep_interval.duration(),
-        Arc::new(TenantObligations::new(&storage.pool)),
-    ));
+    let obligations: Arc<dyn ObligationSource> = Arc::new(TenantObligations::new(&storage.pool, config.receiver.clone()));
+    let pacer = Arc::new(BackgroundPacer::new(config.expiry.sweep_interval.duration(), Arc::clone(&obligations)));
     let periodic_due = Arc::new(PeriodicDue::default());
     let temporal = compose_temporal_history(
         &storage.pool,
@@ -332,6 +335,11 @@ async fn build_tenant_state(
             snapshot_preparation_slots,
         },
     )?;
+    // Before the tenant serves a request, so every companion and copy placed
+    // before a change of receiver owes the new one and none placed after it does.
+    if let Some(forwarding) = &services.state.subscription_forwarding {
+        forwarding.adopt_receiver().await?;
+    }
     let channels = TenantTaskChannels {
         signals,
         notification_wake: notification_receiver,
@@ -349,6 +357,6 @@ async fn build_tenant_state(
     let supervision = supervise_tasks(config, &storage, &services, &writes, &dispatcher, task_supervisor, channels)?;
     Ok((
         services.state,
-        BrokerTenantRuntime::new(storage.hit_flush, supervision, dispatcher, storage.pool, pacer, periodic_due),
+        BrokerTenantRuntime::new(storage.hit_flush, supervision, dispatcher, storage.pool, pacer, obligations, periodic_due),
     ))
 }

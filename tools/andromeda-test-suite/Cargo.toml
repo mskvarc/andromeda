@@ -380,3 +380,7 @@ path = "tests/pgbouncer/tenancy/main.rs"
 [[test]]
 name = "interoperability"
 path = "tests/interoperability/main.rs"
+
+[[test]]
+name = "upgrade_subscription"
+path = "tests/upgrade/subscription/main.rs"

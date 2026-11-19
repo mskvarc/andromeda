@@ -7,6 +7,7 @@ use crate::{
     },
     tenant_factory::{storage::TenantStorage, tasks::TenantSignals},
 };
+use andromeda_configuration::schema::server::ServerConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
@@ -23,11 +24,11 @@ use andromeda_subscription::{
 use andromeda_subscription_forwarding::{
     mapping::{ForwardedSubscriptionRouter, SubscriptionForwardingStore},
     receiver::ReceiverEndpoint,
+    redirect_ledger::RedirectLedger,
     service::SubscriptionForwardingService,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::{sync::Arc, time::Duration};
-use url::Url;
 
 /// How long a copy placement holds its claim before the claim counts as
 /// abandoned, twice `request_deadline`. A placement runs inside a request, or
@@ -65,22 +66,33 @@ pub(super) struct DistributedSubscriptionEdge<'edge> {
 }
 
 impl<'edge> DistributedSubscriptionEdge<'edge> {
-    /// Resolve the edge from the configured `apiRoot`.
+    /// Resolve the edge from the receiver the configured `apiRoot` gives.
     ///
     /// Without one the distributed side stays off, and the broker says so
     /// once per tenant.
     pub(super) fn resolve(
-        public_url: Option<&Url>,
+        receiver: Option<&ReceiverEndpoint>,
         router: &'edge Arc<dyn ForwardedSubscriptionRouter>,
         federation: &'edge Arc<FederationService>,
         tenant: &TenantRef,
     ) -> Option<DistributedSubscriptionEdge<'edge>> {
-        let Some(receiver) = public_url.and_then(ReceiverEndpoint::from_advertised) else {
+        let Some(receiver) = receiver else {
             tracing::info!(tenant = ?tenant, "subscription forwarding disabled: server.public_url is not set");
             return None;
         };
-        Some(DistributedSubscriptionEdge { receiver, router, federation })
+        Some(DistributedSubscriptionEdge {
+            receiver: receiver.clone(),
+            router,
+            federation,
+        })
     }
+}
+
+/// The receiver context sources notify this broker at, below the `apiRoot`
+/// `server.public_url` configures, `None` when it configures none peers could
+/// reach, which leaves the distributed side of subscriptions off.
+pub(crate) fn advertised_receiver(server: &ServerConfig) -> Option<ReceiverEndpoint> {
+    server.public_url.as_ref().and_then(ReceiverEndpoint::from_advertised)
 }
 
 /// Compose both subscription services and the distributed side joining them,
@@ -147,6 +159,7 @@ fn compose_subscription_forwarding(
             .subscriptions(Arc::clone(subscriptions))
             .csource_subscriptions(Arc::clone(csource_subscriptions))
             .mappings(Arc::new(SubscriptionForwardingRepository::new(&storage.pool)) as Arc<dyn SubscriptionForwardingStore>)
+            .redirects(Arc::new(SubscriptionForwardingRepository::new(&storage.pool)) as Arc<dyn RedirectLedger>)
             .router(Arc::clone(edge.router))
             .federation(Arc::clone(edge.federation))
             .entity_query(Arc::clone(entity_query))

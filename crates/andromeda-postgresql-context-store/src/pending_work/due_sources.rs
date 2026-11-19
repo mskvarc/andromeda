@@ -4,7 +4,9 @@
 //!
 //! The live statement names no Snapshot schema, so its text is the same
 //! whatever Snapshots exist and a connection plans it once; a Snapshot created
-//! or reaped adds or drops only its own small statement.
+//! or reaped adds or drops only its own small statement. The sources of the
+//! distributed subscription side are read only while it runs, since nothing
+//! else serves them, and their text is then the same for every tenant.
 //!
 //! A queue is read through the index its claim uses. An expression over every
 //! row would read the whole heap on every probe, and a queue heap keeps the
@@ -26,11 +28,12 @@ use andromeda_postgresql_schema::{
     posted_query::PostedQueries,
     queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
-    subscription_forwarding::ForwardedSubscriptionClaims,
+    subscription_forwarding::{ForwardedSubscriptionClaims, ForwardedSubscriptionRedirects, SubscriptionCompanions, SubscriptionReceiver},
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
 use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
+use andromeda_subscription_forwarding::receiver::ReceiverEndpoint;
 use sea_query::{
     Alias,
     CaseStatement,
@@ -60,9 +63,11 @@ enum Unleased {
 
 /// `SELECT LEAST(...)` of the earliest due instant in each queue and expiry
 /// source of the live branch and the tenant, a single row whose one nullable
-/// column is the soonest, or NULL when nothing is due.
-pub(crate) fn least_due_select() -> SelectStatement {
-    let sources = vec![
+/// column is the soonest, or NULL when nothing is due. The sources of the
+/// distributed subscription side are read when it runs, notifying context
+/// sources at `forwarding`.
+pub(crate) fn least_due_select(forwarding: Option<&ReceiverEndpoint>) -> SelectStatement {
+    let mut sources = vec![
         claimable_min(
             NotificationDeliveries::Table,
             NotificationDeliveries::NextAttemptAt,
@@ -88,20 +93,46 @@ pub(crate) fn least_due_select() -> SelectStatement {
             Cond::all(),
         ),
         preparing_min(),
-        expiry_min(Entities::Table, Entities::ExpiresAt),
-        expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
+        present_min(Entities::Table, Entities::ExpiresAt),
+        present_min(Entities::Table, Entities::MinAttributeExpiresAt),
         subscription_expiry_min(),
-        expiry_min(Csr::Table, Csr::ExpiresAt),
+        present_min(Csr::Table, Csr::ExpiresAt),
         earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
         orphan_branch_due(),
         earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
         earliest_min(PostedQueries::Table, PostedQueries::ExpiresAt),
         cached_context_expiry_min(),
-        // A copy placement cut off before its source answered is placed again
-        // once its claim's lease ends.
-        earliest_min(ForwardedSubscriptionClaims::Table, ForwardedSubscriptionClaims::LeaseUntil),
     ];
+    if let Some(receiver) = forwarding {
+        sources.extend(forwarding_due(receiver));
+    }
     Query::select().expr_as(Func::least(sources), Alias::new("due")).to_owned()
+}
+
+/// The obligations of the distributed subscription side, which notifies
+/// context sources at `receiver`: a copy placement cut off before its source
+/// answered is placed again once its claim's lease ends, a companion or copy
+/// owed the current receiver is updated when its update falls due, and a
+/// receiver other than the one adopted last is adopted at once.
+fn forwarding_due(receiver: &ReceiverEndpoint) -> [SimpleExpr; 4] {
+    [
+        earliest_min(ForwardedSubscriptionClaims::Table, ForwardedSubscriptionClaims::LeaseUntil),
+        present_min(SubscriptionCompanions::Table, SubscriptionCompanions::RedirectDueAt),
+        earliest_min(ForwardedSubscriptionRedirects::Table, ForwardedSubscriptionRedirects::RedirectDueAt),
+        receiver_change_due(receiver),
+    ]
+}
+
+/// A scalar subquery that is now while `receiver` is not the one adopted last.
+fn receiver_change_due(receiver: &ReceiverEndpoint) -> SimpleExpr {
+    let adopted = Query::select()
+        .expr(Expr::val(1))
+        .from(SubscriptionReceiver::Table)
+        .and_where(Expr::col(SubscriptionReceiver::Receiver).eq(receiver.url().as_str()))
+        .to_owned();
+    let mut select = Query::select();
+    select.expr(now()).and_where(Expr::exists(adopted).not());
+    scalar(select)
 }
 
 /// The earliest claimable instant of the delivery queue of `branch`, a single
@@ -198,8 +229,9 @@ fn preparing_min() -> SimpleExpr {
     scalar(select)
 }
 
-/// A scalar subquery of the earliest non-null `expires_at` in a table.
-fn expiry_min(table: impl IntoTableRef, column: impl IntoColumnRef + Copy) -> SimpleExpr {
+/// A scalar subquery of the earliest instant a nullable column of a table
+/// holds.
+fn present_min(table: impl IntoTableRef, column: impl IntoColumnRef + Copy) -> SimpleExpr {
     let mut select = Query::select();
     select.expr(Func::min(Expr::col(column))).from(table).and_where(Expr::col(column).is_not_null());
     scalar(select)
@@ -215,8 +247,8 @@ fn orphan_branch_due() -> SimpleExpr {
     scalar(select)
 }
 
-/// A scalar subquery of the earliest `expires_at` in a table whose column is
-/// always present, so no null filter is needed.
+/// A scalar subquery of the earliest instant a column of a table holds, a
+/// column that is never NULL, so no null filter is needed.
 fn earliest_min(table: impl IntoTableRef, column: impl IntoColumnRef + Copy) -> SimpleExpr {
     let mut select = Query::select();
     select.expr(Func::min(Expr::col(column))).from(table);
@@ -281,10 +313,17 @@ mod tests {
     use crate::pending_work::due_sources::{branch_delivery_due_select, least_due_select};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_subscription_forwarding::receiver::ReceiverEndpoint;
     use sea_query::PostgresQueryBuilder;
+    use url::Url;
 
+    fn receiver() -> ReceiverEndpoint {
+        ReceiverEndpoint::from_advertised(&Url::parse("http://broker-a:1056").expect("a URL")).expect("a receiver")
+    }
+
+    /// The statement of a tenant whose distributed subscription side runs.
     fn least_sql() -> String {
-        least_due_select().to_string(PostgresQueryBuilder)
+        least_due_select(Some(&receiver())).to_string(PostgresQueryBuilder)
     }
 
     /// A delivery queued on a published Snapshot branch is an obligation of the
@@ -393,6 +432,51 @@ mod tests {
     fn the_probe_reads_the_earliest_lease_end_of_an_unsettled_copy_claim() {
         let sql = least_sql();
         assert!(sql.contains(r#"(SELECT MIN("lease_until") FROM "forwarded_subscription_claims")"#), "{sql}");
+    }
+
+    /// A companion or copy owed the current receiver is updated when its
+    /// update falls due, read through the index on each one's due instant.
+    #[test]
+    fn the_probe_reads_the_earliest_update_owed_the_current_receiver() {
+        let sql = least_sql();
+        assert!(
+            sql.contains(r#"(SELECT MIN("redirect_due_at") FROM "subscription_companions" WHERE "redirect_due_at" IS NOT NULL)"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"(SELECT MIN("redirect_due_at") FROM "forwarded_subscription_redirects")"#),
+            "{sql}"
+        );
+    }
+
+    /// A receiver other than the one adopted last owes every companion and
+    /// copy an update, so the tenant is due at once to adopt it, a dormant
+    /// one included.
+    #[test]
+    fn the_probe_is_due_now_while_the_receiver_is_not_the_one_adopted_last() {
+        let sql = least_sql();
+        assert!(
+            sql.contains(concat!(
+                r#"(SELECT NOW() WHERE NOT EXISTS(SELECT 1 FROM "subscription_receiver" "#,
+                r#"WHERE "receiver" = 'http://broker-a:1056/ngsi-ld/andromeda/v1/notifications'))"#
+            )),
+            "{sql}"
+        );
+    }
+
+    /// Without the distributed subscription side, no pass serves its claims
+    /// and redirects, so they keep no tenant due.
+    #[test]
+    fn the_probe_reads_no_source_of_the_distributed_subscription_side_while_it_does_not_run() {
+        let sql = least_due_select(None).to_string(PostgresQueryBuilder);
+        for table in [
+            "forwarded_subscription_claims",
+            "subscription_companions",
+            "forwarded_subscription_redirects",
+            "subscription_receiver",
+        ] {
+            assert!(!sql.contains(table), "{table} in {sql}");
+        }
     }
 
     #[test]

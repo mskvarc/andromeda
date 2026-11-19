@@ -15,6 +15,8 @@ mod copy_placement;
 /// What placing one reduced copy records, routes and keeps.
 #[cfg(test)]
 mod copy_placement_tests;
+/// Updating the reduced copy a context source holds.
+mod copy_update;
 /// Failures of the distributed subscription side.
 pub mod error;
 /// What an expired subscription leaves at the context sources.
@@ -59,6 +61,15 @@ mod reassembly_tests;
 mod received_entity;
 /// The notification endpoint this broker advertises to context sources.
 pub mod receiver;
+/// Bringing the companions and copies that name an earlier receiver to the
+/// receiver this broker serves.
+mod receiver_redirect;
+/// What the redirect pass sends the companions and copies owed the current
+/// receiver.
+#[cfg(test)]
+mod receiver_redirect_tests;
+/// Which companions and copies still name a receiver this broker no longer serves.
+pub mod redirect_ledger;
 /// Reducing a subscription to what one registration matches.
 pub mod reduced_copy;
 /// Tearing down the copies held at a removed registration's context source.

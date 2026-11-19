@@ -6,6 +6,7 @@
 //! reads over a transient connection of its own: through the request path for
 //! an established tenant, directly for a provisional one.
 
+use crate::tenant_factory::subscription_services::advertised_receiver;
 use andromeda_configuration::{broker_config::BrokerConfig, schema::temporal::storage::StorageDaysError};
 use andromeda_postgresql_context_store::pending_work::PostgresPendingWorkProbe;
 use andromeda_postgresql_pool::tenant_probe_urls::TenantProbeUrls;
@@ -40,7 +41,11 @@ pub(crate) enum PendingWorkProbeError {
 pub(crate) fn pending_work_probe(urls: &TenantProbeUrls, config: &BrokerConfig) -> Result<Arc<dyn PendingWorkProbe>, PendingWorkProbeError> {
     let history = HistorySchedule::try_from(&TemporalStoragePolicy::try_from(&config.temporal.storage)?)?;
     Ok(Arc::new(PendingWorkSources::new(vec![
-        Arc::new(PostgresPendingWorkProbe::new(urls.clone(), config.database.acquire_timeout())),
+        Arc::new(PostgresPendingWorkProbe::new(
+            urls.clone(),
+            config.database.acquire_timeout(),
+            advertised_receiver(&config.server),
+        )),
         Arc::new(PostgresHistoryWorkProbe::new(urls.clone(), config.database.acquire_timeout(), history)),
     ])))
 }

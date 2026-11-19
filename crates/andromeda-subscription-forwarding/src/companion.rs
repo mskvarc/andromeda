@@ -14,6 +14,7 @@ use crate::{
     minted_subscription_id::mint_subscription_id,
     participation::stays_local,
     receiver::ReceiverEndpoint,
+    redirect_ledger::RedirectTarget,
     service::SubscriptionForwardingService,
     teardown::CopyMappings,
 };
@@ -106,7 +107,7 @@ impl SubscriptionForwardingService {
     /// a second copy at a source whose first one is not yet recorded; one
     /// that arrives before the route exists is refused and carries nothing
     /// the synchronous placement has not already done.
-    async fn create_companion(
+    pub(crate) async fn create_companion(
         &self,
         subscription: &Subscription,
         encountered_sources: &[ContextSourcePseudonym],
@@ -219,13 +220,14 @@ impl SubscriptionForwardingService {
     }
 
     /// Update the companion of `subscription` to mirror it, answering the
-    /// companion updated, or `None` when no companion stands.
+    /// companion updated, or `None` when no companion stands. An updated
+    /// companion notifies the current receiver.
     ///
     /// A companion the mappings name but the store no longer holds was deleted
     /// underneath its mapping. Its route and every copy still recorded are
     /// withdrawn, so the companion provisioned in its place starts from no
     /// copy; linking that companion replaces the stale mapping.
-    async fn update_companion(&self, subscription: &Subscription) -> Result<Option<Identifier>, SubscriptionForwardingError> {
+    pub(crate) async fn update_companion(&self, subscription: &Subscription) -> Result<Option<Identifier>, SubscriptionForwardingError> {
         let Some(companion) = self.mappings.companion_of(&subscription.id).await? else {
             return Ok(None);
         };
@@ -239,7 +241,10 @@ impl SubscriptionForwardingService {
             )
             .await;
         match updated {
-            Ok(()) => Ok(Some(companion)),
+            Ok(()) => {
+                self.redirects.redirected(&subscription.id, &RedirectTarget::Companion).await?;
+                Ok(Some(companion))
+            }
             Err(SubscriptionError::NotFound { .. }) => {
                 debug!(subscription = %subscription.id, %companion, "companion subscription is gone; provisioning a new one");
                 let leftover = SubscriptionTeardown {

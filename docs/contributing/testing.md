@@ -36,8 +36,9 @@ cargo bench -p andromeda-subscription --bench subscription_matching
 | `distributed` | Distributed and federated operation |
 | `pgbouncer` | Running behind PgBouncer |
 | `interoperability` | The ported ETSI interoperability cases, run across several brokers |
+| `upgrade` | A broker upgraded from a release on its database, beside the upgrade rehearsals described below |
 
-Each tree runs against a Docker Compose stack. Run one with `tools/andromeda-test-suite/run-suite.sh <tree>`, which is what CI runs. The script also runs the `upgrade` tree, which holds the upgrade rehearsals described below rather than tests of the suite. [Test suite](../testing/test-suite.md) describes the stacks, how to run a tree by hand, and why two runs can't share a Docker host. The `pgbouncer` stack is very heavy, and needs a host with a lot of memory. It is very resource intensive. CI doesn't run it.
+Each tree runs against a Docker Compose stack. Run one with `tools/andromeda-test-suite/run-suite.sh <tree>`, which is what CI runs. The `upgrade` tree also holds the upgrade rehearsals described below, which aren't tests of the suite. [Test suite](../testing/test-suite.md) describes the stacks, how to run a tree by hand, and why two runs can't share a Docker host. The `pgbouncer` stack is very heavy, and needs a host with a lot of memory. It is very resource intensive. CI doesn't run it.
 
 The suite isn't a default workspace member, so a plain `cargo clippy` skips it. CI lints it with the rest of the workspace, and you can lint it on its own the same way.
 
@@ -62,7 +63,7 @@ The PostgreSQL image in `docker/images/postgresql` has check scripts of its own 
 
 ## What a change has to prove
 
-- A behaviour fix adds a suite test that fails before the fix and passes after it. It goes in `ngsi_ld` for behaviour the specification defines or leaves to the implementation, in `andromeda` for an extension and in `distributed` for federation.
+- A behaviour fix adds a suite test that fails before the fix and passes after it. It goes in `ngsi_ld` for behaviour the specification defines or leaves to the implementation, in `andromeda` for an extension, in `distributed` for federation and in `upgrade` for what a broker does with what a release left in its database.
 - The specification decides what a test expects. Cite the clause in the test when the expected value isn't obvious.
 - Where the specification leaves a choice to the implementation, a test asserts the choice Andromeda made and cites the clause that leaves it open. Where the outcome is simply undefined, such as the order of notifications when no clause defines one, a test asserts nothing about it.
 - When the broker disagrees with the specification, the test asserts the specification and fails until the fix lands. A deviation is never pinned as expected behaviour, even where the clause only says "should".

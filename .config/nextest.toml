@@ -1,5 +1,6 @@
 # The default profile runs the workspace's unit tests, locally and in CI; `suite` and `suite-verdict` belong to
-# andromeda-test-suite, and `upgrade` and `upgrade-verdict` to andromeda-upgrade-tests.
+# andromeda-test-suite, and `upgrade` and `upgrade-verdict` to the upgrade tree, the rehearsals of
+# andromeda-upgrade-tests and the upgrade tests of andromeda-test-suite.
 
 # An inheriting profile takes its parent's overrides from nextest 0.9.145 on; an older nextest would run `suite-verdict`
 # with no test group at all.
@@ -207,16 +208,17 @@ inherits = "suite"
 [profile.suite-verdict.junit]
 path = "junit.xml"
 
-# The upgrade rehearsals, on the server `ANDROMEDA_UPGRADE_TESTS__SERVER` names. A failure is never retried and stops
-# no other rehearsal, as in the suite. A rehearsal migrates a few databases in seconds; one still running after five
-# minutes waits on a lock it will never get.
+# The upgrade tree: the rehearsals, on the server `ANDROMEDA_UPGRADE_TESTS__SERVER` names, and the suite's upgrade
+# tests, against the hub of the upgrade stack. A failure is never retried and stops no other test, as in the suite. A
+# rehearsal migrates a few databases in seconds, and an upgrade test waits for the upgraded hub's background pass, a
+# minute after the hub opens its tenant; either still running after five minutes waits for something that never comes.
 [profile.upgrade]
-default-filter = 'package(andromeda-upgrade-tests)'
+default-filter = 'package(andromeda-upgrade-tests) | binary_id(#andromeda-test-suite::upgrade_*)'
 retries = 0
 fail-fast = false
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# The upgrade tree's run is the rehearsals plus a JUnit report.
+# The upgrade tree's run is the upgrade run plus a JUnit report.
 [profile.upgrade-verdict]
 inherits = "upgrade"
 

@@ -11,8 +11,10 @@
 
 use crate::{
     error::SubscriptionForwardingError,
-    forwarded_claim::{ClaimOrigin, ForwardedClaim, StaleClaim},
+    forwarded_claim::{ClaimOrigin, ForwardedClaim, HeldCopy, StaleClaim},
     mapping::SubscriptionForwardingStore,
+    receiver::ReceiverEndpoint,
+    redirect_ledger::RedirectTarget,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
@@ -25,6 +27,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+/// The mappings as the redirect ledger.
+mod redirects;
 
 /// How the mappings keep the copies placements claim.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +94,11 @@ pub(crate) struct ForwardingMaps {
     /// The copies recorded under the identifier a source assigned, in the order
     /// they were.
     recorded: Mutex<Vec<ForwardedCopy>>,
+    /// The receiver adopted last, `None` before the first adoption.
+    adopted: Mutex<Option<ReceiverEndpoint>>,
+    /// The companion and the copies owed the current receiver, each with the
+    /// instant its update falls due.
+    owed: Mutex<Vec<(RedirectTarget, Instant)>>,
 }
 
 impl ForwardingMaps {
@@ -116,6 +126,8 @@ impl ForwardingMaps {
             claimed: Mutex::new(Vec::new()),
             settled: Mutex::new(Vec::new()),
             recorded: Mutex::new(Vec::new()),
+            adopted: Mutex::new(None),
+            owed: Mutex::new(Vec::new()),
         }
     }
 
@@ -211,6 +223,7 @@ impl ForwardingMaps {
 impl SubscriptionForwardingStore for ForwardingMaps {
     async fn link_companion(&self, _local: &Identifier, companion: &Identifier) -> Result<(), SubscriptionForwardingError> {
         *self.companion.lock().expect("the companion link is never poisoned") = companion.clone();
+        self.forget_redirects(|owed| *owed == RedirectTarget::Companion);
         Ok(())
     }
 
@@ -244,7 +257,7 @@ impl SubscriptionForwardingStore for ForwardingMaps {
         })
     }
 
-    async fn settle_forwarded(&self, _local: &Identifier, registration: &Identifier) -> Result<(), SubscriptionForwardingError> {
+    async fn settle_forwarded(&self, _local: &Identifier, registration: &Identifier, held: HeldCopy) -> Result<(), SubscriptionForwardingError> {
         self.records
             .lock()
             .expect("the claim records are never poisoned")
@@ -252,6 +265,14 @@ impl SubscriptionForwardingStore for ForwardingMaps {
             .filter(|record| record.registration == *registration)
             .for_each(|record| record.lease = ClaimLease::Settled);
         self.settled.lock().expect("the settlements are never poisoned").push(registration.clone());
+        match held {
+            HeldCopy::AsSent => {}
+            HeldCopy::EarlierSend => {
+                if let Some(copy) = self.copy_at(registration) {
+                    self.owe(RedirectTarget::Copy(copy));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -341,6 +362,7 @@ impl SubscriptionForwardingStore for ForwardingMaps {
             .lock()
             .expect("the claim records are never poisoned")
             .retain(|record| record.registration != *registration);
+        self.forget_redirects(|owed| matches!(owed, RedirectTarget::Copy(copy) if copy.registration == *registration));
         self.removed.lock().expect("the removal record is never poisoned").push(registration.clone());
         Ok(())
     }

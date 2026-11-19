@@ -5,7 +5,8 @@
 //! durable drains (notification deliveries, side effects, temporal append
 //! intents, Snapshot status notifications), the clause-5.8.6 periodic
 //! notification sweeps, the clause-5.13.1 cached-`@context` invalidation, the
-//! resumption of abandoned clause-5.8.1.4 subscription copy placements, the
+//! resumption of abandoned clause-5.8.1.4 subscription copy placements and the
+//! updates of the companions and copies owed the current receiver, the
 //! spatial index's background catch-up and the table-size gauges. Each runs on
 //! its own clock (a fixed cadence, or a drain's fallback timer backing off to a
 //! ceiling), and every tick touches the tenant's pool. Through a transaction
@@ -55,7 +56,7 @@
 //! | notification-delivery, side-effect, temporal-intent and Snapshot-status drains | each queue's earliest claimable item, retries included |
 //! | entity and context source periodic notifications | each active periodic subscription's next grid point |
 //! | cached-`@context` invalidation | the earliest expiration of a `"Cached"` `@context` |
-//! | subscription copy placement resumption | the earliest end of an unsettled copy claim's lease |
+//! | subscription copy placement resumption and receiver redirects | the earliest end of an unsettled copy claim's lease, the earliest update a companion or copy owes the current receiver, and now while that receiver is not the one adopted last |
 //!
 //! The table-size gauges and the notification-delivery cleanup serve no
 //! obligation: the gauges report sizes, and the cleanup reaps finished queue
