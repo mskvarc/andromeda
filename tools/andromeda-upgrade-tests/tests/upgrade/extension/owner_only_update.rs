@@ -18,7 +18,8 @@ use andromeda_postgresql_seaquery::{
     command::Command,
     introspection::extension_version,
     statement::Statement,
-    test_role::{ExtensionCreationAtVersion, PublicTablesReadGrant, RoleCreation, RoleRemoval},
+    test_extension::ExtensionCreationAtVersion,
+    test_role::{PublicTablesReadGrant, RoleCreation, RoleRemoval},
 };
 use andromeda_upgrade_tests::{upgrade_database::UpgradeDatabase, upgrade_server::UpgradeServer};
 use pretty_assertions::{assert_eq, assert_ne};

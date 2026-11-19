@@ -1,11 +1,14 @@
 //! What a schema-contract check refuses a tenant for.
 
-use crate::schema_contract::{
-    migrations_digest::{MigrationsDigest, MigrationsDigestError},
-    schema_version::{SchemaVersion, SchemaVersionError},
-    server_encoding::ServerEncoding,
-    server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
-    versioned_extension::VersionedExtension,
+use crate::{
+    schema_contract::{
+        migrations_digest::{MigrationsDigest, MigrationsDigestError},
+        schema_version::{SchemaVersion, SchemaVersionError},
+        server_encoding::ServerEncoding,
+        server_requirements::{ExtensionPresence, ExtensionVersion, ExtensionVersionError, PostgresVersion},
+        versioned_extension::VersionedExtension,
+    },
+    tracked_extension::TrackedExtension,
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::{saturation::is_pool_saturated, schema_change_classification::classify_schema_change};
@@ -31,9 +34,17 @@ pub enum SchemaContractError {
     /// The stored digest is not a digest.
     #[error("tenant schema contract: {0}")]
     MigrationsDigestValue(#[from] MigrationsDigestError),
-    /// A reported extension version could not be read.
-    #[error("tenant schema contract: {0}")]
-    ExtensionVersionValue(#[from] ExtensionVersionError),
+    /// A version the extension catalogue reports for a tracked extension could
+    /// not be read, as while `postgis_extensions_upgrade` holds `PostGIS` at
+    /// its placeholder version `ANY`.
+    #[error("tenant schema contract: the {} version the catalogue reports cannot be read: {source}", .extension.catalog_name())]
+    ExtensionVersionValue {
+        /// The extension the version belongs to.
+        extension: TrackedExtension,
+        /// Why the reported text is no version.
+        #[source]
+        source: ExtensionVersionError,
+    },
     /// The tenant holds no `schema_metadata` row: it was migrated but never
     /// stamped, which is drift rather than a state to repair silently.
     #[error(
@@ -103,6 +114,20 @@ pub enum SchemaContractError {
         /// What the extension catalogue reports.
         found: ExtensionPresence,
     },
+    /// A versioned extension is installed above the version the server's
+    /// installation ships, as a server running an image older than the one
+    /// that updated the database leaves it: the server lacks the library and
+    /// the scripts of the installed version, so no session may load the
+    /// extension and no update can reach it.
+    #[error("tenant schema contract: {extension} {installed} is installed, but the server ships {shipped}; run the database image that installed {installed}")]
+    ExtensionAheadOfServer {
+        /// The extension.
+        extension: VersionedExtension,
+        /// The version `pg_extension` records for the database.
+        installed: ExtensionVersion,
+        /// The version the server's installation ships.
+        shipped: ExtensionVersion,
+    },
 }
 
 impl SchemaContractError {
@@ -119,7 +144,7 @@ impl SchemaContractError {
             SchemaContractError::NoMigrations
             | SchemaContractError::SchemaVersionValue(_)
             | SchemaContractError::MigrationsDigestValue(_)
-            | SchemaContractError::ExtensionVersionValue(_)
+            | SchemaContractError::ExtensionVersionValue { .. }
             | SchemaContractError::Unstamped { .. }
             | SchemaContractError::SchemaVersionMismatch { .. }
             | SchemaContractError::MigrationsDigestMismatch { .. }
@@ -128,7 +153,8 @@ impl SchemaContractError {
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
             | SchemaContractError::TimescaleDbBelowMinimum { .. }
-            | SchemaContractError::ExtensionUnavailable { .. } => false,
+            | SchemaContractError::ExtensionUnavailable { .. }
+            | SchemaContractError::ExtensionAheadOfServer { .. } => false,
         }
     }
 
@@ -145,7 +171,7 @@ impl SchemaContractError {
             SchemaContractError::NoMigrations
             | SchemaContractError::SchemaVersionValue(_)
             | SchemaContractError::MigrationsDigestValue(_)
-            | SchemaContractError::ExtensionVersionValue(_)
+            | SchemaContractError::ExtensionVersionValue { .. }
             | SchemaContractError::Unstamped { .. }
             | SchemaContractError::SchemaVersionMismatch { .. }
             | SchemaContractError::MigrationsDigestMismatch { .. }
@@ -154,7 +180,8 @@ impl SchemaContractError {
             | SchemaContractError::PostgresBelowMinimum { .. }
             | SchemaContractError::PostGisBelowMinimum { .. }
             | SchemaContractError::TimescaleDbBelowMinimum { .. }
-            | SchemaContractError::ExtensionUnavailable { .. } => PersistenceFailure::SchemaMismatch,
+            | SchemaContractError::ExtensionUnavailable { .. }
+            | SchemaContractError::ExtensionAheadOfServer { .. } => PersistenceFailure::SchemaMismatch,
         }
     }
 }

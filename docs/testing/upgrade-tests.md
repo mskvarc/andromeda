@@ -43,6 +43,7 @@ The crate's one test target, `upgrade`, has seven groups of tests.
 - A Snapshot created through the broker's own creation path after the upgrade builds its branch through every branch migration, against the types the later tenant migrations changed and without the conversion functions the upgrade dropped.
 - A database no migration has reached takes the whole tenant set.
 - A database whose ledger records an applied branch migration other than the one this build embeds is refused, even when nothing is left to apply.
+- A database stamped with a schema version ahead of this build is refused by the probe, even with extension work due, and by the migration run, and neither changes its stamp or its ledger.
 - The platform database runs the platform set and then converts the seals of its live branch and its Snapshot branch, with every ledger at the last migration of its set.
 
 `tenancy` covers the tenant registry of a platform database, fresh or as v1.0.0 left it, opened by the broker's own registry as the broker opens it when it starts, and the tenant template the registry prepares then (see [Schema](../database/schema.md#tenant-template)). Each test names its tenant databases and its template after a prefix of its own and drops the template it made.
@@ -62,9 +63,15 @@ The crate's one test target, `upgrade`, has seven groups of tests.
 - A template dropped behind the registry's back leaves the next tenant created empty and migrated to the current schema.
 - A template a session holds leaves the next tenant created empty and migrated to the current schema, and a template a session holds when this build must build it again is left in place while the registry serves and creates new tenants empty.
 
-`extension` covers a tenant database whose TimescaleDB stands at the schema contract's floor, below the version the server ships, as an image upgrade leaves it.
+`extension` covers a tenant database whose extensions lag the versions the server ships, as an image upgrade leaves them, or that its catalogue records in a state no update reaches.
 
 - A role that does not hold the privileges of the extension's owner reads the schema as current and leaves the installed version in place, since only the owner may update it. The owner's extension reconciliation updates it and ends the idle sessions of its role, which loaded the floor's library, so a pool that held one carries on with a new session.
+- An update held back past every retry by a transaction that read a `timescaledb_information` view, which the update replaces, fails with SQLSTATE `55P03` and leaves the installed version, and the schema still reads as needing migration. Once the transaction ends, the next update makes it.
+- An update the same transaction holds back for longer than the database's `idle_in_transaction_session_timeout` still completes, because the session holding the update lock idles while the update runs on its own connection and never meets that timeout.
+- An update abandoned while it waits for its lock leaves the installed version, and the next update makes it.
+- A TimescaleDB below the floor, at 2.30.2, with a newer version shipped reads as needing migration rather than as refused, and the migration run updates it past the floor and accepts it.
+- A `pg_repack` recorded below the shipped version, which ships no update scripts, is dropped and created again at the shipped version. While a view outside the extension depends on one of its members, as a repack run's leftovers do, the drop is refused and the recorded version stays, and once the view is gone the next reconciliation recreates it.
+- A PostGIS version recorded as `ANY`, as `postgis_extensions_upgrade` leaves it while it runs, is refused by the probe and by the extension reconciliation, naming PostGIS.
 
 `entity_map` covers the Entity Maps a v1.0.0 tenant stored.
 

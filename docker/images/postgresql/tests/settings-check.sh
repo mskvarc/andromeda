@@ -241,11 +241,23 @@ for extension in "${extensions[@]}"; do
 	expect "$extension loads at the version the image ships" \
 		"$(sql limits-2g "CREATE EXTENSION IF NOT EXISTS $extension; SELECT extversion = default_version FROM pg_extension JOIN pg_available_extensions ON name = extname WHERE extname = '$extension'" 2>&1)" t
 done
+# PostGIS transforms through PROJ, repairs through GEOS and measures on the
+# spheroid through GeographicLib, libraries its package links rather than
+# carries. 15 degrees east is 6378137 m x 15 x pi / 180 in Web Mercator.
+expect 'PostGIS transforms through PROJ' \
+	"$(sql limits-2g 'SELECT round(ST_X(ST_Transform(ST_SetSRID(ST_MakePoint(15, 46), 4326), 3857)))')" 1669792
+expect 'PostGIS repairs a self-intersecting polygon through GEOS' \
+	"$(sql limits-2g "SELECT ST_IsValid(ST_MakeValid('POLYGON((0 0, 1 1, 1 0, 0 1, 0 0))'::geometry))" 2> /dev/null)" t
+expect 'PostGIS measures a degree of longitude at 46 degrees north on the WGS 84 spheroid' \
+	"$(sql limits-2g "SELECT round(ST_Distance('POINT(15 46)'::geography, 'POINT(16 46)'::geography))")" 77463
 # The broker updates the extensions of a tenant the previous release created,
 # so the image keeps the TimescaleDB library and an update path from each
-# version that release shipped: TimescaleDB 2.31.0 and PostGIS 3.6.4.
+# version that release shipped: TimescaleDB 2.31.0 and PostGIS 3.6.4. Until
+# the update, every session in such a tenant's database loads the 2.31.0
+# library, so an image without it cannot serve the tenant at all.
 sql limits-2g 'CREATE DATABASE previous_release' > /dev/null
-sql_in limits-2g andromeda previous_release "CREATE EXTENSION timescaledb VERSION '2.31.0'" > /dev/null 2>&1 || :
+expect 'the image loads the TimescaleDB 2.31.0 library the previous release shipped' \
+	"$(sql_in limits-2g andromeda previous_release "CREATE EXTENSION timescaledb VERSION '2.31.0'; SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'" 2>&1)" 2.31.0
 expect 'a database at TimescaleDB 2.31.0 updates to the version the image ships' \
 	"$(sql_in limits-2g andromeda previous_release "ALTER EXTENSION timescaledb UPDATE; SELECT extversion = default_version FROM pg_extension JOIN pg_available_extensions ON name = extname WHERE extname = 'timescaledb'" 2>&1)" t
 expect 'PostGIS has an update path from 3.6.4 to the version the image ships' \

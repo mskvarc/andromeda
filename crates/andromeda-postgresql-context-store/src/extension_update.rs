@@ -30,8 +30,13 @@
 //!
 //! Brokers starting together serialize on a transaction advisory lock keyed on
 //! the database and read the versions again under it, so one of them updates
-//! and the others find nothing left to do. Every connection here waits a
-//! bounded time for each lock, and an update refused a lock runs again.
+//! and the others find nothing left to do. The lock holder's transaction sits
+//! idle while the commands run on their own connections, so the server's
+//! idle-in-transaction timeout never ends it however long an update takes.
+//! Every connection here waits a bounded time for each lock, and an update
+//! refused a lock runs again; one still refused after the last attempt fails
+//! the open with the database's error and leaves the installed version in
+//! place, for the next open to update.
 
 use crate::{
     error::ContextStoreError,
@@ -40,7 +45,7 @@ use crate::{
     optional_extension::OptionalExtension,
     pending_extension_update::{PendingExtensionUpdate, UpdatePrivilege, pending_extension_updates},
 };
-use andromeda_postgresql_pool::schema_change_lock::schema_change_connect_options;
+use andromeda_postgresql_pool::schema_change_lock::{schema_change_connect_options, schema_change_lock_holder_options};
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
     command::Command,
@@ -131,7 +136,7 @@ pub async fn installable_optional_extensions(connection: &mut PgConnection) -> R
 /// read.
 pub async fn update_extensions(database_url: &Url) -> Result<(), ContextStoreError> {
     let options = schema_change_connect_options(database_url.as_str())?;
-    let mut lock_holder = PgConnection::connect_with(&options).await?;
+    let mut lock_holder = PgConnection::connect_with(&schema_change_lock_holder_options(database_url.as_str())?).await?;
     let outcome = update_under_lock(&mut lock_holder, &options).await;
     lock_holder.close().await?;
     outcome

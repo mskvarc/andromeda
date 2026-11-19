@@ -10,6 +10,7 @@ use crate::{
     error::ContextStoreError,
     extension_standing::{ExtensionStanding, extension_standings},
     schema_contract::{
+        error::SchemaContractError,
         server_requirements::{ExtensionPresence, ExtensionVersion},
         versioned_extension::VersionedExtension,
     },
@@ -83,16 +84,26 @@ impl LaggingExtension {
 /// not pending either, since nothing could update it. The privilege is read
 /// only when something lags.
 ///
+/// One installed above the version the server ships is refused: a server
+/// running an older image than the one that last updated the database lacks
+/// the installed version's library, so every session that loads the
+/// extension fails, and no update reaches back.
+///
 /// Run it inside [`begin_without_timescaledb`], so the read leaves its
-/// connection usable after an update.
+/// connection usable after an update and runs where the installed library is
+/// missing.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the read fails and
 /// [`ContextStoreError::SchemaContract`] when a reported version cannot be
-/// read.
+/// read or a versioned extension is installed above the shipped version.
 pub async fn pending_extension_updates(connection: &mut PgConnection) -> Result<Vec<PendingExtensionUpdate>, ContextStoreError> {
-    let lagging: Vec<LaggingExtension> = extension_standings(&mut *connection).await?.into_iter().filter_map(lagging_extension).collect();
+    let lagging = extension_standings(&mut *connection)
+        .await?
+        .into_iter()
+        .filter_map(|standing| lagging_extension(standing).transpose())
+        .collect::<Result<Vec<LaggingExtension>, SchemaContractError>>()?;
     if lagging.is_empty() {
         return Ok(Vec::new());
     }
@@ -108,18 +119,22 @@ pub fn any_updatable(pending: &[PendingExtensionUpdate]) -> bool {
 }
 
 /// The update one extension lags by, or `None` when it is absent, not shipped,
-/// installed at or above the shipped version, or brought up to date by
-/// recreation rather than by update.
+/// installed at the shipped version, or brought up to date by recreation
+/// rather than by update.
 ///
-/// An installed version above the shipped one is a server running an older
-/// image than the one that last updated the database; no update reaches back,
-/// and the schema contract's floor decides whether it still serves.
-fn lagging_extension(ExtensionStanding { extension, installed, shipped }: ExtensionStanding) -> Option<LaggingExtension> {
+/// A versioned extension installed above the shipped version is refused with
+/// [`SchemaContractError::ExtensionAheadOfServer`].
+fn lagging_extension(ExtensionStanding { extension, installed, shipped }: ExtensionStanding) -> Result<Option<LaggingExtension>, SchemaContractError> {
     match (extension, installed, shipped) {
         (TrackedExtension::Updated(extension), ExtensionPresence::Installed(installed), Some(shipped)) if installed < shipped => {
-            Some(LaggingExtension { extension, installed, shipped })
+            Ok(Some(LaggingExtension { extension, installed, shipped }))
         }
-        (TrackedExtension::Updated(_) | TrackedExtension::Recreated(_), ExtensionPresence::Installed(_) | ExtensionPresence::Absent, Some(_) | None) => None,
+        (TrackedExtension::Updated(extension), ExtensionPresence::Installed(installed), Some(shipped)) if installed > shipped => {
+            Err(SchemaContractError::ExtensionAheadOfServer { extension, installed, shipped })
+        }
+        (TrackedExtension::Updated(_) | TrackedExtension::Recreated(_), ExtensionPresence::Installed(_) | ExtensionPresence::Absent, Some(_) | None) => {
+            Ok(None)
+        }
     }
 }
 
@@ -139,6 +154,7 @@ mod tests {
         pending_extension_update::{LaggingExtension, PendingExtensionUpdate, UpdatePrivilege, any_updatable, lagging_extension, update_privileges_statement},
         recreated_extension::RecreatedExtension,
         schema_contract::{
+            error::SchemaContractError,
             server_requirements::{ExtensionPresence, ExtensionVersion},
             versioned_extension::VersionedExtension,
         },
@@ -156,7 +172,8 @@ mod tests {
                 extension: TrackedExtension::Updated(VersionedExtension::TimescaleDb),
                 installed: ExtensionPresence::Installed(installed),
                 shipped: Some(shipped),
-            }),
+            })
+            .expect("a lagging extension is no refusal"),
             Some(LaggingExtension {
                 extension: VersionedExtension::TimescaleDb,
                 installed,
@@ -190,11 +207,10 @@ mod tests {
     }
 
     #[test]
-    fn an_extension_at_or_above_the_shipped_version_absent_or_not_shipped_is_not_pending() {
+    fn an_extension_at_the_shipped_version_absent_or_not_shipped_is_not_pending() {
         let shipped = ExtensionVersion::new(3, 6, 4);
         let settled = [
             (ExtensionPresence::Installed(shipped), Some(shipped)),
-            (ExtensionPresence::Installed(ExtensionVersion::new(3, 6, 5)), Some(shipped)),
             (ExtensionPresence::Installed(ExtensionVersion::new(3, 5, 0)), None),
             (ExtensionPresence::Absent, Some(shipped)),
             (ExtensionPresence::Absent, None),
@@ -205,11 +221,43 @@ mod tests {
                     extension: TrackedExtension::Updated(VersionedExtension::PostGis),
                     installed,
                     shipped,
-                }),
+                })
+                .expect("a settled extension is no refusal"),
                 None,
                 "{installed} against {shipped:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_versioned_extension_installed_above_the_shipped_version_is_refused_naming_both_versions() {
+        let installed = ExtensionVersion::new(2, 32, 0);
+        let shipped = ExtensionVersion::new(2, 31, 0);
+        match lagging_extension(ExtensionStanding {
+            extension: TrackedExtension::Updated(VersionedExtension::TimescaleDb),
+            installed: ExtensionPresence::Installed(installed),
+            shipped: Some(shipped),
+        }) {
+            Err(SchemaContractError::ExtensionAheadOfServer {
+                extension: VersionedExtension::TimescaleDb,
+                installed: refused,
+                shipped: offered,
+            }) => assert_eq!((refused, offered), (installed, shipped)),
+            other => panic!("expected a refusal naming both versions, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_recreated_extension_above_the_shipped_version_is_left_to_the_recreation() {
+        assert_eq!(
+            lagging_extension(ExtensionStanding {
+                extension: TrackedExtension::Recreated(RecreatedExtension::PgRepack),
+                installed: ExtensionPresence::Installed(ExtensionVersion::new(1, 5, 4)),
+                shipped: Some(ExtensionVersion::new(1, 5, 3)),
+            })
+            .expect("a recreated extension is no refusal"),
+            None
+        );
     }
 
     #[test]
@@ -219,7 +267,8 @@ mod tests {
                 extension: TrackedExtension::Recreated(RecreatedExtension::PgRepack),
                 installed: ExtensionPresence::Installed(ExtensionVersion::new(1, 5, 2)),
                 shipped: Some(ExtensionVersion::new(1, 5, 3)),
-            }),
+            })
+            .expect("a recreated extension is no refusal"),
             None
         );
     }

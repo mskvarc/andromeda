@@ -212,11 +212,12 @@ pub enum TenantSchemaState {
 /// relation undefined, or its versioned extensions not yet installed), so the
 /// caller runs the migrator over a direct connection. An update only the
 /// extension's owner may make is left to the floor below: no migration run
-/// would make it, and reading it as due would load the tenant on every probe. Genuine drift the migrator
-/// cannot resolve, namely a digest mismatch at the same version, a stamp ahead of
-/// the contract, or a server or installed extension below the floor with no
-/// newer version shipped, is returned as the refusal it is, rather than
-/// migrated over.
+/// would make it, and reading it as due would load the tenant on every probe.
+/// Genuine drift the migrator cannot resolve, namely a digest mismatch at the
+/// same version, a stamp ahead of the contract, a server below the floor, or
+/// an installed extension below the floor with no update the role may make,
+/// is returned as the refusal it is, whatever extension work is due, so the
+/// broker changes nothing in a database it then refuses.
 ///
 /// # Errors
 ///
@@ -234,14 +235,24 @@ pub async fn tenant_schema_state(pool: &PgPool) -> Result<TenantSchemaState, Con
     let installable = installable_optional_extensions(&mut probe).await?;
     let verified = verify_schema_contract(&mut probe, &contract).await;
     probe.rollback().await?;
-    if any_updatable(&pending) || !recreations.is_empty() || !installable.is_empty() {
-        return Ok(TenantSchemaState::NeedsMigration);
-    }
+    let update_due = any_updatable(&pending);
+    let extension_work_due = update_due || !recreations.is_empty() || !installable.is_empty();
     match verified {
+        Ok(()) if extension_work_due => Ok(TenantSchemaState::NeedsMigration),
         Ok(()) => Ok(TenantSchemaState::Current),
         Err(error) if schema_error_is_migratable(&error) => Ok(TenantSchemaState::NeedsMigration),
+        Err(error) if update_due && is_floor_shortfall(&error) => Ok(TenantSchemaState::NeedsMigration),
         Err(error) => Err(error.into()),
     }
+}
+
+/// Whether a refusal is an installed `PostGIS` or `TimescaleDB` below the
+/// schema's floor, which a pending update may lift.
+const fn is_floor_shortfall(error: &SchemaContractError) -> bool {
+    matches!(
+        error,
+        SchemaContractError::PostGisBelowMinimum { .. } | SchemaContractError::TimescaleDbBelowMinimum { .. }
+    )
 }
 
 /// Whether a schema-contract refusal is one the migrator resolves by bringing
@@ -262,12 +273,13 @@ fn schema_error_is_migratable(error: &SchemaContractError) -> bool {
         SchemaContractError::MigrationsDigestMismatch { .. }
         | SchemaContractError::PostgresBelowMinimum { .. }
         | SchemaContractError::ExtensionUnavailable { .. }
+        | SchemaContractError::ExtensionAheadOfServer { .. }
         | SchemaContractError::ServerEncodingNotUtf8 { .. }
         | SchemaContractError::ServerEncodingUnreadable(_)
         | SchemaContractError::NoMigrations
         | SchemaContractError::SchemaVersionValue(_)
         | SchemaContractError::MigrationsDigestValue(_)
-        | SchemaContractError::ExtensionVersionValue(_) => false,
+        | SchemaContractError::ExtensionVersionValue { .. } => false,
     }
 }
 

@@ -35,6 +35,15 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 /// timeout from.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The session defaults the broker installs on every database, as its
+/// default configuration sets them.
+pub(crate) fn database_defaults() -> DatabaseDefaults {
+    DatabaseDefaults {
+        synchronous_commit: SynchronousCommit::default(),
+        statement_timeout: StatementTimeout::past_request_deadline(REQUEST_TIMEOUT),
+    }
+}
+
 /// A prefix no other rehearsal names its tenant databases and its template
 /// after.
 pub(crate) fn fresh_prefix() -> Result<DbNamePrefix, UpgradeTestError> {
@@ -64,10 +73,7 @@ pub(crate) async fn open_registry(database: &UpgradeDatabase, prefix: &DbNamePre
         name_prefix: prefix.clone(),
         ..TenantDatabasesConfig::default()
     };
-    let defaults = DatabaseDefaults {
-        synchronous_commit: SynchronousCommit::default(),
-        statement_timeout: StatementTimeout::past_request_deadline(REQUEST_TIMEOUT),
-    };
+    let defaults = database_defaults();
     Ok(PostgresTenantRegistry::connect(
         configure_pool_options(2, ACQUIRE_TIMEOUT),
         database.database_url(),

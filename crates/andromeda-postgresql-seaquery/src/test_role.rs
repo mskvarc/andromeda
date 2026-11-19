@@ -1,11 +1,9 @@
 //! The statements a test runs to act as a role without a superuser's
-//! privileges, and to hold an extension at a version below the one the
-//! server ships.
+//! privileges.
 
 use crate::{
     command::{Command, rendering::RenderedCommand},
     identifier::quoted_iden,
-    literal::quoted_text,
 };
 use sea_query::{DynIden, IntoIden};
 
@@ -69,49 +67,17 @@ impl RenderedCommand for PublicTablesReadGrant {
 
 impl Command for PublicTablesReadGrant {}
 
-/// `CREATE EXTENSION <extension> WITH SCHEMA public VERSION '<version>'`,
-/// installing a version the server still ships below its default.
-#[derive(Clone, Debug)]
-pub struct ExtensionCreationAtVersion {
-    /// The extension.
-    extension: DynIden,
-    /// The version to install, as `pg_available_extension_versions` names it.
-    version: String,
-}
-
-impl ExtensionCreationAtVersion {
-    /// Create `extension` at `version`.
-    pub fn new(extension: impl IntoIden, version: &str) -> ExtensionCreationAtVersion {
-        ExtensionCreationAtVersion {
-            extension: extension.into_iden(),
-            version: version.to_owned(),
-        }
-    }
-}
-
-impl RenderedCommand for ExtensionCreationAtVersion {
-    fn rendered(&self) -> String {
-        format!(
-            "CREATE EXTENSION {} WITH SCHEMA \"public\" VERSION {}",
-            quoted_iden(&self.extension),
-            quoted_text(&self.version)
-        )
-    }
-}
-
-impl Command for ExtensionCreationAtVersion {}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         command::rendering::RenderedCommand,
-        test_role::{ExtensionCreationAtVersion, PublicTablesReadGrant, RoleCreation, RoleRemoval},
+        test_role::{PublicTablesReadGrant, RoleCreation, RoleRemoval},
     };
     use pretty_assertions::assert_eq;
     use sea_query::Alias;
 
     #[test]
-    fn each_statement_names_its_role_and_extension_as_quoted_identifiers_and_the_version_as_a_literal() {
+    fn each_statement_names_its_role_as_a_quoted_identifier() {
         assert_eq!(RoleCreation::new(Alias::new("reader")).rendered(), r#"CREATE ROLE "reader" NOLOGIN"#);
         assert_eq!(
             RoleRemoval::new(Alias::new("reader")).rendered(),
@@ -120,10 +86,6 @@ mod tests {
         assert_eq!(
             PublicTablesReadGrant::new(Alias::new("reader")).rendered(),
             r#"GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "reader""#
-        );
-        assert_eq!(
-            ExtensionCreationAtVersion::new(Alias::new("timescaledb"), "2.31.0").rendered(),
-            r#"CREATE EXTENSION "timescaledb" WITH SCHEMA "public" VERSION '2.31.0'"#
         );
     }
 }
