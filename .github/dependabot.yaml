@@ -6,11 +6,12 @@ version: 2
 # The tag of every Rust base image names the toolchain rust-toolchain.toml pins, and the toolchain_pin architecture gate
 # fails while they differ, so a new Rust version reaches the pin and the images of the broker and the suite runner in
 # one pull request. The broker's runtime image travels with them, because a directory belongs to one update entry.
+# Each member entry names its labels: an entry without them gets Dependabot's default dependencies and ecosystem labels,
+# whatever the group sets.
 multi-ecosystem-groups:
   rust-toolchain:
     schedule:
       interval: monthly
-    labels: [build]
     commit-message:
       prefix: build
       include: scope
@@ -35,6 +36,7 @@ updates:
     directory: /
     patterns: ["*"]
     multi-ecosystem-group: rust-toolchain
+    labels: [build]
 
   - package-ecosystem: docker
     directories:
@@ -42,6 +44,7 @@ updates:
       - /tools/andromeda-test-suite/stacks/runner
     patterns: ["*"]
     multi-ecosystem-group: rust-toolchain
+    labels: [build]
 
   - package-ecosystem: docker
     directories:
