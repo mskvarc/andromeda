@@ -93,6 +93,8 @@ pub(crate) struct StoreDouble {
     renewal: Option<Renewal>,
     renewals: AtomicU32,
     quota: QuotaCheck,
+    claims: AtomicU32,
+    failing_claim: Option<u32>,
     recorded: Mutex<Vec<RecordedStatus>>,
     copies: Mutex<Vec<CloneCopy>>,
 }
@@ -108,6 +110,8 @@ impl StoreDouble {
             renewal: None,
             renewals: AtomicU32::new(0),
             quota: QuotaCheck::Within,
+            claims: AtomicU32::new(0),
+            failing_claim: None,
             recorded: Mutex::new(Vec::new()),
             copies: Mutex::new(Vec::new()),
         }
@@ -125,6 +129,15 @@ impl StoreDouble {
     /// Answer every tenant quota check as `quota` says.
     pub(crate) fn with_quota_check(self, quota: QuotaCheck) -> StoreDouble {
         StoreDouble { quota, ..self }
+    }
+
+    /// Fail the `nth` claim of the next waiting preparation, counted from one
+    /// across every pass, as a deadlock in the claim's transaction does.
+    pub(crate) fn with_failing_claim(self, nth: u32) -> StoreDouble {
+        StoreDouble {
+            failing_claim: Some(nth),
+            ..self
+        }
     }
 
     /// Have another worker hold the waiting Snapshot `id`'s claim.
@@ -232,9 +245,14 @@ impl StoreDouble {
     }
 
     /// Claim the first waiting Snapshot whose clone source, if any, has left
-    /// `preparing` or is gone, the store's claim predicate.
-    fn claim_next(&self) -> Option<SnapshotPreparationJob> {
-        self.claim_first(|_| true)
+    /// `preparing` or is gone, the store's claim predicate, or fail the claim
+    /// [`StoreDouble::with_failing_claim`] names.
+    fn claim_next(&self) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+        let claim = self.claims.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.failing_claim == Some(claim) {
+            return Err(SnapshotError::Contended);
+        }
+        Ok(self.claim_first(|_| true))
     }
 
     /// Claim the created Snapshot `id` under the same predicate.
