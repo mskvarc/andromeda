@@ -3,8 +3,10 @@
 //!
 //! The first instances of the page's local entities are merged with what the
 //! sources answered for the page, and the rest of the local instances are then
-//! read to the end of the window, page after page (clause 6.3.10), each stored
-//! in the Snapshot's branch as it is read.
+//! read to the end of the pass's window, page after page (clause 6.3.10), each
+//! stored in the Snapshot's branch as it is read. Every read exempts the
+//! page's contributed entities from a split query's filters, which their
+//! gathered parts decided (clause 5.7.4.4).
 //!
 //! Under `lastN` the broker's instances and each source's are held to it
 //! apart, so the Snapshot holds every instance the merged answer keeps: Query
@@ -19,7 +21,7 @@ use crate::{
         execution_failure::ExecutionFailure,
         instance_walk::{InstanceWalk, WalkProgress},
         status::{failure_detail, success_detail},
-        temporal_capture::{TemporalCapture, capture_refused},
+        temporal_capture::{CapturePass, TemporalCapture, capture_refused},
         temporal_failure::{TemporalStep, temporal_failure},
     },
 };
@@ -44,30 +46,32 @@ use std::collections::HashSet;
 use tracing::{error, warn};
 
 impl SnapshotExecutor {
-    /// Capture one page of entities: the first instances of the local ones
-    /// merged with what the sources answered, then the rest of the local
-    /// instances, until the window is exhausted.
+    /// Capture one page of entities of `pass`: the first instances of the
+    /// local ones merged with what the sources answered, then the rest of the
+    /// local instances, until the pass's window is exhausted.
     ///
     /// Returns the query's failure, or `None` once every instance of the page
     /// is stored.
     pub(super) async fn capture_temporal_page(
         &self,
         capture: &TemporalCapture<'_>,
+        pass: CapturePass<'_>,
         entity_ids: Vec<Identifier>,
         forwarded: Vec<ForwardedTemporalEntities>,
         captured: &mut HashSet<Identifier>,
     ) -> Result<Option<ExecutionResultDetails>, SnapshotError> {
-        let timeproperty = capture.params.timeproperty_or_default();
+        let timeproperty = pass.params.timeproperty_or_default();
         let reads_local = !entity_ids.is_empty();
+        let contributed = pass.verdict.contributed_among(&entity_ids);
         // clone: the page's instances are read by a narrowed copy of the query while its identifier pages read the query as asked
-        let mut narrowed = capture.params.clone();
+        let mut narrowed = pass.params.clone();
         narrowed.select_only(entity_ids);
-        let mut walk = InstanceWalk::new(capture.interval, timeproperty, capture.params.last_n);
+        let mut walk = InstanceWalk::new(pass.interval, timeproperty, pass.params.last_n);
         let mut forwarded = Some(forwarded);
         loop {
             narrowed.set_interval(walk.interval());
             let (mut local, range) = if reads_local {
-                match self.local_instances(&narrowed, capture).await {
+                match self.local_instances(&narrowed, &contributed, capture).await {
                     Ok(page) => page,
                     Err(error) => {
                         warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, error = %error, "Snapshot temporal query failed");
@@ -107,13 +111,15 @@ impl SnapshotExecutor {
     }
 
     /// One page of the instances of the local entities `narrowed` lists, and
-    /// the range a partial page ends at; no Context Source contributes to it.
+    /// the range a partial page ends at; the filters do not hold
+    /// `contributed`.
     ///
     /// The read is boxed: it is the largest future of the capture loop, which
     /// would otherwise carry it inline across every await.
     async fn local_instances(
         &self,
         narrowed: &AdmittedTemporalRequest,
+        contributed: &ContributedEntities,
         capture: &TemporalCapture<'_>,
     ) -> Result<(Vec<TemporalHistory>, Option<TemporalRange>), TemporalError> {
         let window = PageWindow {
@@ -129,7 +135,8 @@ impl SnapshotExecutor {
                 context: capture.context,
                 language_targeting: self.sources.temporal.language_targeting(),
             },
-            ContributedEntities::default(),
+            // clone: every read of the page's instances is made under the same exemption
+            contributed.clone(),
         ))
         .await?;
         for warning in &warnings {

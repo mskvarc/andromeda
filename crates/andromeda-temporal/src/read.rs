@@ -2,6 +2,7 @@
 
 use crate::{
     aggregation_eligibility::{disqualifying_shapes, ensure_aggregation_eligible},
+    candidate_listing::CandidateListing,
     error::TemporalError,
     port::{
         history_reader::ShapeHolders,
@@ -157,11 +158,14 @@ impl TemporalService {
     /// Execute stage 1 entity ID resolution over the page `window` selects,
     /// without fetching temporal history.
     ///
-    /// Used to build `EntityMaps` (clause 5.5.14). Runs only the lightweight
-    /// stage 1 statement (entity ID resolution). A map fixes the whole result
-    /// set and is read with [`PageWindow::unbounded`], whatever page the
-    /// request names. `filters` decides whether the value, geo and scope
-    /// filters hold the listed entities (clause 5.14.5.4).
+    /// Used to build `EntityMaps` (clause 5.5.14) and to page the entities a
+    /// Snapshot captures (clause 5.16.1.4). Runs only the lightweight stage 1
+    /// statement (entity ID resolution). A map fixes the whole result set and
+    /// is read with [`PageWindow::unbounded`], whatever page the request
+    /// names. `listing` decides whether the request's identifiers narrow the
+    /// listing, whether the value, geo and scope filters hold the listed
+    /// entities (clause 5.14.5.4), and which contributed entities of a split
+    /// query they do not hold (clause 5.7.4.4).
     ///
     /// The request's terms and `q` target languages are read as `reading`
     /// says.
@@ -176,11 +180,15 @@ impl TemporalService {
         params: &AdmittedTemporalRequest,
         window: &PageWindow,
         reading: QueryReading<'_>,
-        identifiers: RequestedIdentifiers,
-        filters: CandidateFilters,
+        listing: CandidateListing,
     ) -> Result<Vec<Identifier>, TemporalError> {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
+            let CandidateListing {
+                identifiers,
+                filters,
+                contributed,
+            } = listing;
             let mut compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}
@@ -190,6 +198,7 @@ impl TemporalService {
                 CandidateFilters::Applied => {}
                 CandidateFilters::Deferred => compiled.entities.without_split_filters(),
             }
+            compiled.contributed = contributed;
             let compiled = compiled;
             let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
             let outcome = self.reader.query_entity_ids(&scope, &compiled, window, CountPolicy::Omit).await?;

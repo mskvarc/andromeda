@@ -1,4 +1,7 @@
-use crate::executor::{instance_walk::WalkRefusal, source_instance_walk::SourceInstanceWalk};
+use crate::executor::{
+    instance_walk::WalkRefusal,
+    source_instance_walk::{SourceInstanceWalk, refuse_unpositioned},
+};
 use andromeda_federation::{outcome::ForwardedTemporalEntities, partial_page::PartialPage};
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
@@ -348,7 +351,7 @@ fn a_backward_answer_cut_on_two_pages_resumes_before_the_later_range_end() {
             ranged("DateTime 2024-01-05T00:00:00Z-2024-01-04T00:00:00Z/5"),
         ],
     )];
-    assert_eq!(walk.trim(&mut answers), Ok(()));
+    walk.trim(&mut answers);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::Between { from: at(1), to: at(6) })));
 }
 
@@ -370,12 +373,11 @@ fn a_backward_pass_cut_no_earlier_than_the_previous_one_stalls_the_walk() {
 /// every page, beside a source that answered in full.
 #[test]
 fn a_source_answer_cut_short_at_no_range_is_refused() {
-    let mut walk = walk();
-    let mut answers = [
+    let answers = [
         forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1])])], Vec::new()),
         forwarded(SOURCE_B, vec![entity(VEHICLE_2, &[(speed(), &[1])])], vec![PartialPage::Unranged]),
     ];
-    assert_eq!(walk.trim(&mut answers), Err(WalkRefusal::Unpositioned));
+    assert_eq!(refuse_unpositioned(&answers), Err(WalkRefusal::Unpositioned));
 }
 
 /// A source page cut short at no readable range on a pass resumed past a
@@ -387,7 +389,8 @@ fn a_source_answer_cut_short_at_no_range_on_a_resumed_pass_is_refused() {
     trim(&mut walk, &mut first);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(2)))));
     let mut whole = [forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[2, 3])])], Vec::new())];
-    assert_eq!(walk.trim(&mut whole), Ok(()));
-    let mut resumed = [forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[3, 4])])], vec![PartialPage::Unranged])];
-    assert_eq!(walk.trim(&mut resumed), Err(WalkRefusal::Unpositioned));
+    assert_eq!(refuse_unpositioned(&whole), Ok(()));
+    walk.trim(&mut whole);
+    let resumed = [forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[3, 4])])], vec![PartialPage::Unranged])];
+    assert_eq!(refuse_unpositioned(&resumed), Err(WalkRefusal::Unpositioned));
 }

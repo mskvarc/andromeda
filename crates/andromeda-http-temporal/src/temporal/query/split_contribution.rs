@@ -68,7 +68,7 @@ impl ContributionShape {
     pub(crate) fn of(filtering: SplitEntities, params: &TemporalQueryParameters, gathering: AggregationGathering) -> ContributionShape {
         let aggregated = params.parse_format().is_ok_and(|format| format.is_aggregated());
         match filtering {
-            SplitEntities::Split if aggregated && carries_split_filters(params) => ContributionShape::MergedInstances,
+            SplitEntities::Split if aggregated && params.carries_split_filters() => ContributionShape::MergedInstances,
             SplitEntities::Split | SplitEntities::Complete if aggregated => ContributionShape::HubAggregated(gathering),
             SplitEntities::Split | SplitEntities::Complete => ContributionShape::AsAnswered,
         }
@@ -169,12 +169,6 @@ impl SettledRequest<'_> {
     }
 }
 
-/// Whether the query carries any of the filters clause 5.7.4.4 applies after
-/// aggregation; without one, S7 is S4 and nothing is decided.
-pub(crate) const fn carries_split_filters(params: &TemporalQueryParameters) -> bool {
-    params.q.is_some() || params.geo.0.is_some() || params.scope_q.is_some()
-}
-
 /// The entities a source answered a split query with, for the window or for
 /// the Scope in force when it opens, which the local read exempts from the
 /// value, geo and scope filters.
@@ -193,7 +187,7 @@ pub(crate) fn contributed_entities(
         return ContributedEntities::default();
     };
     match filtering {
-        SplitEntities::Split if carries_split_filters(params) => {
+        SplitEntities::Split if params.carries_split_filters() => {
             let probed = in_effect
                 .into_iter()
                 .flat_map(|gathering| gathering.sources.iter())
@@ -304,12 +298,7 @@ async fn settle_contributions(
 /// Drop every merged entity a source contributed to whose gathered parts the
 /// filters did not keep.
 fn retain_settled(entities: &mut Vec<TemporalHistory>, contributed: &ContributedEntities, settlement: &SplitSettlement) {
-    entities.retain(|entity| {
-        let Some(entity_id) = entity.id() else {
-            return true;
-        };
-        !contributed.contains(entity_id) || settlement.retained.contains(entity_id)
-    });
+    entities.retain(|entity| entity.id().is_none_or(|entity_id| settlement.keeps(contributed, entity_id)));
 }
 
 #[cfg(test)]
@@ -319,7 +308,7 @@ mod tests {
             forwarding::{ForwardedHistory, HistoryReach},
             in_effect_gathering::InEffectGathering,
             merged_history::RemoteParts,
-            split_contribution::{ContributionShape, carries_split_filters, contributed_entities, retain_settled},
+            split_contribution::{ContributionShape, contributed_entities, retain_settled},
         },
         test_history::held_history,
     };
@@ -331,10 +320,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
-    use andromeda_ngsi_ld_query::{
-        scope::scope_query::ScopeQuery,
-        temporal::contributed_entities::{ContributedEntities, ContributedRendering},
-    };
+    use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
     use andromeda_temporal::{local_in_effect::LocalInEffect, split_settlement::SplitSettlement};
     use serde_json::json;
@@ -347,18 +333,6 @@ mod tests {
     /// The history of the entity `identifier` names, holding no attribute.
     async fn history(identifier: &str) -> TemporalHistory {
         held_history(json!({"id": identifier, "type": "Vehicle"})).await
-    }
-
-    /// Clause 5.7.4.4: "If no values filter query is provided, then S5 is
-    /// equal to S4", and likewise for the geoquery and the scope query.
-    #[test]
-    fn only_a_value_geo_or_scope_filter_is_decided_after_aggregation() {
-        assert!(!carries_split_filters(&TemporalQueryParameters::default()));
-        let scoped = TemporalQueryParameters {
-            scope_q: Some("/Madrid".parse::<ScopeQuery>().expect("a valid scopeQ")),
-            ..TemporalQueryParameters::default()
-        };
-        assert!(carries_split_filters(&scoped));
     }
 
     /// A contributed entity the filters did not keep leaves the merge; an

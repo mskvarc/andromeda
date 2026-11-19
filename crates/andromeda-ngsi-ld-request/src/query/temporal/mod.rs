@@ -308,6 +308,15 @@ impl TemporalQueryParameters {
     pub const fn set_interval(&mut self, interval: TimeInterval) {
         (self.timerel, self.time_at, self.end_time_at) = interval.parts();
     }
+
+    /// Whether the query carries a values filter, a geoquery or a Scope
+    /// query, the filters clause 5.7.4.4 applies to the aggregated Entities
+    /// under `splitEntities`; without one, set S7 is S4 and nothing is left
+    /// to decide after aggregation.
+    #[must_use]
+    pub const fn carries_split_filters(&self) -> bool {
+        self.q.is_some() || self.geo.0.is_some() || self.scope_q.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -371,6 +380,20 @@ mod tests {
             (params.timerel, params.time_at, params.end_time_at),
             (Some(TimeRel::Between), Some(from), Some(to))
         );
+    }
+
+    /// Clause 5.7.4.4: "If no values filter query is provided, then S5 is
+    /// equal to S4", and likewise for the geoquery and the Scope query.
+    #[test]
+    fn only_a_value_geo_or_scope_filter_is_decided_after_aggregation() {
+        assert!(!params_from_query("type=Vehicle&attrs=speed&timerel=after&timeAt=2024-01-01T00:00:00Z").carries_split_filters());
+        for filtered in [
+            "q=speed%3E50",
+            "georel=near%3BmaxDistance%3D%3D3000&geometry=Point&coordinates=%5B-3.7%2C40.4%5D",
+            "scopeQ=/Madrid",
+        ] {
+            assert!(params_from_query(filtered).carries_split_filters(), "{filtered}");
+        }
     }
 
     #[test]

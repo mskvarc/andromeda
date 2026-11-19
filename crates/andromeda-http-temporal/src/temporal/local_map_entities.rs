@@ -11,8 +11,8 @@ use crate::{error::TemporalResultExt, history_read::TemporalHistoryRead};
 use andromeda_entity_map::recording::{LocalMapEntities, MapListing, PageFiltering};
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow};
-use andromeda_temporal::{query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
+use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow, temporal::contributed_entities::ContributedEntities};
+use andromeda_temporal::{candidate_listing::CandidateListing, query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
 use axum::http::Uri;
 
 /// Where the histories a temporal map attributes to this broker come from.
@@ -81,8 +81,11 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                             context: read.context,
                             language_targeting: read.language_targeting,
                         },
-                        requested,
-                        CandidateFilters::Applied,
+                        CandidateListing {
+                            identifiers: requested,
+                            filters: CandidateFilters::Applied,
+                            contributed: ContributedEntities::default(),
+                        },
                     )
                     .await
                     .with_instance(instance)?;

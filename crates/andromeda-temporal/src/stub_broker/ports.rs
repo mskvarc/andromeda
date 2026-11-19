@@ -93,10 +93,10 @@ impl TemporalHistoryReader for StubBroker {
         _window: &PageWindow,
         _count: CountPolicy,
     ) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        self.listed_selections
+        self.listings
             .lock()
             .expect("the recording lock is never poisoned")
-            .push(compiled.entities.clone());
+            .push((compiled.entities.clone(), compiled.contributed.clone()));
         Ok(TemporalEntityIdOutcome {
             entity_ids: Vec::new(),
             total: None,
