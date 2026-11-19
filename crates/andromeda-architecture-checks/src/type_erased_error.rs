@@ -13,7 +13,7 @@
 //! anywhere else fails immediately, and a baseline site that stops erasing its
 //! error fails too, so the list can only shrink.
 
-use crate::source_scan::{item_is_test_only, workspace_sources};
+use crate::source_scan::{is_build_script, item_is_test_only, workspace_sources};
 use std::{collections::BTreeSet, path::Path};
 use syn::{
     Item,
@@ -39,7 +39,7 @@ pub const TYPE_ERASED_ERROR_BASELINE: &[&str] = &["crates/andromeda-outbound-htt
 pub fn type_erased_error_sites(workspace_root: &str) -> Vec<String> {
     let mut sites = BTreeSet::new();
     for source in workspace_sources(Path::new(workspace_root)) {
-        if source.workspace_path.contains("/tests/") || source.workspace_path.ends_with("build.rs") {
+        if source.workspace_path.contains("/tests/") || is_build_script(&source.workspace_path) {
             continue;
         }
         let mut visitor = TypeErasedErrorVisitor { erased: false };

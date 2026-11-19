@@ -18,7 +18,7 @@
 //! are tolerated, a new violation anywhere fails immediately, and a baseline
 //! entry that no longer violates fails too, so the list can only shrink.
 
-use crate::source_scan::{item_is_test_only, workspace_sources};
+use crate::source_scan::{is_build_script, item_is_test_only, workspace_sources};
 use andromeda_ngsi_ld_vocabulary::COMPACT_TO_EXPANDED;
 use std::{collections::BTreeSet, path::Path};
 use syn::{
@@ -130,7 +130,7 @@ pub fn assert_detail_messages_are_well_formed(workspace_root: &str, baseline: &[
 pub fn detail_violations(workspace_root: &str) -> Vec<DetailViolation> {
     let mut violations = BTreeSet::new();
     for source in workspace_sources(Path::new(workspace_root)) {
-        if source.is_black_box_suite() || source.workspace_path.contains("/tests/") || source.workspace_path.ends_with("build.rs") {
+        if source.is_black_box_suite() || source.workspace_path.contains("/tests/") || is_build_script(&source.workspace_path) {
             continue;
         }
         let mut visitor = DetailVisitor {

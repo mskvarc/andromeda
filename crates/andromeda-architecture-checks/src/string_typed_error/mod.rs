@@ -38,7 +38,7 @@ mod visitor;
 mod workspace_index;
 
 use crate::{
-    source_scan::workspace_sources,
+    source_scan::{is_build_script, workspace_sources},
     string_typed_error::{visitor::StringTypedErrorVisitor, workspace_index::WorkspaceIndex},
 };
 use std::path::Path;
@@ -90,7 +90,7 @@ pub fn string_typed_error_sites(workspace_root: &str) -> Vec<StringTypedErrorSit
     let sources = workspace_sources(Path::new(workspace_root));
     let production = sources
         .iter()
-        .filter(|source| !source.workspace_path.contains("/tests/") && !source.workspace_path.ends_with("build.rs"))
+        .filter(|source| !source.workspace_path.contains("/tests/") && !is_build_script(&source.workspace_path))
         .collect::<Vec<_>>();
     let index = WorkspaceIndex::collect(production.iter().map(|source| &source.syntax));
     let mut sites = production

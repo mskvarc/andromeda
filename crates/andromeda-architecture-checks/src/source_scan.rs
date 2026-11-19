@@ -115,6 +115,19 @@ pub(crate) fn is_rust_source(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
 
+/// Whether a workspace-relative path is a package's build script: a file named
+/// exactly `build.rs` at the workspace root or directly in a package directory.
+///
+/// A module whose name only ends in `build`, such as `ewkb_build.rs`, or a
+/// `build.rs` below a package's `src/` is production code.
+pub(crate) fn is_build_script(workspace_path: &str) -> bool {
+    match workspace_path.split('/').collect::<Vec<_>>().as_slice() {
+        ["build.rs"] => true,
+        [directory, _package, "build.rs"] => PACKAGE_DIRECTORIES.contains(directory),
+        [..] => false,
+    }
+}
+
 /// Recursively discover every file below one directory that `wanted` selects,
 /// ordered by path.
 ///
@@ -296,4 +309,30 @@ fn test_only_external_modules(source: &RustSource) -> Vec<PathBuf> {
             vec![base.join(format!("{}.rs", module.ident)), base.join(module.ident.to_string())]
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::source_scan::is_build_script;
+
+    #[test]
+    fn a_build_rs_at_the_workspace_root_or_a_package_root_is_a_build_script() {
+        assert!(is_build_script("build.rs"));
+        assert!(is_build_script("crates/andromeda-broker-composition/build.rs"));
+        assert!(is_build_script("tools/andromeda-sql/build.rs"));
+    }
+
+    #[test]
+    fn a_module_whose_name_ends_in_build_is_no_build_script() {
+        assert!(!is_build_script("crates/andromeda-postgresql-encoding/src/ewkb_build.rs"));
+        assert!(!is_build_script("crates/andromeda-postgresql-maintenance/src/rowstore_rebuild.rs"));
+        assert!(!is_build_script("crates/andromeda-spatial-index/src/partitioned_rtree/rebuild.rs"));
+    }
+
+    #[test]
+    fn a_build_rs_below_a_package_source_tree_is_no_build_script() {
+        assert!(!is_build_script("crates/andromeda-broker-composition/src/build.rs"));
+        assert!(!is_build_script("src/build.rs"));
+        assert!(!is_build_script("docs/andromeda/build.rs"));
+    }
 }

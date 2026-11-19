@@ -16,7 +16,7 @@
 //! scripts, `*tests.rs` files and test-only items are not production paths and
 //! are not inspected; fixtures keep decoding stored documents.
 
-use crate::source_scan::{item_is_test_only, workspace_sources};
+use crate::source_scan::{is_build_script, item_is_test_only, workspace_sources};
 use std::path::Path;
 use syn::{
     Expr,
@@ -80,7 +80,7 @@ pub fn state_codec_sites(workspace_root: &str) -> Vec<StateCodecSite> {
 /// The codec calls of one parsed source at `path`, in source order; none when
 /// the file is no production file of a PostgreSQL crate.
 fn source_sites(path: &str, syntax: &syn::File) -> Vec<StateCodecSite> {
-    if !path.starts_with(POSTGRESQL_CRATES) || path.contains("/tests/") || path.ends_with("build.rs") || path.ends_with("tests.rs") {
+    if !path.starts_with(POSTGRESQL_CRATES) || path.contains("/tests/") || is_build_script(path) || path.ends_with("tests.rs") {
         return Vec::new();
     }
     let mut visitor = StateCodecVisitor { path, sites: Vec::new() };

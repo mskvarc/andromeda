@@ -16,93 +16,19 @@
 //! ignored. geozero's default callbacks accept them silently, which would turn
 //! a `CIRCULARSTRING` into a geometry that decodes to nothing at all.
 
+use crate::ewkb_build_error::{GeometryBuildError, PostgisOnlyGeometryType};
 use andromeda_ngsi_ld_geometry::{
     form::{GeometryForm, PolygonRings},
-    line_string_coordinates::{LineStringCoordinates, LineStringError},
-    linear_ring::{LinearRing, LinearRingError},
-    position::{Position, PositionError},
+    geometry_type::GeometryType,
+    line_string_coordinates::LineStringCoordinates,
+    linear_ring::LinearRing,
+    position::Position,
 };
 use geozero::{
     CoordDimensions,
     GeomProcessor,
     error::{GeozeroError, Result as GeozeroResult},
 };
-use thiserror::Error;
-
-/// Failures assembling a geometry from a reader's callbacks.
-///
-/// Every variant describes a callback stream that no well-formed EWKB buffer
-/// produces, so each one means the buffer was malformed or held a geometry
-/// outside the `GeoJSON` model.
-#[derive(Debug, Error, Clone, Copy, PartialEq)]
-pub enum GeometryBuildError {
-    /// A coordinate that is no RFC 7946 position: off the CRS84 axes of
-    /// section 4, or with a non-finite altitude. Every geometry the broker
-    /// writes was built from checked positions, so such a row was not written
-    /// by the broker.
-    #[error("the buffer holds a coordinate that is no GeoJSON position: {0}")]
-    Position(#[from] PositionError),
-    /// A line string of fewer than the two positions RFC 7946 section 3.1.4
-    /// requires. Every line the broker writes was built checked, so such a row
-    /// was not written by the broker.
-    #[error("the buffer holds a line that is no GeoJSON LineString: {0}")]
-    LineString(#[from] LineStringError),
-    /// A polygon ring that is open or holds fewer than the four positions RFC
-    /// 7946 section 3.1.6 requires, which no ring the broker writes is.
-    #[error("the buffer holds a ring that is no GeoJSON linear ring: {0}")]
-    LinearRing(#[from] LinearRingError),
-    /// A coordinate arrived while no geometry that holds positions was open.
-    #[error("a coordinate arrived outside any geometry that can hold one")]
-    UnexpectedCoordinate,
-    /// A Point received a second position; RFC 7946 section 3.1.2 gives it one.
-    #[error("a Point carried a second position")]
-    RepeatedPointCoordinate,
-    /// A Point ended without the single position it must carry.
-    #[error("a Point ended without a position")]
-    MissingPointCoordinate,
-    /// A geometry ended without the matching begin, so the callback stream is
-    /// not properly nested.
-    #[error("a {geometry} ended without a matching begin")]
-    UnbalancedGeometry {
-        /// The geometry whose end had no matching begin.
-        geometry: &'static str,
-    },
-    /// A geometry finished inside another that cannot contain it, such as a
-    /// Polygon nested directly in a `MultiPoint`.
-    #[error("a {geometry} ended inside a geometry that cannot contain one")]
-    MisplacedGeometry {
-        /// The geometry that finished in the wrong place.
-        geometry: &'static str,
-    },
-    /// A second top-level geometry followed the first, which no single EWKB
-    /// buffer encodes.
-    #[error("the buffer encoded more than one top-level geometry")]
-    TrailingGeometry,
-    /// The callback stream ended without producing a geometry.
-    #[error("the buffer encoded no geometry")]
-    MissingGeometry,
-    /// The buffer holds a `PostGIS` geometry type that `GeoJSON`, and therefore
-    /// ETSI GS CIM 009 v1.9.1 clause 4.7, has no representation for.
-    #[error("the buffer encodes a {geometry}, which GeoJSON has no geometry type for")]
-    UnsupportedGeometryType {
-        /// The `PostGIS` geometry type that cannot be represented.
-        geometry: &'static str,
-    },
-    /// The buffer holds a `GeometryCollection`. `GeoJSON` defines one, but ETSI GS
-    /// CIM 009 v1.9.1 clause 4.7.1 allows a `GeoProperty` every RFC 7946 geometry
-    /// except that one, so no geometry the broker stores is a collection.
-    #[error("the buffer encodes a GeometryCollection, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes from GeoProperty geometries")]
-    GeometryCollectionUnsupported,
-}
-
-// Hand-written because the trait is geozero's and the error it carries is a
-// string: a `GeomProcessor` callback may only fail as `GeozeroError`, so a typed
-// build failure has to be rendered into one at that boundary.
-impl From<GeometryBuildError> for GeozeroError {
-    fn from(error: GeometryBuildError) -> GeozeroError {
-        GeozeroError::Geometry(error.to_string())
-    }
-}
 
 /// A geometry that has begun but not yet ended, holding what has arrived so far.
 #[derive(Debug)]
@@ -120,6 +46,20 @@ enum PartialGeometry {
     Polygon(Vec<LinearRing>),
     /// A `MultiPolygon` collecting finished polygons.
     MultiPolygon(Vec<PolygonRings>),
+}
+
+impl PartialGeometry {
+    /// The `GeoJSON` type of the geometry once it ends.
+    const fn geometry_type(&self) -> GeometryType {
+        match self {
+            PartialGeometry::Point(_) => GeometryType::Point,
+            PartialGeometry::MultiPoint(_) => GeometryType::MultiPoint,
+            PartialGeometry::LineString(_) => GeometryType::LineString,
+            PartialGeometry::MultiLineString(_) => GeometryType::MultiLineString,
+            PartialGeometry::Polygon(_) => GeometryType::Polygon,
+            PartialGeometry::MultiPolygon(_) => GeometryType::MultiPolygon,
+        }
+    }
 }
 
 /// Assembles a [`GeometryForm`] from a geozero reader's callbacks.
@@ -153,7 +93,9 @@ impl GeometryBuilder {
     /// completed.
     pub fn finish(self) -> Result<GeometryForm, GeometryBuildError> {
         match self.stack.last() {
-            Some(open) => Err(GeometryBuildError::UnbalancedGeometry { geometry: partial_name(open) }),
+            Some(open) => Err(GeometryBuildError::UnbalancedGeometry {
+                geometry: open.geometry_type(),
+            }),
             None => self.finished.ok_or(GeometryBuildError::MissingGeometry),
         }
     }
@@ -188,7 +130,9 @@ impl GeometryBuilder {
     /// their own end callbacks, before they ever become a [`GeometryForm`].
     fn complete(&mut self, form: GeometryForm) -> Result<(), GeometryBuildError> {
         match self.stack.last() {
-            Some(_enclosing) => Err(GeometryBuildError::MisplacedGeometry { geometry: form_name(&form) }),
+            Some(_enclosing) => Err(GeometryBuildError::MisplacedGeometry {
+                geometry: form.geometry_type(),
+            }),
             None => {
                 if self.finished.is_some() {
                     Err(GeometryBuildError::TrailingGeometry)
@@ -201,37 +145,13 @@ impl GeometryBuilder {
     }
 }
 
-/// The `GeoJSON` type name of a finished geometry, for diagnostics.
-const fn form_name(form: &GeometryForm) -> &'static str {
-    match form {
-        GeometryForm::Point(_) => "Point",
-        GeometryForm::MultiPoint(_) => "MultiPoint",
-        GeometryForm::LineString(_) => "LineString",
-        GeometryForm::MultiLineString(_) => "MultiLineString",
-        GeometryForm::Polygon(_) => "Polygon",
-        GeometryForm::MultiPolygon(_) => "MultiPolygon",
-    }
-}
-
-/// The `GeoJSON` type name of an unfinished geometry, for diagnostics.
-const fn partial_name(partial: &PartialGeometry) -> &'static str {
-    match partial {
-        PartialGeometry::Point(_) => "Point",
-        PartialGeometry::MultiPoint(_) => "MultiPoint",
-        PartialGeometry::LineString(_) => "LineString",
-        PartialGeometry::MultiLineString(_) => "MultiLineString",
-        PartialGeometry::Polygon(_) => "Polygon",
-        PartialGeometry::MultiPolygon(_) => "MultiPolygon",
-    }
-}
-
 /// The failure for a `PostGIS` geometry type `GeoJSON` cannot express.
-fn unsupported(geometry: &'static str) -> GeozeroError {
+fn unsupported(geometry: PostgisOnlyGeometryType) -> GeozeroError {
     GeometryBuildError::UnsupportedGeometryType { geometry }.into()
 }
 
 /// The failure for an end callback whose begin is missing or of another kind.
-fn unbalanced(geometry: &'static str) -> GeozeroError {
+fn unbalanced(geometry: GeometryType) -> GeozeroError {
     GeometryBuildError::UnbalancedGeometry { geometry }.into()
 }
 
@@ -259,7 +179,7 @@ impl GeomProcessor for GeometryBuilder {
 
     fn point_end(&mut self, _idx: usize) -> GeozeroResult<()> {
         let Some(PartialGeometry::Point(slot)) = self.stack.pop() else {
-            return Err(unbalanced("Point"));
+            return Err(unbalanced(GeometryType::Point));
         };
         let position = slot.ok_or(GeometryBuildError::MissingPointCoordinate)?;
         Ok(self.complete(GeometryForm::Point(position))?)
@@ -272,7 +192,7 @@ impl GeomProcessor for GeometryBuilder {
 
     fn multipoint_end(&mut self, _idx: usize) -> GeozeroResult<()> {
         let Some(PartialGeometry::MultiPoint(positions)) = self.stack.pop() else {
-            return Err(unbalanced("MultiPoint"));
+            return Err(unbalanced(GeometryType::MultiPoint));
         };
         Ok(self.complete(GeometryForm::MultiPoint(positions))?)
     }
@@ -284,7 +204,7 @@ impl GeomProcessor for GeometryBuilder {
 
     fn linestring_end(&mut self, _tagged: bool, _idx: usize) -> GeozeroResult<()> {
         let Some(PartialGeometry::LineString(positions)) = self.stack.pop() else {
-            return Err(unbalanced("LineString"));
+            return Err(unbalanced(GeometryType::LineString));
         };
         // A line string is a ring when a Polygon encloses it and a member when a
         // MultiLineString does; only on its own is it a geometry in its own
@@ -300,7 +220,10 @@ impl GeomProcessor for GeometryBuilder {
             }
             None => Some(LineStringCoordinates::try_new(positions).map_err(GeometryBuildError::from)?),
             Some(PartialGeometry::Point(_) | PartialGeometry::MultiPoint(_) | PartialGeometry::LineString(_) | PartialGeometry::MultiPolygon(_)) => {
-                return Err(GeometryBuildError::MisplacedGeometry { geometry: "LineString" }.into());
+                return Err(GeometryBuildError::MisplacedGeometry {
+                    geometry: GeometryType::LineString,
+                }
+                .into());
             }
         };
         match standalone {
@@ -316,7 +239,7 @@ impl GeomProcessor for GeometryBuilder {
 
     fn multilinestring_end(&mut self, _idx: usize) -> GeozeroResult<()> {
         let Some(PartialGeometry::MultiLineString(line_strings)) = self.stack.pop() else {
-            return Err(unbalanced("MultiLineString"));
+            return Err(unbalanced(GeometryType::MultiLineString));
         };
         Ok(self.complete(GeometryForm::MultiLineString(line_strings))?)
     }
@@ -328,7 +251,7 @@ impl GeomProcessor for GeometryBuilder {
 
     fn polygon_end(&mut self, _tagged: bool, _idx: usize) -> GeozeroResult<()> {
         let Some(PartialGeometry::Polygon(rings)) = self.stack.pop() else {
-            return Err(unbalanced("Polygon"));
+            return Err(unbalanced(GeometryType::Polygon));
         };
         let rings = PolygonRings::new(rings);
         // A polygon is a member when a MultiPolygon encloses it, and a geometry
@@ -345,7 +268,12 @@ impl GeomProcessor for GeometryBuilder {
                 | PartialGeometry::LineString(_)
                 | PartialGeometry::MultiLineString(_)
                 | PartialGeometry::Polygon(_),
-            ) => return Err(GeometryBuildError::MisplacedGeometry { geometry: "Polygon" }.into()),
+            ) => {
+                return Err(GeometryBuildError::MisplacedGeometry {
+                    geometry: GeometryType::Polygon,
+                }
+                .into());
+            }
         };
         match standalone {
             Some(rings) => Ok(self.complete(GeometryForm::Polygon(rings))?),
@@ -360,7 +288,7 @@ impl GeomProcessor for GeometryBuilder {
 
     fn multipolygon_end(&mut self, _idx: usize) -> GeozeroResult<()> {
         let Some(PartialGeometry::MultiPolygon(polygons)) = self.stack.pop() else {
-            return Err(unbalanced("MultiPolygon"));
+            return Err(unbalanced(GeometryType::MultiPolygon));
         };
         Ok(self.complete(GeometryForm::MultiPolygon(polygons))?)
     }
@@ -374,43 +302,47 @@ impl GeomProcessor for GeometryBuilder {
     }
 
     fn circularstring_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("CircularString"))
+        Err(unsupported(PostgisOnlyGeometryType::CircularString))
     }
 
     fn compoundcurve_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("CompoundCurve"))
+        Err(unsupported(PostgisOnlyGeometryType::CompoundCurve))
     }
 
     fn curvepolygon_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("CurvePolygon"))
+        Err(unsupported(PostgisOnlyGeometryType::CurvePolygon))
     }
 
     fn multicurve_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("MultiCurve"))
+        Err(unsupported(PostgisOnlyGeometryType::MultiCurve))
     }
 
     fn multisurface_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("MultiSurface"))
+        Err(unsupported(PostgisOnlyGeometryType::MultiSurface))
     }
 
     fn triangle_begin(&mut self, _tagged: bool, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("Triangle"))
+        Err(unsupported(PostgisOnlyGeometryType::Triangle))
     }
 
     fn polyhedralsurface_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("PolyhedralSurface"))
+        Err(unsupported(PostgisOnlyGeometryType::PolyhedralSurface))
     }
 
     fn tin_begin(&mut self, _size: usize, _idx: usize) -> GeozeroResult<()> {
-        Err(unsupported("Tin"))
+        Err(unsupported(PostgisOnlyGeometryType::Tin))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ewkb_build::{GeometryBuildError, GeometryBuilder, unbalanced, unsupported};
+    use crate::{
+        ewkb_build::{GeometryBuilder, unbalanced, unsupported},
+        ewkb_build_error::{GeometryBuildError, PostgisOnlyGeometryType},
+    };
     use andromeda_ngsi_ld_geometry::{
         form::GeometryForm,
+        geometry_type::GeometryType,
         line_string_coordinates::LineStringError,
         linear_ring::LinearRingError,
         position::{Position, PositionError},
@@ -438,7 +370,7 @@ mod tests {
         let mut builder = GeometryBuilder::new();
         builder.point_begin(0).expect("a Point may begin");
         let error = builder.finish().expect_err("the Point never ended");
-        pretty_assertions::assert_eq!(error, GeometryBuildError::UnbalancedGeometry { geometry: "Point" });
+        pretty_assertions::assert_eq!(error, GeometryBuildError::UnbalancedGeometry { geometry: GeometryType::Point });
     }
 
     #[test]
@@ -460,14 +392,14 @@ mod tests {
     fn an_end_callback_without_its_begin_is_rejected() {
         let mut builder = GeometryBuilder::new();
         let error = builder.polygon_end(true, 0).expect_err("no Polygon is open");
-        pretty_assertions::assert_eq!(error.to_string(), unbalanced("Polygon").to_string());
+        pretty_assertions::assert_eq!(error.to_string(), unbalanced(GeometryType::Polygon).to_string());
     }
 
     #[test]
     fn a_postgis_curve_type_is_refused_rather_than_silently_dropped() {
         let mut builder = GeometryBuilder::new();
         let error = builder.circularstring_begin(3, 0).expect_err("GeoJSON has no CircularString");
-        pretty_assertions::assert_eq!(error.to_string(), unsupported("CircularString").to_string());
+        pretty_assertions::assert_eq!(error.to_string(), unsupported(PostgisOnlyGeometryType::CircularString).to_string());
     }
 
     #[test]

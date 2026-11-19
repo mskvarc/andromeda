@@ -34,7 +34,7 @@ use crate::{
         rule::{ENGINE, stale_adapters},
         visitor::{Finding, RegistrationMatchingVisitor},
     },
-    source_scan::workspace_sources,
+    source_scan::{is_build_script, workspace_sources},
 };
 use std::path::Path;
 use syn::{File, visit::Visit};
@@ -87,7 +87,7 @@ pub fn registration_matching_scan(workspace_root: &str) -> RegistrationMatchingS
     let mut adapted = Vec::new();
     for source in workspace_sources(Path::new(workspace_root)) {
         let path = source.workspace_path.as_str();
-        if path.contains("/tests/") || path.ends_with("build.rs") || path.ends_with("tests.rs") {
+        if path.contains("/tests/") || is_build_script(path) || path.ends_with("tests.rs") {
             continue;
         }
         for finding in source_findings(&source.syntax) {

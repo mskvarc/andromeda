@@ -1,16 +1,14 @@
 //! The workspace-wide ceiling on production file length.
 //!
-//! The project rules split a file past ~400 production lines on sight and never lets
-//! one past 600. This gate makes that measurable rather than a hand-kept
-//! ledger: a file over the hard limit fails outright, and a file over the
-//! signal line is tolerated only while it is on a baseline that can only shrink:
-//! a new file crossing the signal line fails, and a baseline file that falls
-//! back under it must be removed. Production lines are counted to the first
+//! No production file passes 400 lines. A file over that signal line fails
+//! unless it is on a baseline that can only shrink: a baseline file that falls
+//! back under the line must be removed. A file over the 600-line hard limit
+//! fails even on the baseline. Production lines are counted to the first
 //! `#[cfg(test)]`, the same measure the project's own rule uses; integration
-//! tests, `*tests.rs` files, build scripts, and the focused test crates are not
-//! production and are not counted.
+//! tests, `*tests.rs` files, package build scripts, and the focused test crates
+//! are not production and are not counted.
 
-use crate::source_scan::source_tree_paths;
+use crate::source_scan::{is_build_script, source_tree_paths};
 use std::{
     collections::BTreeSet,
     fs,
@@ -95,14 +93,14 @@ pub fn assert_no_god_files(workspace_root: &str, baseline: &[&str]) {
 
 /// Every production `.rs` file below `src/`, `crates/`, and `tools/`.
 ///
-/// Integration tests under `tests/`, `*tests.rs` files and build scripts are not
-/// production code, so the length rule does not measure them.
+/// Integration tests under `tests/`, `*tests.rs` files and package build
+/// scripts are not production code, so the length rule does not measure them.
 fn production_source_paths(root: &Path) -> Vec<PathBuf> {
     source_tree_paths(root)
         .into_iter()
         .filter(|path| {
             let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
-            !relative.contains("/tests/") && !relative.ends_with("build.rs") && !relative.ends_with("tests.rs")
+            !relative.contains("/tests/") && !is_build_script(&relative) && !relative.ends_with("tests.rs")
         })
         .collect()
 }
@@ -122,8 +120,37 @@ fn production_line_count(source: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::god_file::production_line_count;
+    use crate::god_file::{assert_no_god_files, production_line_count};
     use pretty_assertions::assert_eq;
+    use std::{env, fs, process};
+
+    /// A scratch workspace holding one file of `lines` lines at `relative`.
+    fn scratch_workspace(name: &str, relative: &str, lines: usize) -> String {
+        let root = env::temp_dir().join(format!("andromeda-god-file-{}-{name}", process::id()));
+        let path = root.join(relative);
+        if let Some(directory) = path.parent() {
+            fs::create_dir_all(directory).unwrap_or_else(|error| panic!("{error}"));
+        }
+        fs::write(&path, "line\n".repeat(lines)).unwrap_or_else(|error| panic!("{error}"));
+        root.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    #[should_panic(expected = "crates/fixture/src/ewkb_build.rs: 401 production lines")]
+    fn a_module_named_ewkb_build_past_the_signal_line_fails() {
+        assert_no_god_files(&scratch_workspace("ewkb-build", "crates/fixture/src/ewkb_build.rs", 401), &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "crates/fixture/src/rowstore_rebuild.rs: 401 production lines")]
+    fn a_module_named_rowstore_rebuild_past_the_signal_line_fails() {
+        assert_no_god_files(&scratch_workspace("rowstore-rebuild", "crates/fixture/src/rowstore_rebuild.rs", 401), &[]);
+    }
+
+    #[test]
+    fn a_package_build_script_past_the_signal_line_is_not_measured() {
+        assert_no_god_files(&scratch_workspace("build-script", "crates/fixture/build.rs", 401), &[]);
+    }
 
     #[test]
     fn a_file_is_measured_to_its_first_cfg_test() {

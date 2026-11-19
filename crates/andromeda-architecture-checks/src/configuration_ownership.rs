@@ -10,7 +10,7 @@
 //!   composition and the binary names the root `BrokerConfig`, so a domain
 //!   crate receives the one section it reads and never the whole configuration.
 
-use crate::source_scan::{is_test_only, workspace_sources};
+use crate::source_scan::{is_build_script, is_test_only, workspace_sources};
 use std::{collections::BTreeSet, path::Path};
 use syn::{
     Attribute,
@@ -42,7 +42,7 @@ pub fn configuration_ownership_violations(workspace_root: &str) -> Vec<String> {
         .filter(|source| {
             !source.is_black_box_suite()
                 && !source.workspace_path.contains("/tests/")
-                && !source.workspace_path.ends_with("build.rs")
+                && !is_build_script(&source.workspace_path)
                 && !source.workspace_path.ends_with("tests.rs")
         })
         .flat_map(|source| {

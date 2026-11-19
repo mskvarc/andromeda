@@ -23,7 +23,7 @@
 //! tests, build scripts, `*tests.rs` files and test-only items are not
 //! production paths and are not inspected.
 
-use crate::source_scan::{item_is_test_only, workspace_sources};
+use crate::source_scan::{is_build_script, item_is_test_only, workspace_sources};
 use std::{collections::BTreeSet, path::Path};
 use syn::{
     Expr,
@@ -91,7 +91,7 @@ impl SwallowedRowDecodeSite {
 pub fn swallowed_row_decode_sites(workspace_root: &str) -> Vec<SwallowedRowDecodeSite> {
     let mut sites = Vec::new();
     for source in workspace_sources(Path::new(workspace_root)) {
-        if source.workspace_path.contains("/tests/") || source.workspace_path.ends_with("build.rs") || source.workspace_path.ends_with("tests.rs") {
+        if source.workspace_path.contains("/tests/") || is_build_script(&source.workspace_path) || source.workspace_path.ends_with("tests.rs") {
             continue;
         }
         let mut visitor = SwallowedRowDecodeVisitor {
