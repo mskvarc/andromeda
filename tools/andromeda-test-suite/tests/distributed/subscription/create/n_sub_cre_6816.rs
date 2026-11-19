@@ -20,14 +20,15 @@ use ngsi_ld::{
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
-/// The `csf` a copy carries: `tier=="gold"` with its term expanded under the core context, as the copy's `q` is.
-const GOLD_TIER: &str = r#""https://uri.etsi.org/ngsi-ld/default-context/tier"=="gold""#;
+/// The `csf` a copy carries: `tier=="gold"`, its term compacted under the `@context` the copy is sent with, since the
+/// grammar of clause 4.9 admits only short-hand names in an attribute path.
+const GOLD_TIER: &str = r#"tier=="gold""#;
 
 /// Pins: A Subscription by type with csf tier=="gold" places no copy at a `federationOps` registration of the type
 /// with tier silver; a registration with tier gold created after the Subscription receives a copy carrying the csf,
 /// the silver registration updated to tier gold then receives one, and the first registration updated to tier silver
 /// has its copy deleted
-/// Clause: 5.2.12, 5.8.1.4, 5.11.2.4, 5.11.7
+/// Clause: 4.9, 5.2.12, 5.8.1.4, 5.11.2.4, 5.11.7
 #[gtest]
 #[tokio::test]
 async fn n_sub_cre_6816_a_registration_updated_to_meet_a_context_source_filter_receives_the_copy_and_one_updated_away_loses_it() -> Result<()> {
@@ -54,7 +55,7 @@ async fn n_sub_cre_6816_a_registration_updated_to_meet_a_context_source_filter_r
     register_tiered_copy_source(&broker, &source, &namespace, "s1", 1, "gold").await?;
     let placed = source.wait_for_on(Method::POST, "/s1/ngsi-ld/v1/subscriptions", 1).await?;
     expect_that!(placed, len(eq(1)));
-    // The typed reader refuses the expanded csf of a copy, so the body is read for it.
+    // The csf is read as the text the copy carries, the spelling the Context Source expands.
     expect_that!(placed.first().or_fail()?.body.as_slice(), json_equals("$.csf", GOLD_TIER));
     let into_gold = RegistrationFragment::builder().property("tier", property_value("gold")).build()?;
     broker.registrations().update(&namespace.registration_id(2)?, &into_gold).send().await?;

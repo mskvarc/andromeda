@@ -19,14 +19,14 @@ use ngsi_ld::{
     subscription::{Endpoint, NotificationParams, Subscription, SubscriptionFragment, SubscriptionMember},
 };
 
-/// The `csf` the second copy carries: `tier=="silver"` with its term expanded under the core context, as the copy's
-/// `q` is.
-const SILVER_TIER: &str = r#""https://uri.etsi.org/ngsi-ld/default-context/tier"=="silver""#;
+/// The `csf` the second copy carries: `tier=="silver"`, its term compacted under the `@context` the copy is sent
+/// with, since the grammar of clause 4.9 admits only short-hand names in an attribute path.
+const SILVER_TIER: &str = r#"tier=="silver""#;
 
 /// Pins: Update Subscription replacing csf tier=="gold" with tier=="silver" deletes the copy at the gold source and
 /// places one carrying the new csf at the silver source, and a later Update Subscription deleting csf with the
 /// NGSI-LD Null patches the silver copy with csf written as the NGSI-LD Null and places a copy at the gold source again
-/// Clause: 5.2.12, 5.5.8, 5.8.1.4, 5.8.2.4, 5.11.2.4, 5.11.3.4
+/// Clause: 4.9, 5.2.12, 5.5.8, 5.8.1.4, 5.8.2.4, 5.11.2.4, 5.11.3.4
 #[gtest]
 #[tokio::test]
 async fn n_sub_upd_6808_a_changed_context_source_filter_moves_the_copies_to_the_sources_meeting_it() -> Result<()> {
@@ -60,7 +60,7 @@ async fn n_sub_upd_6808_a_changed_context_source_filter_moves_the_copies_to_the_
     expect_that!(deleted, len(eq(1)));
     let placed_2 = source.wait_for_on(Method::POST, "/s2/ngsi-ld/v1/subscriptions", 1).await?;
     expect_that!(placed_2, len(eq(1)));
-    // The typed reader refuses the expanded csf of a copy, so the body is read for it.
+    // The csf is read as the text the copy carries, the spelling the Context Source expands.
     expect_that!(placed_2.first().or_fail()?.body.as_slice(), json_equals("$.csf", SILVER_TIER));
     let unfiltered = SubscriptionFragment::builder().delete(SubscriptionMember::Csf).build()?;
     broker.subscriptions().update(&subscription_id, &unfiltered).send().await?;
