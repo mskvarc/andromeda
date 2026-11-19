@@ -35,6 +35,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     entity_filters::EntityFilters,
     filter::{Filter, reading::filter_reading::FilterReading},
+    name_stage::Expanded,
     projection::expanded_projection::ExpandedProjection,
     scope::scope_query::ScopeQuery,
 };
@@ -239,7 +240,7 @@ impl CompiledSubscription {
     }
 
     /// The filters whose `rel{…}` hops cross into linked entities: the `q`.
-    pub fn hopping_filters(&self) -> impl Iterator<Item = &Filter> {
+    pub fn hopping_filters(&self) -> impl Iterator<Item = &Filter<Expanded>> {
         self.compiled_q
             .as_ref()
             .map(|query| query.compiled().filter())

@@ -1,31 +1,35 @@
 //! The path half of a lowered Query Term.
 
-use crate::filter::{
-    Filter,
-    instance_metadata::InstanceMetadata,
-    language_matching::LanguageMatching,
-    reading::{
-        filter_reading::FilterReading,
-        hop::Hop,
-        operand::Operand,
-        order_relation::OrderRelation,
-        scalar_test::ScalarTest,
-        term_reading::{TermReading, Test},
-        terminal::Terminal,
-        uri_operand::UriOperand,
-        value_test::Polarity,
+use crate::{
+    filter::{
+        Filter,
+        instance_metadata::InstanceMetadata,
+        language_matching::LanguageMatching,
+        reading::{
+            filter_reading::FilterReading,
+            hop::Hop,
+            operand::Operand,
+            order_relation::OrderRelation,
+            scalar_test::ScalarTest,
+            term_reading::{TermReading, Test},
+            terminal::Terminal,
+            uri_operand::UriOperand,
+            value_test::Polarity,
+        },
+        target_language::TargetLanguage,
+        trailing_group::MemberPath,
     },
-    target_language::TargetLanguage,
-    trailing_group::MemberPath,
+    name_stage::{Expanded, Written},
+    namespace_expander::EXAMPLE_NAMESPACE,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, entity_type_iri::EntityTypeIri};
 use langtag::LangTagBuf;
 use pretty_assertions::assert_eq;
 use std::slice;
 
 /// The one term `q` lowers to under `matching`.
 fn term_under(q: &str, matching: LanguageMatching) -> TermReading {
-    match FilterReading::lowered(&q.parse::<Filter>().expect("a clause 4.9 filter"), matching) {
+    match FilterReading::lowered(&expanded(q), matching) {
         FilterReading::Term(term) => *term,
         other @ (FilterReading::All(_) | FilterReading::Any(_)) => panic!("{q} lowers to {other:?}"),
     }
@@ -36,8 +40,20 @@ fn term(q: &str) -> TermReading {
     term_under(q, LanguageMatching::TagEquality)
 }
 
+/// `q` expanded under the example namespace.
+fn expanded(q: &str) -> Filter<Expanded> {
+    EXAMPLE_NAMESPACE
+        .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+        .expect("the names expand")
+}
+
 fn name(text: &str) -> AttributeName {
     text.parse().expect("an attribute name")
+}
+
+/// The expanded attribute `text` names under the example namespace.
+fn iri(text: &str) -> AttributeIri {
+    format!("https://example.com/{text}").parse().expect("an absolute IRI")
 }
 
 fn names(texts: &[&str]) -> Vec<AttributeName> {
@@ -56,7 +72,7 @@ const UNIT_CODE: &str = "\"https://uri.etsi.org/ngsi-ld/unitCode\"";
 fn a_bare_attribute_reads_its_own_value_through_no_hop_and_no_sub_attribute() {
     let term = term("a==1");
     assert_eq!(term.hops(), Vec::<Hop>::new());
-    assert_eq!(term.attribute(), &name("a"));
+    assert_eq!(term.attribute(), &iri("a"));
     assert_eq!(term.sub_attributes(), Vec::<AttributeName>::new());
     assert_eq!(term.terminal(), &Terminal::OwnValue);
 }
@@ -169,9 +185,9 @@ fn a_hop_with_no_guard_admits_every_linked_entity() {
     let [hop] = term.hops() else {
         panic!("one hop: {:?}", term.hops());
     };
-    assert_eq!(hop.relationship(), &name("r"));
-    assert_eq!(hop.guard_types(), Vec::<EntityTypeName>::new());
-    assert_eq!(term.attribute(), &name("a"));
+    assert_eq!(hop.relationship(), &iri("r"));
+    assert_eq!(hop.guard_types(), Vec::<EntityTypeIri>::new());
+    assert_eq!(term.attribute(), &iri("a"));
 }
 
 #[test]
@@ -180,14 +196,14 @@ fn a_chain_of_two_hops_keeps_each_guard_outermost_first() {
     let [outer, inner] = term.hops() else {
         panic!("two hops: {:?}", term.hops());
     };
-    assert_eq!(outer.relationship(), &name("r"));
+    assert_eq!(outer.relationship(), &iri("r"));
     assert_eq!(
         outer.guard_types(),
-        ["T1", "T2"].map(|text| text.parse::<EntityTypeName>().expect("a type name"))
+        ["T1", "T2"].map(|text| format!("https://example.com/{text}").parse::<EntityTypeIri>().expect("an absolute IRI"))
     );
-    assert_eq!(inner.relationship(), &name("s"));
-    assert_eq!(inner.guard_types(), Vec::<EntityTypeName>::new());
-    assert_eq!(term.attribute(), &name("a"));
+    assert_eq!(inner.relationship(), &iri("s"));
+    assert_eq!(inner.guard_types(), Vec::<EntityTypeIri>::new());
+    assert_eq!(term.attribute(), &iri("a"));
 }
 
 /// Clause 4.9 EXAMPLE 14 writes a guard of one type, which the ABNF's
@@ -198,11 +214,14 @@ fn a_hop_guarded_by_one_type_keeps_its_guard() {
     let [outer, inner] = term.hops() else {
         panic!("two hops: {:?}", term.hops());
     };
-    assert_eq!(outer.relationship(), &name("r"));
-    assert_eq!(outer.guard_types(), ["T1".parse::<EntityTypeName>().expect("a type name")]);
-    assert_eq!(inner.relationship(), &name("s"));
-    assert_eq!(inner.guard_types(), Vec::<EntityTypeName>::new());
-    assert_eq!(term.attribute(), &name("a"));
+    assert_eq!(outer.relationship(), &iri("r"));
+    assert_eq!(
+        outer.guard_types(),
+        ["https://example.com/T1".parse::<EntityTypeIri>().expect("an absolute IRI")]
+    );
+    assert_eq!(inner.relationship(), &iri("s"));
+    assert_eq!(inner.guard_types(), Vec::<EntityTypeIri>::new());
+    assert_eq!(term.attribute(), &iri("a"));
 }
 
 /// Clause 4.9 makes each name after the first "a (sub)Property or
@@ -249,7 +268,7 @@ fn a_negated_operator_lowers_to_the_complement_of_its_positive_test() {
 /// The boolean structure is kept as written.
 #[test]
 fn a_filter_lowers_its_conjunctions_and_disjunctions_as_written() {
-    let filter: Filter = "a==1;(b==2|c)".parse().expect("a filter");
+    let filter = expanded("a==1;(b==2|c)");
     let FilterReading::All(children) = FilterReading::lowered(&filter, LanguageMatching::TagEquality) else {
         panic!("a conjunction");
     };
@@ -261,22 +280,14 @@ fn a_filter_lowers_its_conjunctions_and_disjunctions_as_written() {
 /// of each name, joined by `|`: one reading, each name once.
 #[test]
 fn carrying_any_attribute_is_the_reading_of_their_existence_disjunction() {
-    let name = |value: &str| -> AttributeName { value.parse().expect("an attribute name") };
+    let name = |value: &str| -> AttributeIri { value.parse().expect("an absolute IRI") };
     assert_eq!(
         FilterReading::carrying_any([name("https://example.com/b"), name("https://example.com/a"), name("https://example.com/b")]),
-        FilterReading::of(
-            &"\"https://example.com/a\"|\"https://example.com/b\""
-                .parse::<Filter>()
-                .expect("a clause 4.9 filter"),
-            LanguageMatching::TagEquality
-        )
+        FilterReading::of(&expanded("\"https://example.com/a\"|\"https://example.com/b\""), LanguageMatching::TagEquality)
     );
     assert_eq!(
         FilterReading::carrying_any([name("https://example.com/a")]),
-        FilterReading::of(
-            &"\"https://example.com/a\"".parse::<Filter>().expect("a clause 4.9 filter"),
-            LanguageMatching::TagEquality
-        )
+        FilterReading::of(&expanded("\"https://example.com/a\""), LanguageMatching::TagEquality)
     );
     assert_eq!(FilterReading::carrying_any([]), FilterReading::Any(Vec::new()));
 }

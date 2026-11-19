@@ -22,7 +22,7 @@ use crate::{
     },
     standing_instant::instant_of,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
 use andromeda_postgresql_stored_form::expiry::unexpired;
@@ -63,12 +63,12 @@ impl<'c> ElementPath<'c> {
     /// never recorded.
     #[must_use]
     pub fn of_names(
-        attribute: &AttributeName,
+        attribute: &AttributeIri,
         sub_attributes: &[AttributeName],
         row: ProbedRow,
         attributes: &ResolvedNames<AttributeName>,
     ) -> Option<ElementPath<'c>> {
-        let attribute = attributes.get(attribute)?;
+        let attribute = attributes.get_str(attribute.as_str())?;
         let chain = sub_attributes.iter().map(|name| attributes.get(name)).collect::<Option<Vec<_>>>()?;
         Some(ElementPath {
             row,
@@ -171,6 +171,8 @@ mod tests {
             language_matching::LanguageMatching,
             reading::{filter_reading::FilterReading, terminal::Terminal},
         },
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         standing_instant::StandingInstant,
         temporal::window::TimeInterval,
     };
@@ -210,7 +212,12 @@ mod tests {
             ..QueryNames::default()
         };
         let condition = compile(
-            &FilterReading::lowered(&q.parse::<Filter>().expect("parse q"), LanguageMatching::TagEquality),
+            &FilterReading::lowered(
+                &EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("parse q"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            ),
             &InstanceScan::History(&window),
             &names,
         );

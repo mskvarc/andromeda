@@ -96,7 +96,7 @@ pub(super) fn near_origin_among(ids: Vec<Identifier>) -> Arc<CompiledEntityQuery
                 min_distance: None,
             },
             geometry: point(0.0),
-            geoproperty: placement().geoproperty().clone(),
+            geoproperty: placement().geoproperty().as_str().parse().expect("an absolute IRI"),
         }),
         ..EntitySelection::default()
     };

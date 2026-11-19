@@ -149,6 +149,7 @@ mod tests {
         entity_selector_expansion::expand_entity_selectors,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
         namespace_expander::{EXAMPLE_NAMESPACE, NamespaceExpander},
         projection::attrs_selection::{AttrsAdmission, expand_attrs_admitted},
         scope::scope_query::ScopeQuery,
@@ -183,7 +184,7 @@ mod tests {
     async fn compiled(
         selectors: &[WrittenEntitySelector],
         attrs: Option<&[AttributeName]>,
-        q: Option<&Filter>,
+        q: Option<&Filter<Written>>,
         scope_q: Option<&ScopeQuery>,
         expander: &NamespaceExpander,
     ) -> EntitySelection {
@@ -194,7 +195,7 @@ mod tests {
                     .await
                     .expect("attrs expand"),
             )
-            .q(q.map(|expr| CompiledFilter::new(expr.clone(), LanguageMatching::TagEquality)))
+            .q(q.map(|expr| CompiledFilter::new(expander.expanded(expr.clone()).expect("the names expand"), LanguageMatching::TagEquality)))
             .scope_q(scope_q.cloned())
             .build()
     }

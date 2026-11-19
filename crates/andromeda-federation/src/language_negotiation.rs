@@ -25,7 +25,10 @@ use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, language_targeting::LanguageTargeting};
+use andromeda_ngsi_ld_query::{
+    filter::{Filter, language_matching::LanguageMatching, language_targeting::LanguageTargeting},
+    name_stage::Written,
+};
 use thiserror::Error;
 
 /// The level a read runs under, and the warning its fallback carries.
@@ -81,7 +84,7 @@ impl FederationService {
 }
 
 /// Whether `q` names a target language at all.
-fn names_target_language(q: &Filter) -> bool {
+fn names_target_language(q: &Filter<Written>) -> bool {
     !q.target_languages().is_empty()
 }
 

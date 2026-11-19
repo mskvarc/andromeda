@@ -6,4 +6,6 @@ SELECT
 FROM
   "context_source_registrations"
 WHERE
-  ("context_source_properties" -> ('temperature')) IS NOT NULL
+  (
+    "context_source_properties" -> ('https://example.com/temperature')
+  ) IS NOT NULL

@@ -133,7 +133,7 @@ pub(crate) fn temporal_geo_existential(
         return Ok(None);
     };
     windowed_instances(branch, compiled, of)
-        .exists_geo(names.attributes.get(&geo.geoproperty), geo)
+        .exists_geo(names.attributes.get_str(geo.geoproperty.as_str()), geo)
         .map(Some)
 }
 
@@ -150,6 +150,8 @@ mod tests {
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -222,7 +224,9 @@ mod tests {
     /// `q=temperature>99`.
     fn rare_q(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
         compiled.entities.q = Some(CompiledFilter::new(
-            format!("\"{TEMPERATURE}\">99").parse::<Filter>().expect("q parses"),
+            EXAMPLE_NAMESPACE
+                .expanded(format!("\"{TEMPERATURE}\">99").parse::<Filter<Written>>().expect("q parses"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         compiled

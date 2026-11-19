@@ -1,9 +1,9 @@
 //! The clause 4.9 `Attribute` of a Query Term: a value path, or a hop across a Relationship into the entity it names.
 
-use crate::filter::value_path::ValuePath;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::{filter::value_path::ValuePath, name_stage::NameStage};
 
-/// The attribute path a query term compares along (clause 4.9 `Attribute`).
+/// The attribute path a query term compares along (clause 4.9 `Attribute`),
+/// its names in the stage `S`.
 ///
 /// Clause 4.9 gives an attribute reference three axes. Two of them stay inside
 /// one entity and are carried by [`ValuePath`]. The third (the
@@ -12,13 +12,13 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// an attribute path is either a local value path, or one hop followed by an
 /// attribute path that is itself either local or a further hop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AttributePath {
+pub enum AttributePath<S: NameStage> {
     /// A value path addressing an attribute of the entity under evaluation.
-    Local(ValuePath),
+    Local(ValuePath<S>),
     /// A hop across a Relationship into the entity it links to.
     Linked {
         /// The Relationship the hop descends through.
-        relationship: AttributeName,
+        relationship: S::Attribute,
         /// Entity types the linked entity is constrained to, empty when the hop
         /// carried no guard.
         ///
@@ -28,13 +28,13 @@ pub enum AttributePath {
         /// a colon. A prefixed attribute name inside the braces is written
         /// quoted, because a bare `prefix:name` reads as a guard type followed
         /// by an attribute.
-        guard_types: Vec<AttributeName>,
+        guard_types: Vec<S::EntityType>,
         /// The attribute path evaluated against the linked entity.
-        inner: Box<AttributePath>,
+        inner: Box<AttributePath<S>>,
     },
 }
 
-impl AttributePath {
+impl<S: NameStage> AttributePath<S> {
     /// The value path this attribute path terminates at, the attribute whose
     /// value the query term ultimately compares.
     ///
@@ -43,7 +43,7 @@ impl AttributePath {
     /// names: those parameters describe the values being compared, and after a
     /// hop the compared values belong to the linked entity's attribute.
     #[must_use]
-    pub fn terminal(&self) -> &ValuePath {
+    pub fn terminal(&self) -> &ValuePath<S> {
         match self {
             AttributePath::Local(local) => local,
             AttributePath::Linked { inner, .. } => inner.terminal(),
@@ -76,7 +76,7 @@ impl AttributePath {
     }
 
     /// The value path this attribute path terminates at, mutably.
-    pub fn terminal_mut(&mut self) -> &mut ValuePath {
+    pub fn terminal_mut(&mut self) -> &mut ValuePath<S> {
         match self {
             AttributePath::Local(local) => local,
             AttributePath::Linked { inner, .. } => inner.terminal_mut(),

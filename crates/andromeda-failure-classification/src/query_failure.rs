@@ -215,6 +215,7 @@ mod tests {
             target_language::TargetLanguage,
         },
         geo::{geo_query_error::GeoQueryError, reference_budget::ReferenceBudgetError},
+        name_stage::Written,
         ordering::{ordering_error::OrderingError, written_ordering_term::WrittenOrderingTerm},
         pattern::pattern_error::PatternError,
         projection::{projection_error::ProjectionError, written_projection_list::WrittenProjectionList},
@@ -269,7 +270,7 @@ mod tests {
             "speed-limit>1",
         ]
         .into_iter()
-        .map(|q| QueryError::from(q.parse::<Filter>().expect_err("outside the clause 4.9 grammar")))
+        .map(|q| QueryError::from(q.parse::<Filter<Written>>().expect_err("outside the clause 4.9 grammar")))
         .collect();
         failures.extend(
             ["", "(Home", "Home)", "Home;Vehicle", "Home||Vehicle"]
@@ -297,11 +298,13 @@ mod tests {
             NonZeroUsize::new(1).expect("a positive nesting limit"),
         );
         let comparisons = limits
-            .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
+            .admit(&"a==1,2,3".parse::<Filter<Written>>().expect("a filter"))
             .expect_err("too many comparisons");
-        let nesting = limits.admit(&"a;(b|c)".parse::<Filter>().expect("a filter")).expect_err("nested too deep");
+        let nesting = limits
+            .admit(&"a;(b|c)".parse::<Filter<Written>>().expect("a filter"))
+            .expect_err("nested too deep");
         let written = format!("{}a{}", "(".repeat(65), ")".repeat(65))
-            .parse::<Filter>()
+            .parse::<Filter<Written>>()
             .expect_err("parenthesised too deep");
         for error in [comparisons, nesting, written] {
             let error = QueryError::from(error);
@@ -314,9 +317,9 @@ mod tests {
     #[test]
     fn a_bracket_naming_no_target_language_is_bad_request_data() {
         let neither = "en_GB-x".parse::<TargetLanguage>().expect_err("neither a tag nor a range");
-        let tagged: Filter = "name[en-GB]==\"x\"".parse().expect("a filter");
+        let tagged: Filter<Written> = "name[en-GB]==\"x\"".parse().expect("a filter");
         let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
-        let ranged: Filter = "name[de-*-DE]==\"x\"".parse().expect("a filter");
+        let ranged: Filter<Written> = "name[de-*-DE]==\"x\"".parse().expect("a filter");
         let range = LanguageTargeting::LanguageTags.admit(&ranged).expect_err("a range needs the ranges level");
         for error in [neither, tag, range] {
             let error = QueryError::from(error);

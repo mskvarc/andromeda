@@ -5,6 +5,8 @@ use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, positio
 use andromeda_ngsi_ld_query::{
     filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::Written,
+    namespace_expander::EXAMPLE_NAMESPACE,
     scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{
@@ -321,7 +323,11 @@ fn the_state_reading_answers_every_query_term_as_clause_4_9_does() {
     for (fixture, terms) in cases() {
         let entity = state(&fixture());
         for (q, expected) in terms {
-            let expr = q.parse::<Filter>().expect("the Query Term parses");
+            let expr = q
+                .parse::<Filter<Written>>()
+                .expect("the Query Term parses")
+                .into_expanded()
+                .expect("absolute names");
             pretty_assertions::assert_eq!(
                 filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &entity, NoLinkedEntities),
                 expected,
@@ -346,7 +352,11 @@ fn a_bare_path_holds_for_a_structured_value_and_a_geometry() {
     }]);
     let entity = state(&document);
     for q in ["\"https://example.com/address\"", "\"https://example.com/site\""] {
-        let expr = q.parse::<Filter>().expect("the Query Term parses");
+        let expr = q
+            .parse::<Filter<Written>>()
+            .expect("the Query Term parses")
+            .into_expanded()
+            .expect("absolute names");
         assert!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &entity, NoLinkedEntities),
             "{q}"
@@ -415,9 +425,13 @@ fn a_hop_reads_the_linked_state() {
         }]))
     };
     let hop = FilterReading::of(
-        &"\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\""
-            .parse::<Filter>()
-            .expect("the Query Term parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\""
+                    .parse::<Filter<Written>>()
+                    .expect("the Query Term parses"),
+            )
+            .expect("the names expand"),
         LanguageMatching::TagEquality,
     );
     let mut commercial = LinkedStates::new();

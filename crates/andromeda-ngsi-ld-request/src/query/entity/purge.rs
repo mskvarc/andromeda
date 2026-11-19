@@ -41,6 +41,7 @@ use andromeda_ngsi_ld_query::{
         Filter,
         compilation::{AdmittedFilter, FilterAdmission, admit_q_filter},
     },
+    name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
@@ -68,7 +69,7 @@ pub struct PurgeEntitiesParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -77,7 +78,7 @@ pub struct PurgeEntitiesParameters {
     pub scope_q: Option<ScopeQuery>,
     /// The context source filter (clause 4.9 `csf`).
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
     /// The `GeoProperty` Table 6.4.3.3-1 names for a `GeoJSON` representation
     /// (`geometryProperty`).
     #[serde(rename = "geometryProperty")]

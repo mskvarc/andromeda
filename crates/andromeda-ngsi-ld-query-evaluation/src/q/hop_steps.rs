@@ -8,7 +8,10 @@
 //! evaluation on one reading of which objects a hop crosses.
 
 use crate::{q::attribute_axis::relationship_objects, queried_entity::attribute_reading::QueriedEntity};
-use andromeda_ngsi_ld_query::filter::{Filter, attribute_path::AttributePath};
+use andromeda_ngsi_ld_query::{
+    filter::{Filter, attribute_path::AttributePath},
+    name_stage::Expanded,
+};
 
 /// One Relationship object a hop crosses, with the path the hop continues
 /// along in the entity it names.
@@ -17,13 +20,13 @@ pub struct HopStep<'a, 'q> {
     /// The object: the identifier of the linked entity.
     pub object: &'a str,
     /// The path left after the hop, evaluated against the linked entity.
-    pub inner: &'q AttributePath,
+    pub inner: &'q AttributePath<Expanded>,
 }
 
 /// The attribute axes of an expression's Query Terms that cross into a linked
 /// entity, in pre-order.
 #[must_use]
-pub fn linked_paths(expr: &Filter) -> Vec<&AttributePath> {
+pub fn linked_paths(expr: &Filter<Expanded>) -> Vec<&AttributePath<Expanded>> {
     match expr {
         Filter::And(terms) | Filter::Or(terms) => terms.iter().flat_map(linked_paths).collect(),
         Filter::Term(pred) => {
@@ -36,7 +39,7 @@ pub fn linked_paths(expr: &Filter) -> Vec<&AttributePath> {
 /// Every step the hops of `paths` take out of `entity`: one per object of each
 /// hop's Relationship, the same objects the evaluator crosses. A wholly local
 /// path takes no step.
-pub fn hop_steps<'a, 'q, E: QueriedEntity<'a>>(entity: E, paths: &[&'q AttributePath]) -> Vec<HopStep<'a, 'q>> {
+pub fn hop_steps<'a, 'q, E: QueriedEntity<'a>>(entity: E, paths: &[&'q AttributePath<Expanded>]) -> Vec<HopStep<'a, 'q>> {
     paths
         .iter()
         .flat_map(|path| match path {
@@ -54,7 +57,11 @@ mod tests {
         q::hop_steps::{hop_steps, linked_paths},
         queried_entity::expanded_fixture::FixtureEntity,
     };
-    use andromeda_ngsi_ld_query::filter::{Filter, attribute_path::AttributePath};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, attribute_path::AttributePath},
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
+    };
     use serde_json::json;
 
     /// An entity whose `a` Relationship names X through one instance and Y
@@ -77,8 +84,10 @@ mod tests {
     #[test]
     fn hop_steps_pair_each_object_with_the_rest_of_its_path() {
         let expr = "\"https://example.com/a\"{\"https://example.com/b\"{\"https://example.com/c\"}}==1"
-            .parse::<Filter>()
-            .expect("parses");
+            .parse::<Filter<Written>>()
+            .expect("parses")
+            .into_expanded()
+            .expect("absolute names");
         let paths = linked_paths(&expr);
         let entity = entity();
         let steps = hop_steps(&entity, &paths);
@@ -94,10 +103,18 @@ mod tests {
     #[test]
     fn an_expression_without_a_hop_takes_no_step() {
         let expr = "\"https://example.com/a\"==\"urn:x\";\"https://example.com/p\""
-            .parse::<Filter>()
-            .expect("parses");
-        pretty_assertions::assert_eq!(linked_paths(&expr), Vec::<&AttributePath>::new());
-        let through_property = "\"https://example.com/p\"{\"https://example.com/c\"}".parse::<Filter>().expect("parses");
+            .parse::<Filter<Written>>()
+            .expect("parses")
+            .into_expanded()
+            .expect("absolute names");
+        pretty_assertions::assert_eq!(linked_paths(&expr), Vec::<&AttributePath<Expanded>>::new());
+        let through_property = EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/p\"{\"https://example.com/c\"}"
+                    .parse::<Filter<Written>>()
+                    .expect("parses"),
+            )
+            .expect("the names expand");
         let entity = entity();
         pretty_assertions::assert_eq!(
             hop_steps(&entity, &linked_paths(&through_property)),

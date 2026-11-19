@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_query::{
         nested_names::NestedNames,
     },
     geo::{compilation as geo_compile, compiled_geo_query::CompiledGeoQuery},
+    name_stage::{Expanded, Written},
     projection::{
         attrs_selection::{AttrsAdmission, expand_attrs_admitted},
         expanded_projection::ExpandedProjection,
@@ -208,7 +209,7 @@ const fn compile_instance_page(
 /// Compile the clause 4.5.19 response shape: output format, aggregation
 /// methods and period, the extension grouping, and whether system attributes
 /// survive.
-fn compile_representation(params: &TemporalQueryParameters, format: TemporalFormat, grouping: Option<AggregationGrouping>) -> Representation {
+fn compile_representation(params: &TemporalQueryParameters, format: TemporalFormat, grouping: Option<AggregationGrouping<Expanded>>) -> Representation {
     // Tables 6.18.3.2-1 and 6.19.3.1-1 apply the aggregation parameters to
     // aggregated values only; a winning non-aggregated format ignores them
     // even when `options` names `aggregatedValues`.
@@ -242,12 +243,12 @@ async fn compile_grouping(
     format: TemporalFormat,
     json_keys: &JsonKeyAttributes,
     expander: &impl TermExpander,
-) -> Result<Option<AggregationGrouping>, TemporalError> {
+) -> Result<Option<AggregationGrouping<Expanded>>, TemporalError> {
     let (true, Some(raw)) = (format.is_grouped(), params.aggr_group_by.as_deref()) else {
         return Ok(None);
     };
     let grouping = raw
-        .parse::<AggregationGrouping>()
+        .parse::<AggregationGrouping<Written>>()
         .map_err(|error| TemporalError::Request(ParameterError::AggrGroupByInvalid(error)))?;
     let mut expanded_terms = Vec::with_capacity(grouping.terms().len());
     for term in grouping.0 {

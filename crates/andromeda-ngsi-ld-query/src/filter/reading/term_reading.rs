@@ -1,7 +1,7 @@
 //! One Query Term with every clause 4.9 decision taken.
 
 use crate::filter::reading::{hop::Hop, operand::Operand, terminal::Terminal, value_test::ValueTest};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 
 /// One Query Term, decided. Only lowering builds one, so every reading of a
 /// term is one lowering has taken.
@@ -14,7 +14,7 @@ pub struct TermReading {
     /// The linked-entity hops, outermost first.
     pub(super) hops: Vec<Hop>,
     /// The attribute of the Entity the last hop reaches, expanded.
-    pub(super) attribute: AttributeName,
+    pub(super) attribute: AttributeIri,
     /// The sub-attributes walked below the attribute, outermost first.
     pub(super) sub_attributes: Vec<AttributeName>,
     /// What the path ends on at the last instance.
@@ -44,7 +44,7 @@ impl TermReading {
 
     /// The attribute of the Entity the last hop reaches.
     #[must_use]
-    pub const fn attribute(&self) -> &AttributeName {
+    pub const fn attribute(&self) -> &AttributeIri {
         &self.attribute
     }
 

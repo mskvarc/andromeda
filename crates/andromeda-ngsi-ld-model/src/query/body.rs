@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
     geo::written_geo_query::WrittenGeoQuery,
+    name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
     projection::written_projection_term::WrittenProjectionTerm,
     scope::scope_query::ScopeQuery,
@@ -36,7 +37,7 @@ pub struct Query {
     pub entities: Option<Vec<EntitySelector>>,
     /// Clause-4.9 entity filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// Clause-4.10 geo-spatial filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geo_q: Option<WrittenGeoQuery>,
@@ -70,7 +71,7 @@ pub struct Query {
     pub aggr_params: Option<AggregationParameters>,
     /// Clause-4.9 filter applied to candidate registrations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
     /// Entity identifiers already encountered during graph traversal.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
     pub contained_by: Option<Vec<Identifier>>,

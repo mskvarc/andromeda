@@ -26,7 +26,7 @@ use crate::{
         value_item::ValueItem,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, entity_type_iri::EntityTypeIri};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
         family_reading::{MultiValueReading, TargetOrigin, ValueKeys, family_reading, hop_families},
@@ -82,7 +82,7 @@ fn target_beyond<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(
 /// array of objects", and with several instances "any object of such
 /// instances". An attribute of a family no hop crosses ([`hop_families`])
 /// names no linked entity, whatever its value spells.
-pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &AttributeName) -> impl Iterator<Item = &'a str> {
+pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &AttributeIri) -> impl Iterator<Item = &'a str> {
     entity
         .attribute_instances(relationship)
         .filter(|instance| hop_families().any(|family| family == instance.family()))
@@ -134,8 +134,11 @@ fn element_beyond<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, ho
 ///
 /// An empty guard admits every linked entity; otherwise clause 4.9's
 /// `1*(EntityType)` list is a disjunction, so one shared type is enough.
-fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[EntityTypeName]) -> bool {
-    guard_types.is_empty() || linked.types().any(|declared| guard_types.contains(declared))
+fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[EntityTypeIri]) -> bool {
+    guard_types.is_empty()
+        || linked
+            .types()
+            .any(|declared| guard_types.iter().any(|guard| guard.as_str() == declared.as_str()))
 }
 
 /// Whether `reaches` takes some instance the sub-attribute chain
@@ -239,14 +242,17 @@ mod tests {
             linked_entities::NoLinkedEntities,
         },
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::{
-        attribute_path::AttributePath,
-        language_matching::LanguageMatching,
-        query_term::QueryTerm,
-        reading::{family_reading::TargetOrigin, term_reading::TermReading},
-        trailing_group::{MemberPath, TrailingGroup},
-        value_path::ValuePath,
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
+    use andromeda_ngsi_ld_query::{
+        filter::{
+            attribute_path::AttributePath,
+            language_matching::LanguageMatching,
+            query_term::QueryTerm,
+            reading::{family_reading::TargetOrigin, term_reading::TermReading},
+            trailing_group::{MemberPath, TrailingGroup},
+            value_path::ValuePath,
+        },
+        name_stage::{Expanded, Written},
     };
     use serde_json::{Value, json};
 
@@ -255,20 +261,25 @@ mod tests {
         raw.parse().expect("a valid attribute name")
     }
 
+    /// An expanded attribute name for a test path.
+    fn iri(raw: &str) -> AttributeIri {
+        raw.parse().expect("an absolute IRI")
+    }
+
     /// The target values a path resolves to, with their origins.
-    fn targets_along(entity: &Value, path: &ValuePath) -> Vec<(Value, TargetOrigin)> {
+    fn targets_along(entity: &Value, path: &ValuePath<Expanded>) -> Vec<(Value, TargetOrigin)> {
         targets_under(entity, path, LanguageMatching::TagEquality)
     }
 
     /// The reading of the existence term over a local path, its target
     /// language selecting keys by `matching`.
-    fn term_along(path: &ValuePath, matching: LanguageMatching) -> TermReading {
+    fn term_along(path: &ValuePath<Expanded>, matching: LanguageMatching) -> TermReading {
         TermReading::of(&QueryTerm::Exists(AttributePath::Local(path.clone())), matching)
     }
 
     /// The target values a path resolves to under `matching`, with their
     /// origins.
-    fn targets_under(entity: &Value, path: &ValuePath, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
+    fn targets_under(entity: &Value, path: &ValuePath<Expanded>, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
         let entity = FixtureEntity::from_expanded(entity);
         let mut targets = Vec::new();
         any_target(&entity, &term_along(path, matching), NoLinkedEntities, &mut |target| {
@@ -280,8 +291,8 @@ mod tests {
 
     /// A path whose trailing group is the one member `member`, as the client
     /// spelled it.
-    fn bracketed(attribute: &str, member: &str) -> ValuePath {
-        let mut path = ValuePath::simple(name(attribute));
+    fn bracketed(attribute: &str, member: &str) -> ValuePath<Expanded> {
+        let mut path = ValuePath::simple(iri(attribute));
         path.trailing = Some(TrailingGroup::Members(MemberPath::new(vec![name(member)])));
         path
     }
@@ -323,15 +334,15 @@ mod tests {
 
     /// The target values one bare attribute path resolves to.
     fn targets_of(entity: &Value, attribute: &str) -> Vec<Value> {
-        targets_along(entity, &ValuePath::simple(name(attribute)))
+        targets_along(entity, &ValuePath::simple(iri(attribute)))
             .into_iter()
             .map(|(value, _)| value)
             .collect()
     }
 
     /// A path through the given sub-attribute segments.
-    fn through(attribute: &str, sub_attrs: &[&str]) -> ValuePath {
-        let mut path = ValuePath::simple(name(attribute));
+    fn through(attribute: &str, sub_attrs: &[&str]) -> ValuePath<Expanded> {
+        let mut path = ValuePath::simple(iri(attribute));
         path.sub_attributes = sub_attrs.iter().map(|segment| name(segment)).collect();
         path
     }
@@ -494,7 +505,7 @@ mod tests {
             "https://example.com/myJson": [{"https://uri.etsi.org/ngsi-ld/hasJSON": [{"@value": {"a": {"b": [1, 2]}}, "@type": "@json"}]}]
         });
         let addressed = vec![name("https://example.com/a"), name("https://example.com/b")];
-        let mut path = ValuePath::simple(name("https://example.com/myJson"));
+        let mut path = ValuePath::simple(iri("https://example.com/myJson"));
         path.trailing = Some(TrailingGroup::Members(MemberPath {
             addressed: addressed.clone(),
             written: vec![name("a"), name("b")],
@@ -524,8 +535,10 @@ mod tests {
     /// The strings `name[<language>]` reads under `matching`.
     fn read_language(language: &str, matching: LanguageMatching) -> Vec<Value> {
         let path = format!("\"https://example.com/name\"[{language}]")
-            .parse::<ValuePath>()
-            .expect("a target language");
+            .parse::<ValuePath<Written>>()
+            .expect("a target language")
+            .into_expanded()
+            .expect("an absolute IRI");
         targets_under(&multilingual(), &path, matching).into_iter().map(|(value, _)| value).collect()
     }
 
@@ -562,7 +575,11 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "en-GB", "@value": "Lift"}]
             }]
         }));
-        let english = "\"https://example.com/name\"[en]".parse::<ValuePath>().expect("a path");
+        let english = "\"https://example.com/name\"[en]"
+            .parse::<ValuePath<Written>>()
+            .expect("a path")
+            .into_expanded()
+            .expect("an absolute IRI");
         assert!(!addresses_element(
             &entity,
             &term_along(&english, LanguageMatching::TagEquality),
@@ -584,7 +601,11 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://example.com/en-GB": [{"@value": "x"}]}]
             }]
         });
-        let path = "\"https://example.com/address\"[en-GB]".parse::<ValuePath>().expect("a path");
+        let path = "\"https://example.com/address\"[en-GB]"
+            .parse::<ValuePath<Written>>()
+            .expect("a path")
+            .into_expanded()
+            .expect("an absolute IRI");
         pretty_assertions::assert_eq!(targets_along(&entity, &path), Vec::new());
     }
 }

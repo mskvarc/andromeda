@@ -19,6 +19,7 @@ use andromeda_linked_retrieval::{
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     filter::compilation::{FilterAdmission, admit_q_filter},
+    name_stage::Written,
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
     query_error::QueryError,
     temporal::{
@@ -300,7 +301,7 @@ impl TemporalQueryParameters {
         if !self.parse_format()?.is_grouped() {
             return Err(ParameterError::AggrGroupByWithoutGroupedValues);
         }
-        let grouping = raw.parse::<AggregationGrouping>().map_err(ParameterError::AggrGroupByInvalid)?;
+        let grouping = raw.parse::<AggregationGrouping<Written>>().map_err(ParameterError::AggrGroupByInvalid)?;
         if self.last_n.is_some() {
             return Err(ParameterError::LastNWithGrouping);
         }

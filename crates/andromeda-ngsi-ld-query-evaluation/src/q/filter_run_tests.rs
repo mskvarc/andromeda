@@ -24,7 +24,8 @@ use andromeda_ngsi_ld_query::{
             term_reading::TermReading,
         },
     },
-    namespace_expander::EXAMPLE_NAMESPACE_TYPED,
+    name_stage::{Expanded, Written},
+    namespace_expander::{EXAMPLE_NAMESPACE, EXAMPLE_NAMESPACE_TYPED},
 };
 use andromeda_q_corpus::conformance::{COLOR, CONFORMANCE, ConformanceVehicle, NAME, SPEED};
 use pretty_assertions::assert_eq;
@@ -33,19 +34,19 @@ use std::borrow::Cow;
 
 /// Whether an expanded entity satisfies an expression, read through the
 /// entity traits.
-fn holds(expr: &Filter, document: &Value) -> bool {
+fn holds(expr: &Filter<Expanded>, document: &Value) -> bool {
     holds_under(expr, document, LanguageMatching::TagEquality)
 }
 
 /// Whether an expanded entity satisfies an expression whose target
 /// languages select keys by `matching`.
-fn holds_under(expr: &Filter, document: &Value, matching: LanguageMatching) -> bool {
+fn holds_under(expr: &Filter<Expanded>, document: &Value, matching: LanguageMatching) -> bool {
     filter_holds(&FilterReading::of(expr, matching), &FixtureEntity::from_expanded(document), NoLinkedEntities)
 }
 
 /// Whether an expanded entity satisfies an expression whose hops cross into
 /// the expanded `linked` entities.
-fn holds_linked(expr: &Filter, document: &Value, linked: &[Value]) -> bool {
+fn holds_linked(expr: &Filter<Expanded>, document: &Value, linked: &[Value]) -> bool {
     let linked: Vec<FixtureEntity> = linked.iter().map(FixtureEntity::from_expanded).collect();
     filter_holds(
         &FilterReading::of(expr, LanguageMatching::TagEquality),
@@ -102,7 +103,9 @@ fn a_single_predicate_is_evaluated_as_its_own_expression() {
         "\"https://example.com/isParked\">\"a\"",
     ];
     for raw in terms {
-        let expr = raw.parse::<Filter>().expect("parses");
+        let expr = EXAMPLE_NAMESPACE
+            .expanded(raw.parse::<Filter<Written>>().expect("parses"))
+            .expect("the names expand");
         let Filter::Term(pred) = &expr else {
             panic!("{raw} is a single Query Term");
         };
@@ -116,43 +119,69 @@ fn a_single_predicate_is_evaluated_as_its_own_expression() {
 
 #[test]
 fn eval_existence_present() {
-    let expr = "\"https://example.com/speed\"".parse::<Filter>().unwrap();
+    let expr = EXAMPLE_NAMESPACE
+        .expanded("\"https://example.com/speed\"".parse::<Filter<Written>>().unwrap())
+        .expect("the names expand");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_existence_absent() {
-    let expr = "\"https://example.com/nonexistent\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/nonexistent\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_number_greater() {
-    let expr = "\"https://example.com/speed\">50".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\">50"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_number_greater_false() {
-    let expr = "\"https://example.com/speed\">100".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\">100"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_number_equal() {
-    let expr = "\"https://example.com/speed\"==80".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\"==80"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_number_unequal() {
-    let expr = "\"https://example.com/speed\"!=50".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\"!=50"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_float_equal() {
-    let expr = "\"https://example.com/temperature\"==23.5".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/temperature\"==23.5"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
@@ -163,21 +192,33 @@ fn exact_decimals_compare_beyond_binary64_precision() {
     )
     .expect("exact arbitrary-precision JSON");
     assert!(holds(
-        &"\"https://example.com/reading\"==0.100000000000000005"
-            .parse::<Filter>()
-            .expect("exact equality"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/reading\"==0.100000000000000005"
+                    .parse::<Filter<Written>>()
+                    .expect("exact equality")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(holds(
-        &"\"https://example.com/reading\">0.100000000000000004"
-            .parse::<Filter>()
-            .expect("exact ordering"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/reading\">0.100000000000000004"
+                    .parse::<Filter<Written>>()
+                    .expect("exact ordering")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(!holds(
-        &"\"https://example.com/reading\"==0.100000000000000004"
-            .parse::<Filter>()
-            .expect("adjacent inequality"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/reading\"==0.100000000000000004"
+                    .parse::<Filter<Written>>()
+                    .expect("adjacent inequality")
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -193,7 +234,16 @@ fn a_json_string_declared_as_a_number_compares_as_the_number_it_names() {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "0.100000000000000005", "@type": "http://www.w3.org/2001/XMLSchema#decimal"}]
         }]
     }]);
-    let reading = |q: &str| holds(&format!("\"https://example.com/reading\"{q}").parse::<Filter>().expect("parses"), &entity);
+    let reading = |q: &str| {
+        holds(
+            &format!("\"https://example.com/reading\"{q}")
+                .parse::<Filter<Written>>()
+                .expect("parses")
+                .into_expanded()
+                .expect("absolute names"),
+            &entity,
+        )
+    };
     assert!(reading("==0.100000000000000005"));
     assert!(!reading("!=0.100000000000000005"));
     assert!(reading(">0.1"));
@@ -212,7 +262,11 @@ fn declared_double(value: &str) -> Value {
 
 fn double_holds(value: &str, q: &str) -> bool {
     holds(
-        &format!("\"https://example.com/reading\"{q}").parse::<Filter>().expect("parses"),
+        &format!("\"https://example.com/reading\"{q}")
+            .parse::<Filter<Written>>()
+            .expect("parses")
+            .into_expanded()
+            .expect("absolute names"),
         &declared_double(value),
     )
 }
@@ -254,7 +308,16 @@ fn a_json_string_declared_as_a_boolean_compares_as_a_boolean() {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "true", "@type": "http://www.w3.org/2001/XMLSchema#boolean"}]
         }]
     }]);
-    let open = |q: &str| holds(&format!("\"https://example.com/open\"{q}").parse::<Filter>().expect("parses"), &entity);
+    let open = |q: &str| {
+        holds(
+            &format!("\"https://example.com/open\"{q}")
+                .parse::<Filter<Written>>()
+                .expect("parses")
+                .into_expanded()
+                .expect("absolute names"),
+            &entity,
+        )
+    };
     assert!(open("==true"));
     assert!(!open("!=true"));
     assert!(!open("==\"true\""));
@@ -273,7 +336,16 @@ fn a_json_string_declared_as_no_number_compares_as_a_string() {
             "@id": "urn:ngsi-ld:Sensor:1",
             "https://example.com/reading": [{"https://uri.etsi.org/ngsi-ld/hasValue": [value]}]
         }]);
-        let reading = |q: &str| holds(&format!("\"https://example.com/reading\"{q}").parse::<Filter>().expect("parses"), &entity);
+        let reading = |q: &str| {
+            holds(
+                &format!("\"https://example.com/reading\"{q}")
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+                    .into_expanded()
+                    .expect("absolute names"),
+                &entity,
+            )
+        };
         assert!(!reading("==4") && reading("!=4") && !reading(">3"));
         assert!(reading("==\"4\"") && !reading("!=\"4\""));
     }
@@ -281,13 +353,21 @@ fn a_json_string_declared_as_no_number_compares_as_a_string() {
 
 #[test]
 fn eval_string_equal() {
-    let expr = "\"https://example.com/brandName\"==\"Mercedes\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/brandName\"==\"Mercedes\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_string_unequal() {
-    let expr = "\"https://example.com/brandName\"!=\"BMW\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/brandName\"!=\"BMW\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
@@ -295,10 +375,28 @@ fn eval_string_unequal() {
 /// follows `a` under it, though `M` precedes `a` by code point.
 #[test]
 fn a_string_ordering_follows_the_unicode_collation_algorithm() {
-    assert!(holds(&"\"https://example.com/brandName\">\"a\"".parse::<Filter>().unwrap(), &vehicle_entity()));
-    assert!(!holds(&"\"https://example.com/brandName\"<\"a\"".parse::<Filter>().unwrap(), &vehicle_entity()));
     assert!(holds(
-        &"\"https://example.com/brandName\"==\"a\"..\"z\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/brandName\">\"a\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &vehicle_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/brandName\"<\"a\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &vehicle_entity()
+    ));
+    assert!(holds(
+        &"\"https://example.com/brandName\"==\"a\"..\"z\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &vehicle_entity()
     ));
 }
@@ -306,8 +404,10 @@ fn a_string_ordering_follows_the_unicode_collation_algorithm() {
 #[test]
 fn eval_relationship_equal() {
     let expr = "\"https://example.com/isParked\"==\"urn:ngsi-ld:OffStreetParking:Downtown1\""
-        .parse::<Filter>()
-        .unwrap();
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
@@ -330,91 +430,144 @@ fn a_percent_encoded_relationship_object_matches_only_its_own_spelling() {
         ("\"https://example.com/locatedIn\"==urn:ngsi-ld:Building:1", false),
         ("\"https://example.com/locatedIn\"!=\"urn:ngsi-ld:Building:1\"", true),
     ] {
-        pretty_assertions::assert_eq!(holds(&expression.parse::<Filter>().unwrap(), &entity), expected, "{expression}");
+        pretty_assertions::assert_eq!(
+            holds(
+                &expression.parse::<Filter<Written>>().unwrap().into_expanded().expect("absolute names"),
+                &entity
+            ),
+            expected,
+            "{expression}"
+        );
     }
     assert!(!holds(
-        &"\"https://example.com/isParked\"==\"urn:ngsi-ld%3AOffStreetParking%3ADowntown1\""
-            .parse::<Filter>()
-            .unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/isParked\"==\"urn:ngsi-ld%3AOffStreetParking%3ADowntown1\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &vehicle_entity()
     ));
 }
 
 #[test]
 fn eval_boolean() {
-    let expr = "\"https://example.com/active\"==true".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/active\"==true"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_range() {
-    let expr = "\"https://example.com/speed\"==70..90".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\"==70..90"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_range_outside() {
-    let expr = "\"https://example.com/speed\"==90..100".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\"==90..100"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_value_list_match() {
-    let expr = "\"https://example.com/brandName\"==\"BMW\",\"Mercedes\",\"Audi\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/brandName\"==\"BMW\",\"Mercedes\",\"Audi\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_value_list_no_match() {
-    let expr = "\"https://example.com/brandName\"==\"BMW\",\"Audi\"".parse::<Filter>().unwrap();
+    let expr = EXAMPLE_NAMESPACE
+        .expanded("\"https://example.com/brandName\"==\"BMW\",\"Audi\"".parse::<Filter<Written>>().unwrap())
+        .expect("the names expand");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_match_pattern() {
-    let expr = "\"https://example.com/brandName\"~=\"Merc.*\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/brandName\"~=\"Merc.*\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_not_match_pattern() {
-    let expr = "\"https://example.com/brandName\"!~=\"BMW.*\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/brandName\"!~=\"BMW.*\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_and() {
     let expr = "\"https://example.com/speed\">50;\"https://example.com/brandName\"==\"Mercedes\""
-        .parse::<Filter>()
-        .unwrap();
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_and_one_false() {
-    let expr = "\"https://example.com/speed\">100;\"https://example.com/brandName\"==\"Mercedes\""
-        .parse::<Filter>()
-        .unwrap();
+    let expr = EXAMPLE_NAMESPACE
+        .expanded(
+            "\"https://example.com/speed\">100;\"https://example.com/brandName\"==\"Mercedes\""
+                .parse::<Filter<Written>>()
+                .unwrap(),
+        )
+        .expect("the names expand");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_or() {
-    let expr = "\"https://example.com/speed\">100|\"https://example.com/brandName\"==\"Mercedes\""
-        .parse::<Filter>()
-        .unwrap();
+    let expr = EXAMPLE_NAMESPACE
+        .expanded(
+            "\"https://example.com/speed\">100|\"https://example.com/brandName\"==\"Mercedes\""
+                .parse::<Filter<Written>>()
+                .unwrap(),
+        )
+        .expect("the names expand");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_compound_value_path() {
-    let expr = "\"https://example.com/address\"[city]==\"Berlin\"".parse::<Filter>().unwrap();
+    let expr = EXAMPLE_NAMESPACE
+        .expanded("\"https://example.com/address\"[city]==\"Berlin\"".parse::<Filter<Written>>().unwrap())
+        .expect("the names expand");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_compound_value_path_no_match() {
-    let expr = "\"https://example.com/address\"[city]==\"Paris\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/address\"[city]==\"Paris\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
@@ -443,15 +596,23 @@ fn entity_with_expanded_compound_value() -> Value {
 fn a_compound_member_of_an_expanded_value_is_reached_through_its_member_node() {
     let entity = entity_with_expanded_compound_value();
     assert!(holds(
-        &"\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\""
-            .parse::<Filter>()
-            .unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(!holds(
-        &"\"https://example.com/address\"[\"https://example.com/city\"]==\"Paris\""
-            .parse::<Filter>()
-            .unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\"[\"https://example.com/city\"]==\"Paris\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -460,15 +621,23 @@ fn a_compound_member_of_an_expanded_value_is_reached_through_its_member_node() {
 fn a_nested_compound_member_is_reached_through_one_hop_per_member() {
     let entity = entity_with_expanded_compound_value();
     assert!(holds(
-        &"\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]==40"
-            .parse::<Filter>()
-            .unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]==40"
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(holds(
-        &"\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]>30"
-            .parse::<Filter>()
-            .unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]>30"
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -477,13 +646,23 @@ fn a_nested_compound_member_is_reached_through_one_hop_per_member() {
 fn a_compound_member_the_value_does_not_carry_resolves_no_target() {
     let entity = entity_with_expanded_compound_value();
     assert!(!holds(
-        &"\"https://example.com/address\"[\"https://example.com/postcode\"]==\"10115\""
-            .parse::<Filter>()
-            .unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\"[\"https://example.com/postcode\"]==\"10115\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(!holds(
-        &"\"https://example.com/address\"[\"https://example.com/postcode\"]".parse::<Filter>().unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\"[\"https://example.com/postcode\"]"
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -510,7 +689,10 @@ fn entity_with_several_member_values() -> Value {
 
 /// Whether the `q` text holds for [`entity_with_several_member_values`].
 fn several_values_hold(q: &str) -> bool {
-    holds(&q.parse::<Filter>().expect("parses"), &entity_with_several_member_values())
+    holds(
+        &q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"),
+        &entity_with_several_member_values(),
+    )
 }
 
 /// Clause 4.9: "If the data type of the target value and the data type of
@@ -529,7 +711,7 @@ fn a_member_compares_only_with_an_operand_of_its_own_json_type() {
             }]
         }]
     }]);
-    let member_holds = |q: &str| holds(&q.parse::<Filter>().expect("parses"), &entity);
+    let member_holds = |q: &str| holds(&q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"), &entity);
     let zip = "\"https://example.com/address\"[\"https://example.com/zip\"]";
     let code = "\"https://example.com/address\"[\"https://example.com/code\"]";
     let open = "\"https://example.com/address\"[\"https://example.com/open\"]";
@@ -614,14 +796,21 @@ fn a_trailing_path_into_a_property_holding_several_structured_values_reaches_not
         format!("{path}==5,6"),
         format!("{path}!=7"),
     ] {
-        let expr = q.parse::<Filter>().expect("parses");
+        let expr = q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names");
         assert!(!holds(&expr, &several), "{q} holds over several structured values");
     }
     for q in [String::from(path), format!("{path}==5"), format!("{path}==5,6"), format!("{path}!=7")] {
-        let expr = q.parse::<Filter>().expect("parses");
+        let expr = q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names");
         assert!(holds(&expr, &one), "{q} does not hold over one structured value");
     }
-    assert!(!holds(&format!("{path}==6").parse::<Filter>().expect("parses"), &one));
+    assert!(!holds(
+        &format!("{path}==6")
+            .parse::<Filter<Written>>()
+            .expect("parses")
+            .into_expanded()
+            .expect("absolute names"),
+        &one
+    ));
 }
 
 /// A member holding only a node is the target element, and its value is an
@@ -667,7 +856,7 @@ fn entity_with_json_property() -> Value {
 #[tokio::test]
 async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expanded() {
     let expanded = expand_filter(
-        "myJson[city]==\"Berlin\"".parse::<Filter>().expect("parses"),
+        "myJson[city]==\"Berlin\"".parse::<Filter<Written>>().expect("parses"),
         &JsonKeyAttributes::default(),
         &EXAMPLE_NAMESPACE_TYPED,
     )
@@ -676,7 +865,7 @@ async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expa
     assert!(holds(&expanded, &entity_with_json_property()));
 
     let non_matching = expand_filter(
-        "myJson[city]==\"Paris\"".parse::<Filter>().expect("parses"),
+        "myJson[city]==\"Paris\"".parse::<Filter<Written>>().expect("parses"),
         &JsonKeyAttributes::default(),
         &EXAMPLE_NAMESPACE_TYPED,
     )
@@ -706,13 +895,21 @@ fn multi_instance_entity() -> Value {
 #[test]
 fn eval_matches_when_any_instance_satisfies_the_predicate() {
     // Clause 4.9 p. 86: the target value is any value of the instances; the first instance alone is 10.
-    let expr = "\"https://example.com/speed\">50".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\">50"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &multi_instance_entity()));
 }
 
 #[test]
 fn eval_rejects_when_no_instance_satisfies_the_predicate() {
-    let expr = "\"https://example.com/speed\">100".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/speed\">100"
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds(&expr, &multi_instance_entity()));
 }
 
@@ -720,13 +917,21 @@ fn eval_rejects_when_no_instance_satisfies_the_predicate() {
 fn eval_not_match_pattern_requires_the_attribute_to_be_present() {
     // Clause 4.9: notPatternOp requires the entity to contain the target
     // element, so a missing attribute does not match.
-    let expr = "\"https://example.com/missing\"!~=\"x\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/missing\"!~=\"x\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds(&expr, &vehicle_entity()));
 }
 
 #[test]
 fn eval_not_match_pattern_still_matches_a_present_non_matching_value() {
-    let expr = "\"https://example.com/brandName\"!~=\"BMW.*\"".parse::<Filter>().unwrap();
+    let expr = "\"https://example.com/brandName\"!~=\"BMW.*\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &vehicle_entity()));
 }
 
@@ -771,15 +976,19 @@ fn a_temporal_sub_attribute_resolves_to_its_direct_value() {
     // still reach it rather than resolving nothing. An instant the instance
     // holds is a `DateTime`, which a bare `dateTime` operand compares with.
     let expr = "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z"
-        .parse::<Filter>()
-        .unwrap();
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds(&expr, &rich_entity()));
 }
 
 #[test]
 fn a_language_property_satisfies_a_bare_existence_check() {
     // Clause 4.9: existence holds for any attribute family, including a LanguageProperty.
-    let expr = "\"https://example.com/description\"".parse::<Filter>().unwrap();
+    let expr = EXAMPLE_NAMESPACE
+        .expanded("\"https://example.com/description\"".parse::<Filter<Written>>().unwrap())
+        .expect("the names expand");
     assert!(holds(&expr, &rich_entity()));
 }
 
@@ -812,7 +1021,12 @@ fn a_bare_attribute_path_holds_for_a_structured_value_and_a_geometry() {
     let fixture = FixtureEntity::from_expanded(&entity);
     let exists = |q: &str| {
         filter_holds(
-            &FilterReading::of(&q.parse::<Filter>().expect("parses"), LanguageMatching::TagEquality),
+            &FilterReading::of(
+                &EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("parses"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            ),
             &fixture,
             NoLinkedEntities,
         )
@@ -832,8 +1046,22 @@ fn a_bare_attribute_path_holds_for_a_structured_value_and_a_geometry() {
 fn values_of_different_types_are_considered_unequal() {
     // Clause 4.9: `!=` holds and `==` fails when the operand's type differs
     // from the target's, here a boolean attribute against a number.
-    assert!(holds(&"\"https://example.com/active\"!=5".parse::<Filter>().unwrap(), &vehicle_entity()));
-    assert!(!holds(&"\"https://example.com/active\"==5".parse::<Filter>().unwrap(), &vehicle_entity()));
+    assert!(holds(
+        &"\"https://example.com/active\"!=5"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &vehicle_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/active\"==5"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &vehicle_entity()
+    ));
 }
 
 #[test]
@@ -843,11 +1071,46 @@ fn an_array_valued_property_is_matched_by_membership() {
     // the target value, if the latter is an array". The array a client wrote
     // as a Property value expands to one `hasValue` node per element, so
     // every element is part of the target value.
-    assert!(holds(&"\"https://example.com/tags\"==1".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(holds(&"\"https://example.com/tags\"==3".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(!holds(&"\"https://example.com/tags\"==9".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(holds(&"\"https://example.com/tags\"!=9".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(!holds(&"\"https://example.com/tags\"!=3".parse::<Filter>().unwrap(), &rich_entity()));
+    assert!(holds(
+        &"\"https://example.com/tags\"==1"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(holds(
+        &"\"https://example.com/tags\"==3"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/tags\"==9"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(holds(
+        &"\"https://example.com/tags\"!=9"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/tags\"!=3"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
 }
 
 /// Clause 4.9: "If the target element is a `ListProperty`, the target value
@@ -856,11 +1119,46 @@ fn an_array_valued_property_is_matched_by_membership() {
 /// the latter is an array".
 #[test]
 fn a_list_property_is_matched_by_membership_of_its_value_list() {
-    assert!(holds(&"\"https://example.com/colors\"==\"red\"".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(holds(&"\"https://example.com/colors\"==\"blue\"".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(!holds(&"\"https://example.com/colors\"==\"green\"".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(holds(&"\"https://example.com/colors\"!=\"green\"".parse::<Filter>().unwrap(), &rich_entity()));
-    assert!(!holds(&"\"https://example.com/colors\"!=\"blue\"".parse::<Filter>().unwrap(), &rich_entity()));
+    assert!(holds(
+        &"\"https://example.com/colors\"==\"red\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(holds(
+        &"\"https://example.com/colors\"==\"blue\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/colors\"==\"green\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(holds(
+        &"\"https://example.com/colors\"!=\"green\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/colors\"!=\"blue\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
 }
 
 /// Clause 4.9: "If the target element is a `ListRelationship`, the target
@@ -870,19 +1168,35 @@ fn a_list_property_is_matched_by_membership_of_its_value_list() {
 #[test]
 fn a_list_relationship_is_matched_by_membership_of_its_object_list() {
     assert!(holds(
-        &"\"https://example.com/parts\"==\"urn:ngsi-ld:Part:2\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/parts\"==\"urn:ngsi-ld:Part:2\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/parts\"==\"urn:ngsi-ld:Part:9\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/parts\"==\"urn:ngsi-ld:Part:9\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:9\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:9\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:1\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:1\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -894,12 +1208,27 @@ fn a_list_relationship_is_matched_by_membership_of_its_object_list() {
 #[test]
 fn a_list_relationship_matches_no_ordering_or_pattern_operator() {
     assert!(!holds(
-        &"\"https://example.com/parts\">\"urn:ngsi-ld:Part:0\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/parts\">\"urn:ngsi-ld:Part:0\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
-    assert!(!holds(&"\"https://example.com/parts\"~=\"urn:.*\"".parse::<Filter>().unwrap(), &rich_entity()));
     assert!(!holds(
-        &"\"https://example.com/parts\"!~=\"nothing.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/parts\"~=\"urn:.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/parts\"!~=\"nothing.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -912,23 +1241,53 @@ fn a_list_relationship_matches_no_ordering_or_pattern_operator() {
 #[test]
 fn a_multi_term_vocab_property_is_matched_by_membership() {
     assert!(holds(
-        &"\"https://example.com/gender\"==\"https://example.com/Other\"".parse::<Filter>().unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/gender\"==\"https://example.com/Other\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/gender\"==\"https://example.com/Male\"".parse::<Filter>().unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/gender\"==\"https://example.com/Male\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/gender\"==\"https://example.com/Female\"".parse::<Filter>().unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/gender\"==\"https://example.com/Female\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/gender\"!=\"https://example.com/Female\"".parse::<Filter>().unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/gender\"!=\"https://example.com/Female\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/gender\"!=\"https://example.com/Male\"".parse::<Filter>().unwrap(),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/gender\"!=\"https://example.com/Male\""
+                    .parse::<Filter<Written>>()
+                    .unwrap()
+            )
+            .expect("the names expand"),
         &rich_entity()
     ));
 }
@@ -937,7 +1296,14 @@ fn a_multi_term_vocab_property_is_matched_by_membership() {
 fn a_pattern_operator_does_not_match_a_non_string_target() {
     // Clause 4.9: a non-String target is considered not matching, so the
     // number 80 is not stringified to "80" and matched against "8.*".
-    assert!(!holds(&"\"https://example.com/speed\"~=\"8.*\"".parse::<Filter>().unwrap(), &vehicle_entity()));
+    assert!(!holds(
+        &"\"https://example.com/speed\"~=\"8.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &vehicle_entity()
+    ));
 }
 
 #[test]
@@ -946,9 +1312,20 @@ fn a_pattern_operator_does_not_match_a_relationship_object() {
     // other than equality and inequality. A URI is string-shaped, so only its
     // origin rules it out, and `notPatternOp` must not turn the exclusion
     // into a match either.
-    assert!(!holds(&"\"https://example.com/owner\"~=\"urn:.*\"".parse::<Filter>().unwrap(), &rich_entity()));
     assert!(!holds(
-        &"\"https://example.com/owner\"!~=\"^nothing\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/owner\"~=\"urn:.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/owner\"!~=\"^nothing\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -957,9 +1334,20 @@ fn a_pattern_operator_does_not_match_a_relationship_object() {
 fn an_ordering_comparison_against_a_relationship_does_not_match() {
     // Clause 4.9: `>`/`<`/`>=`/`<=` against a Relationship shall not match,
     // but equality against its object still does.
-    assert!(!holds(&"\"https://example.com/owner\">\"a\"".parse::<Filter>().unwrap(), &rich_entity()));
+    assert!(!holds(
+        &"\"https://example.com/owner\">\"a\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
     assert!(holds(
-        &"\"https://example.com/owner\"==\"urn:ngsi-ld:Person:42\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/owner\"==\"urn:ngsi-ld:Person:42\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -972,14 +1360,29 @@ fn a_relationship_lies_within_no_range_and_outside_every_one() {
     // its data type differs from the range's, which the Unequal rule makes
     // unequal.
     assert!(!holds(
-        &"\"https://example.com/owner\"==\"urn:a\"..\"urn:z\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/owner\"==\"urn:a\"..\"urn:z\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
-    assert!(holds(&"\"https://example.com/owner\"!=1..5".parse::<Filter>().unwrap(), &rich_entity()));
+    assert!(holds(
+        &"\"https://example.com/owner\"!=1..5"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
 }
 
 #[test]
@@ -987,7 +1390,11 @@ fn a_target_incomparable_with_a_range_is_outside_it() {
     // "Outside" is the exact complement of "within", so `!=` a numeric range
     // holds for a string target that cannot be inside it.
     assert!(holds(
-        &"\"https://example.com/brandName\"!=70..90".parse::<Filter>().unwrap(),
+        &"\"https://example.com/brandName\"!=70..90"
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &vehicle_entity()
     ));
 }
@@ -1016,10 +1423,12 @@ fn parking(parking_id: &str, category: &str, parking_type: &str) -> Value {
 
 const DOWNTOWN: &str = "urn:ngsi-ld:OffStreetParking:Downtown1";
 
-fn linked_filter(inner_value: &str) -> Filter {
+fn linked_filter(inner_value: &str) -> Filter<Expanded> {
     format!("\"https://example.com/isParkedIn\"{{\"https://example.com/category\"}}==\"{inner_value}\"")
-        .parse::<Filter>()
+        .parse::<Filter<Written>>()
         .expect("parses")
+        .into_expanded()
+        .expect("absolute names")
 }
 
 /// Clause 4.9 EXAMPLE 13: a hop "makes a sub-query on matching target
@@ -1044,8 +1453,10 @@ fn a_type_guard_admits_only_a_linked_entity_of_a_listed_type() {
         "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",",
         "\"https://example.com/Store\":\"https://example.com/category\"}==\"commercial\""
     )
-    .parse::<Filter>()
-    .expect("parses");
+    .parse::<Filter<Written>>()
+    .expect("parses")
+    .into_expanded()
+    .expect("absolute names");
     let building = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
     let warehouse = [parking(DOWNTOWN, "commercial", "https://example.com/Warehouse")];
     assert!(holds_linked(&guarded, &vehicle_parked_in(DOWNTOWN), &building));
@@ -1059,9 +1470,13 @@ fn a_hop_whose_object_names_no_known_entity_resolves_no_target() {
     let linked = [parking("urn:ngsi-ld:OffStreetParking:Elsewhere", "commercial", "https://example.com/Building")];
     assert!(!holds_linked(&linked_filter("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
     assert!(!holds_linked(
-        &"\"https://example.com/isParkedIn\"{\"https://example.com/category\"}"
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/isParkedIn\"{\"https://example.com/category\"}"
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &vehicle_parked_in(DOWNTOWN),
         &linked
     ));
@@ -1089,8 +1504,10 @@ fn two_hops_descend_through_two_linked_levels() {
     ];
     let two_hops = |zone: &str| {
         format!("\"https://example.com/outer\"{{\"https://example.com/inner\"{{\"https://example.com/zone\"}}}}==\"{zone}\"")
-            .parse::<Filter>()
+            .parse::<Filter<Written>>()
             .expect("parses")
+            .into_expanded()
+            .expect("absolute names")
     };
     assert!(holds_linked(&two_hops("north"), &entity, &linked));
     assert!(!holds_linked(&two_hops("south"), &entity, &linked));
@@ -1161,7 +1578,7 @@ fn door() -> Value {
 
 /// Whether the Door satisfies `q`, its names already expanded.
 fn door_holds(q: &str) -> bool {
-    holds(&q.parse::<Filter>().expect("parses"), &door())
+    holds(&q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"), &door())
 }
 
 /// Clause 4.9 `equal`: "a match is found as the value of the key-value pair
@@ -1253,23 +1670,43 @@ fn a_bracketed_member_of_another_family_stays_a_compound_member() {
 #[test]
 fn a_pattern_operator_reaches_every_language_of_a_language_property() {
     assert!(holds(
-        &"\"https://example.com/description\"~=\"Tue.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"~=\"Tue.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/description\"~=\"Do.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"~=\"Do.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/description\"~=\"rot.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"~=\"rot.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/description\"!~=\"rot.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"!~=\"rot.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/description\"!~=\"Tue.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"!~=\"Tue.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -1280,9 +1717,20 @@ fn a_pattern_operator_reaches_every_language_of_a_language_property() {
 /// pattern never reaches the elements of a list.
 #[test]
 fn a_pattern_operator_does_not_reach_the_elements_of_a_value_list() {
-    assert!(!holds(&"\"https://example.com/colors\"~=\"re.*\"".parse::<Filter>().unwrap(), &rich_entity()));
     assert!(!holds(
-        &"\"https://example.com/colors\"!~=\"nothing.*\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/colors\"~=\"re.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &"\"https://example.com/colors\"!~=\"nothing.*\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -1295,34 +1743,62 @@ fn a_language_property_with_no_target_language_matches_any_language_value() {
     // is what both spellings of "no target language" address, the bare path
     // and the `[*]` suppression marker.
     assert!(holds(
-        &"\"https://example.com/description\"[*]==\"Tuer\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"[*]==\"Tuer\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/description\"==\"Tuer\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"==\"Tuer\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/description\"==\"Door\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"==\"Door\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/description\"==\"rot\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"==\"rot\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     // Clause 4.9, `unequal`: "No matching value is found in any of the
     // values of the key-value pairs of a languageMap", so a map that does
     // hold the value is not a match in either spelling.
     assert!(!holds(
-        &"\"https://example.com/description\"!=\"Tuer\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"!=\"Tuer\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(!holds(
-        &"\"https://example.com/description\"[*]!=\"Tuer\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"[*]!=\"Tuer\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
     assert!(holds(
-        &"\"https://example.com/description\"!=\"rot\"".parse::<Filter>().unwrap(),
+        &"\"https://example.com/description\"!=\"rot\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
         &rich_entity()
     ));
 }
@@ -1366,11 +1842,46 @@ fn a_literal_beside_a_node_is_compared_as_an_element() {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "x"}, {"https://example.com/a": [{"@value": 1}]}]
         }]
     }]);
-    assert!(holds(&"\"https://example.com/p\"==\"x\"".parse::<Filter>().unwrap(), &entity));
-    assert!(!holds(&"\"https://example.com/p\"~=\"x\"".parse::<Filter>().unwrap(), &entity));
-    assert!(!holds(&"\"https://example.com/p\">\"a\"".parse::<Filter>().unwrap(), &entity));
-    assert!(holds(&"\"https://example.com/p\"!=\"y\"".parse::<Filter>().unwrap(), &entity));
-    assert!(!holds(&"\"https://example.com/p\"!=\"x\"".parse::<Filter>().unwrap(), &entity));
+    assert!(holds(
+        &"\"https://example.com/p\"==\"x\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
+    assert!(!holds(
+        &"\"https://example.com/p\"~=\"x\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
+    assert!(!holds(
+        &"\"https://example.com/p\">\"a\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
+    assert!(holds(
+        &"\"https://example.com/p\"!=\"y\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
+    assert!(!holds(
+        &"\"https://example.com/p\"!=\"x\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
 }
 
 /// A Property whose one value is a JSON literal (`@type` `@json`) is raw
@@ -1392,9 +1903,30 @@ fn a_json_literal_value_is_read_by_its_written_keys() {
             ]
         }]
     }]);
-    assert!(holds(&"\"https://example.com/one\"[city]==\"X\"".parse::<Filter>().unwrap(), &entity));
-    assert!(!holds(&"\"https://example.com/one\"[city]==\"Y\"".parse::<Filter>().unwrap(), &entity));
-    assert!(!holds(&"\"https://example.com/several\"[city]==\"X\"".parse::<Filter>().unwrap(), &entity));
+    assert!(holds(
+        &"\"https://example.com/one\"[city]==\"X\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
+    assert!(!holds(
+        &"\"https://example.com/one\"[city]==\"Y\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
+    assert!(!holds(
+        &"\"https://example.com/several\"[city]==\"X\""
+            .parse::<Filter<Written>>()
+            .unwrap()
+            .into_expanded()
+            .expect("absolute names"),
+        &entity
+    ));
 }
 
 /// Clause 4.9 addresses `datasetId` with `.` like a sub-attribute, and
@@ -1404,8 +1936,10 @@ fn the_dataset_of_every_instance_is_addressable() {
     let entity = instance_members_entity();
     let dataset = |id: &str| {
         format!("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/datasetId\"==\"{id}\"")
-            .parse::<Filter>()
+            .parse::<Filter<Written>>()
             .expect("parses")
+            .into_expanded()
+            .expect("absolute names")
     };
     assert!(holds(&dataset("urn:ngsi-ld:Dataset:a"), &entity));
     assert!(holds(&dataset("urn:ngsi-ld:Dataset:b"), &entity));
@@ -1438,7 +1972,7 @@ fn declared_types_entity() -> Value {
 #[test]
 fn a_declared_value_type_and_object_type_are_addressable() {
     let entity = declared_types_entity();
-    let holds_q = |q: &str| holds(&q.parse::<Filter>().expect("parses"), &entity);
+    let holds_q = |q: &str| holds(&q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"), &entity);
     assert!(holds_q(
         "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"==\"https://example.com/String\""
     ));
@@ -1459,7 +1993,7 @@ fn a_declared_value_type_and_object_type_are_addressable() {
 #[test]
 fn several_object_types_are_compared_by_membership() {
     let entity = declared_types_entity();
-    let holds_q = |q: &str| holds(&q.parse::<Filter>().expect("parses"), &entity);
+    let holds_q = |q: &str| holds(&q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"), &entity);
     let serves = "\"https://example.com/serves\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"";
     assert!(holds_q(&format!("{serves}==\"https://example.com/Gauge\"")));
     assert!(holds_q(&format!("{serves}==\"https://example.com/Device\"")));
@@ -1474,9 +2008,13 @@ fn several_object_types_are_compared_by_membership() {
 fn a_held_instance_has_no_instance_id_to_match() {
     let entity = instance_members_entity();
     assert!(!holds(
-        &"\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/instanceId\""
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/instanceId\""
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -1487,27 +2025,43 @@ fn a_held_instance_has_no_instance_id_to_match() {
 fn a_unit_code_and_a_creation_time_are_compared_as_their_lexical_forms() {
     let entity = instance_members_entity();
     assert!(holds(
-        &"\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"CEL\""
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"CEL\""
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(holds(
-        &"\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/createdAt\">2024-06-01T09:00:00Z"
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/createdAt\">2024-06-01T09:00:00Z"
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(!holds(
-        &"\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/createdAt\">2024-06-01T11:00:00Z"
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/createdAt\">2024-06-01T11:00:00Z"
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(!holds(
-        &"\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/modifiedAt\""
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/modifiedAt\""
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -1533,7 +2087,7 @@ fn time_value_entity() -> Value {
 #[test]
 fn a_date_time_operand_matches_a_declared_time_value_and_a_quoted_one_a_plain_string() {
     let entity = time_value_entity();
-    let holds_q = |q: &str| holds(&q.parse::<Filter>().expect("parses"), &entity);
+    let holds_q = |q: &str| holds(&q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"), &entity);
     assert!(!holds_q("\"https://example.com/plain\"==2024-01-01T00:00:00Z"));
     assert!(holds_q("\"https://example.com/typed\"==2024-01-01T00:00:00.000Z"));
     assert!(holds_q(
@@ -1551,7 +2105,7 @@ fn a_date_time_operand_matches_a_declared_time_value_and_a_quoted_one_a_plain_st
 #[test]
 fn a_segment_naming_the_value_member_matches_no_operator() {
     let entity = instance_members_entity();
-    let holds_q = |q: &str| holds(&q.parse::<Filter>().expect("parses"), &entity);
+    let holds_q = |q: &str| holds(&q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"), &entity);
     let value_member = "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/hasValue\"";
     assert!(!holds_q(value_member));
     assert!(!holds_q(&format!("{value_member}>30")));
@@ -1565,7 +2119,12 @@ fn a_segment_naming_the_value_member_matches_no_operator() {
 /// unequal", so the number 80 is not the String spelling it.
 #[test]
 fn a_number_is_unequal_to_a_string_spelling_it() {
-    let speed = |q: &str| holds(&q.parse::<Filter>().expect("parses"), &vehicle_entity());
+    let speed = |q: &str| {
+        holds(
+            &q.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names"),
+            &vehicle_entity(),
+        )
+    };
     assert!(!speed("\"https://example.com/speed\"==\"80\""));
     assert!(speed("\"https://example.com/speed\"!=\"80\""));
     assert!(!speed("\"https://example.com/speed\"<\"9\""));
@@ -1580,21 +2139,33 @@ fn a_number_is_unequal_to_a_string_spelling_it() {
 fn a_structured_value_is_entered_through_the_trailing_path_alone() {
     let entity = instance_members_entity();
     assert!(!holds(
-        &"\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/hasValue\".\"https://example.com/city\"==\"Berlin\""
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/hasValue\".\"https://example.com/city\"==\"Berlin\""
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(holds(
-        &"\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\""
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\""
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
     assert!(!holds(
-        &"\"https://example.com/address\"[\"https://example.com/extra\".\"https://example.com/floor\"]==3"
-            .parse::<Filter>()
-            .expect("parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(
+                "\"https://example.com/address\"[\"https://example.com/extra\".\"https://example.com/floor\"]==3"
+                    .parse::<Filter<Written>>()
+                    .expect("parses")
+            )
+            .expect("the names expand"),
         &entity
     ));
 }
@@ -1620,12 +2191,20 @@ fn multilingual_entity() -> Value {
 fn a_full_tag_in_the_bracket_compares_its_key_case_insensitively() {
     for matching in [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering] {
         assert!(holds_under(
-            &"\"https://example.com/name\"[en-gb]==\"Lift\"".parse::<Filter>().unwrap(),
+            &"\"https://example.com/name\"[en-gb]==\"Lift\""
+                .parse::<Filter<Written>>()
+                .unwrap()
+                .into_expanded()
+                .expect("absolute names"),
             &multilingual_entity(),
             matching
         ));
         assert!(!holds_under(
-            &"\"https://example.com/name\"[en-gb]==\"Elevator\"".parse::<Filter>().unwrap(),
+            &"\"https://example.com/name\"[en-gb]==\"Elevator\""
+                .parse::<Filter<Written>>()
+                .unwrap()
+                .into_expanded()
+                .expect("absolute names"),
             &multilingual_entity(),
             matching
         ));
@@ -1634,19 +2213,35 @@ fn a_full_tag_in_the_bracket_compares_its_key_case_insensitively() {
 
 #[test]
 fn a_primary_tag_reaches_its_regional_key_only_under_extended_filtering() {
-    let lift = "\"https://example.com/name\"[en]==\"Lift\"".parse::<Filter>().unwrap();
+    let lift = "\"https://example.com/name\"[en]==\"Lift\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(!holds_under(&lift, &multilingual_entity(), LanguageMatching::TagEquality));
     assert!(holds_under(&lift, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
-    let elevator = "\"https://example.com/name\"[en]==\"Elevator\"".parse::<Filter>().unwrap();
+    let elevator = "\"https://example.com/name\"[en]==\"Elevator\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds_under(&elevator, &multilingual_entity(), LanguageMatching::TagEquality));
     assert!(holds_under(&elevator, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
 }
 
 #[test]
 fn a_wildcard_range_matches_the_value_of_a_key_it_filters() {
-    let aufzug = "\"https://example.com/name\"[de-*-DE]==\"Aufzug\"".parse::<Filter>().unwrap();
+    let aufzug = "\"https://example.com/name\"[de-*-DE]==\"Aufzug\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds_under(&aufzug, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
-    let pattern = "\"https://example.com/name\"[*-GB]~=\"^Li\"".parse::<Filter>().unwrap();
+    let pattern = "\"https://example.com/name\"[*-GB]~=\"^Li\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds_under(&pattern, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
 }
 
@@ -1655,10 +2250,18 @@ fn a_wildcard_range_matches_the_value_of_a_key_it_filters() {
 #[test]
 fn unequal_under_filtering_holds_when_no_selected_string_matches() {
     let entity = multilingual_entity();
-    let not_lift = "\"https://example.com/name\"[en]!=\"Lift\"".parse::<Filter>().unwrap();
+    let not_lift = "\"https://example.com/name\"[en]!=\"Lift\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds_under(&not_lift, &entity, LanguageMatching::TagEquality));
     assert!(!holds_under(&not_lift, &entity, LanguageMatching::ExtendedFiltering));
-    let not_door = "\"https://example.com/name\"[en]!=\"Door\"".parse::<Filter>().unwrap();
+    let not_door = "\"https://example.com/name\"[en]!=\"Door\""
+        .parse::<Filter<Written>>()
+        .unwrap()
+        .into_expanded()
+        .expect("absolute names");
     assert!(holds_under(&not_door, &entity, LanguageMatching::ExtendedFiltering));
 }
 
@@ -1669,7 +2272,7 @@ struct PriorityOnly;
 impl ResourceMembers<'static> for PriorityOnly {
     fn member_target(self, term: &TermReading) -> Option<ResolvedTarget<'static>> {
         match term.attribute().as_str() {
-            "priority" => Some(ResolvedTarget {
+            "https://example.com/priority" => Some(ResolvedTarget {
                 value: TargetValue::Number(Cow::Owned(7.into())),
                 origin: TargetOrigin::AttributeValue,
                 reading: MultiValueReading::WholeArray,
@@ -1696,7 +2299,13 @@ fn a_resource_member_is_compared_and_one_it_does_not_hold_matches_nothing() {
         ("endpoint!=\"x\"|priority==7", true),
     ] {
         assert_eq!(
-            members_hold(&FilterReading::of(&q.parse::<Filter>().unwrap(), LanguageMatching::TagEquality), PriorityOnly),
+            members_hold(
+                &FilterReading::of(
+                    &EXAMPLE_NAMESPACE.expanded(q.parse::<Filter<Written>>().unwrap()).expect("the names expand"),
+                    LanguageMatching::TagEquality
+                ),
+                PriorityOnly
+            ),
             expected,
             "{q}"
         );
@@ -1723,7 +2332,7 @@ fn vehicle(vehicle: &ConformanceVehicle) -> Value {
 fn every_operator_selects_by_value_and_never_an_entity_without_the_attribute() {
     let absent = serde_json::json!([{"@id": "urn:ngsi-ld:Vehicle:A2", "@type": ["https://example.com/Vehicle"]}]);
     for case in CONFORMANCE {
-        let expr = case.filter.parse::<Filter>().expect("parses");
+        let expr = case.filter.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names");
         assert!(holds(&expr, &vehicle(&case.selected)), "{} must select its matching entity", case.filter);
         if let Some(rejected) = &case.rejected {
             assert!(!holds(&expr, &vehicle(rejected)), "{} must reject its non-matching entity", case.filter);

@@ -16,8 +16,8 @@ use andromeda_ngsi_ld_query::filter::reading::filter_reading::FilterReading;
 pub fn referenced_attribute_names(reading: &FilterReading, out: &mut Vec<AttributeName>) {
     for term in reading.terms() {
         // clone: the caller owns the resolved list, which outlives the reading
-        out.extend(term.hops().iter().map(|hop| hop.relationship().clone()));
-        out.push(term.attribute().clone());
+        out.extend(term.hops().iter().map(|hop| AttributeName::from(hop.relationship().clone())));
+        out.push(AttributeName::from(term.attribute().clone()));
         out.extend(term.sub_attributes().iter().cloned());
     }
 }

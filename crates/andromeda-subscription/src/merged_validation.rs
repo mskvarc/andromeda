@@ -60,6 +60,7 @@ fn validate_selector(values: &SubscriptionWriteValues) -> Result<(), Subscriptio
 mod tests {
     use crate::{
         error::SubscriptionError,
+        expanded_filters::ExpandedFilters,
         fields::SubscriptionWriteValues,
         merged_validation::validate_merged_subscription,
         subscription_validation_reason::SubscriptionValidationReason,
@@ -76,7 +77,8 @@ mod tests {
             target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
-        SubscriptionWriteValues::from_create(request)
+        let expanded = ExpandedFilters::under_example_namespace(&request);
+        SubscriptionWriteValues::from_create(request, expanded)
     }
 
     /// Clause 5.2.12, Table 5.2.12-1: a throttled subscription a PATCH gives a

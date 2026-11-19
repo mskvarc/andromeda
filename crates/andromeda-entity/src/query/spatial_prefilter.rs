@@ -3,7 +3,7 @@
 
 use crate::query::EntityQueryService;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     expanded_entity_selector::ExpandedEntitySelector,
@@ -115,7 +115,7 @@ impl EntityQueryService {
     fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>, admitted: Admitted<'_>) -> Option<HashSet<Identifier>> {
         let mut union: HashSet<Identifier> = HashSet::new();
         for type_iri in &accelerable.type_iris {
-            let key = SpatialKey::new(self.tenant.clone(), type_iri.clone(), accelerable.geo.geoproperty.clone());
+            let key = SpatialKey::new(self.tenant.clone(), type_iri.clone(), AttributeName::from(accelerable.geo.geoproperty.clone()));
             let room = LocationCandidates::MAX.saturating_sub(union.len());
             // A partition that declines for any one type would otherwise
             // contribute an empty candidate set, which is indistinguishable from

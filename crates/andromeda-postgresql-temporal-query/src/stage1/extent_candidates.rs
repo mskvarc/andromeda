@@ -78,7 +78,7 @@ impl<'q> ExtentRead<'q> {
         let Some(geo) = &compiled.entities.geo else {
             return Ok(None);
         };
-        let Some(geoproperty) = names.attributes.get(&geo.geoproperty) else {
+        let Some(geoproperty) = names.attributes.get_str(geo.geoproperty.as_str()) else {
             return Ok(None);
         };
         Ok(box_test(

@@ -86,7 +86,7 @@ impl<'r> ResolvedTerm<'r> {
     #[must_use]
     pub fn of(term: &'r TermReading, names: &QueryNames) -> Option<ResolvedTerm<'r>> {
         let hops = term.hops().iter().map(|hop| ResolvedHop::of(hop, names)).collect::<Option<Vec<_>>>()?;
-        let attribute = names.attributes.get(term.attribute())?;
+        let attribute = names.attributes.get_str(term.attribute().as_str())?;
         let chain = term
             .sub_attributes()
             .iter()
@@ -133,11 +133,11 @@ impl ResolvedHop {
     /// `hop` with its Relationship and guard types resolved, `None` when the
     /// Relationship was never recorded or the guard names no recorded type.
     fn of(hop: &Hop, names: &QueryNames) -> Option<ResolvedHop> {
-        let relationship = names.attributes.get(hop.relationship())?;
+        let relationship = names.attributes.get_str(hop.relationship().as_str())?;
         let guard = match hop.guard_types() {
             [] => HopGuard::AnyEntity,
             types => {
-                let recorded: Vec<EntityTypeNameKey> = types.iter().filter_map(|guard_type| names.types.get(guard_type)).collect();
+                let recorded: Vec<EntityTypeNameKey> = types.iter().filter_map(|guard_type| names.types.get_str(guard_type.as_str())).collect();
                 if recorded.is_empty() {
                     return None;
                 }

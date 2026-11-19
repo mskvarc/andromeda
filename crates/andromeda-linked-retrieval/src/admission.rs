@@ -38,7 +38,7 @@
 
 use crate::join::traversal_depth;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{filter::Filter, projection::written_projection_term::WrittenProjectionTerm};
+use andromeda_ngsi_ld_query::{filter::Filter, name_stage::NameStage, projection::written_projection_term::WrittenProjectionTerm};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use derive_more::{Display, From};
 use std::num::NonZeroU32;
@@ -145,7 +145,7 @@ impl LinkedReference {
 
     /// The filter reference `q` carries, if it hops.
     #[must_use]
-    pub fn of_filter(q: Option<&Filter>) -> Option<LinkedReference> {
+    pub fn of_filter<S: NameStage>(q: Option<&Filter<S>>) -> Option<LinkedReference> {
         NonZeroU32::new(q.map_or(0, Filter::linked_depth)).map(|depth| LinkedReference::Filter { depth })
     }
 

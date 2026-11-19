@@ -5,7 +5,7 @@ use crate::{
     query_error::QueryError,
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_vocabulary::compact::properties;
 
 /// Compile geo query parameters into a [`CompiledGeoQuery`].
@@ -43,12 +43,8 @@ pub async fn compile_geo_query(
     Ok(Some(CompiledGeoQuery {
         georel: geo_query.georel.clone(),
         geometry,
-        geoproperty: expander
-            .expand_term(geoproperty)
-            .await?
-            .as_str()
-            .parse::<AttributeName>()
-            .map_err(GeoQueryError::InvalidGeoproperty)?,
+        geoproperty: AttributeIri::try_from(expander.expand_term(geoproperty).await?)
+            .map_err(|too_long| GeoQueryError::InvalidGeoproperty(NgsiLdReferenceError::from(too_long)))?,
     }))
 }
 

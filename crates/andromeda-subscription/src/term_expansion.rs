@@ -9,6 +9,7 @@
 
 use crate::{
     error::SubscriptionError,
+    expanded_filters::ExpandedFilters,
     filter_opt_ins::expanded_opt_ins,
     projection_expansion::expand_notification_projection,
     subscription_invariant::SubscriptionInvariant,
@@ -31,11 +32,10 @@ use andromeda_ngsi_ld_query::{
     term_expander::TermExpander,
     type_selection::expansion::expand_type_selection,
 };
-use std::mem;
 
 /// Expand every name of one attribute-name list in place (clause 5.5.7).
 async fn expand_name_list(names: &mut Vec<AttributeName>, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
-    *names = expand_attribute_names(names, expander).await?;
+    *names = expand_attribute_names(names, expander).await?.into_iter().map(AttributeName::from).collect();
     Ok(())
 }
 
@@ -65,14 +65,13 @@ async fn expand_geoproperty(geoproperty: &mut NgsiLdReference, expander: &impl T
 }
 
 /// Expand entities, watchedAttributes, the notification's attributes, pick and
-/// omit, the filters, the opt-in lists and geoQ of a subscription request in
-/// place. Context hosting is NOT handled here, because the lifecycle adds that on top.
+/// omit, the opt-in lists and geoQ of a subscription request in place, and
+/// make the expanded `q` and `csf`. Context hosting is NOT handled here, because the lifecycle adds that on top.
 ///
 /// The `q` is compiled from `admitted_q`, the admission its request received
-/// at validation, and the `q` the request holds afterwards is the expanded
-/// filter itself, which also keeps the spelling the subscriber wrote of its
-/// trailing `[…]` members, where clause 4.9 reads a `LanguageProperty`'s target
-/// language and a raw JSON key.
+/// at validation. The expanded filters keep the spelling the subscriber wrote
+/// of their trailing `[…]` members, where clause 4.9 reads a `LanguageProperty`'s target
+/// language and a raw JSON key; the request keeps its filters as written.
 ///
 /// # Errors
 ///
@@ -89,7 +88,7 @@ pub(crate) async fn expand_common_subscription_terms(
     request: &mut SubscriptionRequest,
     context: &ContextSpec,
     admitted_q: Option<&AdmittedFilter>,
-) -> Result<(), SubscriptionError> {
+) -> Result<ExpandedFilters, SubscriptionError> {
     let prepared_context = engine.prepare_term_context(context);
     let term_expander = ContextualExpander::new(engine, &prepared_context);
 
@@ -104,9 +103,10 @@ pub(crate) async fn expand_common_subscription_terms(
     }
 
     let opt_ins = expanded_opt_ins(&mut request.expand_values, &mut request.json_keys, &term_expander).await?;
-    request.q = match (mem::take(&mut request.q), admitted_q) {
+    let q = match (&request.q, admitted_q) {
         (Clearable::Set(_), Some(admitted)) => Clearable::Set(compile_q_filter(admitted, &opt_ins, &term_expander).await?),
-        (unchanged @ (Clearable::Absent | Clearable::NgsiLdNull), None) => unchanged,
+        (Clearable::Absent, None) => Clearable::Absent,
+        (Clearable::NgsiLdNull, None) => Clearable::NgsiLdNull,
         (Clearable::Set(_), None) | (Clearable::Absent | Clearable::NgsiLdNull, Some(_)) => return Err(SubscriptionInvariant::QNotAdmitted.into()),
     };
 
@@ -115,9 +115,11 @@ pub(crate) async fn expand_common_subscription_terms(
     // 5.5.7), so the filter matched against them (clauses 5.8.1.4 and
     // 5.11.2.4) has to name them by IRI too. Their values are raw JSON, so the
     // compound-value members stay as written (clause 4.9).
-    request.csf = match mem::take(&mut request.csf) {
-        Clearable::Set(csf) => Clearable::Set(expand_context_source_filter(csf, &term_expander).await?),
-        unchanged @ (Clearable::Absent | Clearable::NgsiLdNull) => unchanged,
+    let csf = match &request.csf {
+        // clone: the request keeps the filter as written, which its emptiness and deleted members are read from
+        Clearable::Set(csf) => Clearable::Set(expand_context_source_filter(csf.clone(), &term_expander).await?),
+        Clearable::Absent => Clearable::Absent,
+        Clearable::NgsiLdNull => Clearable::NgsiLdNull,
     };
 
     if let Some(geo_q) = request.geo_q.as_set_mut()
@@ -126,7 +128,7 @@ pub(crate) async fn expand_common_subscription_terms(
         expand_geoproperty(geoproperty, &term_expander).await?;
     }
 
-    Ok(())
+    Ok(ExpandedFilters { q, csf })
 }
 
 #[cfg(test)]
@@ -134,6 +136,7 @@ mod tests {
     use crate::{
         admission_fixture::broker_defaults,
         error::SubscriptionError,
+        expanded_filters::ExpandedFilters,
         request_validation::admit_q,
         subscription_invariant::SubscriptionInvariant,
         term_expansion::expand_common_subscription_terms,
@@ -162,15 +165,36 @@ mod tests {
     /// `wire` with its `q` admitted at the broker's default limits and every
     /// target language, then expanded under `context`.
     async fn expanded_under(wire: Value, context: &ContextSpec) -> Result<SubscriptionRequest, SubscriptionError> {
+        expanded_with_filters_under(wire, context).await.map(|(request, _filters)| request)
+    }
+
+    /// `wire` admitted and expanded under `context`, with the expanded filters
+    /// the expansion made beside the request it expanded.
+    async fn expanded_with_filters_under(wire: Value, context: &ContextSpec) -> Result<(SubscriptionRequest, ExpandedFilters), SubscriptionError> {
         let mut request = request(&wire);
         let admitted = admit_q(&request, broker_defaults(LanguageTargeting::LanguageRanges))?;
-        expand_common_subscription_terms(&offline_engine(), &mut request, context, admitted.as_ref()).await?;
-        Ok(request)
+        let filters = expand_common_subscription_terms(&offline_engine(), &mut request, context, admitted.as_ref()).await?;
+        Ok((request, filters))
+    }
+
+    /// The text of the expanded `q`, which the request leaves as written.
+    fn expanded_q(filters: &ExpandedFilters) -> Value {
+        json!(filters.q.as_set().expect("the request names a q").to_string())
+    }
+
+    /// The text of the expanded `csf`, which the request leaves as written.
+    fn expanded_csf(filters: &ExpandedFilters) -> Value {
+        json!(filters.csf.as_set().expect("the request names a csf").to_string())
     }
 
     /// `wire` expanded under the core context.
     async fn expanded(wire: Value) -> Result<SubscriptionRequest, SubscriptionError> {
         expanded_under(wire, &ContextSpec::none()).await
+    }
+
+    /// `wire` expanded under the core context, with its expanded filters.
+    async fn expanded_with_filters(wire: Value) -> Result<(SubscriptionRequest, ExpandedFilters), SubscriptionError> {
+        expanded_with_filters_under(wire, &ContextSpec::none()).await
     }
 
     /// `wire` expanded under a body `@context` that maps `speed`, `Vehicle`
@@ -261,10 +285,12 @@ mod tests {
     /// executing the query", so the stored filter is the coerced one.
     #[tokio::test]
     async fn expand_values_rewrites_the_stored_filter_operand() {
-        let request = expanded(json!({"q": "colour==\"active\"", "expandValues": "colour"})).await.expect("expands");
+        let (_request, filters) = expanded_with_filters(json!({"q": "colour==\"active\"", "expandValues": "colour"}))
+            .await
+            .expect("expands");
 
         pretty_assertions::assert_eq!(
-            written(&request)["q"],
+            expanded_q(&filters),
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/colour\"==\"https://uri.etsi.org/ngsi-ld/default-context/active\"")
         );
     }
@@ -273,10 +299,10 @@ mod tests {
     /// what makes the member observable at all.
     #[tokio::test]
     async fn a_filter_without_the_opt_in_keeps_its_literal_operand() {
-        let request = expanded(json!({"q": "colour==\"active\""})).await.expect("expands");
+        let (_request, filters) = expanded_with_filters(json!({"q": "colour==\"active\""})).await.expect("expands");
 
         pretty_assertions::assert_eq!(
-            written(&request)["q"],
+            expanded_q(&filters),
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/colour\"==\"active\"")
         );
     }
@@ -292,12 +318,12 @@ mod tests {
     /// raw is JSON, and is not expanded to ngsi-ld:hasValue using the core @context".
     #[tokio::test]
     async fn json_keys_leaves_the_addressed_object_keys_literal() {
-        let declared = expanded(json!({"q": "payload[city]==\"Berlin\"", "jsonKeys": "payload"}))
+        let (_request, declared) = expanded_with_filters(json!({"q": "payload[city]==\"Berlin\"", "jsonKeys": "payload"}))
             .await
             .expect("expands");
 
-        let written = written(&declared);
-        let rendered = written["q"].as_str().expect("the filter is a string");
+        let written = expanded_q(&declared);
+        let rendered = written.as_str().expect("the filter is a string");
         assert!(
             rendered.contains("https://uri.etsi.org/ngsi-ld/default-context/payload"),
             "the addressed attribute still expands: {rendered}"
@@ -314,10 +340,10 @@ mod tests {
     /// declaration observable at all.
     #[tokio::test]
     async fn the_same_bracketed_key_expands_without_the_json_keys_declaration() {
-        let undeclared = expanded(json!({"q": "payload[city]==\"Berlin\""})).await.expect("expands");
+        let (_request, undeclared) = expanded_with_filters(json!({"q": "payload[city]==\"Berlin\""})).await.expect("expands");
 
-        let written = written(&undeclared);
-        let rendered = written["q"].as_str().expect("the filter is a string");
+        let written = expanded_q(&undeclared);
+        let rendered = written.as_str().expect("the filter is a string");
         assert!(
             rendered.contains("https://uri.etsi.org/ngsi-ld/default-context/city"),
             "an undeclared attribute's member name expands: {rendered}"
@@ -339,11 +365,11 @@ mod tests {
     /// the expanded member the text form carries.
     #[tokio::test]
     async fn the_expanded_q_keeps_the_written_trailing_members() {
-        let request = expanded(json!({"q": "name[en]==\"Door\""})).await.expect("expands");
-        let q = request.q.as_set().expect("the request names a q");
+        let (_request, filters) = expanded_with_filters(json!({"q": "name[en]==\"Door\""})).await.expect("expands");
+        let q = filters.q.as_set().expect("the request names a q");
 
         pretty_assertions::assert_eq!(
-            written(&request)["q"],
+            expanded_q(&filters),
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/name\"[\"https://uri.etsi.org/ngsi-ld/default-context/en\"]==\"Door\"")
         );
         pretty_assertions::assert_eq!(q.written_member_text(), "\"https://uri.etsi.org/ngsi-ld/default-context/name\"[en]==\"Door\"");
@@ -354,10 +380,10 @@ mod tests {
     /// by IRI and keeps the member as the literal key it addresses.
     #[tokio::test]
     async fn the_expanded_csf_keeps_its_trailing_members_verbatim() {
-        let request = expanded(json!({"csf": "coverage[region]==\"north\""})).await.expect("expands");
+        let (_request, filters) = expanded_with_filters(json!({"csf": "coverage[region]==\"north\""})).await.expect("expands");
 
         pretty_assertions::assert_eq!(
-            written(&request)["csf"],
+            expanded_csf(&filters),
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/coverage\"[region]==\"north\"")
         );
     }

@@ -47,7 +47,7 @@ pub(crate) fn met_restrictions(
 ) -> Result<Option<Condition>, RenderError> {
     let reading = compiled.entities.q.as_ref().map(CompiledFilter::reading);
     let geo = compiled.entities.geo.as_ref();
-    let geoproperty = geo.and_then(|geo| names.attributes.get(&geo.geoproperty));
+    let geoproperty = geo.and_then(|geo| names.attributes.get_str(geo.geoproperty.as_str()));
     let reduced_keys = named_attributes(reading, geoproperty, names);
     if reduced_keys.is_empty() {
         return Ok(None);
@@ -62,7 +62,7 @@ pub(crate) fn met_restrictions(
             holds = holds.add(q_filter::compile(reading, &InstanceScan::History(&reduced), names));
         }
         if let Some(geo) = geo {
-            holds = holds.add(reduced.exists_geo(names.attributes.get(&geo.geoproperty), geo)?);
+            holds = holds.add(reduced.exists_geo(names.attributes.get_str(geo.geoproperty.as_str()), geo)?);
         }
         met = met.add(holds);
     }
@@ -79,7 +79,11 @@ fn named_attributes(reading: Option<&FilterReading>, geoproperty: Option<Attribu
     let candidates = reading
         .into_iter()
         .flat_map(FilterReading::terms)
-        .filter_map(|term| names.attributes.get(term.hops().first().map_or(term.attribute(), |hop| hop.relationship())))
+        .filter_map(|term| {
+            names
+                .attributes
+                .get_str(term.hops().first().map_or(term.attribute(), |hop| hop.relationship()).as_str())
+        })
         .chain(geoproperty);
     for key in candidates {
         if !keys.contains(&key) {
@@ -98,6 +102,8 @@ mod tests {
         entity_selection::EntitySelection,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         temporal::{
             compiled::CompiledTemporalQuery,
             contributed_entities::{ContributedEntities, ContributedRendering},
@@ -157,7 +163,12 @@ mod tests {
 
     fn with_q(q: &str) -> CompiledTemporalQuery {
         let mut compiled = compiled();
-        compiled.entities.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality));
+        compiled.entities.q = Some(CompiledFilter::new(
+            EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("q parses"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        ));
         compiled
     }
 

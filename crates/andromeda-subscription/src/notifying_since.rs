@@ -16,7 +16,10 @@
 //! instant of every change they are compared with, so brokers sharing the
 //! tenant database order them alike.
 
-use crate::variant::RegistrationMatchReach;
+use crate::{
+    expanded_filters::{ExpandedFilters, StoredFilters},
+    variant::RegistrationMatchReach,
+};
 use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -71,25 +74,31 @@ pub enum SinceRestart {
 }
 
 impl SinceRestart {
-    /// Whether the update fragment `request` changes the value of what the
-    /// `existing` Subscription selects: `entities`, `watchedAttributes`,
+    /// Whether the update fragment `request`, its filters `expanded`, changes the value of what the
+    /// `existing` Subscription, its filters `stored`, selects: `entities`, `watchedAttributes`,
     /// `notificationTrigger`, `q`, `geoQ`, `scopeQ`, `localOnly`, and `csf` and
     /// `datasetId` where `reach` makes them select what the Subscription is
     /// notified of (Table 5.2.12-1, clause 5.12), each compared after its terms
     /// were expanded.
     #[must_use]
-    pub fn of_selection(request: &SubscriptionRequest, existing: &Subscription, reach: RegistrationMatchReach) -> SinceRestart {
+    pub fn of_selection(
+        request: &SubscriptionRequest,
+        expanded: &ExpandedFilters,
+        existing: &Subscription,
+        stored: &StoredFilters,
+        reach: RegistrationMatchReach,
+    ) -> SinceRestart {
         let selection = &existing.selection;
         let filters = &existing.filters;
         let changed = request.entities.changes(selection.entities.as_ref())
             || request.watched_attributes.changes(selection.watched_attributes.as_ref())
             || request.notification_trigger.changes(selection.notification_trigger.as_ref())
-            || request.q.changes(filters.q.as_ref())
+            || expanded.q.changes(stored.q.as_ref())
             || request.geo_q.changes(filters.geo_q.as_ref())
             || request.scope_q.changes(filters.scope_q.as_ref())
             || match reach {
                 RegistrationMatchReach::NotifiedRegistrations => {
-                    request.csf.changes(filters.csf.as_ref()) || request.dataset_id.changes(filters.dataset_id.as_ref())
+                    expanded.csf.changes(stored.csf.as_ref()) || request.dataset_id.changes(filters.dataset_id.as_ref())
                 }
                 RegistrationMatchReach::ReachedSources => false,
             }
@@ -137,6 +146,7 @@ impl NotifyingRestart {
 #[cfg(test)]
 mod tests {
     use crate::{
+        expanded_filters::{ExpandedFilters, StoredFilters},
         notifying_since::{NotifyingRestart, NotifyingSince, SelectionJudged, SinceRestart},
         variant::RegistrationMatchReach,
     };
@@ -225,7 +235,7 @@ mod tests {
             "type": "Subscription",
             "entities": [{"type": "https://example.com/Vehicle"}],
             "watchedAttributes": ["https://example.com/speed"],
-            "q": "speed>1",
+            "q": "\"https://example.com/speed\">1",
             "notification": {"endpoint": {"uri": "http://receiver.example.com/notify"}},
             "status": "active",
             "createdAt": "2026-01-01T00:00:00Z",
@@ -236,7 +246,10 @@ mod tests {
 
     fn restart_under(fragment: &Value, reach: RegistrationMatchReach) -> SinceRestart {
         let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
-        SinceRestart::of_selection(&request, &stored(), reach)
+        let expanded = ExpandedFilters::under_example_namespace(&request);
+        let existing = stored();
+        let stored_filters = StoredFilters::of(&existing.filters).expect("the stored filters are expanded");
+        SinceRestart::of_selection(&request, &expanded, &existing, &stored_filters, reach)
     }
 
     /// What an update of an entity Subscription restarts.

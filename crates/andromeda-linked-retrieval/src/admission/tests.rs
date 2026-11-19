@@ -5,6 +5,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     filter::{Filter, hop_admission::FilterHopAdmission},
+    name_stage::Written,
     projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -47,7 +48,7 @@ impl Case {
         let pick: Option<Vec<WrittenProjectionTerm>> = self
             .pick
             .map(|raw| Vec::from(raw.parse::<WrittenProjectionList>().expect("valid projection list")));
-        let q: Option<Filter> = self.q.map(|raw| raw.parse().expect("valid filter"));
+        let q: Option<Filter<Written>> = self.q.map(|raw| raw.parse().expect("valid filter"));
         let join_level = self.join_level.and_then(NonZeroU32::new);
         let request = LinkedRequest::builder().pick(pick.as_deref()).join(self.join).join_level(join_level).build();
         admit_request(operation, &request)?;

@@ -9,7 +9,7 @@ use crate::queried_entity::{
     scoped_entity::ScopedEntity,
 };
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use serde_json::Value;
 use std::borrow::Cow;
 
@@ -45,7 +45,7 @@ impl PlacedFixture {
 impl<'a> QueriedEntity<'a> for &'a PlacedFixture {
     type Instance = &'a FixtureInstance;
 
-    fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a FixtureInstance> {
+    fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = &'a FixtureInstance> {
         self.entity.attribute_instances(attribute)
     }
 
@@ -55,7 +55,7 @@ impl<'a> QueriedEntity<'a> for &'a PlacedFixture {
 }
 
 impl<'a> LocatedEntity<'a> for &'a PlacedFixture {
-    fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
+    fn geo_property_geometries(self, attribute: &AttributeIri) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
         let location = attribute.as_str() == LOCATION;
         self.location.iter().filter(move |_| location).map(Cow::Borrowed)
     }

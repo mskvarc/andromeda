@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset_selector::DatasetSelector,
     filter::Filter,
+    name_stage::Written,
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
     query_error::QueryError,
@@ -68,11 +69,11 @@ pub struct CsrQueryParameters {
     /// registrations' `RegistrationInfo` like the `attrs` list; it is not
     /// evaluated against the registrations themselves.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// The context source filter (clause 4.9 `csf`), evaluated against the
     /// registrations' own Context Source Properties (clause 5.10.2.4).
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,

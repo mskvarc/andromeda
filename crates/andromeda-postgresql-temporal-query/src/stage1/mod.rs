@@ -235,6 +235,8 @@ mod tests {
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{icu_collation::IcuCollation, sort_direction::SortDirection},
         page_window::{PageStart, PageWindow},
         temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
@@ -327,7 +329,9 @@ mod tests {
                 .map(|selector| selector.parse::<DatasetSelector>().expect("a valid dataset selector"))
                 .collect();
             compiled.entities.q = Some(CompiledFilter::new(
-                "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
+                EXAMPLE_NAMESPACE
+                    .expanded("\"https://example.com/speed\">100".parse::<Filter<Written>>().unwrap())
+                    .expect("the names expand"),
                 LanguageMatching::TagEquality,
             ));
             compiled.entities.geo = Some(CompiledGeoQuery {

@@ -21,10 +21,11 @@ use crate::{
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
     },
+    name_stage::{Expanded, Written},
     query_error::QueryError,
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use std::collections::HashSet;
 
 /// What a written `q` filter is admitted under: how much it may ask of the
@@ -47,7 +48,7 @@ pub struct FilterOptIns {
     pub json_keys: JsonKeyAttributes,
     /// The attributes whose string operands expand through the `@context`
     /// (`expandValues`).
-    pub expand_values: HashSet<AttributeName>,
+    pub expand_values: HashSet<AttributeIri>,
 }
 
 impl FilterOptIns {
@@ -82,12 +83,12 @@ impl FilterOptIns {
 /// makes one, so every filter a pipeline compiles was admitted once, by the
 /// request that wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdmittedFilter(Filter);
+pub struct AdmittedFilter(Filter<Written>);
 
 impl AdmittedFilter {
     /// The filter as the request wrote it.
     #[must_use]
-    pub const fn written(&self) -> &Filter {
+    pub const fn written(&self) -> &Filter<Written> {
         &self.0
     }
 }
@@ -105,7 +106,7 @@ impl AdmittedFilter {
 /// Returns the [`QueryError`] of the complexity admission or of a target
 /// language the level does not admit, and the refusal of `hops` for a hop the
 /// operation does not admit, each converted into `E`.
-pub fn admit_q_filter<E, H>(filter: &Filter, admission: FilterAdmission, hops: &H) -> Result<AdmittedFilter, E>
+pub fn admit_q_filter<E, H>(filter: &Filter<Written>, admission: FilterAdmission, hops: &H) -> Result<AdmittedFilter, E>
 where
     E: From<QueryError> + From<H::Refusal>,
     H: FilterHopAdmission,
@@ -129,7 +130,7 @@ where
 /// when it expands to something that is not an absolute IRI, and
 /// [`QueryError::Filter`] carrying [`FilterError::InvalidAttributeName`](crate::filter::filter_error::FilterError::InvalidAttributeName) when a
 /// name does not expand to a usable attribute name.
-pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Filter, QueryError> {
+pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Filter<Expanded>, QueryError> {
     // clone: expansion consumes its tree, and every compilation of the request reads the admitted filter again
     let filter = expand_filter(filter.0.clone(), &opt_ins.json_keys, expander).await?;
     apply_expand_values(filter, &opt_ins.expand_values, expander).await
@@ -146,6 +147,7 @@ mod tests {
             hop_admission::FilterHopAdmission,
             language_targeting::LanguageTargeting,
         },
+        name_stage::Written,
         namespace_expander::NamespaceExpander,
         query_error::QueryError,
     };
@@ -180,7 +182,7 @@ mod tests {
     impl FilterHopAdmission for Hops {
         type Refusal = HopRefused;
 
-        fn admit_hops(&self, filter: &Filter) -> Result<(), HopRefused> {
+        fn admit_hops(&self, filter: &Filter<Written>) -> Result<(), HopRefused> {
             match self {
                 Hops::Refused if filter.linked_depth() > 0 => Err(HopRefused),
                 Hops::Refused | Hops::Admitted => Ok(()),
@@ -218,7 +220,7 @@ mod tests {
     }
 
     fn admitted(q: &str, admission: FilterAdmission, hops: &Hops) -> Result<AdmittedFilter, Refused> {
-        admit_q_filter::<Refused, _>(&q.parse::<Filter>().expect("the filter parses"), admission, hops)
+        admit_q_filter::<Refused, _>(&q.parse::<Filter<Written>>().expect("the filter parses"), admission, hops)
     }
 
     async fn compiled_text(q: &str, opt_ins: &FilterOptIns) -> String {
@@ -311,7 +313,7 @@ mod tests {
     /// leaves it as written for the next compilation.
     #[tokio::test]
     async fn an_admitted_filter_keeps_the_filter_as_written() {
-        let written = "speed>5".parse::<Filter>().expect("the filter parses");
+        let written = "speed>5".parse::<Filter<Written>>().expect("the filter parses");
         let filter = admit_q_filter::<Refused, _>(&written, admission(LanguageTargeting::Specification), &Hops::Admitted).expect("the filter is admitted");
         compile_q_filter(&filter, &FilterOptIns::default(), &EXPANDER)
             .await

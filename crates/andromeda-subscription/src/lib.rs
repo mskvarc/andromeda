@@ -42,6 +42,8 @@ pub mod entity;
 pub mod entity_filter_set;
 /// Subscription policy failures.
 pub mod error;
+/// The `q` and `csf` of a subscription request once their terms are expanded.
+pub mod expanded_filters;
 pub mod expiry;
 mod fields;
 /// What the filters a subscription request writes are admitted under.

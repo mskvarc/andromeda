@@ -15,6 +15,8 @@ use andromeda_ngsi_ld_query::{
     expanded_entity_selector::ExpandedEntitySelector,
     filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::{Expanded, Written},
+    namespace_expander::EXAMPLE_NAMESPACE,
     ordering::{
         compiled_ordering_term::CompiledOrderingTerm,
         expanded_ordering_target::ExpandedOrderingTarget,
@@ -83,12 +85,17 @@ fn query(selection: EntitySelection) -> CompiledEntityQuery {
 fn filtered(q: &str) -> CompiledEntityQuery {
     query(
         EntitySelection::builder()
-            .q(Some(CompiledFilter::new(q.parse::<Filter>().expect("valid q"), LanguageMatching::TagEquality)))
+            .q(Some(CompiledFilter::new(
+                EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("valid q"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            )))
             .build(),
     )
 }
 
-fn ordered_by(direction: OrderingDirection, path: ValuePath) -> CompiledEntityQuery {
+fn ordered_by(direction: OrderingDirection, path: ValuePath<Expanded>) -> CompiledEntityQuery {
     let mut ordered = query(EntitySelection::builder().selectors(vec![of_type("Vehicle")]).build());
     ordered.ordering.terms = vec![CompiledOrderingTerm {
         target: ExpandedOrderingTarget::Attribute(path),
@@ -98,7 +105,7 @@ fn ordered_by(direction: OrderingDirection, path: ValuePath) -> CompiledEntityQu
     ordered
 }
 
-fn attribute(name: &str) -> ValuePath {
+fn attribute(name: &str) -> ValuePath<Expanded> {
     ValuePath::simple(format!("https://example.com/{name}").parse().expect("valid attribute name"))
 }
 
@@ -125,7 +132,9 @@ fn vehicles_near() -> CompiledEntityQuery {
 fn geo_page_shapes() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, CountPolicy)> {
     let mut keyed = vehicles_near();
     keyed.selection.q = Some(CompiledFilter::new(
-        format!("\"{TEMPERATURE}\"~=\"text-71.*\"").parse::<Filter>().expect("valid q"),
+        EXAMPLE_NAMESPACE
+            .expanded(format!("\"{TEMPERATURE}\"~=\"text-71.*\"").parse::<Filter<Written>>().expect("valid q"))
+            .expect("the names expand"),
         LanguageMatching::TagEquality,
     ));
     vec![

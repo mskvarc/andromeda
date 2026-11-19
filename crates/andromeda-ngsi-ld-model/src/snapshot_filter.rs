@@ -17,18 +17,21 @@
 //! filter does not compare, so naming them is refused too.
 
 use crate::snapshot::{SnapshotPriority, SnapshotType};
-use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::filter::{
-    Filter,
-    attribute_path::AttributePath,
-    filter_error::FilterError,
-    language_matching::LanguageMatching,
-    reading::{
-        family_reading::{MultiValueReading, TargetOrigin},
-        filter_reading::FilterReading,
-        term_reading::TermReading,
+use andromeda_ngsi_ld_query::{
+    filter::{
+        Filter,
+        attribute_path::AttributePath,
+        filter_error::FilterError,
+        language_matching::LanguageMatching,
+        reading::{
+            family_reading::{MultiValueReading, TargetOrigin},
+            filter_reading::FilterReading,
+            term_reading::TermReading,
+        },
     },
+    name_stage::Written,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     q::{
@@ -37,8 +40,9 @@ use andromeda_ngsi_ld_query_evaluation::{
     },
     queried_entity::resource_members::ResourceMembers,
 };
+use iri_rs::iri;
 use std::{borrow::Cow, str::FromStr};
-use strum::{Display as StrumDisplay, EnumString};
+use strum::{Display as StrumDisplay, EnumIter, EnumString, IntoEnumIterator};
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 use url::Url;
@@ -47,7 +51,7 @@ use url::Url;
 ///
 /// Each member's target value is of the data type Table 5.2.41-1 gives it:
 /// `snapshotPriority` is a Number, every other one a String.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, StrumDisplay, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, StrumDisplay, EnumString, EnumIter)]
 pub enum SnapshotMember {
     /// The Snapshot's URI.
     #[strum(serialize = "id")]
@@ -65,6 +69,30 @@ pub enum SnapshotMember {
     /// The endpoint notified of status changes.
     #[strum(serialize = "endpoint")]
     Endpoint,
+}
+
+impl SnapshotMember {
+    /// The IRI the member is named by in the expanded filter a purge filter is
+    /// read as.
+    ///
+    /// No `@context` applies to a purge filter, and `id` and `type` are JSON-LD
+    /// keywords no context expands to an IRI, so each member is named by a URN
+    /// of the broker's own. The URN never leaves the purge: it only ties a
+    /// reading of the filter back to the member it was parsed from.
+    fn iri(self) -> AttributeIri {
+        AttributeIri::from_static(match self {
+            SnapshotMember::Id => iri!("urn:andromeda:snapshot-member:id"),
+            SnapshotMember::Type => iri!("urn:andromeda:snapshot-member:type"),
+            SnapshotMember::SnapshotLifetime => iri!("urn:andromeda:snapshot-member:snapshotLifetime"),
+            SnapshotMember::SnapshotPriority => iri!("urn:andromeda:snapshot-member:snapshotPriority"),
+            SnapshotMember::Endpoint => iri!("urn:andromeda:snapshot-member:endpoint"),
+        })
+    }
+
+    /// The member `iri` names, `None` when it names none.
+    fn of_iri(iri: &AttributeIri) -> Option<SnapshotMember> {
+        SnapshotMember::iter().find(|member| member.iri() == *iri)
+    }
 }
 
 /// What a purge filter reads of one Snapshot.
@@ -140,16 +168,25 @@ impl FromStr for SnapshotPurgeFilter {
     type Err = SnapshotQParseError;
 
     fn from_str(raw: &str) -> Result<SnapshotPurgeFilter, SnapshotQParseError> {
-        let expr = raw.parse::<Filter>()?;
+        let expr = raw.parse::<Filter<Written>>()?;
         every_path_names_a_member(&expr)?;
+        let expanded = expr.into_expanded_by(
+            &|name| {
+                name.as_str()
+                    .parse::<SnapshotMember>()
+                    .map(SnapshotMember::iri)
+                    .map_err(|_unknown| SnapshotQParseError::UnknownMember)
+            },
+            &|_type| Err(SnapshotQParseError::UnknownMember),
+        )?;
         // A Snapshot member holds no languageMap, so no term selects
         // languageMap keys and the matching is the specification's own.
-        Ok(SnapshotPurgeFilter(FilterReading::of(&expr, LanguageMatching::TagEquality)))
+        Ok(SnapshotPurgeFilter(FilterReading::of(&expanded, LanguageMatching::TagEquality)))
     }
 }
 
 /// Refuse an expression one of whose Query Terms names no [`SnapshotMember`].
-fn every_path_names_a_member(expr: &Filter) -> Result<(), SnapshotQParseError> {
+fn every_path_names_a_member(expr: &Filter<Written>) -> Result<(), SnapshotQParseError> {
     match expr {
         Filter::And(terms) | Filter::Or(terms) => terms.iter().try_for_each(every_path_names_a_member),
         Filter::Term(predicate) => filtered_member(predicate.path()).map(|_member| ()),
@@ -161,16 +198,16 @@ fn every_path_names_a_member(expr: &Filter) -> Result<(), SnapshotQParseError> {
 /// A member is named by its plain name: a dotted path, a trailing `[...]`
 /// group or a `{...}` hop addresses something inside or beyond a member, which
 /// the Snapshot data type does not have.
-fn filtered_member(path: &AttributePath) -> Result<SnapshotMember, SnapshotQParseError> {
+fn filtered_member(path: &AttributePath<Written>) -> Result<SnapshotMember, SnapshotQParseError> {
     match path {
         AttributePath::Local(local) if local.is_simple() => local.attribute.as_str().parse().map_err(|_unknown| SnapshotQParseError::UnknownMember),
         AttributePath::Local(_) | AttributePath::Linked { .. } => Err(SnapshotQParseError::UnknownMember),
     }
 }
 
-/// The member the attribute of an admitted term names.
+/// The member the attribute of an admitted term names, by the IRI parsing gave it.
 fn term_member(term: &TermReading) -> Option<SnapshotMember> {
-    term.attribute().as_str().parse().ok()
+    SnapshotMember::of_iri(term.attribute())
 }
 
 #[cfg(test)]

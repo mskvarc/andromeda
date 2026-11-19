@@ -172,6 +172,8 @@ mod tests {
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
         scope::scope_query::ScopeQuery,
@@ -179,6 +181,13 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriBuf;
+
+    /// `q` expanded under the example namespace.
+    fn expanded(q: &str) -> Filter<Expanded> {
+        EXAMPLE_NAMESPACE
+            .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+            .expect("the names expand")
+    }
 
     /// Clause 5.5.14: a request that named no identifier fixes nothing, so the
     /// selectors and filters alone decide what it considers.
@@ -245,10 +254,7 @@ mod tests {
                     .build(),
             ])
             .attrs(vec![speed.clone()])
-            .q(Some(CompiledFilter::new(
-                "speed>10".parse::<Filter>().expect("q parses"),
-                LanguageMatching::TagEquality,
-            )))
+            .q(Some(CompiledFilter::new(expanded("speed>10"), LanguageMatching::TagEquality)))
             .geo(Some(CompiledGeoQuery {
                 georel: GeoRel::Within,
                 geometry: serde_json::from_value::<Geometry>(serde_json::json!({
@@ -284,10 +290,7 @@ mod tests {
                     .build(),
             ])
             .attrs(vec![speed.clone()])
-            .q(Some(CompiledFilter::new(
-                "speed>10".parse::<Filter>().expect("q parses"),
-                LanguageMatching::TagEquality,
-            )))
+            .q(Some(CompiledFilter::new(expanded("speed>10"), LanguageMatching::TagEquality)))
             .considered(ConsideredEntities::NoEntity)
             .projected_members(ProjectedMembers::AnyOf {
                 attributes: vec![speed],

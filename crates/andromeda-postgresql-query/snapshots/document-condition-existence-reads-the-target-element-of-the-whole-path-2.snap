@@ -28,6 +28,6 @@ WHERE
     FROM
       (
         SELECT
-          "context_source_properties" -> ('a') AS "j"
+          "context_source_properties" -> ('https://example.com/a') AS "j"
       ) AS "s"
   ) IS NOT NULL

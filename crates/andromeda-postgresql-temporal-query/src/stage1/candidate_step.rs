@@ -206,6 +206,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         page_window::PageWindow,
         scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
@@ -221,9 +223,13 @@ mod tests {
     fn a_q_filter_takes_no_step_of_its_own() {
         let mut compiled = opened(sensors());
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99"
-                .parse::<Filter>()
-                .expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded(
+                    "\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99"
+                        .parse::<Filter<Written>>()
+                        .expect("valid q"),
+                )
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let stage1 = build_stage1_entity_ids(

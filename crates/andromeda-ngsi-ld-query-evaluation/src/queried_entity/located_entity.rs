@@ -1,7 +1,7 @@
 //! What a geo-query reads of an entity (clause 4.10).
 
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 use std::borrow::Cow;
 
 /// An entity as a geo-query reads it.
@@ -14,5 +14,5 @@ pub trait LocatedEntity<'a>: Copy {
     /// holds the clause 4.7.2 string form and has to parse it. An instance
     /// holding no geometry contributes none, and an entity not carrying the
     /// attribute yields nothing.
-    fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>>;
+    fn geo_property_geometries(self, attribute: &AttributeIri) -> impl Iterator<Item = Cow<'a, GeometryForm>>;
 }

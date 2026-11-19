@@ -9,7 +9,10 @@
 //! conjunction may be satisfied by two different instances, so two terms
 //! become one only where their disjunction is that one term.
 
-use crate::filter::{Filter, language_matching::LanguageMatching, reading::term_reading::TermReading};
+use crate::{
+    filter::{Filter, language_matching::LanguageMatching, reading::term_reading::TermReading},
+    name_stage::Expanded,
+};
 use std::ops::ControlFlow;
 
 /// The boolean structure of a lowered `q` filter over its term readings.
@@ -34,7 +37,7 @@ impl FilterReading {
     /// with its target languages selecting languageMap keys by `matching`,
     /// and in normal form.
     #[must_use]
-    pub fn of(filter: &Filter, matching: LanguageMatching) -> FilterReading {
+    pub fn of(filter: &Filter<Expanded>, matching: LanguageMatching) -> FilterReading {
         FilterReading::lowered(filter, matching).normal_form()
     }
 
@@ -47,7 +50,7 @@ impl FilterReading {
     /// named by its core `@context` term, as
     /// [`FilterReading::lowered_context_source_filter`] reads it.
     #[must_use]
-    pub fn of_context_source_filter(filter: &Filter) -> FilterReading {
+    pub fn of_context_source_filter(filter: &Filter<Expanded>) -> FilterReading {
         FilterReading::lowered_context_source_filter(filter).normal_form()
     }
 
@@ -151,30 +154,41 @@ fn joined_equalities(members: Vec<FilterReading>) -> Vec<FilterReading> {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        Filter,
-        attribute_path::AttributePath,
-        instance_metadata::InstanceMetadata,
-        language_matching::LanguageMatching,
-        reading::{filter_reading::FilterReading, terminal::Terminal},
-        trailing_group::{MemberPath, TrailingGroup},
+    use crate::{
+        filter::{
+            Filter,
+            attribute_path::AttributePath,
+            instance_metadata::InstanceMetadata,
+            language_matching::LanguageMatching,
+            reading::{filter_reading::FilterReading, terminal::Terminal},
+            trailing_group::{MemberPath, TrailingGroup},
+        },
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use pretty_assertions::assert_eq;
 
+    /// `q` expanded under the example namespace.
+    fn expanded(q: &str) -> Filter<Expanded> {
+        EXAMPLE_NAMESPACE
+            .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+            .expect("the names expand")
+    }
+
     /// The reading the executions run for `q`.
     fn normal(q: &str) -> FilterReading {
-        FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+        FilterReading::of(&expanded(q), LanguageMatching::TagEquality)
     }
 
     /// `q` lowered term for term, before normal form.
     fn lowered(q: &str) -> FilterReading {
-        FilterReading::lowered(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+        FilterReading::lowered(&expanded(q), LanguageMatching::TagEquality)
     }
 
     /// The sub-attributes and the terminal of the one term a `csf` reads.
     fn context_source_term(csf: &str) -> (Vec<String>, Terminal) {
-        let FilterReading::Term(term) = FilterReading::of_context_source_filter(&csf.parse::<Filter>().expect("a clause 4.9 filter")) else {
+        let FilterReading::Term(term) = FilterReading::of_context_source_filter(&expanded(csf)) else {
             panic!("one term");
         };
         (
@@ -313,7 +327,7 @@ mod tests {
     /// member read two keys of a `JsonProperty`.
     #[test]
     fn equalities_over_two_written_spellings_of_one_member_are_never_joined() {
-        let mut filter = "a[city_name]==1|a[city_name]==2".parse::<Filter>().expect("a filter");
+        let mut filter = expanded("a[city_name]==1|a[city_name]==2");
         let Filter::Or(filters) = &mut filter else {
             panic!("a disjunction");
         };
@@ -368,7 +382,7 @@ mod tests {
     /// is taken of.
     #[test]
     fn lowering_alone_keeps_the_filter_as_written() {
-        let filter: Filter = "b==2;(a==1;a==1)".parse().expect("a filter");
+        let filter = expanded("b==2;(a==1;a==1)");
         let FilterReading::All(children) = FilterReading::lowered(&filter, LanguageMatching::TagEquality) else {
             panic!("a conjunction");
         };

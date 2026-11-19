@@ -24,37 +24,40 @@
 //! spelling is a [`UriOperand`]: the stored and forwarded filter keeps what the
 //! client wrote, and the reading holds both spellings.
 
-use crate::filter::{
-    Filter,
-    attribute_path::AttributePath,
-    equality_value::EqualityValue,
-    instance_metadata::InstanceMetadata,
-    language_matching::LanguageMatching,
-    query_term::{QueryTerm, SetMembership},
-    reading::{
-        filter_reading::FilterReading,
-        hop::Hop,
-        interval::Interval,
-        operand::Operand,
-        scalar_test::ScalarTest,
-        term_reading::{TermReading, Test},
-        terminal::Terminal,
-        uri_operand::UriOperand,
-        value_test::{Polarity, ValueTest},
+use crate::{
+    filter::{
+        Filter,
+        attribute_path::AttributePath,
+        equality_value::EqualityValue,
+        instance_metadata::InstanceMetadata,
+        language_matching::LanguageMatching,
+        query_term::{QueryTerm, SetMembership},
+        reading::{
+            filter_reading::FilterReading,
+            hop::Hop,
+            interval::Interval,
+            operand::Operand,
+            scalar_test::ScalarTest,
+            term_reading::{TermReading, Test},
+            terminal::Terminal,
+            uri_operand::UriOperand,
+            value_test::{Polarity, ValueTest},
+        },
+        scalar::Scalar,
+        target_language::LanguageSelector,
+        trailing_group::TrailingGroup,
+        value_path::ValuePath,
     },
-    scalar::Scalar,
-    target_language::LanguageSelector,
-    trailing_group::TrailingGroup,
-    value_path::ValuePath,
+    name_stage::Expanded,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, identifier::Identifier};
 
 impl FilterReading {
     /// The reading of a parsed, expanded filter as written, term for term, its
     /// target languages selecting languageMap keys by `matching`: what the
     /// normal form is taken of.
     #[must_use]
-    pub fn lowered(filter: &Filter, matching: LanguageMatching) -> FilterReading {
+    pub fn lowered(filter: &Filter<Expanded>, matching: LanguageMatching) -> FilterReading {
         match filter {
             Filter::And(filters) => FilterReading::All(filters.iter().map(|filter| FilterReading::lowered(filter, matching)).collect()),
             Filter::Or(filters) => FilterReading::Any(filters.iter().map(|filter| FilterReading::lowered(filter, matching)).collect()),
@@ -73,7 +76,7 @@ impl FilterReading {
     /// `@context`. Before a trailing group it stays a sub-attribute name, as
     /// the IRI does.
     #[must_use]
-    pub fn lowered_context_source_filter(filter: &Filter) -> FilterReading {
+    pub fn lowered_context_source_filter(filter: &Filter<Expanded>) -> FilterReading {
         FilterReading::lowered(filter, LanguageMatching::TagEquality).ending_on_member_terms()
     }
 
@@ -93,7 +96,7 @@ impl FilterReading {
     /// normal form, so each name is one term and a single name is that term
     /// alone. With no name it is a disjunction no Entity satisfies.
     #[must_use]
-    pub fn carrying_any(attributes: impl IntoIterator<Item = AttributeName>) -> FilterReading {
+    pub fn carrying_any(attributes: impl IntoIterator<Item = AttributeIri>) -> FilterReading {
         FilterReading::Any(
             attributes
                 .into_iter()
@@ -116,7 +119,7 @@ impl TermReading {
     /// The reading of one parsed, expanded Query Term, its target language
     /// selecting languageMap keys by `matching`.
     #[must_use]
-    pub fn of(term: &QueryTerm, matching: LanguageMatching) -> TermReading {
+    pub fn of(term: &QueryTerm<Expanded>, matching: LanguageMatching) -> TermReading {
         let (hops, local) = hops_to_local(term.path());
         let (sub_attributes, terminal) = local_reading(local, matching);
         TermReading {
@@ -144,7 +147,7 @@ impl TermReading {
 
 /// The hops of an attribute path, outermost first, and the value path it ends
 /// on.
-fn hops_to_local(path: &AttributePath) -> (Vec<Hop>, &ValuePath) {
+fn hops_to_local(path: &AttributePath<Expanded>) -> (Vec<Hop>, &ValuePath<Expanded>) {
     let mut hops = Vec::new();
     let mut current = path;
     loop {
@@ -157,7 +160,7 @@ fn hops_to_local(path: &AttributePath) -> (Vec<Hop>, &ValuePath) {
             } => {
                 hops.push(Hop {
                     relationship: relationship.clone(),
-                    guard_types: guard_types.iter().map(EntityTypeName::from).collect(),
+                    guard_types: guard_types.clone(), // clone: the reading owns the guard the filter keeps
                 });
                 current = inner;
             }
@@ -166,7 +169,7 @@ fn hops_to_local(path: &AttributePath) -> (Vec<Hop>, &ValuePath) {
 }
 
 /// The sub-attributes a value path walks and what it ends on.
-fn local_reading(path: &ValuePath, matching: LanguageMatching) -> (Vec<AttributeName>, Terminal) {
+fn local_reading(path: &ValuePath<Expanded>, matching: LanguageMatching) -> (Vec<AttributeName>, Terminal) {
     match path.ending_member() {
         Some((member, above)) => (above.to_vec(), Terminal::InstanceMember(member)),
         None => (path.sub_attributes.clone(), trailing_group_terminal(path, matching)),
@@ -174,7 +177,7 @@ fn local_reading(path: &ValuePath, matching: LanguageMatching) -> (Vec<Attribute
 }
 
 /// What a path's trailing group ends on at the instance it reaches.
-fn trailing_group_terminal(path: &ValuePath, matching: LanguageMatching) -> Terminal {
+fn trailing_group_terminal(path: &ValuePath<Expanded>, matching: LanguageMatching) -> Terminal {
     match &path.trailing {
         None | Some(TrailingGroup::AllLanguages) => Terminal::OwnValue,
         Some(TrailingGroup::Language(language)) => Terminal::Language {
@@ -193,7 +196,7 @@ fn trailing_group_terminal(path: &ValuePath, matching: LanguageMatching) -> Term
 }
 
 /// What a Query Term asks of its target.
-fn test_of(term: &QueryTerm) -> Test {
+fn test_of(term: &QueryTerm<Expanded>) -> Test {
     match term {
         QueryTerm::Exists(_) => Test::Exists,
         QueryTerm::Equality { membership, value, .. } => Test::Value(ValueTest::new(equality_test(value), equality_polarity(*membership))),

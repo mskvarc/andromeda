@@ -84,6 +84,8 @@ mod tests {
         entity_selection::EntitySelection,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -101,7 +103,12 @@ mod tests {
         CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
-                    .q(Some(CompiledFilter::new(q.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality)))
+                    .q(Some(CompiledFilter::new(
+                        EXAMPLE_NAMESPACE
+                            .expanded(q.parse::<Filter<Written>>().expect("q parses"))
+                            .expect("the names expand"),
+                        LanguageMatching::TagEquality,
+                    )))
                     .geo(geo)
                     .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("scopeQ parses")))
                     .build(),

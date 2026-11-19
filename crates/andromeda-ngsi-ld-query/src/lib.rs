@@ -36,6 +36,7 @@ pub mod expanded_entity_selector;
 pub mod filter;
 pub mod geo;
 pub mod identifier_axis;
+pub mod name_stage;
 #[cfg(any(test, feature = "test-support"))]
 pub mod namespace_expander;
 pub mod ordering;

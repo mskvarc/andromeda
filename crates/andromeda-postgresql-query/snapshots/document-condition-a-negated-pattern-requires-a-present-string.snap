@@ -29,7 +29,7 @@ WHERE
     FROM
       (
         SELECT
-          "context_source_properties" -> ('name') AS "j"
+          "context_source_properties" -> ('https://example.com/name') AS "j"
       ) AS "s"
   ) IS NOT NULL
   AND (
@@ -57,7 +57,7 @@ WHERE
         FROM
           (
             SELECT
-              "context_source_properties" -> ('name') AS "j"
+              "context_source_properties" -> ('https://example.com/name') AS "j"
           ) AS "s"
       )
     ) = ('string')
@@ -87,7 +87,7 @@ WHERE
             FROM
               (
                 SELECT
-                  "context_source_properties" -> ('name') AS "j"
+                  "context_source_properties" -> ('https://example.com/name') AS "j"
               ) AS "s"
           )
         ) = ('string')
@@ -116,7 +116,7 @@ WHERE
               FROM
                 (
                   SELECT
-                    "context_source_properties" -> ('name') AS "j"
+                    "context_source_properties" -> ('https://example.com/name') AS "j"
                 ) AS "s"
             ) #>> ('{}')) ~ $1), FALSE)))
 1: String '^A.*'

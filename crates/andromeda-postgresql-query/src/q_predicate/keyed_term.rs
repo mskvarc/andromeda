@@ -263,7 +263,11 @@ mod tests {
         },
         query_names::QueryNames,
     };
-    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
+    };
 
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
@@ -403,7 +407,12 @@ mod tests {
         let mut names = names();
         let read: Vec<AttributeNameKey> = counts.iter().map(|(key, _)| AttributeNameKey::from(*key)).collect();
         names.carriers = AttributeCarriers::new(&read, counts.iter().map(|(key, count)| (AttributeNameKey::from(*key), *count)));
-        let reading = FilterReading::of(&q.parse::<Filter>().expect("the filter parses"), LanguageMatching::TagEquality);
+        let reading = FilterReading::of(
+            &EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("the filter parses"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        );
         keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names, |_| CandidateBound::AtMost(1000))
             .into_iter()
             .map(|keyed| keyed.term.attribute().as_str().to_owned())
@@ -471,7 +480,14 @@ mod tests {
 
     #[test]
     fn the_census_is_read_only_when_two_conjuncts_contend() {
-        let reading = |q: &str| FilterReading::of(&q.parse::<Filter>().expect("the filter parses"), LanguageMatching::TagEquality);
+        let reading = |q: &str| {
+            FilterReading::of(
+                &EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("the filter parses"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            )
+        };
         assert_eq!(
             keyed_conjuncts(&reading(COUNT_AND_NAME), &names()),
             KeyedConjuncts::Contended(vec![AttributeNameKey::from(2), AttributeNameKey::from(9)])
@@ -488,7 +504,12 @@ mod tests {
     /// to answer; the conjuncts read in canonical order are not.
     #[test]
     fn a_conjunct_the_census_fits_is_marked_as_answering() {
-        let reading = FilterReading::of(&COUNT_AND_NAME.parse::<Filter>().expect("the filter parses"), LanguageMatching::TagEquality);
+        let reading = FilterReading::of(
+            &EXAMPLE_NAMESPACE
+                .expanded(COUNT_AND_NAME.parse::<Filter<Written>>().expect("the filter parses"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        );
         let census = |counts: &[(i32, u64)]| -> Vec<CensusCount> {
             let mut names = names();
             let read: Vec<AttributeNameKey> = counts.iter().map(|(key, _)| AttributeNameKey::from(*key)).collect();

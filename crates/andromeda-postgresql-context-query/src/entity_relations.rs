@@ -337,6 +337,8 @@ mod tests {
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         pattern::Pattern,
         scope::scope_query::ScopeQuery,
@@ -426,7 +428,9 @@ mod tests {
     fn a_q_filter_joins_nothing() {
         let mut filtered = empty_query();
         filtered.selection.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\">1".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">1".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         assert_statement_snapshot!("entity-relations-a-q-filter-joins-nothing", from_clause(relations(&filtered)));
@@ -529,7 +533,9 @@ mod tests {
     fn a_walked_statement_joins_on_the_walks_key() {
         let mut query = typed_query();
         query.selection.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\">1".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">1".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];

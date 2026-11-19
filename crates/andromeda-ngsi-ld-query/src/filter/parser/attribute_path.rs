@@ -19,14 +19,15 @@ use crate::{
         filter_error::FilterError,
         parser::{
             expected,
-            value_path::{attribute_name, check_depth, value_path},
+            value_path::{attribute_name, check_depth, entity_type_name, value_path},
             word::{Word, name_extent, word},
         },
         quoting::Quoting,
     },
+    name_stage::Written,
     query_text::{grammar_fault::GrammarFault, whitespace::Whitespace},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use winnow::{
     Parser,
     stream::{LocatingSlice, Location, Stream},
@@ -36,7 +37,7 @@ use winnow::{
 #[derive(Debug)]
 struct HopGuard<'a> {
     /// The entity types the hop is constrained to, empty when it carried none.
-    types: Vec<AttributeName>,
+    types: Vec<EntityTypeName>,
     /// The inner path's leading name when the guard's terminating colon carried
     /// it (`Store:category`); `None` when the inner path starts at the next word.
     inner_leading: Option<&'a str>,
@@ -49,7 +50,7 @@ struct HopGuard<'a> {
 /// # Errors
 ///
 /// Refuses with [`FilterError::Expected`] when a hop is empty, left unclosed or holds anything after its path (a comparison written inside the braces), and with the refusals of [`value_path`], of the entity-type guard and of [`check_depth`].
-pub(super) fn attribute_path(input: &mut LocatingSlice<&str>, leading: &str, depth: usize) -> Result<AttributePath, GrammarFault<FilterError>> {
+pub(super) fn attribute_path(input: &mut LocatingSlice<&str>, leading: &str, depth: usize) -> Result<AttributePath<Written>, GrammarFault<FilterError>> {
     Whitespace::Json.skip::<FilterError>().parse_next(input)?;
     if input.peek_token() != Some('{') {
         return value_path(input, leading, depth).map(AttributePath::Local);
@@ -90,12 +91,12 @@ fn hop_guard<'i>(input: &mut LocatingSlice<&'i str>) -> Result<HopGuard<'i>, Gra
         let name = expected(Expectation::EntityType, word).parse_next(input)?;
         Whitespace::Json.skip::<FilterError>().parse_next(input)?;
         if input.peek_token() == Some(',') {
-            types.push(attribute_name(name.text).map_err(GrammarFault::Refused)?);
+            types.push(entity_type_name(name.text).map_err(GrammarFault::Refused)?);
             let _separator = input.next_token();
             continue;
         }
         let (last, inner_leading) = guard_end(input, name)?;
-        types.push(attribute_name(last).map_err(GrammarFault::Refused)?);
+        types.push(entity_type_name(last).map_err(GrammarFault::Refused)?);
         return Ok(HopGuard { types, inner_leading });
     }
 }
@@ -167,13 +168,14 @@ mod tests {
             filter_error::FilterError,
             parser::attribute_path::attribute_path,
         },
+        name_stage::Written,
         query_text::grammar_fault::GrammarFault,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use winnow::stream::{LocatingSlice, Stream};
 
     /// Reads the hop of `text` whose leading name is its first `leading_length` bytes, returning the result and what stays unread.
-    fn hop(text: &str, leading_length: usize) -> (Result<AttributePath, FilterError>, &str) {
+    fn hop(text: &str, leading_length: usize) -> (Result<AttributePath<Written>, FilterError>, &str) {
         let mut input = LocatingSlice::new(text);
         let leading = input.next_slice(leading_length);
         let result = attribute_path(&mut input, leading, 0).map_err(|fault| match fault {
@@ -184,19 +186,19 @@ mod tests {
     }
 
     /// The relationship, guard types and inner path of a hop.
-    fn linked(path: &AttributePath) -> (&str, Vec<&str>, &AttributePath) {
+    fn linked(path: &AttributePath<Written>) -> (&str, Vec<&str>, &AttributePath<Written>) {
         match path {
             AttributePath::Linked {
                 relationship,
                 guard_types,
                 inner,
-            } => (relationship.as_str(), guard_types.iter().map(AttributeName::as_str).collect(), inner),
+            } => (relationship.as_str(), guard_types.iter().map(EntityTypeName::as_str).collect(), inner),
             AttributePath::Local(local) => panic!("expected a hop, got the local path {local:?}"),
         }
     }
 
     /// The leading name of a path that crosses no hop.
-    fn local(path: &AttributePath) -> &str {
+    fn local(path: &AttributePath<Written>) -> &str {
         match path {
             AttributePath::Local(local) => local.attribute.as_str(),
             AttributePath::Linked { relationship, .. } => panic!("expected a local path, got a hop through {relationship}"),

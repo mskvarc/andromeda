@@ -43,9 +43,10 @@ use crate::{
         trailing_group::{MemberPath, TrailingGroup},
         value_path::ValuePath,
     },
+    name_stage::Written,
     query_text::{grammar_fault::GrammarFault, whitespace::Whitespace},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use std::str::FromStr;
 use winnow::{
     Parser,
@@ -82,6 +83,17 @@ pub(super) fn attribute_name(raw: &str) -> Result<AttributeName, FilterError> {
     raw.parse().map_err(FilterError::InvalidAttributeName)
 }
 
+/// Read a name as an entity type name, in the same grammar an attribute name is
+/// read in.
+///
+/// # Errors
+///
+/// Returns [`FilterError::InvalidAttributeName`] when the name is outside the
+/// clause 4.6.2 grammar.
+pub(super) fn entity_type_name(raw: &str) -> Result<EntityTypeName, FilterError> {
+    raw.parse().map_err(FilterError::InvalidAttributeName)
+}
+
 /// Reads a `ValuePath` whose leading name has already been read: `('.' name)* ('[' trailing ']')?`.
 ///
 /// `depth` counts the segments already consumed by an enclosing attribute path, so a path reached through linked-entity hops shares one budget with them. The JSON whitespace between any two of its marks is skipped.
@@ -89,7 +101,7 @@ pub(super) fn attribute_name(raw: &str) -> Result<AttributeName, FilterError> {
 /// # Errors
 ///
 /// Refuses with [`FilterError::InvalidAttributeName`] when a segment is outside the clause 4.6.2 name grammar, [`FilterError::InvalidTrailingMember`] when a one-member group is neither a name nor a language tag or range, [`FilterError::Expected`] when a separator is not followed by a name or a bracket is left open, and [`FilterError::PathTooDeep`] beyond [`MAX_SUB_ATTRIBUTE_DEPTH`].
-pub(super) fn value_path(input: &mut LocatingSlice<&str>, leading: &str, depth: usize) -> Result<ValuePath, GrammarFault<FilterError>> {
+pub(super) fn value_path(input: &mut LocatingSlice<&str>, leading: &str, depth: usize) -> Result<ValuePath<Written>, GrammarFault<FilterError>> {
     let attribute = attribute_name(leading).map_err(GrammarFault::Refused)?;
     let mut sub_attributes = Vec::new();
     while let Some(name) = dotted_name(input)? {
@@ -113,7 +125,7 @@ pub(super) fn value_path(input: &mut LocatingSlice<&str>, leading: &str, depth: 
 }
 
 /// Reads a whole value path standing on its own: the path, then the end of the text.
-fn standalone_path(input: &mut LocatingSlice<&str>) -> Result<ValuePath, GrammarFault<FilterError>> {
+fn standalone_path(input: &mut LocatingSlice<&str>) -> Result<ValuePath<Written>, GrammarFault<FilterError>> {
     let leading = expected(Expectation::AttributeName, word).parse_next(input)?;
     let path = value_path(input, leading.text, 0)?;
     complete(input)?;
@@ -163,7 +175,7 @@ fn trailing_group(input: &mut LocatingSlice<&str>, depth: usize) -> Result<Trail
     Ok(TrailingGroup::Members(MemberPath::new(members)))
 }
 
-impl FromStr for ValuePath {
+impl FromStr for ValuePath<Written> {
     type Err = FilterError;
 
     /// Parses a whole value path standing on its own, with no enclosing
@@ -181,7 +193,7 @@ impl FromStr for ValuePath {
     /// path outside the production, and [`FilterError::UnexpectedCharacter`] when
     /// anything follows the path, which is what refuses the clause 4.9
     /// `rel{...}` linked-entity axis to a parameter whose own grammar has no hop.
-    fn from_str(text: &str) -> Result<ValuePath, FilterError> {
+    fn from_str(text: &str) -> Result<ValuePath<Written>, FilterError> {
         let mut input = LocatingSlice::new(text);
         standalone_path(&mut input).map_err(|fault| entry_refusal(text, fault))
     }
@@ -189,20 +201,23 @@ impl FromStr for ValuePath {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        complexity::MAX_SUB_ATTRIBUTE_DEPTH,
-        expectation::{Expectation, Found, Punctuation},
-        filter_error::FilterError,
-        target_language::{LanguageSelector, TargetLanguage},
-        trailing_group::TrailingGroup,
-        value_path::ValuePath,
+    use crate::{
+        filter::{
+            complexity::MAX_SUB_ATTRIBUTE_DEPTH,
+            expectation::{Expectation, Found, Punctuation},
+            filter_error::FilterError,
+            target_language::{LanguageSelector, TargetLanguage},
+            trailing_group::TrailingGroup,
+            value_path::ValuePath,
+        },
+        name_stage::Written,
     };
     use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
     use pretty_assertions::assert_eq;
 
     /// The names of a parsed path, as the client spelled them.
     fn spelled(text: &str) -> (String, Vec<String>, Vec<String>) {
-        let path = text.parse::<ValuePath>().expect("a clause 4.9 ValuePath");
+        let path = text.parse::<ValuePath<Written>>().expect("a clause 4.9 ValuePath");
         (
             path.attribute.as_str().to_owned(),
             path.sub_attributes.iter().map(|name| name.as_str().to_owned()).collect(),
@@ -252,15 +267,15 @@ mod tests {
     /// comes last: nothing may follow the closing bracket.
     #[test]
     fn a_second_bracketed_group_is_outside_the_production() {
-        assert!("a[b][c]".parse::<ValuePath>().is_err());
-        assert!("a[b].c".parse::<ValuePath>().is_err());
+        assert!("a[b][c]".parse::<ValuePath<Written>>().is_err());
+        assert!("a[b].c".parse::<ValuePath<Written>>().is_err());
     }
 
     /// The `%x7B…%x7D` linked-entity axis crosses an entity boundary, which
     /// clause 4.23.3's `AttrName`-based grammar does not reach.
     #[test]
     fn the_linked_entity_axis_is_not_part_of_a_value_path() {
-        let error = "rel{attr}".parse::<ValuePath>().expect_err("a hop is not a ValuePath");
+        let error = "rel{attr}".parse::<ValuePath<Written>>().expect_err("a hop is not a ValuePath");
         assert!(
             matches!(error, FilterError::UnexpectedCharacter { character: '{', position: 3 }),
             "got {error:?}"
@@ -269,7 +284,7 @@ mod tests {
 
     /// The refusal of a text that is no value path.
     fn refusal(text: &str) -> FilterError {
-        text.parse::<ValuePath>().expect_err("outside the ValuePath production")
+        text.parse::<ValuePath<Written>>().expect_err("outside the ValuePath production")
     }
 
     /// The name is read and validated where it stands, so it is refused before a later quotation mark that is never closed.
@@ -350,7 +365,7 @@ mod tests {
     /// A path standing alone reads its names, sub-attributes and trailing group from the text, and refuses what follows.
     #[test]
     fn a_standalone_value_path_parses_from_its_text() {
-        let path = "address[city]".parse::<ValuePath>().expect("a path with a trailing group");
+        let path = "address[city]".parse::<ValuePath<Written>>().expect("a path with a trailing group");
         assert_eq!(path.attribute.as_str(), "address");
         assert_eq!(path.sub_attributes.len(), 0);
         assert_eq!(
@@ -359,7 +374,7 @@ mod tests {
             Some(vec!["city".to_owned()])
         );
 
-        let path = "a.b.c".parse::<ValuePath>().expect("a dotted path");
+        let path = "a.b.c".parse::<ValuePath<Written>>().expect("a dotted path");
         assert_eq!(path.attribute.as_str(), "a");
         assert_eq!(
             path.sub_attributes.iter().map(|name| name.as_str().to_owned()).collect::<Vec<_>>(),
@@ -367,7 +382,7 @@ mod tests {
         );
         assert!(path.trailing.is_none());
 
-        let error = "a[b].c".parse::<ValuePath>().expect_err("nothing follows the trailing group");
+        let error = "a[b].c".parse::<ValuePath<Written>>().expect_err("nothing follows the trailing group");
         assert!(
             matches!(error, FilterError::UnexpectedCharacter { character: '.', position: 4 }),
             "got {error:?}"
@@ -377,7 +392,7 @@ mod tests {
     /// JSON whitespace stands between any two marks of the path and before its end.
     #[test]
     fn json_whitespace_separates_the_marks_of_a_path() {
-        let path = " a . b [ c . d ] \t\n".parse::<ValuePath>().expect("whitespace is skipped");
+        let path = " a . b [ c . d ] \t\n".parse::<ValuePath<Written>>().expect("whitespace is skipped");
         assert_eq!(path.attribute.as_str(), "a");
         assert_eq!(path.sub_attributes.len(), 1);
         assert_eq!(path.members().map(|members| members.addressed.len()), Some(2));
@@ -395,13 +410,13 @@ mod tests {
             ("a[]", Found::Character(']'), 2),
             ("true", Found::Character('t'), 0),
         ] {
-            let error = text.parse::<ValuePath>().expect_err("a name is required");
+            let error = text.parse::<ValuePath<Written>>().expect_err("a name is required");
             assert!(
                 matches!(error, FilterError::Expected { expected: Expectation::AttributeName, found: refused, position: at } if refused == found && at == position),
                 "{text}: got {error:?}"
             );
         }
-        let error = "a[b".parse::<ValuePath>().expect_err("the bracket is left open");
+        let error = "a[b".parse::<ValuePath<Written>>().expect_err("the bracket is left open");
         assert!(
             matches!(
                 error,
@@ -418,17 +433,22 @@ mod tests {
     /// A `*` that touches a hyphen belongs to a language range; a lone one is the every-language marker, and a range separator ends the path.
     #[test]
     fn the_star_and_the_range_separator_are_read_by_what_touches_them() {
-        assert_eq!("a[ * ]".parse::<ValuePath>().expect("the marker").trailing, Some(TrailingGroup::AllLanguages));
+        assert_eq!(
+            "a[ * ]".parse::<ValuePath<Written>>().expect("the marker").trailing,
+            Some(TrailingGroup::AllLanguages)
+        );
         assert!(matches!(
-            "a[*-GB]".parse::<ValuePath>().expect("a range").trailing,
+            "a[*-GB]".parse::<ValuePath<Written>>().expect("a range").trailing,
             Some(TrailingGroup::Language(_))
         ));
-        let error = "a..b".parse::<ValuePath>().expect_err("a range separator is no sub-attribute separator");
+        let error = "a..b"
+            .parse::<ValuePath<Written>>()
+            .expect_err("a range separator is no sub-attribute separator");
         assert!(
             matches!(error, FilterError::UnexpectedCharacter { character: '.', position: 1 }),
             "got {error:?}"
         );
-        let error = "a[*x]".parse::<ValuePath>().expect_err("the marker stands alone");
+        let error = "a[*x]".parse::<ValuePath<Written>>().expect_err("the marker stands alone");
         assert!(
             matches!(
                 error,
@@ -468,17 +488,17 @@ mod tests {
     #[test]
     fn a_separator_with_no_name_after_it_is_rejected() {
         for malformed in ["a.", "a[", "a[]", ".a", "a[b", "a.b."] {
-            assert!(malformed.parse::<ValuePath>().is_err(), "{malformed}");
+            assert!(malformed.parse::<ValuePath<Written>>().is_err(), "{malformed}");
         }
     }
 
     #[test]
     fn a_path_at_the_depth_limit_parses_and_one_beyond_it_does_not() {
         let at_limit = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH));
-        assert!(at_limit.parse::<ValuePath>().is_ok(), "a path at the limit must parse");
+        assert!(at_limit.parse::<ValuePath<Written>>().is_ok(), "a path at the limit must parse");
 
         let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
-        let error = too_deep.parse::<ValuePath>().expect_err("beyond the limit");
+        let error = too_deep.parse::<ValuePath<Written>>().expect_err("beyond the limit");
         assert!(matches!(error, FilterError::PathTooDeep { .. }), "got {error:?}");
     }
 
@@ -487,7 +507,7 @@ mod tests {
     #[test]
     fn the_depth_limit_counts_compound_members_too() {
         let members = (0..=MAX_SUB_ATTRIBUTE_DEPTH).map(|index| format!("m{index}")).collect::<Vec<_>>().join(".");
-        let error = format!("a[{members}]").parse::<ValuePath>().expect_err("beyond the limit");
+        let error = format!("a[{members}]").parse::<ValuePath<Written>>().expect_err("beyond the limit");
         assert!(matches!(error, FilterError::PathTooDeep { .. }), "got {error:?}");
     }
 
@@ -495,7 +515,7 @@ mod tests {
     /// spells.
     #[test]
     fn a_hyphenated_language_tag_is_a_target_language() {
-        let path = "label[en-GB]".parse::<ValuePath>().expect("a target language");
+        let path = "label[en-GB]".parse::<ValuePath<Written>>().expect("a target language");
         assert!(matches!(path.trailing, Some(TrailingGroup::Language(TargetLanguage::Tag(_)))), "{path:?}");
         pretty_assertions::assert_eq!(path.target_language().map(LanguageSelector::as_str), Some("en-GB"));
     }
@@ -504,7 +524,7 @@ mod tests {
     /// member reading and offers the language reading beside it.
     #[test]
     fn a_name_that_is_also_a_tag_stays_a_member_path_with_a_target_language() {
-        let path = "label[en]".parse::<ValuePath>().expect("a member path");
+        let path = "label[en]".parse::<ValuePath<Written>>().expect("a member path");
         assert!(matches!(path.trailing, Some(TrailingGroup::Members(_))), "{path:?}");
         pretty_assertions::assert_eq!(path.target_language().map(LanguageSelector::as_str), Some("en"));
     }
@@ -512,7 +532,7 @@ mod tests {
     #[test]
     fn a_multi_member_or_non_tag_path_names_no_target_language() {
         for text in ["label[city_name]", "label[airquality.particulate]"] {
-            let path = text.parse::<ValuePath>().expect("a member path");
+            let path = text.parse::<ValuePath<Written>>().expect("a member path");
             assert!(matches!(path.trailing, Some(TrailingGroup::Members(_))), "{text}");
             assert!(path.target_language().is_none(), "{text}");
         }
@@ -520,23 +540,23 @@ mod tests {
 
     #[test]
     fn the_star_marker_selects_every_language() {
-        let path = "label[*]".parse::<ValuePath>().expect("the marker");
+        let path = "label[*]".parse::<ValuePath<Written>>().expect("the marker");
         assert_eq!(path.trailing, Some(TrailingGroup::AllLanguages));
         assert!(path.target_language().is_none());
     }
 
     #[test]
     fn a_wildcard_range_is_a_target_language() {
-        let path = "label[de-*-DE]".parse::<ValuePath>().expect("a range");
+        let path = "label[de-*-DE]".parse::<ValuePath<Written>>().expect("a range");
         assert!(matches!(path.trailing, Some(TrailingGroup::Language(TargetLanguage::Range(_)))), "{path:?}");
         assert!(path.target_language().is_some_and(LanguageSelector::is_range));
     }
 
     #[test]
     fn a_member_neither_name_nor_tag_is_refused() {
-        let error = "label[en_GB-x]".parse::<ValuePath>().expect_err("neither");
+        let error = "label[en_GB-x]".parse::<ValuePath<Written>>().expect_err("neither");
         assert!(matches!(error, FilterError::InvalidTrailingMember { .. }), "got {error:?}");
-        let error = "label[en-GB.x]".parse::<ValuePath>().expect_err("a tag starts no member path");
+        let error = "label[en-GB.x]".parse::<ValuePath<Written>>().expect_err("a tag starts no member path");
         assert!(matches!(error, FilterError::InvalidAttributeName(_)), "got {error:?}");
     }
 }

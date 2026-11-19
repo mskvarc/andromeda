@@ -128,7 +128,7 @@ pub(crate) fn value_walk_order(query: &CompiledEntityQuery, names: &QueryNames, 
         return None;
     }
     Some(ValueWalkOrder {
-        attribute: names.attributes.get(&path.attribute)?,
+        attribute: names.attributes.get_str(path.attribute.as_str())?,
         direction: SortDirection::from(term.direction),
         collation: ordering_collation(term.collation.as_ref()),
         offset,
@@ -263,6 +263,8 @@ mod tests {
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{
             compiled_ordering_term::CompiledOrderingTerm,
             expanded_ordering_target::ExpandedOrderingTarget,
@@ -470,7 +472,9 @@ mod tests {
     fn an_ordering_the_value_index_cannot_serve_keeps_the_plain_page() {
         let mut filtered = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
         filtered.selection.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\"!=1".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\"!=1".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let two_terms = vehicles_by(vec![term(SPEED, OrderingDirection::Asc), term(SPEED, OrderingDirection::Desc)]);

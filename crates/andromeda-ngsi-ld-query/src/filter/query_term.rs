@@ -2,24 +2,25 @@
 
 use crate::{
     filter::{attribute_path::AttributePath, equality_value::EqualityValue, operator_spelling, reading::order_relation::OrderRelation, scalar::Scalar},
+    name_stage::NameStage,
     pattern::Pattern,
 };
 
-/// A single query term within a `q` filter.
+/// A single query term within a `q` filter, its names in the stage `S`.
 ///
 /// Clause 4.9 Table 4.9-1 admits a range or a value list only after `==`/`!=`;
 /// the four ordering operators take a single scalar. The two comparison
 /// variants encode that split at the type level, so a range or a list can never
 /// attach to an ordering operator and no rendering has to re-check eligibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueryTerm {
+pub enum QueryTerm<S: NameStage> {
     /// Attribute existence check (e.g. `temperature`).
-    Exists(AttributePath),
+    Exists(AttributePath<S>),
     /// Equality comparison (`==`/`!=`) of an attribute value against a scalar,
     /// a range, or a value list.
     Equality {
         /// The attribute path to compare.
-        path: AttributePath,
+        path: AttributePath<S>,
         /// Whether the value must lie inside (`==`) or outside (`!=`) the operand.
         membership: SetMembership,
         /// The equality value: a scalar, a range or a value list.
@@ -29,7 +30,7 @@ pub enum QueryTerm {
     /// single scalar.
     Ordering {
         /// The attribute path to compare.
-        path: AttributePath,
+        path: AttributePath<S>,
         /// The ordering operator.
         operator: OrderingOperator,
         /// The single scalar operand; clause 4.9 admits no compound operand here.
@@ -38,28 +39,28 @@ pub enum QueryTerm {
     /// Regex match: attribute value must match the pattern (e.g. `name~="A.*"`).
     MatchPattern {
         /// The attribute path to match against.
-        path: AttributePath,
+        path: AttributePath<S>,
         /// The regex pattern, validated when the filter was parsed.
         pattern: Pattern,
     },
     /// Negated regex match: attribute value must not match the pattern (e.g. `name!~="A.*"`).
     NotMatchPattern {
         /// The attribute path to match against.
-        path: AttributePath,
+        path: AttributePath<S>,
         /// The regex pattern that must not match, validated when the filter
         /// was parsed.
         pattern: Pattern,
     },
 }
 
-impl QueryTerm {
+impl<S: NameStage> QueryTerm<S> {
     /// The attribute path this query term compares along.
     ///
     /// Every variant carries one, so a consumer that only has to walk the path
     /// (a SQL compiler descending the linked-entity hops, for instance) reads it
     /// here rather than re-matching all five variants.
     #[must_use]
-    pub const fn path(&self) -> &AttributePath {
+    pub const fn path(&self) -> &AttributePath<S> {
         match self {
             QueryTerm::Exists(path)
             | QueryTerm::Equality { path, .. }
@@ -70,7 +71,7 @@ impl QueryTerm {
     }
 
     /// The attribute path this query term compares along, mutably.
-    pub const fn path_mut(&mut self) -> &mut AttributePath {
+    pub const fn path_mut(&mut self) -> &mut AttributePath<S> {
         match self {
             QueryTerm::Exists(path)
             | QueryTerm::Equality { path, .. }

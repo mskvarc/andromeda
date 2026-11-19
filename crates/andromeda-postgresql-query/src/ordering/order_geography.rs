@@ -5,7 +5,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     standing_instant::instant_of,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{postgis::validated_geom_from_ewkb, spherical_distance::st_distance_sphere};
@@ -41,7 +41,7 @@ use sea_query::{CaseStatement, Expr as SeaExpr, Func, Keyword, QueryStatementBui
 /// `GeoProperty`" and orders them by value instead.
 #[must_use]
 pub fn geo_order_distance(
-    geoproperty: &AttributeName,
+    geoproperty: &AttributeIri,
     attribute_names: &ResolvedNames<AttributeName>,
     outer: &EntityRowRefs,
     reference: &[u8],
@@ -87,11 +87,11 @@ enum OrderSubject {
 }
 
 /// Classify an ordering term by where its geometry is stored.
-fn order_subject(geoproperty: &AttributeName, attribute_names: &ResolvedNames<AttributeName>) -> OrderSubject {
+fn order_subject(geoproperty: &AttributeIri, attribute_names: &ResolvedNames<AttributeName>) -> OrderSubject {
     if geoproperty.as_str() == LOCATION.as_str() {
         return OrderSubject::LocationColumn;
     }
-    match attribute_names.get(geoproperty) {
+    match attribute_names.get_str(geoproperty.as_str()) {
         Some(attribute_name_key) => OrderSubject::Instances(attribute_name_key),
         None => OrderSubject::None,
     }
@@ -100,7 +100,7 @@ fn order_subject(geoproperty: &AttributeName, attribute_names: &ResolvedNames<At
 #[cfg(test)]
 mod tests {
     use crate::{entity_row_refs::EntityRowRefs, ordering::order_geography::geo_order_distance};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
@@ -112,12 +112,15 @@ mod tests {
     /// A stand-in reference geometry the distance expression binds.
     const REFERENCE: &[u8] = &[1, 2, 3, 4];
 
-    fn name(value: &str) -> AttributeName {
-        value.parse().expect("valid attribute name")
+    fn name(value: &str) -> AttributeIri {
+        value.parse().expect("an absolute IRI")
     }
 
     fn resolved_custom() -> ResolvedNames<AttributeName> {
-        ResolvedNames::from_pairs([(name(CUSTOM_GEOPROPERTY), AttributeNameKey::from(CUSTOM_GEOPROPERTY_ID))])
+        ResolvedNames::from_pairs([(
+            CUSTOM_GEOPROPERTY.parse().expect("valid attribute name"),
+            AttributeNameKey::from(CUSTOM_GEOPROPERTY_ID),
+        )])
     }
 
     /// The entity statement selects the entity relations unaliased.
@@ -198,7 +201,10 @@ mod tests {
     /// and no apostrophe in one can terminate a literal.
     #[test]
     fn no_geoproperty_iri_reaches_the_statement_text() {
-        let names = ResolvedNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameKey::from(9_i32))]);
+        let names = ResolvedNames::from_pairs([(
+            "https://example.com/o'brien".parse().expect("valid attribute name"),
+            AttributeNameKey::from(9_i32),
+        )]);
         let select =
             render(geo_order_distance(&name("https://example.com/o'brien"), &names, &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
         assert_statement_snapshot!("order-geography-no-geoproperty-iri-reaches-the-statement-text", select);

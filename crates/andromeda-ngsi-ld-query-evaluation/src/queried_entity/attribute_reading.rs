@@ -7,7 +7,7 @@
 //! entity for `'a`.
 
 use crate::queried_entity::{queried_geometry::QueriedGeometry, value_item::ValueItem};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use std::borrow::Cow;
 
@@ -22,7 +22,7 @@ pub trait QueriedEntity<'a>: Copy {
     ///
     /// Clause 4.9 makes the target of a multi-instance attribute (clause
     /// 4.5.5) "any Value of such instances", so each instance is read.
-    fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = Self::Instance>;
+    fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = Self::Instance>;
 
     /// The entity's types, expanded (clause 4.5.1), which the type guard of a
     /// linked-entity hop is checked against.

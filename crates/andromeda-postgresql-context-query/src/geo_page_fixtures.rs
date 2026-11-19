@@ -13,6 +13,8 @@ use andromeda_ngsi_ld_query::{
     expanded_entity_selector::ExpandedEntitySelector,
     filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::Written,
+    namespace_expander::EXAMPLE_NAMESPACE,
     page_window::PageWindow,
     type_selection::expanded_type_selection::ExpandedTypeSelection,
 };
@@ -78,7 +80,12 @@ pub(crate) fn sensors_within_square() -> CompiledEntityQuery {
 
 /// `query` filtered by the `q` expression `q`.
 pub(crate) fn filtered(mut query: CompiledEntityQuery, q: &str) -> CompiledEntityQuery {
-    query.selection.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("valid q"), LanguageMatching::TagEquality));
+    query.selection.q = Some(CompiledFilter::new(
+        EXAMPLE_NAMESPACE
+            .expanded(q.parse::<Filter<Written>>().expect("valid q"))
+            .expect("the names expand"),
+        LanguageMatching::TagEquality,
+    ));
     query
 }
 

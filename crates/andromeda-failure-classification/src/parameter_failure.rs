@@ -65,6 +65,7 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_query::{
         filter::{Filter, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+        name_stage::Written,
         query_error::QueryError,
     };
     use andromeda_ngsi_ld_request::{error::ParameterError, pagination::page_size::PageSizeExceeded};
@@ -83,10 +84,12 @@ mod tests {
             NonZeroUsize::new(1).expect("a positive nesting limit"),
         );
         let too_many = limits
-            .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
+            .admit(&"a==1,2,3".parse::<Filter<Written>>().expect("a filter"))
             .expect_err("too many comparisons");
-        let too_deep = limits.admit(&"a;(b|c)".parse::<Filter>().expect("a filter")).expect_err("nested too deep");
-        let tagged: Filter = "name[en-GB]==\"x\"".parse().expect("a filter");
+        let too_deep = limits
+            .admit(&"a;(b|c)".parse::<Filter<Written>>().expect("a filter"))
+            .expect_err("nested too deep");
+        let tagged: Filter<Written> = "name[en-GB]==\"x\"".parse().expect("a filter");
         let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
         let expected = [
             NgsiLdErrorType::TooComplexQuery,
@@ -102,7 +105,7 @@ mod tests {
         }
         let comparisons = classify_parameter_error(&ParameterError::Query(QueryError::from(
             limits
-                .admit(&"a==1,2,3".parse::<Filter>().expect("a filter"))
+                .admit(&"a==1,2,3".parse::<Filter<Written>>().expect("a filter"))
                 .expect_err("too many comparisons"),
         )));
         assert!(comparisons.detail().contains("3 comparisons"), "{}", comparisons.detail());

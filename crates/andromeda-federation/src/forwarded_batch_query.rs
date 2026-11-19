@@ -24,6 +24,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
     geo::written_geo_query::WrittenGeoQuery,
+    name_stage::Written,
     pattern::Pattern,
     query_error::QueryError,
     scope::scope_query::ScopeQuery,
@@ -73,13 +74,13 @@ struct Gathered<'q> {
     /// The `attrs` member.
     attrs: Option<Vec<AttributeName>>,
     /// The `q` member.
-    q: Option<Filter>,
+    q: Option<Filter<Written>>,
     /// The `jsonKeys` member, naming what `q` reads as literal JSON keys.
     json_keys: Option<Vec<AttributeName>>,
     /// The `scopeQ` member.
     scope_q: Option<ScopeQuery>,
     /// The `csf` member.
-    csf: Option<Filter>,
+    csf: Option<Filter<Written>>,
     /// The `datasetId` member.
     dataset_id: Option<Vec<DatasetSelector>>,
     /// The `lang` member.
@@ -118,14 +119,14 @@ impl<'q> Gathered<'q> {
             ForwardedParameter::IdPattern => self.selection.id_pattern = Some(value.parse::<Pattern>().map_err(QueryError::from)?),
             ForwardedParameter::Limit | ForwardedParameter::Offset | ForwardedParameter::Options => self.uri.push((parameter, value)),
             ForwardedParameter::Attrs => self.attrs = Some(attribute_names(value)?),
-            ForwardedParameter::Q => self.q = Some(value.parse::<Filter>().map_err(QueryError::from)?),
+            ForwardedParameter::Q => self.q = Some(value.parse::<Filter<Written>>().map_err(QueryError::from)?),
             ForwardedParameter::JsonKeys => self.json_keys = Some(attribute_names(value)?),
             ForwardedParameter::Georel => self.geo.georel = Some(value),
             ForwardedParameter::Geometry => self.geo.geometry = Some(value),
             ForwardedParameter::Coordinates => self.geo.coordinates = Some(value),
             ForwardedParameter::Geoproperty => self.geo.geoproperty = Some(forwarded_name::<NgsiLdReference>(value)?),
             ForwardedParameter::ScopeQ => self.scope_q = Some(value.parse::<ScopeQuery>().map_err(QueryError::from)?),
-            ForwardedParameter::Csf => self.csf = Some(value.parse::<Filter>().map_err(QueryError::from)?),
+            ForwardedParameter::Csf => self.csf = Some(value.parse::<Filter<Written>>().map_err(QueryError::from)?),
             ForwardedParameter::DatasetId => {
                 self.dataset_id = Some(
                     value

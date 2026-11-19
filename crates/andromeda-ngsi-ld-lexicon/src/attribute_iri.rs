@@ -2,7 +2,7 @@
 
 use crate::{identifier_length::IdentifierTooLong, reference::NgsiLdReferenceError};
 use derive_more::{AsRef, Display, Into};
-use iri_rs::IriBuf;
+use iri_rs::{Iri, IriBuf};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, str::FromStr};
 
@@ -34,6 +34,14 @@ impl AttributeIri {
     #[must_use]
     pub const fn as_iri(&self) -> &IriBuf {
         &self.0
+    }
+
+    /// The attribute IRI a vocabulary names itself. The grammar is checked at
+    /// compile time by `iri!`, and the caller passing a literal it wrote is the
+    /// guarantor that it is within the identifier bound.
+    #[must_use]
+    pub fn from_static(iri: Iri<&'static str>) -> AttributeIri {
+        AttributeIri(IriBuf::from(iri))
     }
 }
 
@@ -90,7 +98,7 @@ mod tests {
         reference::NgsiLdReferenceError,
     };
     use indexmap::IndexMap;
-    use iri_rs::IriBuf;
+    use iri_rs::{IriBuf, iri};
     use std::collections::HashSet;
 
     #[test]
@@ -98,6 +106,12 @@ mod tests {
         let iri: AttributeIri = "https://uri.etsi.org/ngsi-ld/default-context/speed".parse().expect("absolute IRI");
         pretty_assertions::assert_eq!(iri.as_str(), "https://uri.etsi.org/ngsi-ld/default-context/speed");
         pretty_assertions::assert_eq!(iri.as_iri().as_str(), iri.as_str());
+    }
+
+    #[test]
+    fn an_attribute_iri_is_built_from_a_compile_time_iri() {
+        let iri = AttributeIri::from_static(iri!("https://example.com/a"));
+        pretty_assertions::assert_eq!(iri.as_str(), "https://example.com/a");
     }
 
     #[test]

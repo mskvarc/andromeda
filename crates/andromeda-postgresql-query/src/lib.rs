@@ -74,6 +74,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-stored-values",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-query",
         "andromeda-postgresql-seaquery",
         "andromeda-q-corpus",
     ],

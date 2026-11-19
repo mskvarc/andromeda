@@ -12,7 +12,7 @@ use crate::{cache::SubscriptionCache, compiled::CompiledSubscription};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_geometry::planar::PlanarGeometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
 use std::{
@@ -41,7 +41,7 @@ pub struct SpatialReach<'a> {
     /// The types the entity is probed under.
     entity_types: &'a [EntityTypeName],
     /// The subscriptions reached per `GeoProperty` probed so far.
-    reached: HashMap<AttributeName, HashSet<Identifier>>,
+    reached: HashMap<AttributeIri, HashSet<Identifier>>,
 }
 
 impl<'a> SpatialReach<'a> {
@@ -82,7 +82,7 @@ impl<'a> SpatialReach<'a> {
     /// 4.10). An untyped or boolean-typed geo subscription is indexed under
     /// the wildcard partition, which no concrete-type key reaches, so that
     /// partition is always probed too.
-    fn probe(&self, geoproperty: &AttributeName) -> HashSet<Identifier> {
+    fn probe(&self, geoproperty: &AttributeIri) -> HashSet<Identifier> {
         let spatial = self.cache.spatial();
         let tenant = self.cache.tenant();
         // clone: every spatial key owns its tenant and property name
@@ -90,8 +90,8 @@ impl<'a> SpatialReach<'a> {
             .entity_types
             .iter()
             .filter_map(|type_name| IriBuf::new(type_name.clone()).ok())
-            .map(|type_iri| SpatialKey::new(tenant.clone(), type_iri, geoproperty.clone()))
-            .chain(iter::once(SpatialKey::any_type(tenant.clone(), geoproperty.clone())))
+            .map(|type_iri| SpatialKey::new(tenant.clone(), type_iri, AttributeName::from(geoproperty.clone())))
+            .chain(iter::once(SpatialKey::any_type(tenant.clone(), AttributeName::from(geoproperty.clone()))))
             .collect();
         let mut reached = HashSet::new();
         for geometry in self.entity.geo_property_geometries(geoproperty.as_str()).map(PlanarGeometry::project) {

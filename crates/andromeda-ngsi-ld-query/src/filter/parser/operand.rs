@@ -232,6 +232,7 @@ mod tests {
             quoting::Quoting,
             scalar::Scalar,
         },
+        name_stage::Written,
         query_text::grammar_fault::GrammarFault,
     };
     use andromeda_ngsi_ld_number::JsonNumber;
@@ -487,7 +488,7 @@ mod tests {
 
     /// The equality operand of a filter holding one query term.
     fn equality_operand(q: &str) -> EqualityValue {
-        let Filter::Term(QueryTerm::Equality { value, .. }) = q.parse::<Filter>().expect("parse q") else {
+        let Filter::Term(QueryTerm::Equality { value, .. }) = q.parse::<Filter<Written>>().expect("parse q") else {
             panic!("a single equality query term");
         };
         value
@@ -523,7 +524,7 @@ mod tests {
             "n==a..b",
             "n==1..true",
         ] {
-            assert!(q.parse::<Filter>().is_err(), "{q} is outside the grammar");
+            assert!(q.parse::<Filter<Written>>().is_err(), "{q} is outside the grammar");
         }
     }
 
@@ -542,7 +543,7 @@ mod tests {
             "b==true",
             "b!=false",
         ] {
-            assert!(q.parse::<Filter>().is_ok(), "{q} is inside the grammar");
+            assert!(q.parse::<Filter<Written>>().is_ok(), "{q} is inside the grammar");
         }
     }
 }

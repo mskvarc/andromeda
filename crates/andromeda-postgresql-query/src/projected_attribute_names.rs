@@ -39,7 +39,7 @@ pub fn projected_attribute_names<'a>(
     }
     if let Some(geo) = geo {
         // clone: the caller owns the resolved list, which outlives the query
-        names.push(geo.geoproperty.clone());
+        names.push(AttributeName::from(geo.geoproperty.clone()));
     }
     // Every ordering term, a distance term included, ranks by the clause
     // 4.23.2 value keys read from the attribute's rows, so each resolves its
@@ -50,7 +50,7 @@ pub fn projected_attribute_names<'a>(
         match &term.target {
             ExpandedOrderingTarget::Attribute(path) => {
                 // clone: the caller owns the resolved list, which outlives the query
-                names.push(path.attribute.clone());
+                names.push(AttributeName::from(path.attribute.clone()));
                 names.extend(path.ending_member().map_or(path.sub_attributes.as_slice(), |(_, above)| above).iter().cloned());
             }
             // None of the clause 4.23 keywords names an attribute, so none of
@@ -69,10 +69,12 @@ pub fn projected_attribute_names<'a>(
 mod tests {
     use crate::projected_attribute_names::projected_attribute_names;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
     use andromeda_ngsi_ld_query::{
         filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading, value_path::ValuePath},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -83,16 +85,20 @@ mod tests {
         value.parse().expect("valid attribute name")
     }
 
+    fn iri(value: &str) -> AttributeIri {
+        value.parse().expect("an absolute IRI")
+    }
+
     /// A distance ordering names one attribute, which is the simple path.
     fn ordered_attribute(value: &str) -> ExpandedOrderingTarget {
-        ExpandedOrderingTarget::Attribute(ValuePath::simple(name(value)))
+        ExpandedOrderingTarget::Attribute(ValuePath::simple(iri(value)))
     }
 
     fn geo_query(geoproperty: &str) -> CompiledGeoQuery {
         CompiledGeoQuery {
             georel: GeoRel::Within,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
-            geoproperty: name(geoproperty),
+            geoproperty: iri(geoproperty),
         }
     }
 
@@ -182,7 +188,7 @@ mod tests {
     /// ranks by the value at the end of the path, read by key.
     #[test]
     fn a_distance_ordering_on_a_sub_attribute_path_resolves_its_names() {
-        let mut path = ValuePath::simple(name("https://example.com/area"));
+        let mut path = ValuePath::simple(iri("https://example.com/area"));
         path.sub_attributes.push(name("https://example.com/accuracy"));
         let terms = [ordering_term(ExpandedOrderingTarget::Attribute(path), OrderingDirection::DistAsc)];
         assert_eq!(
@@ -213,7 +219,9 @@ mod tests {
     #[test]
     fn a_filter_a_geo_query_and_an_ordering_each_contribute_their_own_names() {
         let reading = FilterReading::lowered(
-            &"\"https://example.com/speed\">1".parse::<Filter>().expect("parse q"),
+            &EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">1".parse::<Filter<Written>>().expect("parse q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         );
         let geo = geo_query("https://example.com/observationPoint");

@@ -1,6 +1,6 @@
 //! What an `orderBy` term sorts on, classified but not yet expanded (clause 4.23).
 
-use crate::filter::value_path::ValuePath;
+use crate::{filter::value_path::ValuePath, name_stage::Written};
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 
 /// A written `orderBy` path, classified but not yet expanded. Classification is separate from expansion so the clause 4.23 keyword set is stated once, while the caller decides how the expansion (a JSON-LD lookup, needed only for the attribute arm) happens.
@@ -17,13 +17,13 @@ pub enum WrittenOrderingTarget<'a> {
     /// The `modifiedAt` keyword.
     ModifiedAt,
     /// A value path, still compact.
-    Attribute(&'a ValuePath),
+    Attribute(&'a ValuePath<Written>),
 }
 
 impl<'a> WrittenOrderingTarget<'a> {
     /// Classifies a written `orderBy` path. A keyword is only a keyword when the path names it and nothing else: clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends into an attribute spelled `id`, and `name.createdAt` is a value path into a temporal sub-member rather than the entity's own `createdAt` column.
     #[must_use]
-    pub fn classify(path: &'a ValuePath) -> WrittenOrderingTarget<'a> {
+    pub fn classify(path: &'a ValuePath<Written>) -> WrittenOrderingTarget<'a> {
         if !path.is_simple() {
             return WrittenOrderingTarget::Attribute(path);
         }
@@ -43,12 +43,13 @@ impl<'a> WrittenOrderingTarget<'a> {
 mod tests {
     use crate::{
         filter::value_path::ValuePath,
+        name_stage::Written,
         ordering::{written_ordering_target::WrittenOrderingTarget, written_ordering_term::WrittenOrderingTerm},
     };
     use pretty_assertions::assert_eq;
 
     /// The path of a term that parses.
-    fn path(text: &str) -> ValuePath {
+    fn path(text: &str) -> ValuePath<Written> {
         text.parse::<WrittenOrderingTerm>().expect("a clause 4.23.3 ordering term").path
     }
 

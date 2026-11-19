@@ -46,6 +46,8 @@ mod tests {
         entity_selection::EntitySelection,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
         split_filter::SplitFilter,
     };
@@ -66,7 +68,14 @@ mod tests {
 
     fn selection(q: Option<&str>, geo: Option<CompiledGeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q(q.map(|raw| CompiledFilter::new(raw.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality)))
+            .q(q.map(|raw| {
+                CompiledFilter::new(
+                    EXAMPLE_NAMESPACE
+                        .expanded(raw.parse::<Filter<Written>>().expect("q parses"))
+                        .expect("the names expand"),
+                    LanguageMatching::TagEquality,
+                )
+            }))
             .geo(geo)
             .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("scopeQ parses")))
             .build()

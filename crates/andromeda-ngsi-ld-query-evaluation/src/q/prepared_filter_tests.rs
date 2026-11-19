@@ -16,7 +16,10 @@ use crate::{
     },
     queried_entity::expanded_fixture::{FixtureEntity, FixtureLinked},
 };
-use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::{
+    filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    name_stage::Written,
+};
 use proptest::{
     prelude::{prop_assert_eq, proptest},
     test_runner::Config,
@@ -60,8 +63,10 @@ fn states(document: &Value) -> Vec<Value> {
 /// or over which the required attributes refuse what `reading` holds for.
 fn disagreement(text: &str, states: &[FixtureEntity], linked: &[FixtureEntity]) -> Option<String> {
     let expr = text
-        .parse::<Filter>()
-        .unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
+        .parse::<Filter<Written>>()
+        .unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"))
+        .into_expanded()
+        .expect("absolute names");
     [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering]
         .into_iter()
         .find_map(|matching| {

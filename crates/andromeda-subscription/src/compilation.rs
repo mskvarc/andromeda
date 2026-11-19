@@ -15,7 +15,8 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    name_stage::{Expanded, Written},
     projection::{
         expanded_projection::ExpandedProjection,
         expanded_projection_term::ExpandedProjectionTerm,
@@ -71,7 +72,7 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
             .filters
             .q
             .clone() // clone: compiled state owns its filter AST.
-            .map(|q| SubscriptionQuery::new(CompiledFilter::new(q, language_matching))),
+            .map(|q| SubscriptionQuery::new(CompiledFilter::new(stored_filter(q, sub.id.as_ref()), language_matching))),
         compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
@@ -110,8 +111,25 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        compiled_csf: sub.filters.csf.as_ref().map(FilterReading::of_context_source_filter),
+        compiled_csf: sub
+            .filters
+            .csf
+            .clone() // clone: the stored filter is checked into an owned tree.
+            .map(|csf| FilterReading::of_context_source_filter(&stored_filter(csf, sub.id.as_ref()))),
     }
+}
+
+/// The expanded stage of a stored filter.
+///
+/// A stored text that names a term where an absolute IRI has to stand is a
+/// defined filter the broker cannot evaluate. It admits no entity, as a stored
+/// `geoQ` that no longer compiles does, and an empty disjunction is the filter
+/// no entity satisfies.
+fn stored_filter(filter: Filter<Written>, subscription: &str) -> Filter<Expanded> {
+    filter.into_expanded().unwrap_or_else(|refused| {
+        error!(subscription, %refused, "a stored filter is not expanded, so it selects nothing");
+        Filter::Or(Vec::new())
+    })
 }
 
 /// The attribute identifiers a context-source subscription matches with

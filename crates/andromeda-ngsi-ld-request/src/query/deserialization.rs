@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
     geo::{geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
+    name_stage::Written,
     pattern::Pattern,
     projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
 };
@@ -147,12 +148,12 @@ where
 ///
 /// Returns a deserialization error when the expression does not satisfy the
 /// clause 4.9 filter grammar.
-pub fn deserialize_optional_filter<'de, D>(deserializer: D) -> Result<Option<Filter>, D::Error>
+pub fn deserialize_optional_filter<'de, D>(deserializer: D) -> Result<Option<Filter<Written>>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| value.parse::<Filter>().map_err(DeserializeError::custom)).transpose()
+    raw.map(|value| value.parse::<Filter<Written>>().map_err(DeserializeError::custom)).transpose()
 }
 
 /// Deserialize an optional comma-separated list of NGSI-LD attribute names.

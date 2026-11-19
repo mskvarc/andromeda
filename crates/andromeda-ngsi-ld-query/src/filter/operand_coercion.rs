@@ -11,11 +11,12 @@
 
 use crate::{
     filter::{equality_value::EqualityValue, query_term::QueryTerm, scalar::Scalar},
+    name_stage::NameStage,
     query_error::QueryError,
     term_compactor::TermCompactor,
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_iri::EntityTypeIri};
 use iri_rs::{Iri, IriBuf};
 
 /// Which rule makes the operands of a query term JSON-LD terms.
@@ -38,7 +39,7 @@ impl OperandCoercion {
     /// Returns [`QueryError::TermExpansion`] when an operand does not expand,
     /// carrying [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
     /// when it expands to something that is not an absolute IRI.
-    pub async fn expand_operands(self, term: QueryTerm, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
+    pub async fn expand_operands<S: NameStage>(self, term: QueryTerm<S>, expander: &impl TermExpander) -> Result<QueryTerm<S>, QueryError> {
         Ok(match term {
             QueryTerm::Equality { path, membership, value } => QueryTerm::Equality {
                 value: self.expand_equality_value(value, expander).await?,
@@ -56,7 +57,7 @@ impl OperandCoercion {
 
     /// `term` with the operands [`OperandCoercion::expand_operands`] expanded
     /// put back in the terms of the `@context` `compactor` holds.
-    pub async fn compact_operands(self, term: QueryTerm, compactor: &impl TermCompactor) -> QueryTerm {
+    pub async fn compact_operands<S: NameStage>(self, term: QueryTerm<S>, compactor: &impl TermCompactor) -> QueryTerm<S> {
         match term {
             QueryTerm::Equality { path, membership, value } => QueryTerm::Equality {
                 value: self.compact_equality_value(value, compactor).await,
@@ -124,36 +125,36 @@ impl OperandCoercion {
     /// Compact one operand.
     ///
     /// Only a string or a `URI` can have been expanded. A string the expansion
-    /// could not have produced (one that is no usable name) is the client's own
-    /// literal and is left alone.
+    /// could not have produced (one that is no absolute IRI within the
+    /// identifier bound) is the client's own literal and is left alone.
     async fn compact_scalar(self, scalar: Scalar, compactor: &impl TermCompactor) -> Scalar {
         match scalar {
-            Scalar::Str(text) => match text.parse::<AttributeName>() {
-                Ok(expanded) => Scalar::Str(self.compact(&expanded, compactor).await.as_str().to_owned()),
-                Err(_not_a_name) => Scalar::Str(text),
+            Scalar::Str(text) => match self.compact(&text, compactor).await {
+                Some(compact) => Scalar::Str(compact),
+                None => Scalar::Str(text),
             },
-            Scalar::Uri(text) => match text.parse::<AttributeName>() {
-                Ok(expanded) => {
-                    let compact = self.compact(&expanded, compactor).await.as_str().to_owned();
-                    // A term the compaction leaves is no `URI`, and clause 4.9
-                    // writes such a value only as a `quotedStr`.
-                    if Iri::new(compact.as_str()).is_ok() {
-                        Scalar::Uri(compact)
-                    } else {
-                        Scalar::Str(compact)
-                    }
-                }
-                Err(_not_a_name) => Scalar::Uri(text),
+            Scalar::Uri(text) => match self.compact(&text, compactor).await {
+                // A term the compaction leaves is no `URI`, and clause 4.9
+                // writes such a value only as a `quotedStr`.
+                Some(compact) if Iri::new(compact.as_str()).is_ok() => Scalar::Uri(compact),
+                Some(compact) => Scalar::Str(compact),
+                None => Scalar::Uri(text),
             },
             other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
         }
     }
 
-    /// One expanded name compacted under the rule.
-    async fn compact(self, name: &AttributeName, compactor: &impl TermCompactor) -> AttributeName {
+    /// The spelling under the rule of an operand text that is an expanded name,
+    /// `None` when the text is none or has no written spelling.
+    async fn compact(self, text: &str, compactor: &impl TermCompactor) -> Option<String> {
+        let expanded = text.parse::<AttributeIri>().ok()?;
         match self {
-            OperandCoercion::ExpandValues => compactor.compact_term(name).await,
-            OperandCoercion::Vocabulary => compactor.compact_type(name).await,
+            OperandCoercion::ExpandValues => Some(compactor.compact_term(&expanded).await.as_str().to_owned()),
+            OperandCoercion::Vocabulary => compactor
+                .compact_type(&EntityTypeIri::from(IriBuf::from(expanded)))
+                .await
+                .ok()
+                .map(|name| name.as_str().to_owned()),
         }
     }
 }

@@ -23,7 +23,7 @@
 use crate::reified_scope::reified_paths;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
 use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use andromeda_ngsi_ld_query_evaluation::queried_entity::{
@@ -70,7 +70,7 @@ impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
     /// The instances lying in the window that carry a value of the attribute
     /// rather than recording its deletion or holding no value member, which
     /// no local history row does.
-    fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {
+    fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = &'a InstanceDocument> {
         // The Scope is not an attribute a filter reads.
         let named_scope = attribute.as_str() == expanded_properties::SCOPE.as_str();
         let window = self.window;
@@ -85,7 +85,7 @@ impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
 }
 
 impl<'a> LocatedEntity<'a> for &'a AnsweredEvolution<'a> {
-    fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
+    fn geo_property_geometries(self, attribute: &AttributeIri) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
         self.attribute_instances(attribute)
             .filter_map(|instance| instance.geometry().map(Cow::Borrowed))
     }
@@ -104,7 +104,8 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
         scope::scope_query::ScopeQuery,
         split_filter::{LeafTruths, SplitFilter},
         temporal::window::{TemporalWindow, TimeInterval},
@@ -117,7 +118,12 @@ mod tests {
 
     fn selection(q: Option<&str>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q(q.map(|raw| CompiledFilter::new(raw.parse().expect("a valid q"), LanguageMatching::TagEquality)))
+            .q(q.map(|raw| {
+                CompiledFilter::new(
+                    raw.parse::<Filter<Written>>().expect("a valid q").into_expanded().expect("absolute names"),
+                    LanguageMatching::TagEquality,
+                )
+            }))
             .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("a valid scopeQ")))
             .build()
     }

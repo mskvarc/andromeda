@@ -1,9 +1,12 @@
 //! The clause 4.9 `ValuePath`: an attribute, its sub-attributes and its trailing `[…]` group.
 
-use crate::filter::{
-    instance_metadata::InstanceMetadata,
-    target_language::LanguageSelector,
-    trailing_group::{MemberPath, TrailingGroup},
+use crate::{
+    filter::{
+        instance_metadata::InstanceMetadata,
+        target_language::LanguageSelector,
+        trailing_group::{MemberPath, TrailingGroup},
+    },
+    name_stage::{Expanded, NameStage},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use langtag::LangTag;
@@ -15,26 +18,27 @@ use langtag::LangTag;
 /// `sub_attributes = ["city"]`, and a trailing group holding the member
 /// `streetName`.
 ///
-/// `attribute` and `sub_attributes` are [`AttributeName`]s, which accept a
-/// compact short name, a prefixed name or an expanded IRI. That is exactly the
-/// range this type spans: a freshly parsed filter carries whatever the client
-/// wrote, and an expanded one carries IRIs.
+/// The attribute is a name of the stage `S`: whatever the client wrote in the
+/// written stage, an absolute IRI in the expanded one. The sub-attributes and
+/// the members of the trailing group are [`AttributeName`]s in both stages: a
+/// Context Source filter keeps them as written under an expanded attribute,
+/// because a Context Source Property is held as the JSON its registrant wrote.
 ///
 /// This type models the two *local* traversal axes: `.` sub-attributes and the
 /// `[]` group. The third clause 4.9 axis, the `{}` linked-entity traversal,
 /// crosses an entity boundary and is modelled one level up by
 /// [`AttributePath::Linked`](crate::filter::attribute_path::AttributePath::Linked), whose terminal path is a `ValuePath` again.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValuePath {
-    /// The top-level attribute name (compact or expanded IRI).
-    pub attribute: AttributeName,
+pub struct ValuePath<S: NameStage> {
+    /// The top-level attribute name.
+    pub attribute: S::Attribute,
     /// Sub-attribute names for navigating nested attributes.
     pub sub_attributes: Vec<AttributeName>,
     /// The trailing `[…]` group, `None` when the path has none.
     pub trailing: Option<TrailingGroup>,
 }
 
-impl ValuePath {
+impl<S: NameStage> ValuePath<S> {
     /// Whether this path names one attribute and navigates no further.
     ///
     /// The clause 4.23 keywords `id`, `type` and `scope` name structural
@@ -50,34 +54,11 @@ impl ValuePath {
     /// Build a path addressing an attribute's own value, with no sub-attribute
     /// and no trailing group.
     #[must_use]
-    pub const fn simple(attribute: AttributeName) -> ValuePath {
+    pub const fn simple(attribute: S::Attribute) -> ValuePath<S> {
         ValuePath {
             attribute,
             sub_attributes: Vec::new(),
             trailing: None,
-        }
-    }
-
-    /// The instance member the last `.` segment names, with the sub-attributes
-    /// above it, or `None` when the path ends on an attribute or a
-    /// sub-attribute.
-    ///
-    /// Clause 4.9 makes the last name of the path the target element, and the
-    /// members [`InstanceMetadata`] lists are non-reified Properties of the
-    /// instance before them (`temperature.observedAt`). The top-level name is
-    /// always an attribute. A trailing group other than `[*]` after such a
-    /// member is evaluated "against the seed target value", a String or a
-    /// `DateTime` with no member to reach, so "the target element shall be
-    /// considered as non-existent": the path ends on no member, and the name
-    /// stays a sub-attribute name no Attribute carries.
-    #[must_use]
-    pub fn ending_member(&self) -> Option<(InstanceMetadata, &[AttributeName])> {
-        match self.trailing {
-            None | Some(TrailingGroup::AllLanguages) => {
-                let (last, above) = self.sub_attributes.split_last()?;
-                Some((InstanceMetadata::named(last)?, above))
-            }
-            Some(TrailingGroup::Language(_) | TrailingGroup::Members(_)) => None,
         }
     }
 
@@ -113,14 +94,46 @@ impl ValuePath {
     }
 }
 
+impl ValuePath<Expanded> {
+    /// The instance member the last `.` segment names, with the sub-attributes
+    /// above it, or `None` when the path ends on an attribute or a
+    /// sub-attribute.
+    ///
+    /// Clause 4.9 makes the last name of the path the target element, and the
+    /// members [`InstanceMetadata`] lists are non-reified Properties of the
+    /// instance before them (`temperature.observedAt`). The top-level name is
+    /// always an attribute. A trailing group other than `[*]` after such a
+    /// member is evaluated "against the seed target value", a String or a
+    /// `DateTime` with no member to reach, so "the target element shall be
+    /// considered as non-existent": the path ends on no member, and the name
+    /// stays a sub-attribute name no Attribute carries.
+    #[must_use]
+    pub fn ending_member(&self) -> Option<(InstanceMetadata, &[AttributeName])> {
+        match self.trailing {
+            None | Some(TrailingGroup::AllLanguages) => {
+                let (last, above) = self.sub_attributes.split_last()?;
+                Some((InstanceMetadata::named(last)?, above))
+            }
+            Some(TrailingGroup::Language(_) | TrailingGroup::Members(_)) => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::filter::{Filter, instance_metadata::InstanceMetadata, value_path::ValuePath};
+    use crate::{
+        filter::{Filter, instance_metadata::InstanceMetadata, value_path::ValuePath},
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
     /// The value path the one Query Term of `q` ends on.
-    fn terminal(q: &str) -> ValuePath {
-        match q.parse::<Filter>().expect("a clause 4.9 filter") {
+    fn terminal(q: &str) -> ValuePath<Expanded> {
+        match EXAMPLE_NAMESPACE
+            .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+            .expect("the names expand")
+        {
             Filter::Term(term) => term.path().terminal().clone(),
             other @ (Filter::And(_) | Filter::Or(_)) => panic!("{q} is no single term: {other:?}"),
         }

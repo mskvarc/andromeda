@@ -4,8 +4,10 @@
 //! against registrations exactly as it matches an explicit `attrs` list, so a
 //! consumer needs the filter's attribute footprint without evaluating it.
 
-use crate::filter::{Filter, attribute_path::AttributePath, value_path::ValuePath};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::{
+    filter::{Filter, attribute_path::AttributePath, value_path::ValuePath},
+    name_stage::NameStage,
+};
 
 /// The top-level attribute every query term of `filter` addresses, in first-seen
 /// order and without repetition.
@@ -15,7 +17,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// evaluation the query term reads, and the attribute a context source would
 /// have to hold for the hop to begin.
 #[must_use]
-pub fn referenced_attributes(filter: &Filter) -> Vec<&AttributeName> {
+pub fn referenced_attributes<S: NameStage>(filter: &Filter<S>) -> Vec<&S::Attribute> {
     let mut names = Vec::new();
     collect(filter, &mut names);
     names
@@ -23,7 +25,7 @@ pub fn referenced_attributes(filter: &Filter) -> Vec<&AttributeName> {
 
 /// Walk `filter`, pushing each query term's top-level attribute the first time it
 /// is seen.
-fn collect<'filter>(filter: &'filter Filter, names: &mut Vec<&'filter AttributeName>) {
+fn collect<'filter, S: NameStage>(filter: &'filter Filter<S>, names: &mut Vec<&'filter S::Attribute>) {
     match filter {
         Filter::And(filters) | Filter::Or(filters) => filters.iter().for_each(|filter| collect(filter, names)),
         Filter::Term(term) => {
@@ -36,7 +38,7 @@ fn collect<'filter>(filter: &'filter Filter, names: &mut Vec<&'filter AttributeN
 }
 
 /// The attribute of the entity under evaluation that an attribute path starts from.
-const fn top_level_attribute(path: &AttributePath) -> &AttributeName {
+const fn top_level_attribute<S: NameStage>(path: &AttributePath<S>) -> &S::Attribute {
     match path {
         AttributePath::Local(ValuePath { attribute, .. }) => attribute,
         AttributePath::Linked { relationship, .. } => relationship,
@@ -45,10 +47,13 @@ const fn top_level_attribute(path: &AttributePath) -> &AttributeName {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{Filter, referenced_attributes::referenced_attributes};
+    use crate::{
+        filter::{Filter, referenced_attributes::referenced_attributes},
+        name_stage::Written,
+    };
 
     fn names(q: &str) -> Vec<String> {
-        let filter = q.parse::<Filter>().expect("valid q");
+        let filter = q.parse::<Filter<Written>>().expect("valid q");
         referenced_attributes(&filter).into_iter().map(ToString::to_string).collect()
     }
 

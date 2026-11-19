@@ -12,6 +12,7 @@ use crate::{
         trailing_group::TrailingGroup,
         value_path::ValuePath,
     },
+    name_stage::NameStage,
     pattern::Pattern,
 };
 use andromeda_json_literal::json_text::quoted;
@@ -29,7 +30,7 @@ enum MemberSpelling {
 // The rendering walks a recursive tree and re-inserts the clause 4.9
 // separators, which `derive_more::Display`'s per-variant format string cannot
 // express.
-impl fmt::Display for Filter {
+impl<S: NameStage> fmt::Display for Filter<S> {
     /// Renders a parsed filter back into clause 4.9 syntax.
     ///
     /// The result parses back to an equal filter; identifiers that would
@@ -41,7 +42,7 @@ impl fmt::Display for Filter {
     }
 }
 
-impl Filter {
+impl<S: NameStage> Filter<S> {
     /// Renders the filter into clause 4.9 syntax with every trailing `[…]`
     /// member spelled as the client wrote it, and every other name as
     /// its [`fmt::Display`] spells it.
@@ -60,7 +61,7 @@ impl Filter {
 }
 
 /// Write the boolean structure of a filter.
-fn write_filter(buffer: &mut String, filter: &Filter, spelling: MemberSpelling) {
+fn write_filter<S: NameStage>(buffer: &mut String, filter: &Filter<S>, spelling: MemberSpelling) {
     match filter {
         Filter::And(filters) => write_filters(buffer, filters, ';', spelling),
         Filter::Or(filters) => write_filters(buffer, filters, '|', spelling),
@@ -78,7 +79,7 @@ fn write_filter(buffer: &mut String, filter: &Filter, spelling: MemberSpelling) 
 /// disjunction. Without this, `(a|b);c` rendered as `a|b;c` and read back as
 /// `a|(b;c)`, so a stored filter changed meaning the first time it was
 /// re-serialised.
-fn write_filters(buffer: &mut String, filters: &[Filter], separator: char, spelling: MemberSpelling) {
+fn write_filters<S: NameStage>(buffer: &mut String, filters: &[Filter<S>], separator: char, spelling: MemberSpelling) {
     for (index, filter) in filters.iter().enumerate() {
         if index > 0 {
             buffer.push(separator);
@@ -94,7 +95,7 @@ fn write_filters(buffer: &mut String, filters: &[Filter], separator: char, spell
 }
 
 /// Whether a child of a node written with `separator` has to be parenthesised.
-const fn needs_parentheses(filter: &Filter, separator: char) -> bool {
+const fn needs_parentheses<S: NameStage>(filter: &Filter<S>, separator: char) -> bool {
     match filter {
         // A leaf binds tighter than every operator.
         Filter::Term(_) => false,
@@ -109,7 +110,7 @@ const fn needs_parentheses(filter: &Filter, separator: char) -> bool {
 /// Write one query term: its attribute path, then its operator and
 /// operand, which clause 4.9 writes after a hop's closing brace
 /// (`rel{attr}=="x"`).
-fn write_query_term(buffer: &mut String, term: &QueryTerm, spelling: MemberSpelling) {
+fn write_query_term<S: NameStage>(buffer: &mut String, term: &QueryTerm<S>, spelling: MemberSpelling) {
     write_attribute_path(buffer, term.path(), spelling, PathHead::Query);
     match term {
         QueryTerm::Exists(_) => {}
@@ -143,7 +144,7 @@ enum PathHead {
 
 /// Write an attribute path, every hop's braces closed, its leading name
 /// standing at `head`.
-fn write_attribute_path(buffer: &mut String, path: &AttributePath, spelling: MemberSpelling, head: PathHead) {
+fn write_attribute_path<S: NameStage>(buffer: &mut String, path: &AttributePath<S>, spelling: MemberSpelling, head: PathHead) {
     match path {
         AttributePath::Local(local) => write_value_path(buffer, local, spelling, head),
         AttributePath::Linked {
@@ -151,13 +152,13 @@ fn write_attribute_path(buffer: &mut String, path: &AttributePath, spelling: Mem
             guard_types,
             inner,
         } => {
-            write_leading_name(buffer, relationship.as_str(), head);
+            write_leading_name(buffer, relationship.as_ref(), head);
             buffer.push('{');
             for (index, guard_type) in guard_types.iter().enumerate() {
                 if index > 0 {
                     buffer.push(',');
                 }
-                write_hop_head_name(buffer, guard_type.as_str());
+                write_hop_head_name(buffer, guard_type.as_ref());
             }
             if !guard_types.is_empty() {
                 buffer.push(':');
@@ -179,7 +180,7 @@ fn write_leading_name(buffer: &mut String, name: &str, head: PathHead) {
 // The rendering quotes each name the parser would otherwise split and
 // writes the optional trailing group, which `derive_more::Display`'s format
 // string cannot express.
-impl fmt::Display for ValuePath {
+impl<S: NameStage> fmt::Display for ValuePath<S> {
     /// Renders one value path back into clause 4.9 syntax.
     ///
     /// The result parses back to an equal path through [`FromStr`](std::str::FromStr), which is
@@ -194,8 +195,8 @@ impl fmt::Display for ValuePath {
 
 /// Write a value path, including sub-attributes and compound value keys
 /// in `spelling`, its attribute standing at `head`.
-fn write_value_path(buffer: &mut String, path: &ValuePath, spelling: MemberSpelling, head: PathHead) {
-    write_leading_name(buffer, path.attribute.as_str(), head);
+fn write_value_path<S: NameStage>(buffer: &mut String, path: &ValuePath<S>, spelling: MemberSpelling, head: PathHead) {
+    write_leading_name(buffer, path.attribute.as_ref(), head);
     for sub in &path.sub_attributes {
         buffer.push('.');
         write_identifier(buffer, sub.as_str());
@@ -329,18 +330,21 @@ fn write_quoted(buffer: &mut String, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        Filter,
-        attribute_path::AttributePath,
-        equality_value::EqualityValue,
-        query_term::{OrderingOperator, QueryTerm},
-        scalar::Scalar,
-        value_path::ValuePath,
+    use crate::{
+        filter::{
+            Filter,
+            attribute_path::AttributePath,
+            equality_value::EqualityValue,
+            query_term::{OrderingOperator, QueryTerm},
+            scalar::Scalar,
+            value_path::ValuePath,
+        },
+        name_stage::{Expanded, Written},
     };
 
     #[test]
     fn roundtrip_simple_equality_value() {
-        let filter = "speed>50".parse::<Filter>().unwrap();
+        let filter = "speed>50".parse::<Filter<Written>>().unwrap();
         let text = filter.to_string();
         pretty_assertions::assert_eq!(text, "speed>50");
     }
@@ -354,13 +358,13 @@ mod tests {
             "ref==urn:a,urn:b.c",
             "ref==\"http://example.org/a\"",
         ] {
-            pretty_assertions::assert_eq!(written.parse::<Filter>().unwrap().to_string(), written);
+            pretty_assertions::assert_eq!(written.parse::<Filter<Written>>().unwrap().to_string(), written);
         }
     }
 
     #[test]
     fn a_uri_holding_query_syntax_is_quoted_to_read_back_whole() {
-        let Filter::Term(QueryTerm::Equality { path, membership, .. }) = "p==urn:x".parse::<Filter>().unwrap() else {
+        let Filter::Term(QueryTerm::Equality { path, membership, .. }) = "p==urn:x".parse::<Filter<Written>>().unwrap() else {
             panic!("expected an equality");
         };
         let filter = Filter::Term(QueryTerm::Equality {
@@ -373,28 +377,28 @@ mod tests {
 
     #[test]
     fn roundtrip_string_equality_value() {
-        let filter = "brandName==\"Mercedes\"".parse::<Filter>().unwrap();
+        let filter = "brandName==\"Mercedes\"".parse::<Filter<Written>>().unwrap();
         let text = filter.to_string();
         pretty_assertions::assert_eq!(text, "brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_and() {
-        let filter = "speed>50;brandName==\"Mercedes\"".parse::<Filter>().unwrap();
+        let filter = "speed>50;brandName==\"Mercedes\"".parse::<Filter<Written>>().unwrap();
         let text = filter.to_string();
         pretty_assertions::assert_eq!(text, "speed>50;brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_range() {
-        let filter = "temperature==10..20".parse::<Filter>().unwrap();
+        let filter = "temperature==10..20".parse::<Filter<Written>>().unwrap();
         let text = filter.to_string();
         pretty_assertions::assert_eq!(text, "temperature==10..20");
     }
 
     #[test]
     fn roundtrip_value_list() {
-        let filter = "color==\"red\",\"blue\"".parse::<Filter>().unwrap();
+        let filter = "color==\"red\",\"blue\"".parse::<Filter<Written>>().unwrap();
         let text = filter.to_string();
         pretty_assertions::assert_eq!(text, "color==\"red\",\"blue\"");
     }
@@ -425,10 +429,12 @@ mod tests {
             "speed",
         ];
         for shape in shapes {
-            let parsed = shape.parse::<Filter>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = parsed.to_string();
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
-            let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
         }
     }
@@ -442,9 +448,13 @@ mod tests {
             "speed==1e2..1.00000000000000000001e2",
             "speed==0.100000000000000004,0.100000000000000005",
         ] {
-            let parsed = written.parse::<Filter>().unwrap_or_else(|error| panic!("{written} must parse: {error}"));
+            let parsed = written
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{written} must parse: {error}"));
             let rendered = parsed.to_string();
-            let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "mathematical-value round trip of {written} through {rendered}");
         }
     }
@@ -462,10 +472,12 @@ mod tests {
             ("(a;b);c", "(a;b);c"),
         ];
         for (input, expected) in shapes {
-            let parsed = input.parse::<Filter>().unwrap_or_else(|error| panic!("{input} must parse: {error}"));
+            let parsed = input.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{input} must parse: {error}"));
             let rendered = parsed.to_string();
             pretty_assertions::assert_eq!(rendered, expected, "serialisation of {input}");
-            let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {input}");
         }
     }
@@ -508,10 +520,12 @@ mod tests {
             "rel{\"ex:A\",\"ex:B\":category}==\"x\"",
         ];
         for shape in shapes {
-            let parsed = shape.parse::<Filter>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = parsed.to_string();
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
-            let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
         }
     }
@@ -530,10 +544,12 @@ mod tests {
             r#"name~="back\\slash""#,
             r#"name~="[\s\-]""#,
         ] {
-            let parsed = shape.parse::<Filter>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = parsed.to_string();
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
-            let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
         }
     }
@@ -545,16 +561,16 @@ mod tests {
     /// stored subscription's meaning when it is read back and re-serialised.
     #[test]
     fn a_percent_sequence_in_a_quoted_operand_round_trips_unchanged() {
-        let filter = "ref==\"urn:x:a%2Fb\"".parse::<Filter>().expect("parses");
+        let filter = "ref==\"urn:x:a%2Fb\"".parse::<Filter<Written>>().expect("parses");
         let rendered = filter.to_string();
         pretty_assertions::assert_eq!(rendered, "ref==\"urn:x:a%2Fb\"");
-        let reparsed = rendered.parse::<Filter>().expect("reparses");
+        let reparsed = rendered.parse::<Filter<Written>>().expect("reparses");
         pretty_assertions::assert_eq!(reparsed, filter);
     }
 
     #[test]
     fn display_expanded_iri() {
-        let filter = Filter::Term(QueryTerm::Ordering {
+        let filter: Filter<Expanded> = Filter::Term(QueryTerm::Ordering {
             path: AttributePath::Local(ValuePath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             operator: OrderingOperator::Greater,
             value: Scalar::Number(50.into()),
@@ -562,7 +578,7 @@ mod tests {
         let text = filter.to_string();
         // The IRI must be quoted because it contains a dot
         pretty_assertions::assert_eq!(text, "\"https://example.com/speed\">50");
-        let parsed = text.parse::<Filter>().unwrap();
+        let parsed = text.parse::<Filter<Written>>().unwrap();
         match parsed {
             Filter::Term(QueryTerm::Ordering { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attribute.as_str(), "https://example.com/speed");
@@ -579,7 +595,7 @@ mod tests {
             let Filter::Term(QueryTerm::Equality {
                 value: EqualityValue::Scalar(scalar),
                 ..
-            }) = (written.parse::<Filter>().unwrap().to_string()).parse::<Filter>().unwrap()
+            }) = (written.parse::<Filter<Written>>().unwrap().to_string()).parse::<Filter<Written>>().unwrap()
             else {
                 panic!("{written} is no single equality");
             };
@@ -594,9 +610,9 @@ mod tests {
     #[test]
     fn a_target_language_and_the_every_language_marker_round_trip() {
         for written in ["label[en-GB]==\"x\"", "label[de-*-DE]==\"x\"", "label[*]==\"x\"", "label[zh-Hant-TW]"] {
-            let filter = written.parse::<Filter>().unwrap();
+            let filter = written.parse::<Filter<Written>>().unwrap();
             pretty_assertions::assert_eq!(filter.to_string(), written);
-            pretty_assertions::assert_eq!(filter.to_string().parse::<Filter>().unwrap(), filter, "{written}");
+            pretty_assertions::assert_eq!(filter.to_string().parse::<Filter<Written>>().unwrap(), filter, "{written}");
             pretty_assertions::assert_eq!(filter.written_member_text(), written);
         }
     }
@@ -619,11 +635,13 @@ mod tests {
             (r#"name=="a\nb".."c\td""#, r#"name=="a\nb".."c\td""#),
             (r#"name>"a\u0007b""#, r#"name>"a\u0007b""#),
         ] {
-            let parsed = written.parse::<Filter>().unwrap_or_else(|error| panic!("{written} must parse: {error}"));
+            let parsed = written
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{written} must parse: {error}"));
             let serialised = parsed.to_string();
             pretty_assertions::assert_eq!(serialised, rendered, "serialisation of {written}");
             let reparsed = serialised
-                .parse::<Filter>()
+                .parse::<Filter<Written>>()
                 .unwrap_or_else(|error| panic!("{serialised} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {written}");
         }
@@ -633,7 +651,7 @@ mod tests {
     /// it to the renderer.
     #[test]
     fn every_control_character_a_string_can_hold_reads_back_through_its_rendering() {
-        let Filter::Term(QueryTerm::Equality { path, membership, .. }) = "name==\"x\"".parse::<Filter>().unwrap() else {
+        let Filter::Term(QueryTerm::Equality { path, membership, .. }) = "name==\"x\"".parse::<Filter<Written>>().unwrap() else {
             panic!("expected an equality");
         };
         for code_point in 0x01_u32..0x20 {
@@ -648,7 +666,9 @@ mod tests {
                 rendered.chars().all(|character| u32::from(character) >= 0x20),
                 "U+{code_point:04X} must be written as an escape, got {rendered:?}"
             );
-            let reparsed = rendered.parse::<Filter>().unwrap_or_else(|error| panic!("{rendered:?} must reparse: {error}"));
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered:?} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, filter, "round trip of U+{code_point:04X}");
             pretty_assertions::assert_eq!(filter.written_member_text(), rendered, "written members of U+{code_point:04X}");
         }

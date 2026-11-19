@@ -28,7 +28,7 @@
 //! rules.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_query_evaluation::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
@@ -62,7 +62,7 @@ impl<'a> ContextSourceProperties<'a> {
     }
 
     /// The value of the property `name`, read in place.
-    fn member(self, name: &AttributeName) -> Option<JsonPiece<'a>> {
+    fn member(self, name: &AttributeIri) -> Option<JsonPiece<'a>> {
         self.0.member(name.as_str())
     }
 }
@@ -148,7 +148,7 @@ impl<'a> QueriedValueNode<'a> for NoStructuredValue {
 impl<'a> QueriedEntity<'a> for ContextSourceProperties<'a> {
     type Instance = PropertyValue<'a>;
 
-    fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
+    fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = PropertyValue<'a>> {
         self.member(attribute).map(PropertyValue::of).into_iter()
     }
 
@@ -213,14 +213,22 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::filter::{Filter, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, reading::filter_reading::FilterReading},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
+    };
     use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
 
     /// Whether the `csf` holds over the properties, read as a compiled `csf`
     /// reads them through the entity traits.
     fn holds(q: &str, properties: &Value) -> bool {
-        let reading = FilterReading::of_context_source_filter(&q.parse::<Filter>().expect("the filter parses"));
+        let reading = FilterReading::of_context_source_filter(
+            &EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("the filter parses"))
+                .expect("the names expand"),
+        );
         let properties = JsonLiteral::admit(&properties.to_string()).expect("a JSON literal");
         ContextSourceProperties::of(properties.piece()).is_some_and(|properties| filter_holds(&reading, properties, NoLinkedEntities))
     }

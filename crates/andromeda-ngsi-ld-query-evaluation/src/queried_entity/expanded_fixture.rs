@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
@@ -277,10 +277,10 @@ impl FixtureItem {
 impl<'a> QueriedEntity<'a> for &'a FixtureEntity {
     type Instance = &'a FixtureInstance;
 
-    fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a FixtureInstance> {
+    fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = &'a FixtureInstance> {
         self.attributes
             .iter()
-            .filter(move |(name, _)| name == attribute)
+            .filter(move |(name, _)| name.as_str() == attribute.as_str())
             .flat_map(|(_, instances)| instances)
     }
 

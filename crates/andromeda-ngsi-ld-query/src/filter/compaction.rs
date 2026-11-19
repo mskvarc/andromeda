@@ -16,6 +16,7 @@ use crate::{
     filter::{
         Filter,
         attribute_path::AttributePath,
+        filter_error::FilterError,
         json_key_attributes::JsonKeyAttributes,
         nested_names::NestedNames,
         operand_coercion::OperandCoercion,
@@ -23,10 +24,11 @@ use crate::{
         trailing_group::TrailingGroup,
         value_path::ValuePath,
     },
+    name_stage::{Expanded, NameStage, Written},
     term_compactor::TermCompactor,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
+use std::{collections::HashSet, convert::Infallible, future::Future, hash::BuildHasher, pin::Pin};
 
 /// Recursively compact every attribute term of a `q` filter.
 ///
@@ -35,7 +37,12 @@ use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 /// expanded compact by the inverse rule (see [`OperandCoercion::Vocabulary`]),
 /// so `expand_filter` applied to the result under the same `@context` yields
 /// the filter this was given.
-pub async fn compact_filter(filter: Filter, compactor: &impl TermCompactor) -> Filter {
+///
+/// # Errors
+///
+/// Returns [`FilterError::InvalidAttributeName`] when a hop's guard type has no
+/// written name: no term abbreviates it and it is longer than a name may be.
+pub async fn compact_filter(filter: Filter<Expanded>, compactor: &impl TermCompactor) -> Result<Filter<Written>, FilterError> {
     let json_keys = JsonKeyAttributes::default();
     let members = NestedNames::Terms(&json_keys);
     map_terms(filter, &|term| compact_query_term(term, members, compactor)).await
@@ -45,7 +52,7 @@ pub async fn compact_filter(filter: Filter, compactor: &impl TermCompactor) -> F
 /// holding a vocabulary term, then its attribute path.
 ///
 /// The operands go first: the member is recognised by its expanded name.
-async fn compact_query_term(term: QueryTerm, members: NestedNames<'_>, compactor: &impl TermCompactor) -> QueryTerm {
+async fn compact_query_term(term: QueryTerm<Expanded>, members: NestedNames<'_>, compactor: &impl TermCompactor) -> Result<QueryTerm<Written>, FilterError> {
     let term = match term.path().terminal().ending_member() {
         Some((member, _)) if member.holds_vocabulary_term() => OperandCoercion::Vocabulary.compact_operands(term, compactor).await,
         Some(_) | None => term,
@@ -59,43 +66,56 @@ async fn compact_query_term(term: QueryTerm, members: NestedNames<'_>, compactor
 /// The inverse of [`crate::filter::expansion::expand_context_source_filter`]: the members
 /// address raw JSON keys (see [`NestedNames::Verbatim`]), which no
 /// `@context` abbreviates.
-pub async fn compact_context_source_filter(filter: Filter, compactor: &impl TermCompactor) -> Filter {
+///
+/// # Errors
+///
+/// As [`compact_filter`].
+pub async fn compact_context_source_filter(filter: Filter<Expanded>, compactor: &impl TermCompactor) -> Result<Filter<Written>, FilterError> {
     map_terms(filter, &|term| compact_query_term_paths(term, NestedNames::Verbatim, compactor)).await
 }
 
 /// Rewrite every query term of a filter with `handler`, leaving its
 /// boolean structure intact.
-async fn map_terms<F, Fut>(filter: Filter, handler: &F) -> Filter
+async fn map_terms<S, T, E, F, Fut>(filter: Filter<S>, handler: &F) -> Result<Filter<T>, E>
 where
-    F: Fn(QueryTerm) -> Fut + Sync,
-    Fut: Future<Output = QueryTerm> + Send,
+    S: NameStage,
+    T: NameStage,
+    F: Fn(QueryTerm<S>) -> Fut + Sync,
+    Fut: Future<Output = Result<QueryTerm<T>, E>> + Send,
+    E: Send,
 {
     match filter {
-        Filter::And(filters) => Filter::And(map_all_terms(filters, handler).await),
-        Filter::Or(filters) => Filter::Or(map_all_terms(filters, handler).await),
-        Filter::Term(term) => Filter::Term(handler(term).await),
+        Filter::And(filters) => Ok(Filter::And(map_all_terms(filters, handler).await?)),
+        Filter::Or(filters) => Ok(Filter::Or(map_all_terms(filters, handler).await?)),
+        Filter::Term(term) => Ok(Filter::Term(handler(term).await?)),
     }
 }
 
 /// Rewrite the operands of one boolean node in order.
-async fn map_all_terms<F, Fut>(filters: Vec<Filter>, handler: &F) -> Vec<Filter>
+async fn map_all_terms<S, T, E, F, Fut>(filters: Vec<Filter<S>>, handler: &F) -> Result<Vec<Filter<T>>, E>
 where
-    F: Fn(QueryTerm) -> Fut + Sync,
-    Fut: Future<Output = QueryTerm> + Send,
+    S: NameStage,
+    T: NameStage,
+    F: Fn(QueryTerm<S>) -> Fut + Sync,
+    Fut: Future<Output = Result<QueryTerm<T>, E>> + Send,
+    E: Send,
 {
     let mut rewritten = Vec::with_capacity(filters.len());
     for filter in filters {
-        rewritten.push(map_terms_boxed(filter, handler).await);
+        rewritten.push(map_terms_boxed(filter, handler).await?);
     }
-    rewritten
+    Ok(rewritten)
 }
 
 /// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
 /// own future type.
-fn map_terms_boxed<'a, F, Fut>(filter: Filter, handler: &'a F) -> Pin<Box<dyn Future<Output = Filter> + Send + 'a>>
+fn map_terms_boxed<'a, S, T, E, F, Fut>(filter: Filter<S>, handler: &'a F) -> Pin<Box<dyn Future<Output = Result<Filter<T>, E>> + Send + 'a>>
 where
-    F: Fn(QueryTerm) -> Fut + Sync,
-    Fut: Future<Output = QueryTerm> + Send + 'a,
+    S: NameStage,
+    T: NameStage,
+    F: Fn(QueryTerm<S>) -> Fut + Sync,
+    Fut: Future<Output = Result<QueryTerm<T>, E>> + Send + 'a,
+    E: Send + 'a,
 {
     Box::pin(map_terms(filter, handler))
 }
@@ -114,21 +134,28 @@ where
 /// `expand_attributes` is the stored, expanded opt-in list, and the paths it is
 /// matched against are the stored, expanded ones, so this runs before
 /// [`compact_filter`] turns those paths back into terms.
-pub async fn revert_expand_values<S: BuildHasher + Sync>(
-    filter: Filter,
-    expand_attributes: &HashSet<AttributeName, S>,
+pub async fn revert_expand_values<H: BuildHasher + Sync>(
+    filter: Filter<Expanded>,
+    expand_attributes: &HashSet<AttributeIri, H>,
     compactor: &impl TermCompactor,
-) -> Filter {
-    map_terms(filter, &|term| revert_equality_values(term, expand_attributes, compactor)).await
+) -> Filter<Expanded> {
+    let reverted =
+        map_terms::<Expanded, Expanded, Infallible, _, _>(
+            filter,
+            &|term| async move { Ok(revert_equality_values(term, expand_attributes, compactor).await) },
+        )
+        .await;
+    let Ok(filter) = reverted;
+    filter
 }
 
 /// Put the operands of a comparison back in the client's terms when its
 /// attribute opted in via `expandValues`.
-async fn revert_equality_values<S: BuildHasher + Sync>(
-    term: QueryTerm,
-    expand_attributes: &HashSet<AttributeName, S>,
+async fn revert_equality_values<H: BuildHasher + Sync>(
+    term: QueryTerm<Expanded>,
+    expand_attributes: &HashSet<AttributeIri, H>,
     compactor: &impl TermCompactor,
-) -> QueryTerm {
+) -> QueryTerm<Expanded> {
     if expand_attributes.contains(term.path().terminal().attribute.as_str()) {
         return OperandCoercion::ExpandValues.compact_operands(term, compactor).await;
     }
@@ -137,28 +164,32 @@ async fn revert_equality_values<S: BuildHasher + Sync>(
 
 /// Compact the attribute path of a single query term, keeping its operator and
 /// operand.
-async fn compact_query_term_paths(term: QueryTerm, members: NestedNames<'_>, compactor: &impl TermCompactor) -> QueryTerm {
-    match term {
-        QueryTerm::Exists(path) => QueryTerm::Exists(compact_attribute_path(path, members, compactor).await),
+async fn compact_query_term_paths(
+    term: QueryTerm<Expanded>,
+    members: NestedNames<'_>,
+    compactor: &impl TermCompactor,
+) -> Result<QueryTerm<Written>, FilterError> {
+    Ok(match term {
+        QueryTerm::Exists(path) => QueryTerm::Exists(compact_attribute_path(path, members, compactor).await?),
         QueryTerm::Equality { path, membership, value } => QueryTerm::Equality {
-            path: compact_attribute_path(path, members, compactor).await,
+            path: compact_attribute_path(path, members, compactor).await?,
             membership,
             value,
         },
         QueryTerm::Ordering { path, operator, value } => QueryTerm::Ordering {
-            path: compact_attribute_path(path, members, compactor).await,
+            path: compact_attribute_path(path, members, compactor).await?,
             operator,
             value,
         },
         QueryTerm::MatchPattern { path, pattern } => QueryTerm::MatchPattern {
-            path: compact_attribute_path(path, members, compactor).await,
+            path: compact_attribute_path(path, members, compactor).await?,
             pattern,
         },
         QueryTerm::NotMatchPattern { path, pattern } => QueryTerm::NotMatchPattern {
-            path: compact_attribute_path(path, members, compactor).await,
+            path: compact_attribute_path(path, members, compactor).await?,
             pattern,
         },
-    }
+    })
 }
 
 /// Compact an attribute path: every segment of its value path as a term, and for
@@ -166,9 +197,17 @@ async fn compact_query_term_paths(term: QueryTerm, members: NestedNames<'_>, com
 /// types.
 /// This is the same split [`crate::filter::expansion::expand_attribute_path`] makes
 /// in the other direction.
-pub async fn compact_attribute_path(path: AttributePath, members: NestedNames<'_>, compactor: &impl TermCompactor) -> AttributePath {
+///
+/// # Errors
+///
+/// As [`compact_filter`].
+pub async fn compact_attribute_path(
+    path: AttributePath<Expanded>,
+    members: NestedNames<'_>,
+    compactor: &impl TermCompactor,
+) -> Result<AttributePath<Written>, FilterError> {
     match path {
-        AttributePath::Local(local) => AttributePath::Local(compact_value_path(local, members, compactor).await),
+        AttributePath::Local(local) => Ok(AttributePath::Local(compact_value_path(local, members, compactor).await)),
         AttributePath::Linked {
             relationship,
             guard_types,
@@ -177,14 +216,14 @@ pub async fn compact_attribute_path(path: AttributePath, members: NestedNames<'_
             let relationship = compactor.compact_term(&relationship).await;
             let mut compacted_guard = Vec::with_capacity(guard_types.len());
             for guard_type in &guard_types {
-                compacted_guard.push(compactor.compact_type(guard_type).await);
+                compacted_guard.push(compactor.compact_type(guard_type).await.map_err(FilterError::InvalidAttributeName)?);
             }
-            let inner = compact_attribute_path_boxed(*inner, members, compactor).await;
-            AttributePath::Linked {
+            let inner = compact_attribute_path_boxed(*inner, members, compactor).await?;
+            Ok(AttributePath::Linked {
                 relationship,
                 guard_types: compacted_guard,
                 inner: Box::new(inner),
-            }
+            })
         }
     }
 }
@@ -192,10 +231,10 @@ pub async fn compact_attribute_path(path: AttributePath, members: NestedNames<'_
 /// Box-pinned wrapper: the attribute path walker recurses through hops, and an
 /// `async fn` cannot name its own future type.
 fn compact_attribute_path_boxed<'a, C: TermCompactor>(
-    path: AttributePath,
+    path: AttributePath<Expanded>,
     members: NestedNames<'a>,
     compactor: &'a C,
-) -> Pin<Box<dyn Future<Output = AttributePath> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = Result<AttributePath<Written>, FilterError>> + Send + 'a>> {
     Box::pin(compact_attribute_path(path, members, compactor))
 }
 
@@ -206,25 +245,40 @@ fn compact_attribute_path_boxed<'a, C: TermCompactor>(
 /// parsed path carries what the client wrote in both spellings of its
 /// [`MemberPath`](crate::filter::trailing_group::MemberPath), and a compacted path is meant to read as one. A target
 /// language is no term and stays as written.
-pub async fn compact_value_path(mut path: ValuePath, members: NestedNames<'_>, compactor: &impl TermCompactor) -> ValuePath {
-    if let Some(TrailingGroup::Members(member_path)) = &mut path.trailing {
-        if members.are_terms_under(&path.attribute) {
-            member_path.addressed = compact_all(&member_path.addressed, compactor).await;
+pub async fn compact_value_path(path: ValuePath<Expanded>, members: NestedNames<'_>, compactor: &impl TermCompactor) -> ValuePath<Written> {
+    let trailing = match path.trailing {
+        Some(TrailingGroup::Members(mut member_path)) => {
+            if members.are_terms_under(&path.attribute) {
+                member_path.addressed = compact_all(&member_path.addressed, compactor).await;
+            }
+            member_path.written.clone_from(&member_path.addressed); // clone: the written and addressed spellings are separate owned values
+            Some(TrailingGroup::Members(member_path))
         }
-        member_path.written.clone_from(&member_path.addressed); // clone: the written and addressed spellings are separate owned values
+        other @ (Some(TrailingGroup::Language(_) | TrailingGroup::AllLanguages) | None) => other,
+    };
+    let sub_attributes = if members.sub_attributes_are_terms() {
+        compact_all(&path.sub_attributes, compactor).await
+    } else {
+        path.sub_attributes
+    };
+    ValuePath {
+        attribute: compactor.compact_term(&path.attribute).await,
+        sub_attributes,
+        trailing,
     }
-    path.attribute = compactor.compact_term(&path.attribute).await;
-    if members.sub_attributes_are_terms() {
-        path.sub_attributes = compact_all(&path.sub_attributes, compactor).await;
-    }
-    path
 }
 
 /// Compact every name in a list.
+///
+/// A name that is no absolute IRI is a literal key of a value, which no term
+/// abbreviates, and stays as it is.
 async fn compact_all(names: &[AttributeName], compactor: &impl TermCompactor) -> Vec<AttributeName> {
     let mut compacted = Vec::with_capacity(names.len());
     for name in names {
-        compacted.push(compactor.compact_term(name).await);
+        compacted.push(match name.as_str().parse::<AttributeIri>() {
+            Ok(iri) => compactor.compact_term(&iri).await,
+            Err(_literal_key) => name.clone(),
+        });
     }
     compacted
 }
@@ -238,10 +292,17 @@ mod tests {
             expansion::{apply_expand_values, expand_context_source_filter, expand_filter},
             json_key_attributes::JsonKeyAttributes,
         },
+        name_stage::{Expanded, Written},
         namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
         term_compactor::TermCompactor,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_iri::AttributeIri,
+        attribute_name::AttributeName,
+        entity_type_iri::EntityTypeIri,
+        entity_type_name::EntityTypeName,
+        reference::NgsiLdReferenceError,
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT_TYPE, VALUE_TYPE};
     use iri_rs::Iri;
     use std::{
@@ -265,22 +326,24 @@ mod tests {
     /// implementation follows for an IRI no term abbreviates.
     struct PrefixCompactor;
 
-    fn strip(name: &AttributeName, prefix: &str) -> AttributeName {
-        let core = CORE_MEMBERS.iter().find(|(_, iri)| iri.as_str() == name.as_str()).map(|(term, _)| *term);
-        match core.or_else(|| name.as_str().strip_prefix(prefix)) {
-            Some(term) => term.parse().expect("a stripped term is a valid attribute name"),
-            None => name.clone(),
-        }
+    fn strip<'a>(name: &'a str, prefix: &str) -> &'a str {
+        let core = CORE_MEMBERS.iter().find(|(_, iri)| iri.as_str() == name).map(|(term, _)| *term);
+        core.or_else(|| name.strip_prefix(prefix)).unwrap_or(name)
     }
 
     impl TermCompactor for PrefixCompactor {
-        fn compact_term(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
-            ready(strip(name, TERM_PREFIX))
+        fn compact_term(&self, name: &AttributeIri) -> impl Future<Output = AttributeName> + Send {
+            ready(strip(name.as_str(), TERM_PREFIX).parse().expect("a stripped term is a valid attribute name"))
         }
 
-        fn compact_type(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send {
-            ready(strip(name, TYPE_PREFIX))
+        fn compact_type(&self, name: &EntityTypeIri) -> impl Future<Output = Result<EntityTypeName, NgsiLdReferenceError>> + Send {
+            ready(strip(name.as_str(), TYPE_PREFIX).parse())
         }
+    }
+
+    /// The filter `text` writes, whose names are absolute IRIs already.
+    fn stored(text: &str) -> Filter<Expanded> {
+        text.parse::<Filter<Written>>().expect("parses").into_expanded().expect("absolute names")
     }
 
     /// The suite's operators and path shapes: every operand kind, every
@@ -315,11 +378,11 @@ mod tests {
     #[tokio::test]
     async fn compacting_an_expanded_filter_restores_what_the_client_wrote() {
         for shape in SHAPES {
-            let parsed = shape.parse::<Filter>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let expanded = expand_filter(parsed.clone(), &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands");
             assert_ne!(expanded.to_string(), shape, "the expansion of {shape} must differ from it");
 
-            let compacted = compact_filter(expanded, &PrefixCompactor).await;
+            let compacted = compact_filter(expanded, &PrefixCompactor).await.expect("compacts");
 
             pretty_assertions::assert_eq!(compacted, parsed, "compaction of the expansion of {shape}");
             pretty_assertions::assert_eq!(compacted.to_string(), shape, "serialisation after compaction of {shape}");
@@ -332,10 +395,10 @@ mod tests {
     #[tokio::test]
     async fn expanding_a_compacted_filter_restores_the_stored_expansion() {
         for shape in SHAPES {
-            let parsed = shape.parse::<Filter>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let expanded = expand_filter(parsed, &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands");
 
-            let compacted = compact_filter(expanded.clone(), &PrefixCompactor).await;
+            let compacted = compact_filter(expanded.clone(), &PrefixCompactor).await.expect("compacts");
             let re_expanded = expand_filter(compacted, &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands again");
 
             pretty_assertions::assert_eq!(re_expanded, expanded, "expand after compact of {shape}");
@@ -346,11 +409,9 @@ mod tests {
     /// and the operator and operand beside it are untouched.
     #[tokio::test]
     async fn a_name_no_term_abbreviates_is_kept_as_the_full_iri() {
-        let expanded = "\"https://other.example/speed\">50;\"https://example.com/colour\"==\"red\""
-            .parse::<Filter>()
-            .expect("parses");
+        let expanded = stored("\"https://other.example/speed\">50;\"https://example.com/colour\"==\"red\"");
 
-        let compacted = compact_filter(expanded, &PrefixCompactor).await;
+        let compacted = compact_filter(expanded, &PrefixCompactor).await.expect("compacts");
 
         pretty_assertions::assert_eq!(compacted.to_string(), "\"https://other.example/speed\">50;colour==\"red\"");
     }
@@ -360,9 +421,11 @@ mod tests {
     /// entity types.
     #[tokio::test]
     async fn a_hop_compacts_its_relationship_as_a_term_and_its_guard_as_entity_types() {
-        let expanded = "\"https://example.com/isParkedIn\"{\"https://example.com/types/Building\",\"https://example.com/types/Store\":\"https://example.com/category\"}==\"x\"".parse::<Filter>().expect("parses");
+        let expanded = stored(
+            "\"https://example.com/isParkedIn\"{\"https://example.com/types/Building\",\"https://example.com/types/Store\":\"https://example.com/category\"}==\"x\"",
+        );
 
-        let compacted = compact_filter(expanded, &PrefixCompactor).await;
+        let compacted = compact_filter(expanded, &PrefixCompactor).await.expect("compacts");
 
         pretty_assertions::assert_eq!(compacted.to_string(), "isParkedIn{Building,Store:category}==\"x\"");
     }
@@ -374,14 +437,14 @@ mod tests {
     #[tokio::test]
     async fn a_csf_round_trips_with_its_sub_properties_and_trailing_members_as_written() {
         let written = "coverage.\"https://example.com/since\"[\"https://example.com/area\".region]==\"north\"";
-        let parsed = written.parse::<Filter>().expect("parses");
+        let parsed = written.parse::<Filter<Written>>().expect("parses");
         let expanded = expand_context_source_filter(parsed.clone(), &EXPANDER).await.expect("expands");
 
-        let compacted = compact_context_source_filter(expanded.clone(), &PrefixCompactor).await;
+        let compacted = compact_context_source_filter(expanded.clone(), &PrefixCompactor).await.expect("compacts");
 
         pretty_assertions::assert_eq!(compacted, parsed);
         pretty_assertions::assert_ne!(
-            compact_filter(expanded, &PrefixCompactor).await,
+            compact_filter(expanded, &PrefixCompactor).await.expect("compacts"),
             parsed,
             "an Entity filter compacts the same member as a term"
         );
@@ -392,12 +455,14 @@ mod tests {
     #[tokio::test]
     async fn an_expanded_quoted_word_reverts_to_the_quoted_word() {
         let written = "gender==\"Male\"";
-        let parsed = written.parse::<Filter>().expect("parses");
+        let parsed = written.parse::<Filter<Written>>().expect("parses");
         let expanded = expand_filter(parsed, &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands");
-        let opted_in: HashSet<AttributeName> = HashSet::from([format!("{TERM_PREFIX}gender").parse().expect("a valid name")]);
+        let opted_in: HashSet<AttributeIri> = HashSet::from([format!("{TERM_PREFIX}gender").parse().expect("a valid name")]);
         let coerced = apply_expand_values(expanded, &opted_in, &EXPANDER).await.expect("expands");
 
-        let reverted = compact_filter(revert_expand_values(coerced, &opted_in, &PrefixCompactor).await, &PrefixCompactor).await;
+        let reverted = compact_filter(revert_expand_values(coerced, &opted_in, &PrefixCompactor).await, &PrefixCompactor)
+            .await
+            .expect("compacts");
 
         pretty_assertions::assert_eq!(reverted.to_string(), written);
     }

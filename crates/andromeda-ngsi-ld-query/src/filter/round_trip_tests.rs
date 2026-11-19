@@ -5,16 +5,19 @@
 //! a filter the round trip changes is answered differently once it has
 //! travelled.
 
-use crate::filter::{Filter, generated_filters::query};
+use crate::{
+    filter::{Filter, generated_filters::query},
+    name_stage::Written,
+};
 use proptest::{
     prelude::{prop_assert_eq, proptest},
     test_runner::Config,
 };
 
 /// The filter a client wrote, parsed.
-fn parsed(written: &str) -> Filter {
+fn parsed(written: &str) -> Filter<Written> {
     written
-        .parse::<Filter>()
+        .parse::<Filter<Written>>()
         .unwrap_or_else(|error| panic!("the generator writes only grammatical filters, and {written} is refused: {error}"))
 }
 
@@ -25,7 +28,7 @@ proptest! {
     fn serialising_a_parsed_filter_and_parsing_it_again_gives_the_same_filter(written in query()) {
         let filter = parsed(&written);
         let serialised = filter.to_string();
-        prop_assert_eq!(serialised.parse::<Filter>().ok(), Some(filter), "{} serialised as {}", written, serialised);
+        prop_assert_eq!(serialised.parse::<Filter<Written>>().ok(), Some(filter), "{} serialised as {}", written, serialised);
     }
 
     #[test]

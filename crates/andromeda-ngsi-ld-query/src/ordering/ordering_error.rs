@@ -5,6 +5,7 @@
 use crate::{
     filter::{filter_error::FilterError, value_path::ValuePath},
     geo::reference_budget::ReferenceBudgetError,
+    name_stage::Written,
     ordering::{icu_collation::IcuCollationError, ordering_direction::OrderingDirection},
 };
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
@@ -36,7 +37,7 @@ pub enum OrderingError {
     /// entity name other than "id", then an error of type `BadRequestData`
     /// shall be raised."
     #[error("a temporal query can only be ordered by the Entity member id, not by '{0}'")]
-    TemporalMember(Box<ValuePath>),
+    TemporalMember(Box<ValuePath<Written>>),
     /// A temporal query's `orderBy` asked for a distance ordering.
     ///
     /// Table 6.18.3.2-1 admits only the sorting styles `asc` and `desc`, and

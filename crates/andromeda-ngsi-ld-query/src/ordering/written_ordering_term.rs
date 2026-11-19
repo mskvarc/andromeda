@@ -2,6 +2,7 @@
 
 use crate::{
     filter::{target_language::LanguageSelector, trailing_group::TrailingGroup, value_path::ValuePath},
+    name_stage::Written,
     ordering::{ordering_direction::OrderingDirection, ordering_error::OrderingError},
 };
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use std::{fmt, str::FromStr};
 #[serde(try_from = "String", into = "String")]
 pub struct WrittenOrderingTerm {
     /// The value path or clause 4.23 keyword to sort by, as written. Clause 4.23.3 delegates `AttrName` to clause 4.9, and its examples (`address[city]`, `name.observedAt`) are both the clause 4.9 `ValuePath` production, which is why this is a whole path rather than one name.
-    pub path: ValuePath,
+    pub path: ValuePath<Written>,
     /// The sort direction.
     pub direction: OrderingDirection,
 }
@@ -29,7 +30,7 @@ impl FromStr for WrittenOrderingTerm {
             }
             None => (raw, OrderingDirection::Asc),
         };
-        let path = member.parse::<ValuePath>().map_err(OrderingError::Path)?;
+        let path = member.parse::<ValuePath<Written>>().map_err(OrderingError::Path)?;
         if path.trailing == Some(TrailingGroup::AllLanguages) {
             return Err(OrderingError::LanguageSuppression);
         }
