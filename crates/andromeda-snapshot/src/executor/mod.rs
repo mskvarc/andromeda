@@ -250,8 +250,8 @@ impl SnapshotPreparation {
     ///
     /// Returns [`SnapshotError::Internal`] when the configured lease duration
     /// cannot be turned into a wall-clock deadline, and the store's own failure
-    /// when claiming a preparing snapshot does not complete before any
-    /// preparation was moved on.
+    /// when claiming a preparing snapshot does not complete and the pass moved
+    /// no preparation on, the ones it claimed before that failure included.
     pub async fn execute(&self) -> Result<SnapshotPreparationOutcome, SnapshotError> {
         // Boxed: one capture drives the whole query pipeline, so its future is far
         // too large to hold inline for every buffered job of a round.

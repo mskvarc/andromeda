@@ -1,4 +1,5 @@
 use crate::{
+    error::SnapshotError,
     executor::{
         attempts::{PreparationClaim, PreparationEnd, QueryCounts},
         drain::DrainWorker,
@@ -239,4 +240,84 @@ async fn a_clone_created_while_its_source_prepares_is_left_to_the_pass_ending_th
     assert_eq!(moved, 0);
     assert!(claimed.lock().expect("claim log").is_empty(), "the clone waits for its source");
     assert!(store.take_copies().is_empty(), "nothing is copied before the source ends");
+}
+
+fn second_capture_id() -> Identifier {
+    "urn:ngsi-ld:Snapshot:second-capture".parse().expect("valid snapshot identifier")
+}
+
+/// Two waiting captures, the first claimed first.
+fn two_captures() -> StoreDouble {
+    StoreDouble::new(snapshot(created_id(), SnapshotStatus::Preparing), ClaimHold::Held).with_capture(snapshot(second_capture_id(), SnapshotStatus::Preparing))
+}
+
+/// A claim failing after the first of a round leaves the preparation already
+/// claimed in this worker's hands, so the pass prepares it before it ends, and
+/// the preparation it could not claim stays waiting for the next pass rather
+/// than for a lapsed lease.
+#[tokio::test(start_paused = true)]
+async fn a_claim_failing_after_the_first_of_a_round_still_prepares_the_one_claimed() {
+    let store = two_captures().with_failing_claim(2);
+    let worker = LeaseHolder::mint();
+    let claimed = Mutex::new(Vec::new());
+
+    let moved = drain_worker(&store, worker)
+        .drain(prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("a pass that prepared ends with what it prepared");
+
+    assert_eq!(moved, 1);
+    assert_eq!(claimed.lock().expect("claim log").as_slice(), [created_id()]);
+    assert_eq!(recorded(&store), [(created_id(), SnapshotStatus::Success)]);
+
+    let next = drain_worker(&store, worker)
+        .drain(prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("the next pass completes");
+
+    assert_eq!(next, 1);
+    assert_eq!(recorded(&store), [(second_capture_id(), SnapshotStatus::Success)]);
+}
+
+/// A pass whose first claim fails has nothing claimed and nothing prepared, so
+/// it reports the store's failure, and the preparation stays waiting.
+#[tokio::test(start_paused = true)]
+async fn a_pass_whose_first_claim_fails_reports_the_failure_and_claims_nothing() {
+    let store = two_captures().with_failing_claim(1);
+    let worker = LeaseHolder::mint();
+    let claimed = Mutex::new(Vec::new());
+
+    let failed = drain_worker(&store, worker).drain(prepare(&store, worker, &claimed, &|| {})).await;
+
+    assert!(matches!(failed, Err(SnapshotError::Contended)), "{failed:?}");
+    assert!(claimed.lock().expect("claim log").is_empty());
+
+    let next = drain_worker(&store, worker)
+        .drain(prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("the next pass completes");
+
+    assert_eq!(next, 2);
+    assert_eq!(
+        recorded(&store),
+        [(created_id(), SnapshotStatus::Success), (second_capture_id(), SnapshotStatus::Success)]
+    );
+}
+
+/// The creation's pass that prepared its Snapshot and then fails to claim
+/// in its next round ends with what it prepared, so its caller still wakes
+/// status delivery.
+#[tokio::test(start_paused = true)]
+async fn a_creation_pass_whose_next_claim_fails_ends_with_the_created_snapshot_prepared() {
+    let store = two_captures().with_failing_claim(1);
+    let worker = LeaseHolder::mint();
+    let claimed = Mutex::new(Vec::new());
+
+    let moved = drain_worker(&store, worker)
+        .drain_created(&created_id(), prepare(&store, worker, &claimed, &|| {}))
+        .await
+        .expect("a pass that prepared ends with what it prepared");
+
+    assert_eq!(moved, 1);
+    assert_eq!(recorded(&store), [(created_id(), SnapshotStatus::Success)]);
 }

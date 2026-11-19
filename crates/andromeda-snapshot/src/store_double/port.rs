@@ -171,7 +171,7 @@ impl SnapshotStore for StoreDouble {
         'life0: 'async_trait,
     {
         let job = self.claim_next();
-        Box::pin(async move { Ok(job) })
+        Box::pin(async move { job })
     }
 
     fn claim_created<'life0, 'life1, 'async_trait>(

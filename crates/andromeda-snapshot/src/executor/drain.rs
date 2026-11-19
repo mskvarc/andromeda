@@ -47,9 +47,11 @@ impl DrainWorker<'_> {
     ///
     /// Returns [`SnapshotError::Internal`] when the configured lease cannot be
     /// turned into a wall-clock deadline, and the store's own failure when a
-    /// claim fails before any preparation was moved on. A claim failing after
-    /// that ends the drain with what it moved, so its callers still wake the
-    /// status delivery those preparations enqueued.
+    /// claim fails and the pass moved no preparation on. A failing claim ends
+    /// the drain only once the preparations its round claimed before it are
+    /// run, so no claim of this worker is left to lapse with its lease. A pass
+    /// that moved preparations on ends with what it moved, so its callers
+    /// still wake the status delivery those preparations enqueued.
     pub(crate) async fn drain<'f>(
         &self,
         prepare: impl Fn(SnapshotPreparationJob) -> BoxFuture<'f, Option<PreparationEnd>> + Sync,
@@ -59,7 +61,7 @@ impl DrainWorker<'_> {
 
     /// [`DrainWorker::drain`] for a pass that already moved `moved`
     /// preparations out of `preparing` before it started claiming, returning
-    /// the total. A claim failing after that ends the drain with `moved`
+    /// the total. A claim failing after that ends the drain with the total
     /// rather than an error.
     ///
     /// # Errors
@@ -71,19 +73,25 @@ impl DrainWorker<'_> {
         prepare: impl Fn(SnapshotPreparationJob) -> BoxFuture<'f, Option<PreparationEnd>> + Sync,
     ) -> Result<usize, SnapshotError> {
         loop {
-            let jobs = match self.claim_round().await {
-                Ok(jobs) => jobs,
-                Err(error) if moved > 0 => {
-                    warn!(%error, moved, "Claiming further Snapshot preparations failed; ending the pass with what it prepared");
-                    return Ok(moved);
-                }
-                Err(error) => return Err(error),
-            };
-            if jobs.is_empty() {
-                return Ok(moved);
-            }
+            let ClaimedRound { jobs, failure } = self.claim_round().await;
             let ends: Vec<Option<PreparationEnd>> = fan_out_unordered(jobs, self.max_per_round, &prepare).collect().await;
-            moved += ends.iter().flatten().filter(|end| end.left_preparing()).count();
+            let prepared = ends.iter().flatten().filter(|end| end.left_preparing()).count();
+            moved += prepared;
+            if let Some(error) = failure {
+                return match moved {
+                    0 => Err(error),
+                    moved => {
+                        warn!(
+                            %error,
+                            prepared_in_round = prepared,
+                            prepared_in_pass = moved,
+                            "Claiming a further Snapshot preparation failed; ending the pass after running the preparations it had claimed"
+                        );
+                        Ok(moved)
+                    }
+                };
+            }
+            // Vacuously true for a round that claimed nothing.
             if ends.iter().all(Option::is_none) {
                 return Ok(moved);
             }
@@ -119,17 +127,31 @@ impl DrainWorker<'_> {
         self.drain_after(moved, prepare).await
     }
 
-    /// Claim up to one round of preparations.
-    async fn claim_round(&self) -> Result<Vec<SnapshotPreparationJob>, SnapshotError> {
+    /// Claim up to one round of preparations, keeping the ones claimed before
+    /// a claim fails so the round still runs them.
+    async fn claim_round(&self) -> ClaimedRound {
         let mut jobs = Vec::with_capacity(self.max_per_round);
         while jobs.len() < self.max_per_round {
-            let Some(job) = self.store.next_preparing(self.worker, self.lease).await? else {
-                break;
-            };
-            jobs.push(job);
+            match self.store.next_preparing(self.worker, self.lease).await {
+                Ok(Some(job)) => jobs.push(job),
+                Ok(None) => break,
+                Err(failure) => {
+                    return ClaimedRound { jobs, failure: Some(failure) };
+                }
+            }
         }
-        Ok(jobs)
+        ClaimedRound { jobs, failure: None }
     }
+}
+
+/// The preparations one round claimed, and the failure that ended its
+/// claiming early.
+struct ClaimedRound {
+    /// The preparations claimed, each under this worker's lease.
+    jobs: Vec<SnapshotPreparationJob>,
+    /// The store's failure on the claim after the last of `jobs`; `None` when
+    /// the round filled up or nothing more was claimable.
+    failure: Option<SnapshotError>,
 }
 
 #[cfg(test)]
