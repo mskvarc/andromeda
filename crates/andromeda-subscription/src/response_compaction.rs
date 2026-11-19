@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_query::{
         Filter,
         compaction::{compact_context_source_filter, compact_filter, revert_expand_values},
     },
+    geo::geo_constraint::GeoConstraint,
     name_stage::{Expanded, Written},
     projection::{
         expanded_projection_term::ExpandedProjectionTerm,
@@ -119,8 +120,14 @@ async fn compacted_csf(compactor: &NameCompaction, stored: &Filter<Expanded>, sp
     compact_context_source_filter(stored.clone(), compactor).await.ok().or(spelled)
 }
 
-/// The names of a stored subscription in the reader's terms. The `geoQ` is
-/// served with the geoproperty as stored.
+/// A geo-query whose geoproperty, when it names one, is in the reader's terms
+/// (clause 5.2.13). An absent geoproperty means `location` and stays absent.
+fn compacted_geo_q(compactor: &NameCompaction, mut geo_q: GeoConstraint<Written>) -> GeoConstraint<Written> {
+    geo_q.geoproperty = geo_q.geoproperty.map(|name| compacted_name(compactor, name));
+    geo_q
+}
+
+/// The names of a stored subscription in the reader's terms.
 async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spelled: WrittenSubscriptionTerms) -> WrittenSubscriptionTerms {
     let filters = &stored.filters;
     let opted_in: HashSet<AttributeIri> = filters.expand_values.iter().flatten().cloned().collect();
@@ -144,7 +151,7 @@ async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spel
         pick: spelled.pick.map(|lists| compacted_projection(compactor, lists)),
         omit: spelled.omit.map(|lists| compacted_projection(compactor, lists)),
         q,
-        geo_q: spelled.geo_q,
+        geo_q: spelled.geo_q.map(|geo_q| compacted_geo_q(compactor, geo_q)),
         csf,
         expand_values: spelled.expand_values.map(|names| compacted_names(compactor, names)),
         json_keys: spelled.json_keys.map(|names| compacted_names(compactor, names)),
@@ -337,6 +344,30 @@ mod tests {
         .await;
 
         pretty_assertions::assert_eq!(served["entities"], json!([{"type": "A,B"}, {"type": "(A;B)"}]));
+    }
+
+    /// Clauses 5.2.13 and 5.5.7: a stored `geoQ` geoproperty reads back as the
+    /// term of the reader's `@context`.
+    #[tokio::test]
+    async fn a_stored_geo_query_geoproperty_is_compacted_into_the_readers_terms() {
+        let geoproperty = |stored: &str| {
+            let members = json!({"geoQ": {
+                "georel": "within",
+                "geometry": "Point",
+                "coordinates": [1, 2],
+                "geoproperty": stored
+            }});
+            async move {
+                let terms = presented(&members).await.terms;
+                terms.geo_q.and_then(|geo_q| geo_q.geoproperty).map(|name| name.as_str().to_owned())
+            }
+        };
+
+        pretty_assertions::assert_eq!(
+            geoproperty("https://uri.etsi.org/ngsi-ld/default-context/footprint").await,
+            Some("footprint".to_owned())
+        );
+        pretty_assertions::assert_eq!(geoproperty("https://uri.etsi.org/ngsi-ld/location").await, Some("location".to_owned()));
     }
 
     /// Clause 5.5.7: each stored projection tree reads back with its attribute
