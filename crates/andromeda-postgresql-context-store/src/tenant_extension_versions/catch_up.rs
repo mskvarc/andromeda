@@ -1,9 +1,9 @@
 //! Reading the tenants behind the server's extension versions from the
 //! platform database, for the wake pass to load.
 //!
-//! One statement reads every active named tenant with no wake pending beside
-//! its record, the version the server ships of each extension and the
-//! transactions its database committed. `pg_available_extensions` reports the
+//! One statement reads every active named tenant with no wake due by the
+//! pass's lease beside its record, the version the server ships of each
+//! extension and the transactions its database committed. `pg_available_extensions` reports the
 //! control files installed on the server, which every database of the server
 //! shares, so the platform database sees the version each tenant would be
 //! updated to without connecting to it. The statement keeps only the tenants
@@ -33,8 +33,10 @@ use andromeda_tenancy::{
     status::TenantStatus,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sea_query::{Alias, Cond, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement};
 use sqlx::{Row, postgres::PgRow};
+use std::time::SystemTime;
 
 /// The `pg_stat_database` statistics view, for the transactions each database
 /// committed.
@@ -55,8 +57,8 @@ const COMMITTED_COLUMN: &str = "committed_transactions";
 
 #[async_trait]
 impl CatchUpCandidates for PostgresTenantExtensionVersions {
-    async fn lagging_tenants(&self) -> Result<Vec<TenantName>, CatchUpError> {
-        let rows = lagging_tenants_statement()
+    async fn lagging_tenants(&self, after: SystemTime) -> Result<Vec<TenantName>, CatchUpError> {
+        let rows = lagging_tenants_statement(after)
             .to_query()
             .fetch_all(&self.main_pool)
             .await
@@ -109,9 +111,10 @@ const fn reconciled_column(extension: TrackedExtension) -> &'static str {
     }
 }
 
-/// Every active named tenant with no wake pending and some extension whose
-/// record does not spell the shipped version, with what the order needs.
-fn lagging_tenants_statement() -> SelectStatement {
+/// Every active named tenant with no wake or one after `after` and some
+/// extension whose record does not spell the shipped version, with what the
+/// order needs.
+fn lagging_tenants_statement(after: SystemTime) -> SelectStatement {
     let mut select = Query::select();
     select
         .expr_as(Expr::col((Tenants::Table, Tenants::Name)), Alias::new(NAME_COLUMN))
@@ -159,7 +162,11 @@ fn lagging_tenants_statement() -> SelectStatement {
         Cond::all()
             .add(Expr::col((Tenants::Table, Tenants::Status)).eq(stored_status(TenantStatus::Active).code()))
             .add(Expr::col((Tenants::Table, Tenants::IsUnnamedDefault)).eq(false))
-            .add(Expr::col((TenantWakeSchedule::Table, TenantWakeSchedule::WakeAt)).is_null())
+            .add(
+                Cond::any()
+                    .add(Expr::col((TenantWakeSchedule::Table, TenantWakeSchedule::WakeAt)).is_null())
+                    .add(Expr::col((TenantWakeSchedule::Table, TenantWakeSchedule::WakeAt)).gt(DateTime::<Utc>::from(after))),
+            )
             .add(unsettled),
     );
     select
@@ -229,15 +236,21 @@ fn parsed(raw: Option<String>) -> Result<Option<ExtensionVersion>, CatchUpError>
 mod tests {
     use crate::tenant_extension_versions::catch_up::lagging_tenants_statement;
     use sea_query::PostgresQueryBuilder;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// The end of the pass's lease the read is asked about, 2026-11-18 21:00:00 UTC.
+    fn lease_end() -> SystemTime {
+        UNIX_EPOCH + Duration::from_hours(498_621)
+    }
 
     #[test]
-    fn the_read_takes_active_named_tenants_with_no_wake_pending() {
-        let sql = lagging_tenants_statement().to_string(PostgresQueryBuilder);
+    fn the_read_takes_active_named_tenants_with_no_wake_or_one_after_the_lease() {
+        let sql = lagging_tenants_statement(lease_end()).to_string(PostgresQueryBuilder);
         for fragment in [
             r#"LEFT JOIN "tenant_wake_schedule" ON "tenant_wake_schedule"."tenant_key" = "tenants"."tenant_key""#,
             r#""tenants"."status" = 1"#,
             r#""tenants"."is_unnamed_default" = FALSE"#,
-            r#""tenant_wake_schedule"."wake_at" IS NULL"#,
+            r#"("tenant_wake_schedule"."wake_at" IS NULL OR "tenant_wake_schedule"."wake_at" > '2026-11-18 21:00:00.000000 +00:00')"#,
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
@@ -245,7 +258,7 @@ mod tests {
 
     #[test]
     fn the_read_joins_each_extensions_record_and_the_version_the_server_ships() {
-        let sql = lagging_tenants_statement().to_string(PostgresQueryBuilder);
+        let sql = lagging_tenants_statement(lease_end()).to_string(PostgresQueryBuilder);
         for fragment in [
             r#"LEFT JOIN "tenant_extension_versions" AS "timescaledb_record" ON "timescaledb_record"."tenant_key" = "tenants"."tenant_key" AND "timescaledb_record"."extension" = 'timescaledb'"#,
             r#"LEFT JOIN "tenant_extension_versions" AS "postgis_record""#,
@@ -265,7 +278,7 @@ mod tests {
 
     #[test]
     fn the_read_counts_each_databases_committed_transactions() {
-        let sql = lagging_tenants_statement().to_string(PostgresQueryBuilder);
+        let sql = lagging_tenants_statement(lease_end()).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"LEFT JOIN "pg_stat_database" ON "pg_stat_database"."datname" = "tenants"."database_name""#),
             "{sql}"
@@ -278,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_read_keeps_a_tenant_without_a_record_or_whose_record_spells_neither_shipped_version() {
-        let sql = lagging_tenants_statement().to_string(PostgresQueryBuilder);
+        let sql = lagging_tenants_statement(lease_end()).to_string(PostgresQueryBuilder);
         for fragment in [
             r#""timescaledb_record"."tenant_key" IS NULL"#,
             r#"COALESCE("timescaledb_record"."installed_version", '') <> (SELECT "default_version" FROM "pg_available_extensions" WHERE "name" = 'timescaledb')"#,

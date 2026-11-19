@@ -241,6 +241,15 @@ for extension in "${extensions[@]}"; do
 	expect "$extension loads at the version the image ships" \
 		"$(sql limits-2g "CREATE EXTENSION IF NOT EXISTS $extension; SELECT extversion = default_version FROM pg_extension JOIN pg_available_extensions ON name = extname WHERE extname = '$extension'" 2>&1)" t
 done
+# The broker updates the extensions of a tenant the previous release created,
+# so the image keeps the TimescaleDB library and an update path from each
+# version that release shipped: TimescaleDB 2.31.0 and PostGIS 3.6.4.
+sql limits-2g 'CREATE DATABASE previous_release' > /dev/null
+sql_in limits-2g andromeda previous_release "CREATE EXTENSION timescaledb VERSION '2.31.0'" > /dev/null 2>&1 || :
+expect 'a database at TimescaleDB 2.31.0 updates to the version the image ships' \
+	"$(sql_in limits-2g andromeda previous_release "ALTER EXTENSION timescaledb UPDATE; SELECT extversion = default_version FROM pg_extension JOIN pg_available_extensions ON name = extname WHERE extname = 'timescaledb'" 2>&1)" t
+expect 'PostGIS has an update path from 3.6.4 to the version the image ships' \
+	"$(sql limits-2g "SELECT count(*) FROM pg_extension_update_paths('postgis') JOIN pg_available_extensions ON name = 'postgis' WHERE source = '3.6.4' AND target = default_version AND path IS NOT NULL")" 1
 expect 'pg_stat_statements.max' "$(sql limits-2g 'SHOW pg_stat_statements.max')" 20000
 expect 'autovacuum_naptime overrides the tuner' "$(sql limits-2g 'SHOW autovacuum_naptime')" 1min
 policy_keys="$(docker exec "$prefix-limits-2g" sed -n 's/^\([a-z_.]*\) = .*/\1/p' /etc/postgresql/andromeda.conf.d/10-andromeda.conf)"

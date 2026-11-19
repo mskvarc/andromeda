@@ -42,6 +42,16 @@ impl VersionedExtension {
             VersionedExtension::TimescaleDb => "timescaledb_shipped_version",
         }
     }
+
+    /// The column alias a statement reads whether the session's role may
+    /// update the extension under.
+    #[must_use]
+    pub const fn owned_column(self) -> &'static str {
+        match self {
+            VersionedExtension::PostGis => "postgis_owned",
+            VersionedExtension::TimescaleDb => "timescaledb_owned",
+        }
+    }
 }
 
 #[cfg(test)]

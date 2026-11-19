@@ -8,7 +8,10 @@
 # the temporal Evolution table, the cached identity
 # sequences, the absence of any TimescaleDB conversion job, and the session
 # defaults the broker installs on the tenant and the platform database. IMAGE
-# is the TSL edition, whose columnstore the reconciler enables.
+# is the TSL edition, whose columnstore the reconciler enables. On a server
+# running TimescaleDB's background workers, it then asserts that the tenant
+# template holds no session across a broker start and that every tenant
+# created after one is copied from it.
 set -Eeuo pipefail
 
 image="$1"
@@ -49,25 +52,39 @@ sql() {
 	docker exec -u postgres "$database" psql -U andromeda -XAtq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
 }
 
+# usage: start_database [docker-run-args...]
+start_database() {
+	docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$@" "$image" > /dev/null
+	for _ in $(seq 1 120); do
+		if [ "$(docker inspect -f '{{.State.Health.Status}}' "$database")" = healthy ]; then
+			return 0
+		fi
+		sleep 0.5
+	done
+}
+
+# usage: wait_broker; sets base to the broker's API once it is healthy.
+wait_broker() {
+	base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
+	for _ in $(seq 1 120); do
+		if docker exec "$broker" andromeda health > /dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.5
+	done
+}
+
+start_broker() {
+	docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
+		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
+		-e "ANDROMEDA__DATABASE__CONNECTION=postgres://andromeda:check@$database:5432/andromeda" \
+		"$broker_image" > /dev/null
+	wait_broker
+}
+
 docker network create "$network" > /dev/null
-docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$image" > /dev/null
-for _ in $(seq 1 120); do
-	if docker exec "$database" pg_isready -q -h 127.0.0.1 2> /dev/null; then
-		break
-	fi
-	sleep 0.5
-done
-docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
-	-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-	-e "ANDROMEDA__DATABASE__CONNECTION=postgres://andromeda:check@$database:5432/andromeda" \
-	"$broker_image" > /dev/null
-base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
-for _ in $(seq 1 120); do
-	if docker exec "$broker" andromeda health > /dev/null 2>&1; then
-		break
-	fi
-	sleep 0.5
-done
+start_database
+start_broker
 
 # A temporal write creates the first chunk of attribute_history.
 status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
@@ -131,13 +148,7 @@ expect "a tenant session runs under the installed defaults" "on 35s" "$(sql "$db
 # Reopening the tenant runs the reconciler against the columnstore it enabled,
 # which it must find unchanged rather than drifted.
 docker restart "$broker" > /dev/null
-base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
-for _ in $(seq 1 120); do
-	if docker exec "$broker" andromeda health > /dev/null 2>&1; then
-		break
-	fi
-	sleep 0.5
-done
+wait_broker
 expect "retrieve temporal entity after a restart" 200 \
 	"$(curl -sS -o /dev/null -w '%{http_code}' -H "NGSILD-Tenant: $tenant" "$base/temporal/entities/urn:ngsi-ld:Probe:1")"
 if docker logs "$broker" 2>&1 | grep -qE 'ERROR|not the settings the broker enables'; then
@@ -145,6 +156,45 @@ if docker logs "$broker" 2>&1 | grep -qE 'ERROR|not the settings the broker enab
 	docker logs "$broker" 2>&1 | grep -E 'ERROR|not the settings the broker enables' >&2
 else
 	pass "broker log carries no error"
+fi
+
+# With TimescaleDB's background workers on, the launcher keeps a scheduler on
+# every database that holds the extension and admits connections. The tenant
+# template admits none once locked, so the broker start that brings it forward
+# leaves no session on it, and no copy waits on one.
+docker rm -f -v "$broker" "$database" > /dev/null
+start_database -e TS_TUNE_MAX_BG_WORKERS=tune
+start_broker
+for name in wa wb; do
+	tenant="$name"
+	expect "create entity in $name with background workers on" 201 \
+		"$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
+			--data '{"id":"urn:ngsi-ld:Probe:1","type":"Probe","temperature":{"type":"Property","value":1}}' "$base/entities")"
+done
+docker restart "$broker" > /dev/null
+wait_broker
+for name in wc wd; do
+	tenant="$name"
+	expect "create entity in $name with background workers on" 201 \
+		"$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
+			--data '{"id":"urn:ngsi-ld:Probe:1","type":"Probe","temperature":{"type":"Property","value":1}}' "$base/entities")"
+done
+expect "sessions on the tenant template with background workers on" 0 \
+	"$(sql andromeda "SELECT count(*) FROM pg_stat_activity a JOIN pg_database d ON d.datname = a.datname WHERE d.datistemplate AND d.datname NOT IN ('template0', 'template1')")"
+# A copy keeps the template's ledger instants, which databases migrated one
+# after the other never share.
+first_migrations=''
+for name in wa wb wc wd; do
+	tenant_db="$(sql andromeda "SELECT database_name FROM tenants WHERE name = '$name'")"
+	first_migrations="$first_migrations$(sql "$tenant_db" 'SELECT min(installed_on) FROM _andromeda_tenant_migrations')
+"
+done
+expect "first migration instants of the four tenants with background workers on" 1 "$(printf '%s' "$first_migrations" | sort -u | grep -c .)"
+if docker logs "$broker" 2>&1 | grep -qE 'ERROR|tenant_template_not_copied|tenant_template_unavailable'; then
+	fail "broker log with background workers on carries an error or a tenant created without the template"
+	docker logs "$broker" 2>&1 | grep -E 'ERROR|tenant_template_not_copied|tenant_template_unavailable' >&2
+else
+	pass "broker log with background workers on carries no error and every tenant was copied"
 fi
 
 if [ "$failures" -gt 0 ]; then

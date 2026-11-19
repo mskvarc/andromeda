@@ -12,7 +12,10 @@ use crate::{
     observation::{Finding, ObservationDecision, ObservationLevel},
     state::RegisteredTenant,
 };
-use andromeda_postgresql_context_store::extension_update::{begin_without_timescaledb, pending_extension_updates};
+use andromeda_postgresql_context_store::{
+    extension_update::begin_without_timescaledb,
+    pending_extension_update::{UpdatePrivilege, pending_extension_updates},
+};
 use sqlx::PgConnection;
 
 /// The finding every pending extension update reports.
@@ -28,7 +31,14 @@ pub(crate) async fn report_extension_updates(connection: &mut PgConnection, tena
     let pending = pending_extension_updates(&mut transaction).await.map_err(MaintenanceError::ExtensionVersions)?;
     transaction.commit().await?;
     for update in &pending {
-        observation_event!(EXTENSION_UPDATE, tenant = tenant.log_name(), database = %tenant.database, extension = %update.extension, installed = %update.installed, shipped = %update.shipped, "PostgreSQL extension is installed below the version the server ships; the broker updates it the next time it opens the tenant");
+        match update.privilege {
+            UpdatePrivilege::Held => {
+                observation_event!(EXTENSION_UPDATE, tenant = tenant.log_name(), database = %tenant.database, extension = %update.extension, installed = %update.installed, shipped = %update.shipped, "PostgreSQL extension is installed below the version the server ships; the broker updates it the next time it opens the tenant");
+            }
+            UpdatePrivilege::Lacking => {
+                observation_event!(EXTENSION_UPDATE, tenant = tenant.log_name(), database = %tenant.database, extension = %update.extension, installed = %update.installed, shipped = %update.shipped, "PostgreSQL extension is installed below the version the server ships and only its owner may update it; the broker keeps the installed version");
+            }
+        }
     }
     Ok(())
 }

@@ -138,6 +138,24 @@ pub fn current_role_is_member_of(role: &str) -> SimpleExpr {
     SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
 }
 
+/// `(SELECT pg_has_role(current_user, extowner, 'USAGE') FROM pg_extension
+/// WHERE extname = name)` - whether the session's role holds the privileges of
+/// the role owning one installed extension, as that role, a member inheriting
+/// from it or a superuser, which `ALTER EXTENSION` requires; `NULL` when the
+/// extension is not installed.
+///
+/// The extension name is bound. The scalar subquery yields a single row because
+/// `pg_extension.extname` is unique.
+#[must_use]
+pub fn current_role_owns_extension(name: &str) -> SimpleExpr {
+    let subquery = SelectStatement::new()
+        .expr(Func::cust(Alias::new("pg_has_role")).args([Expr::cust("current_user"), Expr::col(Alias::new("extowner")), Expr::val("USAGE")]))
+        .from(PgExtension)
+        .and_where(Expr::col(Alias::new("extname")).eq(name.to_owned()))
+        .to_owned();
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
 /// `pg_table_is_visible(oid)` - whether the relation `oid` names is the one an
 /// unqualified name resolves to in the session's search path.
 #[must_use]
@@ -247,6 +265,7 @@ mod tests {
             current_database_size,
             current_role_is_member_of,
             current_role_is_superuser,
+            current_role_owns_extension,
             current_schema,
             current_setting,
             current_setting_missing_ok,
@@ -288,6 +307,16 @@ mod tests {
         assert_eq!(
             sql,
             r#"SELECT (SELECT pg_has_role(current_user, "oid", $1) FROM "pg_roles" WHERE "rolname" = $2)"#
+        );
+        assert_eq!(values.0.len(), 2, "{sql}");
+    }
+
+    #[test]
+    fn extension_ownership_reads_whether_the_session_holds_the_owners_privileges() {
+        let (sql, values) = Query::select().expr(current_role_owns_extension("timescaledb")).build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT (SELECT pg_has_role(current_user, "extowner", $1) FROM "pg_extension" WHERE "extname" = $2)"#
         );
         assert_eq!(values.0.len(), 2, "{sql}");
     }

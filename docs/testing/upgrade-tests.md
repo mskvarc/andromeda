@@ -8,7 +8,7 @@ The tests never reach a broker over the network, and they don't need one. They n
 
 ## What is covered
 
-The crate's one test target, `upgrade`, has four groups of tests.
+The crate's one test target, `upgrade`, has seven groups of tests.
 
 `seal` covers the conversion of data-integrity seals (see [Data-integrity seals](../data-integrity-seals.md)), which migrations 0032, 0033 and 0034 perform.
 
@@ -54,16 +54,30 @@ The crate's one test target, `upgrade`, has four groups of tests.
 - A registry started again keeps its template in place, the same database and locked.
 - A template at the schema v1.0.0 sealed is brought forward in place, the same database and locked again, and a copy of it keeps the template's ledger rows and stands at the current schema.
 - A template a start left unlocked and unmigrated is brought forward and locked in place.
-- A template whose stamp is ahead of this build is dropped and built again.
+- A template whose stamp is ahead of this build, or names another migration set at this build's version, is dropped and built again.
 - Two tenants provisioned one after the other are both copies, sharing the template's ledger instants, and each carries a schema stamp instant of its own. Four tenants provisioned side by side are all copies of the one template.
 - A provisional tenant whose database an earlier provisioning left at the v1.0.0 schema is migrated in that database, which keeps its identity and its v1.0.0 ledger rows.
+- A copy whose provisioning stopped before its stamp was renewed is given a stamp instant of its own when the tenant is provisioned again.
 - A copy records a history row, so its hypertable takes a chunk of its own.
 - A template dropped behind the registry's back leaves the next tenant created empty and migrated to the current schema.
+- A template a session holds leaves the next tenant created empty and migrated to the current schema, and a template a session holds when this build must build it again is left in place while the registry serves and creates new tenants empty.
+
+`extension` covers a tenant database whose TimescaleDB stands at the schema contract's floor, below the version the server ships, as an image upgrade leaves it.
+
+- A role that does not hold the privileges of the extension's owner reads the schema as current and leaves the installed version in place, since only the owner may update it. The owner's extension reconciliation updates it and ends the idle sessions of its role, which loaded the floor's library, so a pool that held one carries on with a new session.
+
+`entity_map` covers the Entity Maps a v1.0.0 tenant stored.
+
+- Migration 0039 removes every stored map, its entries and its links: a map v1.0.0 stored records only a digest of its filters as written, which compares with no follow-up request, so a request naming it is answered as one naming an expired map.
 
 `registration` covers the Context Source Property document a `csf` filter reads, which every registration row stores and migration 0037 brings to the shape this build writes.
 
 - A document v1.0.0 stored holds the `startAt` and `endAt` of `observationInterval` and `managementInterval` as plain strings. After the upgrade it equals, member for member, the document this build's own builder writes for the same registration, each instant declared as a `DateTime` with its text kept, an open interval still without `endAt`.
 - A member a registrant added that holds an object with a `startAt` of its own keeps it as written, and a document holding no time interval comes through unchanged.
+
+`subscription` covers the Subscription rows a v1.0.0 tenant stored, whose check on context-source rows migration 0038 adds again without `dataset_ids`.
+
+- A context-source Subscription row holds the `datasetId` its client wrote after the upgrade, and the check still holds `local_only` at its default. The check is added without reading a row, and the rows v1.0.0 stored stay.
 
 ## Running
 

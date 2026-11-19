@@ -14,8 +14,10 @@ use crate::fixtures::{
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_context_store::{
+    tenant_database::{DatabaseCreation, DatabaseSource, create_database_if_missing},
     tenant_database_naming::derive_database_name,
     tenant_migration::{TenantSchemaState, tenant_schema_state},
+    tenant_template::template_name::template_database_name,
 };
 use andromeda_tenancy::database::TenantDatabase;
 use andromeda_upgrade_tests::{upgrade_database::UpgradeDatabase, upgrade_server::UpgradeServer};
@@ -116,6 +118,35 @@ async fn a_tenant_database_an_earlier_provisioning_left_is_migrated_where_it_sta
     pool.close().await;
     registry.main_pool().close().await;
     server.drop_database(&left_name).await?;
+    drop_registry_template(&server, &prefix).await?;
+    platform.drop_database().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_copy_whose_provisioning_stopped_before_its_stamp_was_renewed_is_stamped_anew() -> Result<(), UpgradeTestError> {
+    let server = UpgradeServer::from_environment()?;
+    let platform = UpgradeDatabase::create(&server).await?;
+    let prefix = fresh_prefix()?;
+    let registry = open_registry(&platform, &prefix).await?;
+    let globex = TenantName::try_from("globex".to_owned())?;
+    let left = derive_database_name(&prefix, &globex);
+    let copied = create_database_if_missing(server.url(), &left, DatabaseSource::Template(&template_database_name(&prefix))).await?;
+    assert_eq!(copied, DatabaseCreation::Copied);
+    let left_pool = open_tenant_pool(&server, &left).await?;
+    let template_instant = stamp_instant(&left_pool).await?;
+    left_pool.close().await;
+    insert_v1_0_0_tenant(platform.pool(), "globex", left.as_str(), PROVISIONAL).await?;
+
+    assert_eq!(registry.provision(&globex).await?, left);
+
+    let pool = open_tenant_pool(&server, &left).await?;
+    assert_ne!(stamp_instant(&pool).await?, template_instant);
+    assert_eq!(tenant_schema_state(&pool).await?, TenantSchemaState::Current);
+
+    pool.close().await;
+    registry.main_pool().close().await;
+    server.drop_database(&left).await?;
     drop_registry_template(&server, &prefix).await?;
     platform.drop_database().await?;
     Ok(())

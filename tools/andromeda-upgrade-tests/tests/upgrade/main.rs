@@ -6,6 +6,10 @@
 //! documentation and the migrations' own headers state.
 
 #[cfg(test)]
+mod entity_map;
+#[cfg(test)]
+mod extension;
+#[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 mod lockstep;

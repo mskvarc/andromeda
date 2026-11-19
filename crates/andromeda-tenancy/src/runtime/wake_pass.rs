@@ -117,7 +117,10 @@ enum CatchUpAttempt {
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Wake the tenants due at `now`, as many as the cache has room for,
     /// leasing each claim to `lease_until`, then spend what is left of the pass
-    /// budget on the tenants `catch_up` lists.
+    /// budget on the tenants `catch_up` lists whose wake falls after both
+    /// `lease_until` and one retry interval from `now`. A tenant whose build
+    /// failed holds a retry wake no further out than that, so it is left to the
+    /// wake rather than taking the head of every catch-up.
     ///
     /// # Errors
     ///
@@ -146,7 +149,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let caught_up = if remaining == 0 {
             0
         } else {
-            self.catch_up(catch_up.lagging_tenants().await?, remaining).await
+            let quiet_until = lease_until.max(self.waker.retry_wake(now));
+            self.catch_up(catch_up.lagging_tenants(quiet_until).await?, remaining).await
         };
         let next = match budget_use {
             BudgetUse::Spent => NextWakePass::Immediately,

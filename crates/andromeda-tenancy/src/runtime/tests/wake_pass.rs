@@ -13,12 +13,17 @@ use crate::{
     },
     tenant_ref::TenantRef,
 };
+use andromeda_configuration::{
+    human_duration::HumanDuration,
+    schema::tenancy::{ResidencyConfig, TenancyConfig},
+};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use async_trait::async_trait;
 use pretty_assertions::assert_eq;
 use std::{
     sync::{
         Arc,
+        Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime},
@@ -30,6 +35,8 @@ pub(super) struct FakeCatchUp {
     lagging: Vec<String>,
     /// How many times the list was read.
     reads: AtomicUsize,
+    /// The instant each read asked the listed tenants' wakes to fall after.
+    asked_after: Mutex<Vec<SystemTime>>,
 }
 
 impl FakeCatchUp {
@@ -38,14 +45,16 @@ impl FakeCatchUp {
         FakeCatchUp {
             lagging: lagging.iter().map(|name| (*name).to_string()).collect(),
             reads: AtomicUsize::new(0),
+            asked_after: Mutex::new(Vec::new()),
         }
     }
 }
 
 #[async_trait]
 impl CatchUpCandidates for FakeCatchUp {
-    async fn lagging_tenants(&self) -> Result<Vec<TenantName>, CatchUpError> {
+    async fn lagging_tenants(&self, after: SystemTime) -> Result<Vec<TenantName>, CatchUpError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
+        self.asked_after.lock().expect("the fake's lock is never poisoned").push(after);
         Ok(self.lagging.iter().map(|name| named(name)).collect())
     }
 }
@@ -132,6 +141,51 @@ async fn a_pass_whose_scheduled_wakes_fill_the_budget_reads_no_catch_up_candidat
     );
     assert_eq!(catch_up.reads.load(Ordering::Relaxed), 0);
     assert!(!resident(&manager, "lag1"));
+}
+
+#[tokio::test]
+async fn the_catch_up_lists_the_tenants_whose_wake_falls_after_the_pass_lease() {
+    let PassHarness { manager, .. } = pass_harness(&["due1", "lag1"], 64, &["due1"]);
+    let catch_up = FakeCatchUp::listing(&["lag1"]);
+    let now = SystemTime::now();
+    let lease_until = now + Duration::from_mins(1);
+
+    manager.run_wake_pass(&catch_up, now, lease_until).await.expect("the pass completes");
+
+    assert_eq!(*catch_up.asked_after.lock().expect("the fake's lock is never poisoned"), vec![lease_until]);
+}
+
+#[tokio::test]
+async fn the_catch_up_leaves_a_tenant_waking_within_one_retry_interval_to_its_wake() {
+    let base = config(true, 64);
+    let manager = TenantRuntimeManager::new(
+        TenancyConfig {
+            residency: ResidencyConfig {
+                min_wake_interval: HumanDuration::from_secs(300),
+                ..base.residency
+            },
+            ..base
+        },
+        Arc::new(FakeRegistry::new(&["lag1"])),
+        Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
+        Arc::new(FakeProbe::due_as_answered()),
+        Arc::new(FakeSchedule::claiming(&[])),
+        loading_slots(),
+    );
+    let catch_up = FakeCatchUp::listing(&["lag1"]);
+    let now = SystemTime::now();
+
+    manager
+        .run_wake_pass(&catch_up, now, now + Duration::from_mins(1))
+        .await
+        .expect("the pass completes");
+
+    // A build failed at `now` would hold a retry wake at `now` plus the five
+    // minute interval, past the one-minute lease.
+    assert_eq!(
+        *catch_up.asked_after.lock().expect("the fake's lock is never poisoned"),
+        vec![now + Duration::from_mins(5)]
+    );
 }
 
 #[tokio::test]

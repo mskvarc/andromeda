@@ -1,12 +1,13 @@
-//! The schema stamp of a database copied from the tenant template.
+//! The schema stamp of a database copied from the tenant template, or of a
+//! provisional database that may be one.
 
 use crate::{error::ContextStoreError, extension_update::begin_without_timescaledb, schema_contract::schema_metadata::renew_stamp_instant};
 use andromeda_postgresql_pool::schema_change_lock::schema_change_connect_options;
 use sqlx::{Connection, PgConnection};
 use url::Url;
 
-/// Give the schema stamp of the copy `database_url` names an instant of its
-/// own, over a connection of its own.
+/// Give the schema stamp of the copy or provisional database `database_url`
+/// names an instant of its own, over a connection of its own.
 ///
 /// The update runs with `TimescaleDB` unloaded, so the session never loads the
 /// extension at the template's version, which the copy's migration run may

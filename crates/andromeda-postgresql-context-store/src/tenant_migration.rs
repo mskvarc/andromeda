@@ -18,10 +18,11 @@ use crate::{
     database_defaults::{DatabaseDefaults, DefaultsReconciliation, reconcile_database_defaults},
     error::ContextStoreError,
     extension_recreation::pending_extension_recreations,
-    extension_update::{begin_without_timescaledb, installable_optional_extensions, pending_extension_updates, update_extensions},
+    extension_update::{begin_without_timescaledb, installable_optional_extensions, update_extensions},
     lockstep_migration::migrate_in_lockstep,
     migration_session::MigrationSession,
     migration_set::platform::platform_migrator,
+    pending_extension_update::{any_updatable, pending_extension_updates},
     schema_contract::{
         contract::current_tenant_schema_contract,
         error::SchemaContractError,
@@ -201,16 +202,17 @@ pub enum TenantSchemaState {
 /// would close at its next statement. The versions are read first, because a
 /// failed contract read aborts the transaction.
 ///
-/// A versioned extension below the version the server ships reads as
-/// [`TenantSchemaState::NeedsMigration`], so does an optional extension the
-/// server ships, the database lacks and the role may create, and one installed
-/// below the shipped version that the role may drop and create again, since
-/// the migration run's extension reconciliation installs or recreates it, and
-/// so does a schema
-/// that is simply
-/// not there yet (unstamped, a version behind, its `schema_metadata` relation
-/// undefined, or its versioned extensions not yet installed), so the caller
-/// runs the migrator over a direct connection. Genuine drift the migrator
+/// A versioned extension below the version the server ships that the
+/// session's role may update reads as [`TenantSchemaState::NeedsMigration`],
+/// so does an optional extension the server ships, the database lacks and the
+/// role may create, and one installed below the shipped version that the role
+/// may drop and create again, since the migration run's extension
+/// reconciliation updates, installs or recreates it, and so does a schema that
+/// is simply not there yet (unstamped, a version behind, its `schema_metadata`
+/// relation undefined, or its versioned extensions not yet installed), so the
+/// caller runs the migrator over a direct connection. An update only the
+/// extension's owner may make is left to the floor below: no migration run
+/// would make it, and reading it as due would load the tenant on every probe. Genuine drift the migrator
 /// cannot resolve, namely a digest mismatch at the same version, a stamp ahead of
 /// the contract, or a server or installed extension below the floor with no
 /// newer version shipped, is returned as the refusal it is, rather than
@@ -232,7 +234,7 @@ pub async fn tenant_schema_state(pool: &PgPool) -> Result<TenantSchemaState, Con
     let installable = installable_optional_extensions(&mut probe).await?;
     let verified = verify_schema_contract(&mut probe, &contract).await;
     probe.rollback().await?;
-    if !pending.is_empty() || !recreations.is_empty() || !installable.is_empty() {
+    if any_updatable(&pending) || !recreations.is_empty() || !installable.is_empty() {
         return Ok(TenantSchemaState::NeedsMigration);
     }
     match verified {
