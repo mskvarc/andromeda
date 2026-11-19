@@ -214,6 +214,7 @@ mod tests {
             reading::filter_reading::FilterReading,
         },
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
         scope::scope_query::ScopeQuery,
     };
     use chrono::{Duration, Utc};
@@ -304,7 +305,7 @@ mod tests {
                 let prepared = service.engine().prepare_term_context(context);
                 let filter = FilterReading::of(
                     &expand_filter(
-                        q.parse::<Filter>().expect("the filter parses"),
+                        q.parse::<Filter<Written>>().expect("the filter parses"),
                         &JsonKeyAttributes::default(),
                         &ContextualExpander::new(service.engine(), &prepared),
                     )

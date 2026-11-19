@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
     entity_selection::EntitySelection,
     filter::{Filter, language_targeting::LanguageTargeting},
+    name_stage::Written,
     page_window::PageWindow,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
@@ -27,7 +28,7 @@ fn context() -> ContextSpec {
 fn filtered_query() -> AdmittedTemporalRequest {
     admitted(TemporalQueryParameters {
         id_pattern: Some("^urn:ngsi-ld:Vehicle:".parse::<Pattern>().expect("valid pattern")),
-        q: Some("speed>10".parse::<Filter>().expect("q parses")),
+        q: Some("speed>10".parse::<Filter<Written>>().expect("q parses")),
         scope_q: Some("/Madrid".parse::<ScopeQuery>().expect("scopeQ parses")),
         timerel: Some(TimeRel::Before),
         time_at: Some("2024-01-01T00:00:00Z".parse().expect("a valid instant")),

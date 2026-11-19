@@ -18,11 +18,14 @@ use crate::{
         value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
     },
 };
-use andromeda_ngsi_ld_query::filter::{
-    instance_metadata::InstanceMetadata,
-    target_language::LanguageSelector,
-    trailing_group::{MemberPath, TrailingGroup},
-    value_path::ValuePath,
+use andromeda_ngsi_ld_query::{
+    filter::{
+        instance_metadata::InstanceMetadata,
+        target_language::LanguageSelector,
+        trailing_group::{MemberPath, TrailingGroup},
+        value_path::ValuePath,
+    },
+    name_stage::Expanded,
 };
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, TIME},
@@ -46,7 +49,7 @@ use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleEx
 /// The typed value the read instance holds for the path, read off the
 /// columns of `source`: `member` of the instance `element` locates when the
 /// path ends on one.
-pub(crate) fn ordered_value(path: &ValuePath, element: Option<&ElementPath>, member: Option<InstanceMetadata>, source: &Alias) -> OrderedValue {
+pub(crate) fn ordered_value(path: &ValuePath<Expanded>, element: Option<&ElementPath>, member: Option<InstanceMetadata>, source: &Alias) -> OrderedValue {
     let holder = match element.map(|element| element.chain.is_empty()) {
         Some(false) => Holder::Element(SeaExpr::col((source.clone(), Alias::new(ELEMENT_COLUMN)))),
         Some(true) | None => Holder::Row(source.clone()),

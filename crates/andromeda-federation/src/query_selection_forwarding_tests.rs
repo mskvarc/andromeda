@@ -19,7 +19,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::context_source_alias::ContextSourceAlias;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery};
+use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, name_stage::Written};
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use serde_json::{Value, json};
@@ -170,7 +170,12 @@ async fn contacted(selecting: Selecting, query: &str, registrations: Vec<(Source
     }
 }
 
-async fn expanded(service: &FederationService, context: &ContextSpec, csf: Option<&Filter>, geo: Option<&WrittenGeoQuery>) -> ExpandedRegistrationFilters {
+async fn expanded(
+    service: &FederationService,
+    context: &ContextSpec,
+    csf: Option<&Filter<Written>>,
+    geo: Option<&WrittenGeoQuery>,
+) -> ExpandedRegistrationFilters {
     ExpandedRegistrationFilters::expand(service.engine(), context, csf, geo, generous_geo_admission())
         .await
         .expect("the filters expand")

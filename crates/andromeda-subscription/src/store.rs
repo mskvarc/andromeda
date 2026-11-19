@@ -24,6 +24,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
     geo::written_geo_query::WrittenGeoQuery,
+    name_stage::Expanded,
     page_window::PageWindow,
     scope::scope_query::ScopeQuery,
 };
@@ -47,13 +48,13 @@ pub struct SubscriptionFields<'a> {
     /// Periodic notification interval in seconds.
     pub time_interval: Option<f64>,
     /// NGSI-LD query expression for filtering entities.
-    pub q: Option<&'a Filter>,
+    pub q: Option<&'a Filter<Expanded>>,
     /// Geo-spatial query.
     pub geo_q: Option<&'a WrittenGeoQuery>,
     /// Scope query expression.
     pub scope_q: Option<&'a ScopeQuery>,
     /// Context source filter.
-    pub csf: Option<&'a Filter>,
+    pub csf: Option<&'a Filter<Expanded>>,
     /// The `datasetId` selectors of the Attribute instances notified
     /// (Table 5.2.12-1), `@none` naming the default instance.
     pub dataset_id: Option<&'a [DatasetSelector]>,

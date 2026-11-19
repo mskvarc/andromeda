@@ -1,6 +1,12 @@
 //! A term expander for tests that resolves terms against a namespace, standing in for a request `@context` without a JSON-LD processor.
 
-use crate::term_expander::{TermExpander, TermExpansionError};
+use crate::{
+    filter::{Filter, filter_error::FilterError},
+    name_stage::{Expanded, Written},
+    query_error::QueryError,
+    term_expander::{TermExpander, TermExpansionError},
+};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_iri::EntityTypeIri};
 use iri_rs::{Iri, IriBuf, IriRef, iri};
 use std::future::{Future, ready};
 
@@ -65,6 +71,20 @@ impl NamespaceExpander {
     /// [`TermExpansionError::NotAnIri`] when `term` is no IRI reference or does not resolve.
     pub fn type_iri(&self, term: &str) -> Result<IriBuf, TermExpansionError> {
         resolved(term, &self.types)
+    }
+
+    /// The filter `filter` with each attribute and entity type it names resolved by this namespace.
+    ///
+    /// The synchronous counterpart of [`expand_filter`](crate::filter::expansion::expand_filter) for a filter that needs no sub-attribute, member or operand expansion: only the names that make the expanded stage are rewritten.
+    ///
+    /// # Errors
+    ///
+    /// The [`QueryError`] of a name that does not resolve to a usable IRI.
+    pub fn expanded(&self, filter: Filter<Written>) -> Result<Filter<Expanded>, QueryError> {
+        filter.into_expanded_by(
+            &|name| Ok(AttributeIri::try_from(self.term_iri(name.as_str())?).map_err(FilterError::from)?),
+            &|name| Ok(EntityTypeIri::from(self.type_iri(name.as_str())?)),
+        )
     }
 }
 

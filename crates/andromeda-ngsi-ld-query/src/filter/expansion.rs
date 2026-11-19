@@ -22,11 +22,16 @@ use crate::{
         trailing_group::TrailingGroup,
         value_path::ValuePath,
     },
+    name_stage::{Expanded, NameStage, Written},
     query_error::QueryError,
     term_expander::{TermExpander, TermExpansionError},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use iri_rs::IriBuf;
+use andromeda_ngsi_ld_lexicon::{
+    attribute_iri::AttributeIri,
+    attribute_name::AttributeName,
+    entity_type_iri::EntityTypeIri,
+    identifier_length::IdentifierTooLong,
+};
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
 /// Recursively expand attribute terms in a `q` filter.
@@ -45,14 +50,14 @@ use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 /// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
-pub async fn expand_filter(filter: Filter, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Filter, QueryError> {
+pub async fn expand_filter(filter: Filter<Written>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Filter<Expanded>, QueryError> {
     let members = NestedNames::Terms(json_keys);
     walk_terms(filter, &|term| expand_query_term(term, members, expander)).await
 }
 
 /// Expand the attribute path of one `q` query term, then the operands of one
 /// whose path ends on a member holding a vocabulary term.
-async fn expand_query_term(term: QueryTerm, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
+async fn expand_query_term(term: QueryTerm<Written>, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm<Expanded>, QueryError> {
     let term = expand_query_term_paths(term, members, expander).await?;
     match term.path().terminal().ending_member() {
         Some((member, _)) if member.holds_vocabulary_term() => OperandCoercion::Vocabulary.expand_operands(term, expander).await,
@@ -75,7 +80,7 @@ async fn expand_query_term(term: QueryTerm, members: NestedNames<'_>, expander: 
 /// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
-pub async fn expand_context_source_filter(filter: Filter, expander: &impl TermExpander) -> Result<Filter, QueryError> {
+pub async fn expand_context_source_filter(filter: Filter<Written>, expander: &impl TermExpander) -> Result<Filter<Expanded>, QueryError> {
     walk_terms(filter, &|term| expand_query_term_paths(term, NestedNames::Verbatim, expander)).await
 }
 
@@ -87,20 +92,22 @@ pub async fn expand_context_source_filter(filter: Filter, expander: &impl TermEx
 /// Returns [`QueryError::TermExpansion`] when a string operand of an opted-in
 /// attribute does not expand, carrying [`TermExpansionError::NotAnIri`] when it
 /// expands to something that is not an absolute IRI.
-pub async fn apply_expand_values<S: BuildHasher + Sync>(
-    filter: Filter,
-    expand_attributes: &HashSet<AttributeName, S>,
+pub async fn apply_expand_values<H: BuildHasher + Sync>(
+    filter: Filter<Expanded>,
+    expand_attributes: &HashSet<AttributeIri, H>,
     expander: &impl TermExpander,
-) -> Result<Filter, QueryError> {
+) -> Result<Filter<Expanded>, QueryError> {
     walk_terms(filter, &|term| expand_equality_values(term, expand_attributes, expander)).await
 }
 
 /// Rewrite every query term of a filter, leaving its boolean structure
 /// intact.
-async fn walk_terms<F, Fut>(filter: Filter, handler: &F) -> Result<Filter, QueryError>
+async fn walk_terms<S, T, F, Fut>(filter: Filter<S>, handler: &F) -> Result<Filter<T>, QueryError>
 where
-    F: Fn(QueryTerm) -> Fut + Sync,
-    Fut: Future<Output = Result<QueryTerm, QueryError>> + Send,
+    S: NameStage,
+    T: NameStage,
+    F: Fn(QueryTerm<S>) -> Fut + Sync,
+    Fut: Future<Output = Result<QueryTerm<T>, QueryError>> + Send,
 {
     match filter {
         Filter::And(filters) => {
@@ -123,16 +130,18 @@ where
 
 /// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
 /// own future type.
-fn walk_terms_boxed<'a, F, Fut>(filter: Filter, handler: &'a F) -> Pin<Box<dyn Future<Output = Result<Filter, QueryError>> + Send + 'a>>
+fn walk_terms_boxed<'a, S, T, F, Fut>(filter: Filter<S>, handler: &'a F) -> Pin<Box<dyn Future<Output = Result<Filter<T>, QueryError>> + Send + 'a>>
 where
-    F: Fn(QueryTerm) -> Fut + Sync,
-    Fut: Future<Output = Result<QueryTerm, QueryError>> + Send + 'a,
+    S: NameStage,
+    T: NameStage,
+    F: Fn(QueryTerm<S>) -> Fut + Sync,
+    Fut: Future<Output = Result<QueryTerm<T>, QueryError>> + Send + 'a,
 {
     Box::pin(walk_terms(filter, handler))
 }
 
 /// Expand the attribute path of a single query term.
-async fn expand_query_term_paths(term: QueryTerm, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm, QueryError> {
+async fn expand_query_term_paths(term: QueryTerm<Written>, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<QueryTerm<Expanded>, QueryError> {
     match term {
         QueryTerm::Exists(path) => Ok(QueryTerm::Exists(expand_attribute_path(path, members, expander).await?)),
         QueryTerm::Equality { path, membership, value } => Ok(QueryTerm::Equality {
@@ -162,7 +171,8 @@ async fn expand_query_term_paths(term: QueryTerm, members: NestedNames<'_>, expa
 ///
 /// The guard names entity types, not attributes, so it expands through
 /// [`TermExpander::expand_type`] (clause 4.9's `EntityType` production, which
-/// clause 4.17 expands the same way a `type` selection is expanded).
+/// clause 4.17 expands the same way a `type` selection is expanded). A guard
+/// type is held to the identifier bound as a Relationship is.
 ///
 /// # Errors
 ///
@@ -172,7 +182,11 @@ async fn expand_query_term_paths(term: QueryTerm, members: NestedNames<'_>, expa
 /// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when it does not expand to a usable
 /// attribute name.
-pub async fn expand_attribute_path(path: AttributePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<AttributePath, QueryError> {
+pub async fn expand_attribute_path(
+    path: AttributePath<Written>,
+    members: NestedNames<'_>,
+    expander: &impl TermExpander,
+) -> Result<AttributePath<Expanded>, QueryError> {
     match path {
         AttributePath::Local(local) => Ok(AttributePath::Local(expand_value_path(local, members, expander).await?)),
         AttributePath::Linked {
@@ -180,10 +194,12 @@ pub async fn expand_attribute_path(path: AttributePath, members: NestedNames<'_>
             guard_types,
             inner,
         } => {
-            let relationship = expanded_attribute_name(&expander.expand_term(relationship.as_str()).await?)?;
+            let relationship = AttributeIri::try_from(expander.expand_term(relationship.as_str()).await?).map_err(FilterError::from)?;
             let mut expanded_guard = Vec::with_capacity(guard_types.len());
             for guard_type in &guard_types {
-                expanded_guard.push(expanded_attribute_name(&expander.expand_type(guard_type.as_str()).await?)?);
+                let iri = expander.expand_type(guard_type.as_str()).await?;
+                IdentifierTooLong::check(iri.as_str()).map_err(FilterError::from)?;
+                expanded_guard.push(EntityTypeIri::from(iri));
             }
             let inner = expand_attribute_path_boxed(*inner, members, expander).await?;
             Ok(AttributePath::Linked {
@@ -198,13 +214,10 @@ pub async fn expand_attribute_path(path: AttributePath, members: NestedNames<'_>
 /// Box-pinned wrapper: the attribute path walker recurses through hops, and an
 /// `async fn` cannot name its own future type.
 fn expand_attribute_path_boxed<'a, E: TermExpander>(
-    path: AttributePath,
+    path: AttributePath<Written>,
     members: NestedNames<'a>,
     expander: &'a E,
-) -> Pin<Box<dyn Future<Output = Result<AttributePath, QueryError>> + Send + 'a>>
-where
-    AttributePath: 'a,
-{
+) -> Pin<Box<dyn Future<Output = Result<AttributePath<Expanded>, QueryError>> + Send + 'a>> {
     Box::pin(expand_attribute_path(path, members, expander))
 }
 
@@ -221,20 +234,34 @@ where
 /// is not an absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when it does not expand to a usable
 /// attribute name.
-pub async fn expand_value_path(mut path: ValuePath, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<ValuePath, QueryError> {
-    path.attribute = expanded_attribute_name(&expander.expand_term(path.attribute.as_str()).await?)?;
-    if members.sub_attributes_are_terms() {
-        path.sub_attributes = expand_attribute_names(&path.sub_attributes, expander).await?;
-    }
+pub async fn expand_value_path(path: ValuePath<Written>, members: NestedNames<'_>, expander: &impl TermExpander) -> Result<ValuePath<Expanded>, QueryError> {
+    let attribute = AttributeIri::try_from(expander.expand_term(path.attribute.as_str()).await?).map_err(FilterError::from)?;
+    let sub_attributes = if members.sub_attributes_are_terms() {
+        expand_attribute_names(&path.sub_attributes, expander)
+            .await?
+            .into_iter()
+            .map(AttributeName::from)
+            .collect()
+    } else {
+        path.sub_attributes
+    };
     // A value that is raw JSON (an attribute the request declared in `jsonKeys`,
     // clause 4.9 EXAMPLE 11, or any Context Source Property) is
     // addressed by literal object keys, which no `@context` expands.
-    if let Some(TrailingGroup::Members(member_path)) = &mut path.trailing
-        && members.are_terms_under(&path.attribute)
-    {
-        member_path.addressed = expand_member_names(&member_path.addressed, expander).await?;
-    }
-    Ok(path)
+    let trailing = match path.trailing {
+        Some(TrailingGroup::Members(mut member_path)) => {
+            if members.are_terms_under(&attribute) {
+                member_path.addressed = expand_member_names(&member_path.addressed, expander).await?;
+            }
+            Some(TrailingGroup::Members(member_path))
+        }
+        other @ (Some(TrailingGroup::Language(_) | TrailingGroup::AllLanguages) | None) => other,
+    };
+    Ok(ValuePath {
+        attribute,
+        sub_attributes,
+        trailing,
+    })
 }
 
 /// Expand the members of a trailing group, in order.
@@ -252,7 +279,7 @@ async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpa
     let mut names = Vec::with_capacity(members.len());
     for member in members {
         names.push(match expander.expand_term(member.as_str()).await {
-            Ok(iri) => expanded_attribute_name(&iri)?,
+            Ok(iri) => AttributeName::from(AttributeIri::try_from(iri).map_err(FilterError::from)?),
             Err(TermExpansionError::Keyword) => member.clone(),
             Err(other) => return Err(other.into()),
         });
@@ -266,8 +293,7 @@ async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpa
 /// names [`apply_expand_values`] and [`JsonKeyAttributes`] key a filter by
 /// (clause 4.9): both match against the terminal attribute of the path of an
 /// already-expanded query term, so a compact opt-in list would key nothing
-/// at all. It is also how a path's sub-attributes and compound-value members
-/// are expanded.
+/// at all. It is also how a path's sub-attributes are expanded.
 ///
 /// # Errors
 ///
@@ -276,10 +302,10 @@ async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpa
 /// absolute IRI, and [`QueryError::Filter`] carrying
 /// [`FilterError::InvalidAttributeName`] when a term does not expand to a usable
 /// attribute name.
-pub async fn expand_attribute_names(terms: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeName>, QueryError> {
+pub async fn expand_attribute_names(terms: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeIri>, QueryError> {
     let mut expanded_names = Vec::with_capacity(terms.len());
     for term in terms {
-        expanded_names.push(expanded_attribute_name(&expander.expand_term(term.as_str()).await?)?);
+        expanded_names.push(AttributeIri::try_from(expander.expand_term(term.as_str()).await?).map_err(FilterError::from)?);
     }
     Ok(expanded_names)
 }
@@ -304,29 +330,15 @@ pub async fn expand_json_keys(declared: Option<&[AttributeName]>, expander: &imp
 
 /// Expand the operands of a comparison when its attribute opted in via
 /// `expandValues`.
-async fn expand_equality_values<S: BuildHasher + Sync>(
-    term: QueryTerm,
-    expand_attributes: &HashSet<AttributeName, S>,
+async fn expand_equality_values<H: BuildHasher + Sync>(
+    term: QueryTerm<Expanded>,
+    expand_attributes: &HashSet<AttributeIri, H>,
     expander: &impl TermExpander,
-) -> Result<QueryTerm, QueryError> {
+) -> Result<QueryTerm<Expanded>, QueryError> {
     if expand_attributes.contains(term.path().terminal().attribute.as_str()) {
         return OperandCoercion::ExpandValues.expand_operands(term, expander).await;
     }
     Ok(term)
-}
-
-/// Read an expanded IRI as the attribute name that addresses it.
-///
-/// Term expansion yields an absolute IRI, which the clause 4.6.2 name grammar
-/// accepts, so the failure path only opens if a context produced something an
-/// attribute cannot be keyed by.
-///
-/// # Errors
-///
-/// Returns [`FilterError::InvalidAttributeName`] when the IRI does not satisfy
-/// the clause 4.6.2 attribute-name grammar.
-pub fn expanded_attribute_name(iri: &IriBuf) -> Result<AttributeName, FilterError> {
-    iri.as_str().parse().map_err(FilterError::InvalidAttributeName)
 }
 
 #[cfg(test)]
@@ -343,11 +355,12 @@ mod tests {
             scalar::Scalar,
             value_path::ValuePath,
         },
+        name_stage::{Expanded, NameStage, Written},
         namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
         query_error::QueryError,
         term_expander::{TermExpander, TermExpansionError},
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, entity_type_iri::EntityTypeIri};
     use andromeda_ngsi_ld_vocabulary::expanded::properties::{DATASET_ID, OBJECT_TYPE, VALUE_TYPE};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
@@ -376,11 +389,11 @@ mod tests {
 
     /// Parses and expands a `q` filter, `None` when `q` is absent or
     /// blank.
-    async fn parse_and_expand(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Filter>, QueryError> {
+    async fn parse_and_expand(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Filter<Expanded>>, QueryError> {
         let Some(q_str) = q.map(str::trim).filter(|trimmed| !trimmed.is_empty()) else {
             return Ok(None);
         };
-        let filter = q_str.parse::<Filter>()?;
+        let filter = q_str.parse::<Filter<Written>>()?;
         Ok(Some(expand_filter(filter, json_keys, expander).await?))
     }
 
@@ -406,18 +419,29 @@ mod tests {
         ));
     }
 
-    fn opted_in(names: &[&str]) -> HashSet<AttributeName> {
-        names.iter().map(|name| name.parse().expect("valid attribute name")).collect()
+    fn opted_in(names: &[&str]) -> HashSet<AttributeIri> {
+        names
+            .iter()
+            .map(|name| format!("https://example.com/{name}").parse().expect("an absolute IRI"))
+            .collect()
     }
 
-    fn path_of(filter: &Filter) -> &ValuePath {
+    /// `q` expanded under [`CORE_MEMBER_EXPANDER`].
+    async fn expanded(q: &str) -> Filter<Expanded> {
+        parse_and_expand(Some(q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
+            .await
+            .expect("expands")
+            .expect("present")
+    }
+
+    fn path_of(filter: &Filter<Expanded>) -> &ValuePath<Expanded> {
         match filter {
             Filter::Term(QueryTerm::Equality { path, .. } | QueryTerm::Ordering { path, .. }) => path.terminal(),
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected a comparison, got {other:?}"),
         }
     }
 
-    fn equality_value(filter: &Filter) -> &EqualityValue {
+    fn equality_value<S: NameStage>(filter: &Filter<S>) -> &EqualityValue {
         match filter {
             Filter::Term(QueryTerm::Equality { value, .. }) => value,
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected an equality comparison, got {other:?}"),
@@ -488,7 +512,7 @@ mod tests {
                 } => {
                     assert_eq!(relationship.as_str(), "https://example.com/isParkedIn");
                     assert_eq!(
-                        guard_types.iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
+                        guard_types.iter().map(EntityTypeIri::as_str).collect::<Vec<&str>>(),
                         vec!["https://example.com/types/Building", "https://example.com/types/Store"]
                     );
                     assert_eq!(inner.terminal().attribute.as_str(), "https://example.com/category");
@@ -505,8 +529,13 @@ mod tests {
             .await
             .expect("expands")
             .expect("present");
-        let rendered = expanded.to_string().parse::<Filter>().expect("reparses");
-        assert_eq!(rendered, expanded, "an expanded traversal must round-trip");
+        let reparsed = expanded
+            .to_string()
+            .parse::<Filter<Written>>()
+            .expect("reparses")
+            .into_expanded()
+            .expect("absolute names");
+        assert_eq!(reparsed, expanded, "an expanded traversal must round-trip");
         assert_eq!(path_of(&expanded).attribute.as_str(), "https://example.com/zone");
     }
 
@@ -515,7 +544,7 @@ mod tests {
         let names: Vec<AttributeName> = ["colour", "label"].iter().map(|name| name.parse().expect("valid attribute name")).collect();
         let expanded = expand_attribute_names(&names, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
-            expanded.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            expanded.iter().map(AttributeIri::as_str).collect::<Vec<_>>(),
             vec!["https://example.com/colour", "https://example.com/label"]
         );
     }
@@ -530,7 +559,7 @@ mod tests {
             .expect("expands")
             .expect("present");
         let names: Vec<AttributeName> = vec!["colour".parse().expect("valid attribute name")];
-        let opted_in: HashSet<AttributeName> = expand_attribute_names(&names, &CORE_MEMBER_EXPANDER)
+        let opted_in: HashSet<AttributeIri> = expand_attribute_names(&names, &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands")
             .into_iter()
@@ -544,7 +573,7 @@ mod tests {
 
     #[tokio::test]
     async fn expand_values_rewrites_only_the_named_attributes() {
-        let filter = "colour==\"red\";label==\"red\"".parse::<Filter>().expect("parses");
+        let filter = expanded("colour==\"red\";label==\"red\"").await;
         let opted_in = opted_in(&["colour"]);
         let expanded = apply_expand_values(filter, &opted_in, &CORE_MEMBER_EXPANDER).await.expect("expands");
         let Filter::And(filters) = expanded else {
@@ -559,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn expand_values_leaves_non_string_operands_alone() {
-        let filter = "speed==10..20".parse::<Filter>().expect("parses");
+        let filter = expanded("speed==10..20").await;
         let opted_in = opted_in(&["speed"]);
         let expanded = apply_expand_values(filter, &opted_in, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
@@ -573,7 +602,7 @@ mod tests {
 
     #[tokio::test]
     async fn expand_values_rewrites_the_string_members_of_a_value_list() {
-        let filter = "colour==\"red\",\"blue\"".parse::<Filter>().expect("parses");
+        let filter = expanded("colour==\"red\",\"blue\"").await;
         let opted_in = opted_in(&["colour"]);
         let expanded = apply_expand_values(filter, &opted_in, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
@@ -599,7 +628,7 @@ mod tests {
             "gender==Male",
             "tier==gold",
         ] {
-            let error = q.parse::<Filter>().expect_err("a bare word is no value");
+            let error = q.parse::<Filter<Written>>().expect_err("a bare word is no value");
             assert!(matches!(error, FilterError::BareWord), "{q}: {error:?}");
         }
     }
@@ -610,13 +639,9 @@ mod tests {
     #[tokio::test]
     async fn expand_values_expands_a_quoted_word_to_the_uri_it_names() {
         let opted_in = opted_in(&["gender"]);
-        let list = apply_expand_values(
-            "gender==\"Male\",\"Female\"".parse::<Filter>().expect("parses"),
-            &opted_in,
-            &CORE_MEMBER_EXPANDER,
-        )
-        .await
-        .expect("expands");
+        let list = apply_expand_values(expanded("gender==\"Male\",\"Female\"").await, &opted_in, &CORE_MEMBER_EXPANDER)
+            .await
+            .expect("expands");
         assert_eq!(
             equality_value(&list),
             &EqualityValue::ValueList(vec![
@@ -630,8 +655,8 @@ mod tests {
     #[tokio::test]
     async fn a_quoted_word_and_a_bare_uri_stand_without_expand_values() {
         for q in ["status==\"active\"", "ref==urn:ngsi-ld:Device:1", "speed>1"] {
-            let filter = q.parse::<Filter>().expect("parses");
-            let kept = apply_expand_values(filter.clone(), &HashSet::<AttributeName>::new(), &CORE_MEMBER_EXPANDER)
+            let filter = expanded(q).await;
+            let kept = apply_expand_values(filter.clone(), &HashSet::<AttributeIri>::new(), &CORE_MEMBER_EXPANDER)
                 .await
                 .expect("a value");
             assert_eq!(kept, filter, "{q}");
@@ -694,7 +719,12 @@ mod tests {
             .await
             .expect("expands")
             .expect("present");
-        let reparsed = expanded.to_string().parse::<Filter>().expect("reparses");
+        let reparsed = expanded
+            .to_string()
+            .parse::<Filter<Written>>()
+            .expect("reparses")
+            .into_expanded()
+            .expect("absolute names");
         assert_eq!(reparsed.to_string(), expanded.to_string());
         assert_eq!(
             path_of(&reparsed).members().expect("a member path").addressed,
@@ -709,7 +739,7 @@ mod tests {
     /// literal object key.
     #[tokio::test]
     async fn a_json_keys_attribute_keeps_its_compound_value_member_literal() {
-        let filter = "parkingTickets[value]==\"Overstay 60 minutes\"".parse::<Filter>().expect("parses");
+        let filter = "parkingTickets[value]==\"Overstay 60 minutes\"".parse::<Filter<Written>>().expect("parses");
         let declared: JsonKeyAttributes = ["https://example.com/parkingTickets".parse().expect("valid attribute name")]
             .into_iter()
             .collect();
@@ -735,7 +765,7 @@ mod tests {
     /// what makes the declaration observable at all.
     #[tokio::test]
     async fn the_same_member_expands_when_no_json_keys_declaration_names_the_attribute() {
-        let filter = "parkingTickets[value]==\"Overstay 60 minutes\"".parse::<Filter>().expect("parses");
+        let filter = "parkingTickets[value]==\"Overstay 60 minutes\"".parse::<Filter<Written>>().expect("parses");
         let declared: JsonKeyAttributes = ["https://example.com/other".parse().expect("valid attribute name")].into_iter().collect();
         let expanded = expand_filter(filter, &declared, &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert_eq!(
@@ -755,7 +785,10 @@ mod tests {
         let names = ["parkingTickets".parse().expect("valid attribute name")];
         let declared = expand_json_keys(Some(&names), &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert!(declared.contains(&"https://example.com/parkingTickets".parse().expect("valid attribute name")));
-        assert!(!declared.contains(&names[0]), "the compact name is no key of the expanded paths");
+        assert!(
+            "parkingTickets".parse::<AttributeIri>().is_err(),
+            "the compact name is no key of the expanded paths"
+        );
     }
 
     #[tokio::test]
@@ -767,7 +800,7 @@ mod tests {
     /// they keep expanding through the `@context`.
     #[tokio::test]
     async fn a_json_keys_attribute_still_expands_its_ngsi_ld_sub_attributes() {
-        let filter = "parkingTickets.observedAt<2024-01-01T00:00:00Z".parse::<Filter>().expect("parses");
+        let filter = "parkingTickets.observedAt<2024-01-01T00:00:00Z".parse::<Filter<Written>>().expect("parses");
         let declared: JsonKeyAttributes = ["https://example.com/parkingTickets".parse().expect("valid attribute name")]
             .into_iter()
             .collect();
@@ -784,7 +817,7 @@ mod tests {
     /// sub-properties and trailing members address the literal keys.
     #[tokio::test]
     async fn a_csf_expands_its_property_and_keeps_its_sub_properties_and_trailing_members_verbatim() {
-        let filter = "coverage.since[area.region]==\"north\"".parse::<Filter>().expect("parses");
+        let filter = "coverage.since[area.region]==\"north\"".parse::<Filter<Written>>().expect("parses");
         let expanded = expand_context_source_filter(filter, &CORE_MEMBER_EXPANDER).await.expect("expands");
         let path = path_of(&expanded);
         assert_eq!(path.attribute.as_str(), "https://example.com/coverage");
@@ -807,7 +840,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["area", "region"]
         );
-        let reparsed = expanded.to_string().parse::<Filter>().expect("reparses");
+        let reparsed = expanded
+            .to_string()
+            .parse::<Filter<Written>>()
+            .expect("reparses")
+            .into_expanded()
+            .expect("absolute names");
         assert_eq!(reparsed, expanded, "the stored text keeps the members as written");
     }
 
@@ -816,14 +854,17 @@ mod tests {
     /// reading names the member.
     #[tokio::test]
     async fn a_csf_keeps_an_instance_member_term_as_written() {
-        let expanded = expand_context_source_filter("tier.unitCode==\"C62\"".parse::<Filter>().expect("parses"), &CORE_MEMBER_EXPANDER)
+        let expanded = expand_context_source_filter("tier.unitCode==\"C62\"".parse::<Filter<Written>>().expect("parses"), &CORE_MEMBER_EXPANDER)
             .await
             .expect("expands");
         let path = path_of(&expanded);
         assert_eq!(path.sub_attributes.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["unitCode"]);
         let stored = expanded.to_string();
         assert!(stored.ends_with(".unitCode==\"C62\""), "{stored}");
-        assert_eq!(stored.parse::<Filter>().expect("reparses"), expanded);
+        assert_eq!(
+            stored.parse::<Filter<Written>>().expect("reparses").into_expanded().expect("absolute names"),
+            expanded
+        );
     }
 
     #[tokio::test]
@@ -894,7 +935,7 @@ mod tests {
                 .await
                 .expect("expands")
                 .expect("present");
-            assert_eq!(equality_value(&expanded), equality_value(&q.parse::<Filter>().expect("parses")), "{q}");
+            assert_eq!(equality_value(&expanded), equality_value(&q.parse::<Filter<Written>>().expect("parses")), "{q}");
         }
     }
 

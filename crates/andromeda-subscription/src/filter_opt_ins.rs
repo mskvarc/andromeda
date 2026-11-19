@@ -9,7 +9,7 @@
 //! name the same IRIs the stored `q` is expanded under.
 
 use crate::error::SubscriptionError;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use andromeda_ngsi_ld_model::clearable::Clearable;
 use andromeda_ngsi_ld_query::{
     filter::{compilation::FilterOptIns, expansion::expand_attribute_names},
@@ -29,19 +29,20 @@ pub(crate) async fn expanded_opt_ins(
     json_keys: &mut Clearable<Vec<AttributeName>>,
     expander: &impl TermExpander,
 ) -> Result<FilterOptIns, SubscriptionError> {
-    expand_list(expand_values, expander).await?;
-    expand_list(json_keys, expander).await?;
     Ok(FilterOptIns {
-        // clone: the write keeps its lists while the filter expansion reads their names
-        json_keys: json_keys.as_set().into_iter().flatten().cloned().collect(),
-        expand_values: expand_values.as_set().into_iter().flatten().cloned().collect(),
+        expand_values: expand_list(expand_values, expander).await?.into_iter().collect(),
+        json_keys: expand_list(json_keys, expander).await?.into_iter().collect(),
     })
 }
 
-/// Expand the names of one opt-in list the write names.
-async fn expand_list(list: &mut Clearable<Vec<AttributeName>>, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
-    if let Some(names) = list.as_set_mut() {
-        *names = expand_attribute_names(names, expander).await?;
-    }
-    Ok(())
+/// Expand the names of one opt-in list the write names, and give the expanded
+/// names, none for a list the write does not name.
+async fn expand_list(list: &mut Clearable<Vec<AttributeName>>, expander: &impl TermExpander) -> Result<Vec<AttributeIri>, SubscriptionError> {
+    let Some(names) = list.as_set_mut() else {
+        return Ok(Vec::new());
+    };
+    let iris = expand_attribute_names(names, expander).await?;
+    // clone: the write keeps its list, spelled as an attribute name, while the filter expansion reads the IRIs
+    *names = iris.iter().cloned().map(AttributeName::from).collect();
+    Ok(iris)
 }

@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
     geo::written_geo_query::WrittenGeoQuery,
+    name_stage::Written,
     projection::written_projection_list::WrittenProjectionList,
     scope::scope_query::ScopeQuery,
 };
@@ -236,7 +237,7 @@ pub struct SubscriptionFilters {
     /// subscription rather than one that silently matches nothing from its
     /// first notification onward.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geo_q: Option<WrittenGeoQuery>,
@@ -246,7 +247,7 @@ pub struct SubscriptionFilters {
     /// Context source filter (clause 4.9), which is a `q` filter
     /// over a registration's own properties.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
     /// The `datasetId`s of the Attribute instances each notification carries,
     /// `@none` naming the default instance (Table 5.2.12-1, clause 4.5.5).
     #[serde(skip_serializing_if = "Option::is_none")]

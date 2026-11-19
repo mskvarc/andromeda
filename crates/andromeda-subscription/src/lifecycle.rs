@@ -12,6 +12,7 @@ use crate::{
     deleted_members::DeletedMembers,
     endpoint_admission::{SubscriptionEndpointValidator, validate_endpoint},
     error::SubscriptionError,
+    expanded_filters::StoredFilters,
     fields::SubscriptionWriteValues,
     filter_admission::SubscriptionFilterAdmission,
     forwarding_hook::SubscriptionForwardingHook,
@@ -178,10 +179,10 @@ where
             // member initialised from the `@context` applicable to it, so by the
             // time the request is read the member reflects that initialisation.
             notification_context::initialize_notification_context(&mut request.jsonld_context, subscription_context, &self.engine).await?;
-            self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
+            let expanded = self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
 
             let status = compute_updated_status(SubscriptionStatus::Active, &requested_status_change(&request));
-            let values = SubscriptionWriteValues::from_create(request)?;
+            let values = SubscriptionWriteValues::from_create(request, expanded)?;
             let fields = values.to_fields();
 
             self.repo.create_subscription(target, &id, &fields, status).await?;
@@ -237,10 +238,11 @@ where
 
             self.admit_jsonld_context(request.jsonld_context.as_set()).await?;
 
-            self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
+            let expanded = self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
 
             let deleted = DeletedMembers::of(&request);
             let existing = self.get(target, id).await?;
+            let stored = StoredFilters::of(&existing.filters)?;
             // Nothing is modified, so `modifiedAt` stays and no change is announced (clause 4.8).
             if request.is_empty() {
                 return Ok(());
@@ -250,9 +252,9 @@ where
             let restart = NotifyingRestart::of_update(
                 existing_status,
                 status,
-                SinceRestart::of_selection(&request, &existing, self.variant.registration_match_reach()),
+                SinceRestart::of_selection(&request, &expanded, &existing, &stored, self.variant.registration_match_reach()),
             );
-            let merged = SubscriptionWriteValues::merged(request, existing)?;
+            let merged = SubscriptionWriteValues::merged(request, expanded, stored, existing)?;
             validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();
 

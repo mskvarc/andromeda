@@ -10,14 +10,14 @@ use crate::{
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
 use std::borrow::Cow;
 
 impl<'a> QueriedEntity<'a> for &'a EntityDocument {
     type Instance = &'a InstanceDocument;
 
-    fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {
+    fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = &'a InstanceDocument> {
         self.attributes().get(attribute.as_str()).into_iter().flat_map(AttributeMember::instances)
     }
 
@@ -27,7 +27,7 @@ impl<'a> QueriedEntity<'a> for &'a EntityDocument {
 }
 
 impl<'a> LocatedEntity<'a> for &'a EntityDocument {
-    fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
+    fn geo_property_geometries(self, attribute: &AttributeIri) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
         self.attribute_instances(attribute)
             .filter_map(|instance| instance.geometry().map(Cow::Borrowed))
     }

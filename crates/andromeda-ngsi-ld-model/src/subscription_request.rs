@@ -48,7 +48,13 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
-use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, filter::Filter, geo::written_geo_query::WrittenGeoQuery, scope::scope_query::ScopeQuery};
+use andromeda_ngsi_ld_query::{
+    dataset_selector::DatasetSelector,
+    filter::Filter,
+    geo::written_geo_query::WrittenGeoQuery,
+    name_stage::Written,
+    scope::scope_query::ScopeQuery,
+};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
@@ -103,7 +109,7 @@ pub struct SubscriptionRequest {
     pub time_interval: Clearable<f64>,
     /// NGSI-LD query expression to filter matching entities (clause 4.9).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
-    pub q: Clearable<Filter>,
+    pub q: Clearable<Filter<Written>>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
     pub geo_q: Clearable<WrittenGeoQuery>,
@@ -112,7 +118,7 @@ pub struct SubscriptionRequest {
     pub scope_q: Clearable<ScopeQuery>,
     /// Context source filter (clause 4.9).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
-    pub csf: Clearable<Filter>,
+    pub csf: Clearable<Filter<Written>>,
     /// The `datasetId`s of the Attribute instances each notification carries.
     #[serde(
         default,

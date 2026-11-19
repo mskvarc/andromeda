@@ -29,7 +29,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{Filter, compiled_filter::CompiledFilter, filter_error::FilterError, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    name_stage::{Expanded, Written},
     projection::expanded_projection::ExpandedProjection,
+    term_expander::TermExpansionError,
     type_selection::type_selection_error::TypeSelectionError,
 };
 use andromeda_ngsi_ld_query_evaluation::{
@@ -86,6 +88,9 @@ enum SetupError {
     /// A filter is not a filter.
     #[error("a filter does not parse")]
     Filter(#[from] FilterError),
+    /// A filter names a term where an absolute IRI has to stand.
+    #[error("a filter does not expand")]
+    Expansion(#[from] TermExpansionError),
     /// An entity type is not a type selection.
     #[error("an entity type is not valid")]
     TypeSelection(#[from] TypeSelectionError),
@@ -108,7 +113,7 @@ enum SetupError {
 
 /// The `q` text `filter` with every attribute name written as an expanded
 /// IRI.
-fn expanded(filter: &str) -> Result<Filter, FilterError> {
+fn expanded(filter: &str) -> Result<Filter<Expanded>, SetupError> {
     let mut text = String::with_capacity(filter.len() * 4);
     let mut quoted = false;
     let mut name = String::new();
@@ -135,7 +140,7 @@ fn expanded(filter: &str) -> Result<Filter, FilterError> {
             text.push(character);
         }
     }
-    text.parse::<Filter>()
+    Ok(text.parse::<Filter<Written>>()?.into_expanded()?)
 }
 
 /// The creation of the Vehicle.
@@ -159,7 +164,7 @@ fn creation() -> Result<ChangeEvent, SetupError> {
 }
 
 /// A Subscription to every Vehicle, keyed `key`, filtering on `q`.
-fn subscription(key: i64, q: Filter, terms: &TermInterner) -> Result<Arc<CompiledSubscription>, SetupError> {
+fn subscription(key: i64, q: Filter<Expanded>, terms: &TermInterner) -> Result<Arc<CompiledSubscription>, SetupError> {
     let mut subscription = CompiledSubscription {
         id: format!("urn:ngsi-ld:Subscription:{key}").parse()?,
         key: SubscriptionKey::try_from(key)?,
@@ -207,7 +212,7 @@ fn subscription(key: i64, q: Filter, terms: &TermInterner) -> Result<Arc<Compile
 }
 
 /// An index of `count` Subscriptions whose filters cycle through `filters`.
-fn index_of(count: i64, filters: &[Filter], terms: &TermInterner) -> Result<CandidateIndex, SetupError> {
+fn index_of(count: i64, filters: &[Filter<Expanded>], terms: &TermInterner) -> Result<CandidateIndex, SetupError> {
     let mut index = CandidateIndex::default();
     for (key, filter) in (1..=count).zip(filters.iter().cycle()) {
         index.insert(subscription(key, filter.clone(), terms)?);
@@ -222,9 +227,9 @@ struct Fixture {
     /// The creation of the Vehicle.
     change: ChangeEvent,
     /// The ten filters, expanded.
-    filters: Vec<Filter>,
+    filters: Vec<Filter<Expanded>>,
     /// Ten filters each needing an Attribute the Vehicle lacks.
-    absent: Vec<Filter>,
+    absent: Vec<Filter<Expanded>>,
     /// The numbers of the terms of every Subscription.
     terms: TermInterner,
 }

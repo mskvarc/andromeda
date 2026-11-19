@@ -8,7 +8,11 @@ use crate::{
     query_names::QueryNames,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::{
+    filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    name_stage::Written,
+    namespace_expander::EXAMPLE_NAMESPACE,
+};
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use sea_query::{PostgresQueryBuilder, Query};
@@ -46,7 +50,9 @@ fn rendered(spelling: &str) -> String {
         ..QueryNames::default()
     };
     let reading = FilterReading::of(
-        &expanded(spelling).parse::<Filter>().expect("the spelling parses"),
+        &EXAMPLE_NAMESPACE
+            .expanded(expanded(spelling).parse::<Filter<Written>>().expect("the spelling parses"))
+            .expect("the names expand"),
         LanguageMatching::TagEquality,
     );
     let rows = EntityRowRefs::unaliased(None);

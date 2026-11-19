@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_model::{
         standing::SubscriptionStanding,
     },
 };
-use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, filter::Filter, scope::scope_query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, filter::Filter, name_stage::Written, scope::scope_query::ScopeQuery};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_postgresql_stored_values::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_subscription::{notifying_since::NotifyingSince, stored_subscription::StoredSubscription};
@@ -125,13 +125,13 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 /// Returns [`ContextStoreError::Database`] when either column cannot be
 /// decoded, and [`ContextStoreError::StoredSubscription`] when either is no
 /// query.
-fn stored_q(row: &PgRow) -> Result<Option<Filter>, ContextStoreError> {
+fn stored_q(row: &PgRow) -> Result<Option<Filter<Written>>, ContextStoreError> {
     let q_raw: Option<String> = row.try_get(Subscriptions::Q.unquoted())?;
-    let q: Option<Filter> = q_raw
+    let q: Option<Filter<Written>> = q_raw
         .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::Q(Box::new(error))))
         .transpose()?;
     let written_raw: Option<String> = row.try_get(Subscriptions::QWrittenMembers.unquoted())?;
-    let written: Option<Filter> = written_raw
+    let written: Option<Filter<Written>> = written_raw
         .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::QWrittenMembers(Box::new(error))))
         .transpose()?;
     Ok(match (q, written) {

@@ -38,4 +38,5 @@ typed-builder = "0.23.2"
 [dev-dependencies]
 allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
+andromeda-ngsi-ld-query = { workspace = true, features = ["test-support"] }
 pretty_assertions = "1.4.1"

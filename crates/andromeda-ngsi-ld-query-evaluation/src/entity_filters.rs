@@ -39,6 +39,8 @@ mod tests {
         entity_filters::EntityFilters,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
     };
     use serde_json::json;
@@ -71,7 +73,14 @@ mod tests {
 
     /// Whether `x` passes the filters given.
     fn admits_x(q: Option<&str>, geo: Option<&CompiledGeoQuery>, scope: Option<&str>) -> bool {
-        let q = q.map(|raw| CompiledFilter::new(raw.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality));
+        let q = q.map(|raw| {
+            CompiledFilter::new(
+                EXAMPLE_NAMESPACE
+                    .expanded(raw.parse::<Filter<Written>>().expect("q parses"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            )
+        });
         let scope = scope.map(|raw| raw.parse::<ScopeQuery>().expect("scopeQ parses"));
         let filters = EntityFilters {
             q: q.as_ref(),

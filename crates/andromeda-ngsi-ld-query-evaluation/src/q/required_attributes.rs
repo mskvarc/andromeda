@@ -1,7 +1,7 @@
 //! The attributes every match of a filter must hold.
 
 use crate::queried_entity::attribute_reading::QueriedEntity;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 use andromeda_ngsi_ld_query::filter::reading::{filter_reading::FilterReading, term_reading::TermReading};
 
 /// The attributes an entity must hold for a filter to hold over it (clause
@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::filter::reading::{filter_reading::FilterReading, te
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RequiredAttributes {
     /// The expanded names, each once.
-    names: Vec<AttributeName>,
+    names: Vec<AttributeIri>,
 }
 
 impl RequiredAttributes {
@@ -36,7 +36,7 @@ impl RequiredAttributes {
 
     /// The expanded names, in order.
     #[must_use]
-    pub const fn names(&self) -> &[AttributeName] {
+    pub const fn names(&self) -> &[AttributeIri] {
         self.names.as_slice()
     }
 
@@ -56,7 +56,7 @@ impl RequiredAttributes {
 }
 
 /// Adds the attributes the conjuncts of `filter` require to `names`.
-fn collect(filter: &FilterReading, names: &mut Vec<AttributeName>) {
+fn collect(filter: &FilterReading, names: &mut Vec<AttributeIri>) {
     match filter {
         FilterReading::All(children) => children.iter().for_each(|child| collect(child, names)),
         FilterReading::Any(_) => {}
@@ -65,35 +65,48 @@ fn collect(filter: &FilterReading, names: &mut Vec<AttributeName>) {
 }
 
 /// The attribute of the entity under evaluation `term` reads first.
-fn required_by(term: &TermReading) -> AttributeName {
+fn required_by(term: &TermReading) -> AttributeIri {
     term.hops().first().map_or(term.attribute(), |hop| hop.relationship()).clone()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::q::required_attributes::RequiredAttributes;
-    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
+    };
+
+    const EXAMPLE_A: &str = "https://example.com/a";
+    const EXAMPLE_B: &str = "https://example.com/b";
+    const EXAMPLE_C: &str = "https://example.com/c";
 
     /// The names `q` requires.
     fn required(q: &str) -> Vec<String> {
-        let reading = FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
+        let reading = FilterReading::of(
+            &EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        );
         RequiredAttributes::of(&reading).names().iter().map(|name| name.as_str().to_owned()).collect()
     }
 
     #[test]
     fn a_conjunction_requires_the_attribute_of_each_conjunct() {
-        assert_eq!(required("a==1;b!=2;c"), ["a", "b", "c"]);
-        assert_eq!(required("a==1;a>0;(b;c.s)"), ["a", "b", "c"]);
+        assert_eq!(required("a==1;b!=2;c"), [EXAMPLE_A, EXAMPLE_B, EXAMPLE_C]);
+        assert_eq!(required("a==1;a>0;(b;c.s)"), [EXAMPLE_A, EXAMPLE_B, EXAMPLE_C]);
     }
 
     #[test]
     fn a_disjunction_requires_none_of_its_names() {
         assert_eq!(required("a==1|b"), Vec::<String>::new());
-        assert_eq!(required("d;(a==1|b)"), ["d"]);
+        assert_eq!(required("d;(a==1|b)"), ["https://example.com/d"]);
     }
 
     #[test]
     fn a_hop_requires_the_relationship_of_the_entity_itself() {
-        assert_eq!(required("r{a}==1;b"), ["b", "r"]);
+        assert_eq!(required("r{a}==1;b"), [EXAMPLE_B, "https://example.com/r"]);
     }
 }

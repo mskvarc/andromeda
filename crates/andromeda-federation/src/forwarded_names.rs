@@ -29,7 +29,9 @@ use andromeda_ngsi_ld_query::{
         expansion::{expand_context_source_filter, expand_filter},
         json_key_attributes::JsonKeyAttributes,
     },
+    name_stage::Written,
     projection::written_projection_term::WrittenProjectionTerm,
+    query_error::QueryError,
     type_selection::written_type_selection::WrittenTypeSelection,
 };
 use std::{future::Future, pin::Pin, str::FromStr};
@@ -180,7 +182,7 @@ impl<'a> ForwardedNames<'a> {
     /// Returns [`FederationError::Query`] when a name in the query does not
     /// expand against the inbound context, and [`FederationError::JsonLd`] when
     /// a `jsonKeys` name does not.
-    pub(crate) async fn q(&self, expression: &Filter, json_keys: Option<&[AttributeName]>) -> Result<Filter, FederationError> {
+    pub(crate) async fn q(&self, expression: &Filter<Written>, json_keys: Option<&[AttributeName]>) -> Result<Filter<Written>, FederationError> {
         match self.rewording {
             Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => {
@@ -191,7 +193,7 @@ impl<'a> ForwardedNames<'a> {
                 let literal_keys: JsonKeyAttributes = literal_keys.into_iter().collect();
                 let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
                 let expanded = expand_filter(expression.clone(), &literal_keys, &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
-                Ok(compact_filter(expanded, &self.names).await)
+                Ok(compact_filter(expanded, &self.names).await.map_err(QueryError::from)?)
             }
         }
     }
@@ -205,13 +207,13 @@ impl<'a> ForwardedNames<'a> {
     ///
     /// Returns [`FederationError::Query`] when a name in the filter does not
     /// expand against the inbound context.
-    pub(crate) async fn csf(&self, expression: &Filter) -> Result<Filter, FederationError> {
+    pub(crate) async fn csf(&self, expression: &Filter<Written>) -> Result<Filter<Written>, FederationError> {
         match self.rewording {
             Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => {
                 let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
                 let expanded = expand_context_source_filter(expression.clone(), &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
-                Ok(compact_context_source_filter(expanded, &self.names).await)
+                Ok(compact_context_source_filter(expanded, &self.names).await.map_err(QueryError::from)?)
             }
         }
     }
@@ -280,7 +282,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_ngsi_ld_query::{filter::Filter, type_selection::written_type_selection::WrittenTypeSelection};
+    use andromeda_ngsi_ld_query::{filter::Filter, name_stage::Written, type_selection::written_type_selection::WrittenTypeSelection};
     use serde_json::json;
     use url::form_urlencoded;
 
@@ -339,7 +341,7 @@ mod tests {
         pretty_assertions::assert_eq!(names.entity_type(&vehicle).await.expect("rewords").as_str(), "Car");
         let expression: WrittenTypeSelection = "Vehicle,Other".parse().expect("a type selection");
         pretty_assertions::assert_eq!(names.type_selection(&expression).await.expect("rewords").to_string(), "Car,Other");
-        let query = "speed>10;brand==\"x\"".parse::<Filter>().expect("a query");
+        let query = "speed>10;brand==\"x\"".parse::<Filter<Written>>().expect("a query");
         pretty_assertions::assert_eq!(
             names.q(&query, None).await.expect("rewords").to_string(),
             "velocity>10;\"https://example.org/brand\"==\"x\""

@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
+    name_stage::Written,
     scope::scope_query::ScopeQuery,
     written_entity_selector::WrittenEntitySelector,
 };
@@ -112,7 +113,7 @@ impl ClientQuery<'_> {
     /// The `q` filter the client wrote, as written, if the operation forwards
     /// one: a retrieval carries none (Tables 6.5.3.1-1 and 6.19.3.1-1).
     #[must_use]
-    pub const fn q(&self) -> Option<&Filter> {
+    pub const fn q(&self) -> Option<&Filter<Written>> {
         match self {
             ClientQuery::EntityQuery(params) => params.q.as_ref(),
             ClientQuery::TemporalQuery(params) => params.q.as_ref(),

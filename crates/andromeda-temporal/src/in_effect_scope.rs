@@ -18,7 +18,7 @@ use crate::reified_scope::reified_paths;
 use andromeda_ngsi_ld_entity::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
+    attribute_iri::AttributeIri,
     entity_type_name::EntityTypeName,
     scope::path::ScopePath,
     time::date_time::NgsiLdDateTime,
@@ -114,7 +114,7 @@ fn placement(instance: &InstanceDocument, timeproperty: TimeProp) -> Option<Date
 impl<'a> QueriedEntity<'a> for &'a InEffectScope<'a> {
     type Instance = &'a InstanceDocument;
 
-    fn attribute_instances(self, _attribute: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {
+    fn attribute_instances(self, _attribute: &AttributeIri) -> impl Iterator<Item = &'a InstanceDocument> {
         iter::empty()
     }
 
@@ -124,7 +124,7 @@ impl<'a> QueriedEntity<'a> for &'a InEffectScope<'a> {
 }
 
 impl<'a> LocatedEntity<'a> for &'a InEffectScope<'a> {
-    fn geo_property_geometries(self, _attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
+    fn geo_property_geometries(self, _attribute: &AttributeIri) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
         iter::empty()
     }
 }
@@ -143,8 +143,9 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
         scope::scope_query::ScopeQuery,
         split_filter::SplitFilter,
         temporal::window::{TemporalWindow, TimeInterval},
@@ -235,7 +236,11 @@ mod tests {
         .await;
         let above = EntitySelection::builder()
             .q(Some(CompiledFilter::new(
-                "\"https://example.com/speed\">50".parse().expect("a valid q"),
+                "\"https://example.com/speed\">50"
+                    .parse::<Filter<Written>>()
+                    .expect("a valid q")
+                    .into_expanded()
+                    .expect("absolute names"),
                 LanguageMatching::TagEquality,
             )))
             .build();

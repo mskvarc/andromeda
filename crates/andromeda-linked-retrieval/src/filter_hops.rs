@@ -3,7 +3,10 @@
 //! filter through.
 
 use crate::admission::{AdmissionError, LinkedOperation, LinkedReference, admit};
-use andromeda_ngsi_ld_query::filter::{Filter, hop_admission::FilterHopAdmission};
+use andromeda_ngsi_ld_query::{
+    filter::{Filter, hop_admission::FilterHopAdmission},
+    name_stage::Written,
+};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
 
@@ -30,7 +33,7 @@ impl FilterHops {
 impl FilterHopAdmission for FilterHops {
     type Refusal = AdmissionError;
 
-    fn admit_hops(&self, filter: &Filter) -> Result<(), AdmissionError> {
+    fn admit_hops(&self, filter: &Filter<Written>) -> Result<(), AdmissionError> {
         LinkedReference::of_filter(Some(filter)).map_or(Ok(()), |reference| admit(self.operation, reference, self.join, self.join_level))
     }
 }
@@ -41,12 +44,15 @@ mod tests {
         admission::{AdmissionError, LinkedMember, LinkedOperation, ReachingMember, TemporalJoin},
         filter_hops::FilterHops,
     };
-    use andromeda_ngsi_ld_query::filter::{Filter, hop_admission::FilterHopAdmission};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, hop_admission::FilterHopAdmission},
+        name_stage::Written,
+    };
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
     fn admitted(operation: LinkedOperation, join: Option<JoinMode>, join_level: Option<u32>, q: &str) -> Result<(), AdmissionError> {
-        FilterHops::new(operation, join, join_level.and_then(NonZeroU32::new)).admit_hops(&q.parse::<Filter>().expect("the filter parses"))
+        FilterHops::new(operation, join, join_level.and_then(NonZeroU32::new)).admit_hops(&q.parse::<Filter<Written>>().expect("the filter parses"))
     }
 
     fn depth(hops: u32) -> NonZeroU32 {

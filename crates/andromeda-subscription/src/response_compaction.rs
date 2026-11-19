@@ -8,13 +8,17 @@
 //! lists it writes as the clause 4.21 strings they were sent as.
 
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
     subscription::{NotificationParams, Subscription, SubscriptionFilters},
 };
 use andromeda_ngsi_ld_query::{
-    filter::compaction::{compact_context_source_filter, compact_filter, revert_expand_values},
+    filter::{
+        Filter,
+        compaction::{compact_context_source_filter, compact_filter, revert_expand_values},
+    },
+    name_stage::Written,
     projection::{
         expanded_projection_term::ExpandedProjectionTerm,
         written_projection_list::WrittenProjectionList,
@@ -103,18 +107,37 @@ fn compacted_notification(compactor: &NameCompaction, mut notification: Notifica
 /// Entity attributes, while `csf` addresses a registration's Context Source
 /// Properties.
 async fn compacted_filters(compactor: &NameCompaction, mut filters: SubscriptionFilters) -> SubscriptionFilters {
-    if let Some(expr) = filters.q.take() {
-        // clone: the opt-in list stays on the resource while the filter is reverted against its names
-        let opted_in: HashSet<AttributeName> = filters.expand_values.iter().flatten().cloned().collect();
-        let reverted = revert_expand_values(expr, &opted_in, compactor).await;
-        filters.q = Some(compact_filter(reverted, compactor).await);
+    if let Some(stored) = filters.q.take() {
+        let opted_in: HashSet<AttributeIri> = filters.expand_values.iter().flatten().filter_map(|name| name.as_str().parse().ok()).collect();
+        filters.q = Some(compacted_q(compactor, stored, &opted_in).await);
     }
-    if let Some(expr) = filters.csf.take() {
-        filters.csf = Some(compact_context_source_filter(expr, compactor).await);
+    if let Some(stored) = filters.csf.take() {
+        filters.csf = Some(compacted_csf(compactor, stored).await);
     }
     filters.expand_values = filters.expand_values.map(|names| compacted_names(compactor, names));
     filters.json_keys = filters.json_keys.map(|names| compacted_names(compactor, names));
     filters
+}
+
+/// A stored `q` in the reader's terms, as stored when it is no expanded
+/// filter: a text no expansion wrote has no terms to compact.
+async fn compacted_q(compactor: &NameCompaction, stored: Filter<Written>, opted_in: &HashSet<AttributeIri>) -> Filter<Written> {
+    // clone: the stored filter is the answer when it cannot be compacted
+    let Ok(expanded) = stored.clone().into_expanded() else {
+        return stored;
+    };
+    let reverted = revert_expand_values(expanded, opted_in, compactor).await;
+    compact_filter(reverted, compactor).await.unwrap_or(stored)
+}
+
+/// A stored `csf` in the reader's terms, as stored when it is no expanded
+/// filter.
+async fn compacted_csf(compactor: &NameCompaction, stored: Filter<Written>) -> Filter<Written> {
+    // clone: the stored filter is the answer when it cannot be compacted
+    let Ok(expanded) = stored.clone().into_expanded() else {
+        return stored;
+    };
+    compact_context_source_filter(expanded, compactor).await.unwrap_or(stored)
 }
 
 /// The Subscription as a reader whose names are `compactor`'s reads it: every

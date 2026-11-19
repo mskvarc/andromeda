@@ -40,6 +40,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimePr
 use andromeda_ngsi_ld_query::{
     filter::{Filter, referenced_attributes::referenced_attributes},
     geo::written_geo_query::WrittenGeoQuery,
+    name_stage::Written,
     type_selection::written_type_selection::WrittenTypeSelection,
     written_entity_selector::WrittenEntitySelector,
 };
@@ -94,7 +95,7 @@ pub struct NarrowingInputs<'a> {
     purged: Option<&'a [AttributeName]>,
     /// Input (c): the clause 4.9 NGSI-LD Query.
     #[builder(default = Default::default())]
-    q: Option<&'a Filter>,
+    q: Option<&'a Filter<Written>>,
     /// Input (d): the clause 4.10 NGSI-LD `GeoQuery`.
     #[builder(default = Default::default())]
     geo: Option<&'a WrittenGeoQuery>,
@@ -249,7 +250,12 @@ mod tests {
         query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, type_selection::written_type_selection::WrittenTypeSelection};
+    use andromeda_ngsi_ld_query::{
+        filter::Filter,
+        geo::written_geo_query::WrittenGeoQuery,
+        name_stage::Written,
+        type_selection::written_type_selection::WrittenTypeSelection,
+    };
 
     fn attrs(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a valid Attribute name")).collect()
@@ -259,7 +265,7 @@ mod tests {
         "Vehicle".parse().expect("a valid type selector")
     }
 
-    fn filter(q: &str) -> Filter {
+    fn filter(q: &str) -> Filter<Written> {
         q.parse().expect("a valid q")
     }
 

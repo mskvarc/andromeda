@@ -11,7 +11,7 @@ use crate::queried_entity::{
     queried_geometry::NoGeometry,
     value_item::ValueItem,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use std::{
     borrow::Cow,
@@ -53,7 +53,7 @@ impl LinkedEntities<'_> for NoLinkedEntities {
 impl<'a> QueriedEntity<'a> for NoLinkedEntity {
     type Instance = NoLinkedEntity;
 
-    fn attribute_instances(self, _attribute: &AttributeName) -> impl Iterator<Item = NoLinkedEntity> {
+    fn attribute_instances(self, _attribute: &AttributeIri) -> impl Iterator<Item = NoLinkedEntity> {
         empty()
     }
 

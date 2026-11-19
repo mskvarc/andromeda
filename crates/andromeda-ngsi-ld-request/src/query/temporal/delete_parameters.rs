@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
+    name_stage::Written,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
     type_selection::written_type_selection::WrittenTypeSelection,
@@ -57,7 +58,7 @@ pub struct TemporalDeleteParameters {
     pub id_pattern: Option<Pattern>,
     /// The `q` filter (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -67,7 +68,7 @@ pub struct TemporalDeleteParameters {
     /// The context source filter (clause 5.7.4.3); parsed but never forwarded,
     /// because the delete is local-only.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
 
     /// How the window relates to the given instants (clause 4.11 `timerel`).
     #[serde(default, deserialize_with = "deserialize_option_timerel")]

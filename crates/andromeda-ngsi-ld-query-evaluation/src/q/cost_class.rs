@@ -51,11 +51,20 @@ impl CostClass {
 #[cfg(test)]
 mod tests {
     use crate::q::cost_class::CostClass;
-    use andromeda_ngsi_ld_query::filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::{
+        filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
+    };
 
     /// The class of the one term `q` is.
     fn class_of(q: &str) -> CostClass {
-        let reading = FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
+        let reading = FilterReading::of(
+            &EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        );
         let terms = reading.terms();
         assert_eq!(terms.len(), 1, "{q}");
         CostClass::of(terms[0])

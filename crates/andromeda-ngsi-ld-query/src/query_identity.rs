@@ -272,6 +272,8 @@ mod tests {
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
         query_identity::{IdentifierScope, QueryIdentity},
@@ -283,6 +285,13 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
+
+    /// `q` expanded under the example namespace.
+    fn expanded(q: &str) -> Filter<Expanded> {
+        EXAMPLE_NAMESPACE
+            .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+            .expect("the names expand")
+    }
 
     fn iri(name: &str) -> IriBuf {
         format!("https://example.com/{name}").parse().expect("a valid IRI")
@@ -310,10 +319,7 @@ mod tests {
 
     fn filtered(q: &str) -> EntitySelection {
         EntitySelection::builder()
-            .q(Some(CompiledFilter::new(
-                q.parse::<Filter>().expect("a clause 4.9 filter"),
-                LanguageMatching::TagEquality,
-            )))
+            .q(Some(CompiledFilter::new(expanded(q), LanguageMatching::TagEquality)))
             .build()
     }
 
@@ -500,7 +506,7 @@ mod tests {
 
     #[test]
     fn a_changed_context_source_filter_changes_the_identity() {
-        let csf = |text: &str| FilterReading::of_context_source_filter(&text.parse::<Filter>().expect("a clause 4.9 filter"));
+        let csf = |text: &str| FilterReading::of_context_source_filter(&expanded(text));
         let selection = EntitySelection::default();
         let identity = |reading: Option<&FilterReading>| {
             QueryIdentity::of(&selection, reading, IdentifierScope::Excepted)
@@ -537,9 +543,7 @@ mod tests {
             ])
             .attrs(vec![iri("speed"), iri("brand")])
             .q(Some(CompiledFilter::new(
-                "speed>50;brand==\"x\",\"y\"|seen==2024-01-01T00:00:00Z"
-                    .parse::<Filter>()
-                    .expect("a clause 4.9 filter"),
+                expanded("speed>50;brand==\"x\",\"y\"|seen==2024-01-01T00:00:00Z"),
                 LanguageMatching::TagEquality,
             )))
             .geo(Some(within("[[[0,0],[1,0],[1,1],[0,1],[0,0]]]")))
@@ -549,7 +553,7 @@ mod tests {
                 scope: ScopeRetention::Removed,
             })
             .build();
-        let csf = FilterReading::of_context_source_filter(&"tier==\"gold\"".parse::<Filter>().expect("a clause 4.9 filter"));
+        let csf = FilterReading::of_context_source_filter(&expanded("tier==\"gold\""));
         let written = |scope: IdentifierScope| {
             String::from_utf8(QueryIdentity::of(&selection, Some(&csf), scope).record().expect("a writable identity")).expect("a JSON record")
         };

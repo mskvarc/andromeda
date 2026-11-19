@@ -45,6 +45,7 @@ mod tests {
         entity_filters::EntityFilters,
         entity_selection::EntitySelection,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
         scope::scope_query::ScopeQuery,
     };
 
@@ -59,7 +60,11 @@ mod tests {
     fn the_filters_of_a_selection_are_the_ones_it_carries() {
         let selection = EntitySelection::builder()
             .q(Some(CompiledFilter::new(
-                "\"https://example.com/n\"==10".parse::<Filter>().expect("q parses"),
+                "\"https://example.com/n\"==10"
+                    .parse::<Filter<Written>>()
+                    .expect("q parses")
+                    .into_expanded()
+                    .expect("absolute names"),
                 LanguageMatching::TagEquality,
             )))
             .scope_q(Some("/A/#".parse::<ScopeQuery>().expect("scopeQ parses")))

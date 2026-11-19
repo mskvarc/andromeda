@@ -43,7 +43,7 @@ use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::En
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::queried::linked_states::LinkedStates;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::filter::Filter;
+use andromeda_ngsi_ld_query::{filter::Filter, name_stage::Expanded};
 use andromeda_retry::retry_delay::RetryDelay;
 use andromeda_subscription::{
     cache::SubscriptionCache,
@@ -334,7 +334,7 @@ impl NotificationProcessor {
         candidates: &[Arc<CompiledSubscription>],
         states: ChangedStates<'_>,
     ) -> Result<LinkedStates, EntityError> {
-        let filters: Vec<&Filter> = candidates.iter().flat_map(|candidate| candidate.hopping_filters()).collect();
+        let filters: Vec<&Filter<Expanded>> = candidates.iter().flat_map(|candidate| candidate.hopping_filters()).collect();
         if filters.is_empty() {
             return Ok(LinkedStates::new());
         }
@@ -368,6 +368,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         projection::expanded_projection::ExpandedProjection,
         scope::scope_query::ScopeQuery,
     };
@@ -887,7 +889,9 @@ mod tests {
     fn matches_entity_filters_q_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            "\"https://example.com/speed\">50".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">50".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         )));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
@@ -897,7 +901,9 @@ mod tests {
     fn matches_entity_filters_q_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            "\"https://example.com/speed\">100".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">100".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         )));
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
@@ -970,7 +976,9 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            "\"https://example.com/speed\">100".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">100".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         )));
         let subscription_id = sub.id.clone();
@@ -1038,9 +1046,13 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(SubscriptionQuery::new(CompiledFilter::new(
-            "\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\""
-                .parse::<Filter>()
-                .expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded(
+                    "\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\""
+                        .parse::<Filter<Written>>()
+                        .expect("valid q"),
+                )
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         )));
         let subscription_id = sub.id.clone();

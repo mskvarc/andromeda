@@ -51,8 +51,11 @@ fn collect_selection(expr: &ExpandedTypeSelection, out: &mut Vec<EntityTypeName>
 /// carry.
 fn collect_guards(reading: &FilterReading, out: &mut Vec<EntityTypeName>) {
     for term in reading.terms() {
-        // clone: the caller owns the resolved list, which outlives the reading
-        out.extend(term.hops().iter().flat_map(|hop| hop.guard_types().iter().cloned()));
+        out.extend(
+            term.hops()
+                .iter()
+                .flat_map(|hop| hop.guard_types().iter().filter_map(|guard| guard.as_str().parse::<EntityTypeName>().ok())),
+        );
     }
 }
 
@@ -64,6 +67,8 @@ mod tests {
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         type_selection::expanded_type_selection::ExpandedTypeSelection,
     };
     use iri_rs::IriBuf;
@@ -74,7 +79,14 @@ mod tests {
             type_selection: type_expr,
             ..ExpandedEntitySelector::default()
         });
-        selection.q = q.map(|q| CompiledFilter::new(q.parse::<Filter>().expect("parse q"), LanguageMatching::TagEquality));
+        selection.q = q.map(|q| {
+            CompiledFilter::new(
+                EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("parse q"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            )
+        });
         selection
     }
 

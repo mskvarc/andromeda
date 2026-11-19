@@ -1,6 +1,6 @@
 //! What an `orderBy` term sorts on once its value path is expanded (clause 4.23).
 
-use crate::filter::value_path::ValuePath;
+use crate::{filter::value_path::ValuePath, name_stage::Expanded};
 
 /// What an `orderBy` term sorts on (clause 4.23).
 ///
@@ -21,5 +21,5 @@ pub enum ExpandedOrderingTarget {
     /// `modifiedAt`).
     ModifiedAt,
     /// One attribute's value, addressed by a path whose every name is an expanded IRI (clause 5.2.4).
-    Attribute(ValuePath),
+    Attribute(ValuePath<Expanded>),
 }

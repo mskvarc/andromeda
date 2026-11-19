@@ -8,9 +8,12 @@
 //! [`Filter::written_member_text`]
 //! renders holds the second, and this module joins the two again.
 
-use crate::filter::{Filter, trailing_group::TrailingGroup};
+use crate::{
+    filter::{Filter, trailing_group::TrailingGroup},
+    name_stage::{NameStage, Written},
+};
 
-impl Filter {
+impl<S: NameStage> Filter<S> {
     /// This filter, each trailing member's written spelling read from
     /// `written`: the same filter rendered by
     /// [`Filter::written_member_text`]
@@ -21,7 +24,7 @@ impl Filter {
     /// does every term of a filter whose term count `written` does not
     /// share.
     #[must_use]
-    pub fn with_written_members(mut self, written: &Filter) -> Filter {
+    pub fn with_written_members(mut self, written: &Filter<Written>) -> Filter<S> {
         let written_paths = written.terminal_paths();
         let mut own_paths = self.terminal_paths_mut();
         if own_paths.len() == written_paths.len() {
@@ -41,17 +44,18 @@ impl Filter {
 mod tests {
     use crate::{
         filter::{Filter, expansion::expand_filter, json_key_attributes::JsonKeyAttributes},
+        name_stage::Written,
         namespace_expander::EXAMPLE_NAMESPACE,
     };
 
     /// The filter as a store reads it back: the expanded text, joined with the
     /// written spelling of its members.
-    async fn persisted_round_trip(q: &str) -> Filter {
-        let expanded = expand_filter(q.parse::<Filter>().expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
+    async fn persisted_round_trip(q: &str) -> Filter<Written> {
+        let expanded = expand_filter(q.parse::<Filter<Written>>().expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
             .await
             .expect("expands");
-        let addressed: Filter = expanded.to_string().parse().expect("the expanded text parses");
-        let written: Filter = expanded.written_member_text().parse().expect("the written text parses");
+        let addressed: Filter<Written> = expanded.to_string().parse().expect("the expanded text parses");
+        let written: Filter<Written> = expanded.written_member_text().parse().expect("the written text parses");
         addressed.with_written_members(&written)
     }
 
@@ -74,9 +78,9 @@ mod tests {
     #[test]
     fn a_written_text_of_another_shape_changes_nothing() {
         let expanded = "\"https://example.com/name\"[\"https://example.com/en\"]==\"Door\""
-            .parse::<Filter>()
+            .parse::<Filter<Written>>()
             .expect("parses");
-        let other = "a==1;b==2".parse::<Filter>().expect("parses");
+        let other = "a==1;b==2".parse::<Filter<Written>>().expect("parses");
         pretty_assertions::assert_eq!(
             expanded.clone().with_written_members(&other).written_member_text(),
             expanded.written_member_text()

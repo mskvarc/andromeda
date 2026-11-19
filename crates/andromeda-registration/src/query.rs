@@ -10,7 +10,12 @@ use crate::{
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_iri::AttributeIri,
+    attribute_name::AttributeName,
+    context_source_pseudonym::ContextSourcePseudonym,
+    identifier::Identifier,
+};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{
@@ -22,7 +27,8 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{
         compilation::{FilterOptIns, admit_q_filter, compile_q_filter},
-        expansion::{expand_context_source_filter, expanded_attribute_name},
+        expansion::expand_context_source_filter,
+        filter_error::FilterError,
         reading::filter_reading::FilterReading,
         referenced_attributes::referenced_attributes,
     },
@@ -148,10 +154,8 @@ impl RegistrationService {
             let admitted = admit_q_filter::<RegistrationError, _>(expression, self.filter_admission, &hops)?;
             let expanded_filter = compile_q_filter(&admitted, &FilterOptIns::default(), &expander).await?;
             for name in referenced_attributes(&expanded_filter) {
-                let iri = IriBuf::new(name.as_str().to_owned())
-                    .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::QNonIriAttribute { source }))?;
-                if !attrs.contains(&iri) {
-                    attrs.push(iri);
+                if !attrs.contains(name.as_iri()) {
+                    attrs.push(name.as_iri().clone()); // clone: the compiled query owns its attribute list
                 }
             }
         }
@@ -228,7 +232,8 @@ fn registration_matching_the_query(
     let attributes = compiled
         .attrs
         .iter()
-        .map(expanded_attribute_name)
+        // clone: the bound check consumes the IRI the compiled query keeps
+        .map(|iri| AttributeIri::try_from(iri.clone()).map(AttributeName::from).map_err(FilterError::from))
         .collect::<Result<Vec<AttributeName>, _>>()
         .map_err(QueryError::from)?;
     let specification = RegistrationMatchSpecification {

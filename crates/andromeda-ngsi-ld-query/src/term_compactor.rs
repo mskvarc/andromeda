@@ -8,7 +8,13 @@
 //! port and the JSON-LD layer supplies the implementation, exactly as
 //! [`crate::term_expander::TermExpander`] does for the opposite direction.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{
+    attribute_iri::AttributeIri,
+    attribute_name::AttributeName,
+    entity_type_iri::EntityTypeIri,
+    entity_type_name::EntityTypeName,
+    reference::NgsiLdReferenceError,
+};
 use std::future::Future;
 
 /// Compacts expanded NGSI-LD IRIs against an already-selected `@context`.
@@ -17,14 +23,21 @@ use std::future::Future;
 /// are separate methods because JSON-LD compaction of a type differs from
 /// that of a property term, mirroring the two expansion methods.
 ///
-/// Both methods are infallible by design: clause 4.5.1 permits a rendering to
-/// carry a full IRI when no term abbreviates it, so a name that does not
-/// compact is answered as it was given rather than turned into a failure the
-/// caller could only resolve the same way.
+/// Clause 4.5.1 permits a rendering to carry a full IRI when no term
+/// abbreviates it, so an attribute IRI that does not compact is answered as it
+/// was given: an [`AttributeIri`] is within the identifier bound, and so is the
+/// [`AttributeName`] that spells it. An entity type IRI has no such bound, so
+/// the one that no term abbreviates and that exceeds the identifier bound has
+/// no written name and is refused.
 pub trait TermCompactor: Sync {
     /// Compact an attribute IRI to the term the context spells it with.
-    fn compact_term(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send;
+    fn compact_term(&self, name: &AttributeIri) -> impl Future<Output = AttributeName> + Send;
 
     /// Compact an entity-type IRI to the term the context spells it with.
-    fn compact_type(&self, name: &AttributeName) -> impl Future<Output = AttributeName> + Send;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NgsiLdReferenceError::TooLong`] when no term abbreviates the IRI
+    /// and it is longer than a written name may be.
+    fn compact_type(&self, name: &EntityTypeIri) -> impl Future<Output = Result<EntityTypeName, NgsiLdReferenceError>> + Send;
 }

@@ -11,13 +11,16 @@
 //! one. A filter is parsed whole under every level, so a stored filter keeps
 //! round-tripping through its text, and the level is held to it on admission.
 
-use crate::filter::{
-    Filter,
-    filter_error::FilterError,
-    language_matching::LanguageMatching,
-    target_language::TargetLanguage,
-    trailing_group::TrailingGroup,
-    value_path::ValuePath,
+use crate::{
+    filter::{
+        Filter,
+        filter_error::FilterError,
+        language_matching::LanguageMatching,
+        target_language::TargetLanguage,
+        trailing_group::TrailingGroup,
+        value_path::ValuePath,
+    },
+    name_stage::NameStage,
 };
 use strum::Display;
 
@@ -52,7 +55,7 @@ impl LanguageTargeting {
 
     /// The least level admitting every target language `filter` names.
     #[must_use]
-    pub fn required_by(filter: &Filter) -> LanguageTargeting {
+    pub fn required_by<S: NameStage>(filter: &Filter<S>) -> LanguageTargeting {
         filter.terminal_paths().into_iter().map(required_by_path).max().unwrap_or_default()
     }
 
@@ -64,7 +67,7 @@ impl LanguageTargeting {
     /// only a full tag spells below [`LanguageTargeting::LanguageTags`], and
     /// [`FilterError::LanguageRangeNotAdmitted`] for an extended range below
     /// [`LanguageTargeting::LanguageRanges`].
-    pub fn admit(self, filter: &Filter) -> Result<(), FilterError> {
+    pub fn admit<S: NameStage>(self, filter: &Filter<S>) -> Result<(), FilterError> {
         filter.terminal_paths().into_iter().try_for_each(|path| self.admit_path(path))
     }
 
@@ -74,7 +77,7 @@ impl LanguageTargeting {
     /// # Errors
     ///
     /// As [`LanguageTargeting::admit`].
-    pub fn admit_path(self, path: &ValuePath) -> Result<(), FilterError> {
+    pub fn admit_path<S: NameStage>(self, path: &ValuePath<S>) -> Result<(), FilterError> {
         if required_by_path(path) <= self {
             return Ok(());
         }
@@ -92,7 +95,7 @@ impl LanguageTargeting {
 ///
 /// A one-member group an `AttrName` spells is clause 4.9's own target
 /// language, and `[*]` is clause 4.9's every-language marker.
-const fn required_by_path(path: &ValuePath) -> LanguageTargeting {
+const fn required_by_path<S: NameStage>(path: &ValuePath<S>) -> LanguageTargeting {
     match &path.trailing {
         Some(TrailingGroup::Language(TargetLanguage::Tag(_))) => LanguageTargeting::LanguageTags,
         Some(TrailingGroup::Language(TargetLanguage::Range(_))) => LanguageTargeting::LanguageRanges,
@@ -102,10 +105,13 @@ const fn required_by_path(path: &ValuePath) -> LanguageTargeting {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{Filter, filter_error::FilterError, language_matching::LanguageMatching, language_targeting::LanguageTargeting};
+    use crate::{
+        filter::{Filter, filter_error::FilterError, language_matching::LanguageMatching, language_targeting::LanguageTargeting},
+        name_stage::Written,
+    };
     use pretty_assertions::assert_eq;
 
-    fn filter(q: &str) -> Filter {
+    fn filter(q: &str) -> Filter<Written> {
         q.parse().expect("a clause 4.9 filter")
     }
 

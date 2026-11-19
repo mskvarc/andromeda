@@ -388,6 +388,8 @@ mod tests {
     use crate::{aggregation::build_aggregation_query, history::build_temporal_history_query};
     use andromeda_ngsi_ld_lexicon::{
         aggr_method::AggrMethod,
+        attribute_iri::AttributeIri,
+        attribute_name::AttributeName,
         identifier::Identifier,
         temporal_format::TemporalFormat,
         time::date_time::NgsiLdDateTime,
@@ -395,13 +397,17 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
         temporal::{
             aggregation_period::AggregationPeriod,
             compiled::CompiledTemporalQuery,
+            grouping::{aggregation_grouping::AggregationGrouping, group_key::GroupKey, grouping_term::GroupingTerm},
             instance_selection::InstanceSelection,
             representation::Representation,
             window::{TemporalWindow, TimeInterval},
         },
+        term_expander::TermExpansionError,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{
@@ -429,8 +435,26 @@ mod tests {
             .build()
     }
 
+    /// The grouping `aggr_group_by` writes, its attributes under the example namespace.
+    fn expanded_grouping(aggr_group_by: &str) -> AggregationGrouping<Expanded> {
+        let written = aggr_group_by.parse::<AggregationGrouping<Written>>().expect("a well-formed grouping");
+        let iri = |name: &AttributeName| AttributeIri::try_from(EXAMPLE_NAMESPACE.term_iri(name.as_str()).expect("resolves")).expect("within the bound");
+        AggregationGrouping(
+            written
+                .0
+                .into_iter()
+                .map(|term| GroupingTerm {
+                    key: match term.key {
+                        GroupKey::Member(member) => GroupKey::Member(member),
+                        GroupKey::Path(path) => GroupKey::Path(path.into_expanded_by(&|name| Ok::<_, TermExpansionError>(iri(name))).expect("expands")),
+                    },
+                    bucket: term.bucket,
+                })
+                .collect(),
+        )
+    }
+
     fn grouped(methods: Vec<AggrMethod>, period: Option<&str>, aggr_group_by: &str) -> CompiledTemporalQuery {
-        use andromeda_ngsi_ld_query::temporal::grouping::aggregation_grouping::AggregationGrouping;
         CompiledTemporalQuery::builder()
             .entities(EntitySelection::builder().build())
             .window(TemporalWindow::builder().timeproperty(TimeProp::Observed).build())
@@ -440,7 +464,7 @@ mod tests {
                     .format(TemporalFormat::GroupedValues)
                     .aggr_methods(methods)
                     .aggr_period_duration(period.and_then(|raw| AggregationPeriod::of_parameter(raw).expect("valid period")))
-                    .grouping(Some(aggr_group_by.parse::<AggregationGrouping>().expect("a well-formed grouping")))
+                    .grouping(Some(expanded_grouping(aggr_group_by)))
                     .sys_attrs(SysAttrsInclusion::Strip)
                     .build(),
             )

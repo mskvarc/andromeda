@@ -1,6 +1,7 @@
 use crate::{
     change::{SubscriptionChange, UpsertKind},
     error::SubscriptionError,
+    expanded_filters::ExpandedFilters,
     request_validation,
     term_expansion,
     variant::{RegistrationMatchReach, SubscriptionVariant},
@@ -35,7 +36,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         request: &mut SubscriptionRequest,
         context: &ContextSpec,
         admitted_q: Option<&AdmittedFilter>,
-    ) -> Result<(), SubscriptionError> {
+    ) -> Result<ExpandedFilters, SubscriptionError> {
         term_expansion::expand_common_subscription_terms(&self.engine, request, context, admitted_q).await
     }
 

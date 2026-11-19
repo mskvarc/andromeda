@@ -81,6 +81,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-query",
     ],
     allow_production_dependencies: [],
 }

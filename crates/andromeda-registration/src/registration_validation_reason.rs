@@ -67,13 +67,6 @@ pub enum RegistrationValidationReason {
         #[source]
         source: NgsiLdReferenceError,
     },
-    /// A `q` filter named an attribute that did not expand to an IRI.
-    #[error("q names a non-IRI attribute: {source}")]
-    QNonIriAttribute {
-        /// The expansion failure.
-        #[source]
-        source: InvalidIri<String>,
-    },
     /// A `geoproperty` selector did not expand to an IRI.
     #[error("geoproperty is not an IRI: {source}")]
     GeopropertyNotIri {

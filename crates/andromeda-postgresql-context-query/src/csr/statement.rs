@@ -173,6 +173,8 @@ mod tests {
         cursor::PageCursor,
         filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         page_window::{PageStart, PageWindow},
         pattern::Pattern,
         scope::scope_query::ScopeQuery,
@@ -581,7 +583,9 @@ mod tests {
     fn csf_reads_the_context_source_properties_column() {
         let mut q = empty_query();
         q.csf = Some(FilterReading::of(
-            &"\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"".parse::<Filter>().unwrap(),
+            &EXAMPLE_NAMESPACE
+                .expanded("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         assert_statement_snapshot!("statement-csf-reads-the-context-source-properties-column", build(&q).select);

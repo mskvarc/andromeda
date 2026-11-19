@@ -26,7 +26,7 @@ pub fn geo_query_matches<'a, E: LocatedEntity<'a>>(query: &CompiledGeoQuery, ent
 mod tests {
     use crate::{geo_query::geo_query_matches, queried_entity::located_entity::LocatedEntity};
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
     use andromeda_ngsi_ld_query::geo::compiled_geo_query::CompiledGeoQuery;
     use serde_json::json;
     use std::borrow::Cow;
@@ -35,10 +35,10 @@ mod tests {
 
     /// An entity holding the instances of its `GeoProperty` attributes as
     /// points, in order.
-    struct PlacedEntity(Vec<(AttributeName, GeometryForm)>);
+    struct PlacedEntity(Vec<(AttributeIri, GeometryForm)>);
 
     impl<'a> LocatedEntity<'a> for &'a PlacedEntity {
-        fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
+        fn geo_property_geometries(self, attribute: &AttributeIri) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
             self.0.iter().filter(move |(name, _)| name == attribute).map(|(_, form)| Cow::Borrowed(form))
         }
     }
@@ -46,7 +46,7 @@ mod tests {
     /// An entity whose `geoproperty` carries one point instance per coordinate
     /// pair.
     fn entity_with_instances(geoproperty: &str, points: &[[f64; 2]]) -> PlacedEntity {
-        let name: AttributeName = geoproperty.parse().expect("valid attribute name");
+        let name: AttributeIri = geoproperty.parse().expect("an absolute IRI");
         PlacedEntity(
             points
                 .iter()

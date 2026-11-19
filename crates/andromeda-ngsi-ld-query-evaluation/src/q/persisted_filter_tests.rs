@@ -10,19 +10,20 @@ use andromeda_ngsi_ld_query::{
         language_matching::LanguageMatching,
         reading::filter_reading::FilterReading,
     },
+    name_stage::{Expanded, Written},
     namespace_expander::EXAMPLE_NAMESPACE,
 };
 use serde_json::json;
 
 /// The filter as a store reads it back: the expanded text, joined with the
 /// written spelling of its members.
-async fn persisted_round_trip(q: &str) -> Filter {
-    let expanded = expand_filter(q.parse::<Filter>().expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
+async fn persisted_round_trip(q: &str) -> Filter<Expanded> {
+    let expanded = expand_filter(q.parse::<Filter<Written>>().expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
         .await
         .expect("expands");
-    let addressed: Filter = expanded.to_string().parse().expect("the expanded text parses");
-    let written: Filter = expanded.written_member_text().parse().expect("the written text parses");
-    addressed.with_written_members(&written)
+    let addressed: Filter<Written> = expanded.to_string().parse().expect("the expanded text parses");
+    let written: Filter<Written> = expanded.written_member_text().parse().expect("the written text parses");
+    addressed.with_written_members(&written).into_expanded().expect("absolute names")
 }
 
 /// Clause 4.9: a persisted `name[en]` still reads the English value of a
@@ -46,7 +47,12 @@ async fn a_persisted_target_language_keeps_the_written_tag() {
         &door,
         NoLinkedEntities
     ));
-    let addressed_only: Filter = english.to_string().parse().expect("parses");
+    let addressed_only = english
+        .to_string()
+        .parse::<Filter<Written>>()
+        .expect("parses")
+        .into_expanded()
+        .expect("absolute names");
     assert!(
         !filter_holds(&FilterReading::of(&addressed_only, LanguageMatching::TagEquality), &door, NoLinkedEntities),
         "the expanded text alone has lost the tag"

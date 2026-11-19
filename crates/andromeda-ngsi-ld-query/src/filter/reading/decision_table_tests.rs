@@ -5,22 +5,26 @@
 //! mark each answer that rests on a recorded ruling rather than on a sentence
 //! of the clause, so a change of meaning is one reviewed diff.
 
-use crate::filter::{
-    Filter,
-    language_matching::LanguageMatching,
-    reading::{
-        array_rule::ArrayRule,
-        array_target::ArrayTarget,
-        filter_reading::FilterReading,
-        interval::Interval,
-        operand::Operand,
-        order_relation::OrderRelation,
-        scalar_test::ScalarTest,
-        target_kind::TargetKind,
-        term_reading::Test,
-        value_test::{ComplementScope, Polarity, ValueTest},
-        verdict::Verdict,
+use crate::{
+    filter::{
+        Filter,
+        language_matching::LanguageMatching,
+        reading::{
+            array_rule::ArrayRule,
+            array_target::ArrayTarget,
+            filter_reading::FilterReading,
+            interval::Interval,
+            operand::Operand,
+            order_relation::OrderRelation,
+            scalar_test::ScalarTest,
+            target_kind::TargetKind,
+            term_reading::Test,
+            value_test::{ComplementScope, Polarity, ValueTest},
+            verdict::Verdict,
+        },
     },
+    name_stage::{Expanded, Written},
+    namespace_expander::EXAMPLE_NAMESPACE,
 };
 use andromeda_architecture_checks::assert_named_snapshot;
 use andromeda_ngsi_ld_lexicon::time::{
@@ -31,9 +35,16 @@ use pretty_assertions::assert_eq;
 use std::fmt::Write;
 use strum::IntoEnumIterator;
 
+/// `q` expanded under the example namespace.
+fn expanded(q: &str) -> Filter<Expanded> {
+    EXAMPLE_NAMESPACE
+        .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+        .expect("the names expand")
+}
+
 /// The value test of the one term `q` lowers to.
 fn value_test(q: &str) -> ValueTest {
-    let filter = FilterReading::lowered(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
+    let filter = FilterReading::lowered(&expanded(q), LanguageMatching::TagEquality);
     let FilterReading::Term(term) = filter else {
         panic!("{q} lowers to {filter:?}");
     };
@@ -299,7 +310,7 @@ fn a_pattern_and_its_negation_hold_on_strings_alone() {
 /// element."
 #[test]
 fn an_attribute_alone_tests_existence() {
-    let filter = FilterReading::lowered(&"x".parse::<Filter>().expect("a filter"), LanguageMatching::TagEquality);
+    let filter = FilterReading::lowered(&expanded("x"), LanguageMatching::TagEquality);
     let FilterReading::Term(term) = filter else {
         panic!("one term");
     };

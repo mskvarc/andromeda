@@ -138,6 +138,8 @@ mod tests {
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         page_window::PageWindow,
         scope::scope_query::ScopeQuery,
         temporal::{
@@ -245,7 +247,9 @@ mod tests {
         compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">100".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         compiled.entities.geo = Some(CompiledGeoQuery {
@@ -301,7 +305,9 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">100".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -315,7 +321,9 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\">100".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\">100".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let count = built_count(&compiled, &speed_and_address());
@@ -329,7 +337,9 @@ mod tests {
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\"==1".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/speed\"==1".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -343,7 +353,13 @@ mod tests {
     fn the_terms_of_an_or_share_one_windowed_existential() {
         let mut compiled = minimal_compiled();
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/speed\">100|\"https://example.com/speed\"<10".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded(
+                    "\"https://example.com/speed\">100|\"https://example.com/speed\"<10"
+                        .parse::<Filter<Written>>()
+                        .unwrap(),
+                )
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -354,7 +370,9 @@ mod tests {
     fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
         let mut compiled = minimal_compiled();
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/never-written\">50".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/never-written\">50".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &QueryNames::default());
@@ -384,7 +402,9 @@ mod tests {
     fn a_q_predicate_on_a_compound_value_reads_the_value_object() {
         let mut compiled = minimal_compiled();
         compiled.entities.q = Some(CompiledFilter::new(
-            "\"https://example.com/address\"[city]==\"Berlin\"".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/address\"[city]==\"Berlin\"".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let statement = built(&compiled, &speed_and_address());
@@ -424,7 +444,12 @@ mod tests {
         for (index, q) in queries.into_iter().enumerate() {
             let mut compiled = minimal_compiled();
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-            compiled.entities.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("parse q"), LanguageMatching::TagEquality));
+            compiled.entities.q = Some(CompiledFilter::new(
+                EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("parse q"))
+                    .expect("the names expand"),
+                LanguageMatching::TagEquality,
+            ));
             let statement = built(&compiled, &speed_address_and_their_sub_attributes());
             let name = format!("entity-conditions-no-temporal-statement-rebuilds-a-history-instance-document-{}", index + 1);
             assert_statement_snapshot!(name, statement);

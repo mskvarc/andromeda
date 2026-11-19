@@ -24,14 +24,11 @@
 use crate::{
     entity_filters::EntityFilters,
     entity_selection::EntitySelection,
-    filter::reading::{filter_reading::FilterReading, term_reading::TermReading},
+    filter::reading::{filter_reading::FilterReading, hop::Hop, term_reading::TermReading},
     geo::compiled_geo_query::CompiledGeoQuery,
     scope::scope_pattern::ScopePattern,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-
-/// The clause 4.23 keywords a Query Term may end in instead of an attribute.
-const STRUCTURAL_MEMBERS: [&str; 3] = ["id", "type", "scope"];
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 
 /// One existential leaf of a query's value, geo and scope filters.
 #[derive(Debug, Clone, Copy)]
@@ -86,30 +83,7 @@ impl LeafTruths {
 pub struct HopReads<'q> {
     /// The Relationships crossed at the next depth and the attributes a Query
     /// Term ends in at this one, without repetition.
-    pub attributes: Vec<&'q AttributeName>,
-    /// Whether a term ending in a structural member needs the entity whole.
-    pub members: HopMembers,
-}
-
-/// Which members of the entities one hop depth reaches are read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HopMembers {
-    /// The attributes [`HopReads::attributes`] names alone.
-    Attributes,
-    /// The entity whole: a term ends in `id`, `type` or `scope`, which name
-    /// structural members.
-    WholeEntity,
-}
-
-impl HopReads<'_> {
-    /// The attributes the entities are read with, `None` for every one.
-    #[must_use]
-    pub fn projection(&self) -> Option<&[&AttributeName]> {
-        match self.members {
-            HopMembers::Attributes => Some(&self.attributes),
-            HopMembers::WholeEntity => None,
-        }
-    }
+    pub attributes: Vec<&'q AttributeIri>,
 }
 
 /// The value, geo and scope filters of an [`EntitySelection`], read as a
@@ -155,8 +129,8 @@ impl<'q> SplitFilter<'q> {
     /// those of the entities they link to, and so on, each without repetition.
     /// Empty when no Query Term crosses a hop.
     #[must_use]
-    pub fn hop_relationships(&self) -> Vec<Vec<&'q AttributeName>> {
-        let mut levels: Vec<Vec<&'q AttributeName>> = Vec::new();
+    pub fn hop_relationships(&self) -> Vec<Vec<&'q AttributeIri>> {
+        let mut levels: Vec<Vec<&'q AttributeIri>> = Vec::new();
         for leaf in self.leaves() {
             let FilterLeaf::Term(term) = leaf else {
                 continue;
@@ -187,22 +161,13 @@ impl<'q> SplitFilter<'q> {
             let hops = term.hops();
             for depth in 0..hops.len() {
                 if levels.len() <= depth {
-                    levels.push(HopReads {
-                        attributes: Vec::new(),
-                        members: HopMembers::Attributes,
-                    });
+                    levels.push(HopReads { attributes: Vec::new() });
                 }
-                let read = match hops.get(depth + 1) {
-                    Some(next) => Some(next.relationship()),
-                    None if STRUCTURAL_MEMBERS.contains(&term.attribute().as_str()) => None,
-                    None => Some(term.attribute()),
-                };
-                if let Some(level) = levels.get_mut(depth) {
-                    match read {
-                        None => level.members = HopMembers::WholeEntity,
-                        Some(name) if !level.attributes.contains(&name) => level.attributes.push(name),
-                        Some(_) => {}
-                    }
+                let read = hops.get(depth + 1).map_or(term.attribute(), Hop::relationship);
+                if let Some(level) = levels.get_mut(depth)
+                    && !level.attributes.contains(&read)
+                {
+                    level.attributes.push(read);
                 }
             }
         }
@@ -285,12 +250,21 @@ mod tests {
         entity_selection::EntitySelection,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
-        split_filter::{FilterLeaf, HopMembers, LeafTruths, SplitFilter},
+        split_filter::{FilterLeaf, LeafTruths, SplitFilter},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
     use serde_json::json;
+
+    /// `q` expanded under the example namespace.
+    fn expanded(q: &str) -> Filter<Expanded> {
+        EXAMPLE_NAMESPACE
+            .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+            .expect("the names expand")
+    }
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
@@ -309,7 +283,7 @@ mod tests {
 
     fn selection(q: Option<&str>, geo: Option<CompiledGeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q(q.map(|raw| CompiledFilter::new(raw.parse::<Filter>().expect("q parses"), LanguageMatching::TagEquality)))
+            .q(q.map(|raw| CompiledFilter::new(expanded(raw), LanguageMatching::TagEquality)))
             .geo(geo)
             .scope_q(scope.map(|raw| raw.parse::<ScopeQuery>().expect("scopeQ parses")))
             .build()
@@ -375,7 +349,7 @@ mod tests {
         let levels: Vec<Vec<&str>> = SplitFilter::of(&selection)
             .hop_relationships()
             .into_iter()
-            .map(|level| level.into_iter().map(AttributeName::as_str).collect())
+            .map(|level| level.into_iter().map(AttributeIri::as_str).collect())
             .collect();
         pretty_assertions::assert_eq!(levels, [vec!["https://example.com/parkedIn"], vec!["https://example.com/operator"]]);
     }
@@ -392,34 +366,14 @@ mod tests {
             None,
         );
         let levels = SplitFilter::of(&selection).hop_reads();
-        let reads: Vec<Option<Vec<&str>>> = levels
-            .iter()
-            .map(|level| level.projection().map(|names| names.iter().map(|name| name.as_str()).collect()))
-            .collect();
+        let reads: Vec<Vec<&str>> = levels.iter().map(|level| level.attributes.iter().map(|name| name.as_str()).collect()).collect();
         pretty_assertions::assert_eq!(
             reads,
             [
-                Some(vec!["https://example.com/free", "https://example.com/operator"]),
-                Some(vec!["https://example.com/name"])
+                vec!["https://example.com/free", "https://example.com/operator"],
+                vec!["https://example.com/name"]
             ]
         );
-    }
-
-    /// The attributes the other terms of a depth read stay named beside a
-    /// structural member.
-    #[test]
-    fn a_depth_where_a_term_ends_in_a_structural_member_is_read_whole() {
-        let selection = selection(
-            Some("\"https://example.com/parkedIn\"{type}==\"https://example.com/Parking\";\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0"),
-            None,
-            None,
-        );
-        let reads = SplitFilter::of(&selection).hop_reads();
-        pretty_assertions::assert_eq!(reads.len(), 1);
-        pretty_assertions::assert_eq!(reads[0].members, HopMembers::WholeEntity);
-        pretty_assertions::assert_eq!(reads[0].projection(), None);
-        let attributes: Vec<&str> = reads[0].attributes.iter().map(|name| name.as_str()).collect();
-        pretty_assertions::assert_eq!(attributes, ["https://example.com/free"]);
     }
 
     #[test]

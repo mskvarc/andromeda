@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, positio
 use andromeda_ngsi_ld_query::{
     filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::Written,
     scope::scope_query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{
@@ -121,7 +122,11 @@ fn the_document_reading_answers_every_written_instance() {
         ),
         ("\"https://example.com/label\".\"https://uri.etsi.org/ngsi-ld/hasLanguageMap\"", false),
     ] {
-        let expr = q.parse::<Filter>().expect("the Query Term parses");
+        let expr = q
+            .parse::<Filter<Written>>()
+            .expect("the Query Term parses")
+            .into_expanded()
+            .expect("absolute names");
         pretty_assertions::assert_eq!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
             expected,
@@ -152,7 +157,11 @@ fn a_deleted_instance_of_any_family_holds_no_value() {
         ("\"https://example.com/title\"", true),
         ("\"https://example.com/label\"[de]!=\"Tower\"", true),
     ] {
-        let expr = q.parse::<Filter>().expect("the Query Term parses");
+        let expr = q
+            .parse::<Filter<Written>>()
+            .expect("the Query Term parses")
+            .into_expanded()
+            .expect("absolute names");
         pretty_assertions::assert_eq!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
             expected,
@@ -174,7 +183,11 @@ fn a_deleted_member_is_absent_and_an_empty_member_is_present() {
         ("\"https://example.com/address\"[\"https://example.com/tags\"]!=\"x\"", true),
         ("\"https://example.com/address\"[\"https://example.com/tags\"]==\"x\"", false),
     ] {
-        let expr = q.parse::<Filter>().expect("the Query Term parses");
+        let expr = q
+            .parse::<Filter<Written>>()
+            .expect("the Query Term parses")
+            .into_expanded()
+            .expect("absolute names");
         pretty_assertions::assert_eq!(
             filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
             expected,

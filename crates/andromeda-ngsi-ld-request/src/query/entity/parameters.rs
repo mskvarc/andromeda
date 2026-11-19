@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
     filter::Filter,
+    name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
@@ -75,7 +76,7 @@ pub struct EntityQueryParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -148,7 +149,7 @@ pub struct EntityQueryParameters {
     /// Context Source Filter (S6.4.3.2) for filtering which CSRs
     /// are contacted during distributed operations. Uses the `q` filter grammar.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
 }
 
 query_parameter_set!(

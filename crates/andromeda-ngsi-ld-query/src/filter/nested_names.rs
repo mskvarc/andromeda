@@ -1,7 +1,7 @@
 //! How the names below a filter's attribute are spelled.
 
 use crate::filter::json_key_attributes::JsonKeyAttributes;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 
 /// Whether the `[…]` members of a filter's value paths, and its
 /// sub-attribute names, are terms of the `@context` or literal JSON object
@@ -33,7 +33,7 @@ impl NestedNames<'_> {
     /// Whether the members addressed under the expanded attribute `attribute`
     /// are terms to expand or compact.
     #[must_use]
-    pub fn are_terms_under(self, attribute: &AttributeName) -> bool {
+    pub fn are_terms_under(self, attribute: &AttributeIri) -> bool {
         match self {
             NestedNames::Terms(json_keys) => !json_keys.contains(attribute),
             NestedNames::Verbatim => false,
@@ -53,10 +53,10 @@ impl NestedNames<'_> {
 #[cfg(test)]
 mod tests {
     use crate::filter::{json_key_attributes::JsonKeyAttributes, nested_names::NestedNames};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 
-    fn name(raw: &str) -> AttributeName {
-        raw.parse().expect("valid attribute name")
+    fn name(raw: &str) -> AttributeIri {
+        raw.parse().expect("an absolute IRI")
     }
 
     #[test]

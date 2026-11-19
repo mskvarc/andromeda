@@ -10,6 +10,7 @@ use crate::{
     pattern::pattern_error::PatternError,
 };
 use andromeda_ngsi_ld_lexicon::{
+    identifier_length::IdentifierTooLong,
     reference::NgsiLdReferenceError,
     time::{date::NgsiLdDateError, date_time::NgsiLdDateTimeError, time_of_day::NgsiLdTimeError},
 };
@@ -157,6 +158,16 @@ pub enum FilterError {
     /// The regular expression of a pattern operand was refused.
     #[error(transparent)]
     Pattern(#[from] PatternError),
+}
+
+// Hand-written: `#[from]` converts a whole variant payload, and this one wraps
+// the bound refusal in the reference error the variant carries.
+impl From<IdentifierTooLong> for FilterError {
+    /// An expanded name past the identifier bound is an unusable attribute
+    /// name.
+    fn from(too_long: IdentifierTooLong) -> FilterError {
+        FilterError::InvalidAttributeName(too_long.into())
+    }
 }
 
 #[cfg(test)]

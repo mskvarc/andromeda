@@ -29,7 +29,7 @@ WHERE
     FROM
       (
         SELECT
-          "context_source_properties" -> ('since') AS "j"
+          "context_source_properties" -> ('https://example.com/since') AS "j"
       ) AS "s"
   ) IS NOT NULL
   AND EXISTS (
@@ -60,7 +60,7 @@ WHERE
           FROM
             (
               SELECT
-                "context_source_properties" -> ('since') AS "j"
+                "context_source_properties" -> ('https://example.com/since') AS "j"
             ) AS "s"
         ),
         '$[*]'

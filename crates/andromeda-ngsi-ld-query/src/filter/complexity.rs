@@ -12,7 +12,10 @@
 //! recursion inside a fixed depth however a filter reaches it, a request, a
 //! stored subscription or a forwarded query.
 
-use crate::filter::{Filter, equality_value::EqualityValue, filter_error::FilterError, query_term::QueryTerm};
+use crate::{
+    filter::{Filter, equality_value::EqualityValue, filter_error::FilterError, query_term::QueryTerm},
+    name_stage::NameStage,
+};
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 use std::num::NonZeroUsize;
 
@@ -69,7 +72,7 @@ impl FilterComplexityLimits {
     /// comparisons than `comparisons`, and [`FilterError::NestedTooDeep`] for
     /// one nesting deeper than `nesting`; clause 5.5.6 answers both with
     /// `TooComplexQuery`.
-    pub fn admit(self, filter: &Filter) -> Result<(), FilterError> {
+    pub fn admit<S: NameStage>(self, filter: &Filter<S>) -> Result<(), FilterError> {
         let comparisons = comparison_count(filter);
         if comparisons > self.comparisons.get() {
             return Err(FilterError::TooManyComparisons {
@@ -88,7 +91,7 @@ impl FilterComplexityLimits {
 /// The comparisons `filter` makes: one per Query Term, and one per value of a
 /// value list.
 #[must_use]
-pub fn comparison_count(filter: &Filter) -> usize {
+pub fn comparison_count<S: NameStage>(filter: &Filter<S>) -> usize {
     match filter {
         Filter::And(filters) | Filter::Or(filters) => filters.iter().map(comparison_count).sum(),
         Filter::Term(term) => term_comparisons(term),
@@ -98,7 +101,7 @@ pub fn comparison_count(filter: &Filter) -> usize {
 /// The levels `filter`'s `;` and `|` combinations nest; a lone Query Term nests
 /// none, however many parentheses enclose it.
 #[must_use]
-pub fn nesting_depth(filter: &Filter) -> usize {
+pub fn nesting_depth<S: NameStage>(filter: &Filter<S>) -> usize {
     match filter {
         Filter::And(filters) | Filter::Or(filters) => 1 + filters.iter().map(nesting_depth).max().unwrap_or(0),
         Filter::Term(_) => 0,
@@ -106,7 +109,7 @@ pub fn nesting_depth(filter: &Filter) -> usize {
 }
 
 /// The comparisons one Query Term makes.
-const fn term_comparisons(term: &QueryTerm) -> usize {
+const fn term_comparisons<S: NameStage>(term: &QueryTerm<S>) -> usize {
     match term {
         QueryTerm::Equality {
             value: EqualityValue::ValueList(values),
@@ -125,14 +128,17 @@ const fn term_comparisons(term: &QueryTerm) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{
-        Filter,
-        complexity::{FilterComplexityLimits, comparison_count, nesting_depth},
-        filter_error::FilterError,
+    use crate::{
+        filter::{
+            Filter,
+            complexity::{FilterComplexityLimits, comparison_count, nesting_depth},
+            filter_error::FilterError,
+        },
+        name_stage::Written,
     };
     use std::num::NonZeroUsize;
 
-    fn filter(q: &str) -> Filter {
+    fn filter(q: &str) -> Filter<Written> {
         q.parse().expect("a valid filter")
     }
 

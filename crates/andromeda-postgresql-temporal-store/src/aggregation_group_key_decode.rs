@@ -5,11 +5,9 @@
 use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError, stored_aggregation_error::StoredAggregationError};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, time::rendering::instant_text};
 use andromeda_ngsi_ld_model::temporal::GroupKeyValue;
-use andromeda_ngsi_ld_query::temporal::grouping::{
-    aggregation_grouping::AggregationGrouping,
-    bucket_term::BucketKind,
-    entity_member::EntityMember,
-    group_key::GroupKey,
+use andromeda_ngsi_ld_query::{
+    name_stage::Expanded,
+    temporal::grouping::{aggregation_grouping::AggregationGrouping, bucket_term::BucketKind, entity_member::EntityMember, group_key::GroupKey},
 };
 use andromeda_postgresql_temporal_query::{
     aggregation_group::ObservedUnits,
@@ -27,7 +25,7 @@ use sqlx::postgres::PgRow;
 /// promoted `unitCode` group's unit is not uniform.
 pub(crate) fn decode_group_keys(
     row: &PgRow,
-    grouping: &AggregationGrouping,
+    grouping: &AggregationGrouping<Expanded>,
     entity_id: &Identifier,
     dataset_id: Option<&Identifier>,
     attribute_type: AttributeType,

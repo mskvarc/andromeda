@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_query::{
         language_targeting::LanguageTargeting,
     },
     geo::compilation::compile_geo_query,
+    name_stage::Expanded,
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_query_evaluation::entity_filters::entity_filters_admit;
@@ -90,7 +91,7 @@ impl EntityQueryService {
         &self,
         target: &ContextTarget,
         documents: &[(ReceivedState, EntityDocument)],
-        q: Option<&Filter>,
+        q: Option<&Filter<Expanded>>,
     ) -> Result<LinkedStates, EntityError> {
         match q.filter(|expr| expr.contains_linked_hop()) {
             Some(expr) => {
@@ -103,7 +104,7 @@ impl EntityQueryService {
 }
 
 /// Compile the deferred `q`, expanded under the opt-ins `deferred` carries.
-async fn compile_deferred_q(admitted: &AdmittedFilter, deferred: &DeferredSplitFilters, expander: &impl TermExpander) -> Result<Filter, EntityError> {
+async fn compile_deferred_q(admitted: &AdmittedFilter, deferred: &DeferredSplitFilters, expander: &impl TermExpander) -> Result<Filter<Expanded>, EntityError> {
     // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
     // the same `jsonKeys` declaration the local query used, so one
     // request has one expansion of one filter.
@@ -126,6 +127,7 @@ mod tests {
             compilation::{AdmittedFilter, admit_q_filter},
             language_targeting::LanguageTargeting,
         },
+        name_stage::Written,
         scope::scope_query::ScopeQuery,
     };
     use andromeda_ngsi_ld_request::{deferred_split_filters::DeferredSplitFilters, error::ParameterError};
@@ -134,7 +136,8 @@ mod tests {
     /// The filter `q` writes, admitted for Query Entities under no join.
     fn admitted(q: &str) -> AdmittedFilter {
         let hops = FilterHops::new(LinkedOperation::QueryEntities, None, None);
-        admit_q_filter::<ParameterError, _>(&q.parse::<Filter>().expect("q parses"), service().filter_admission(), &hops).expect("the filter is admitted")
+        admit_q_filter::<ParameterError, _>(&q.parse::<Filter<Written>>().expect("q parses"), service().filter_admission(), &hops)
+            .expect("the filter is admitted")
     }
 
     /// A merged Vehicle `id` whose `speed` is `speed`, in the scope `/Madrid`.

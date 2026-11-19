@@ -23,11 +23,14 @@
 //!   instant, which the reader spells as every emitted instant is spelled.
 
 use crate::{aggregation_group::PromotedGroupFacets, alias::Ah, value_text::value_text};
-use andromeda_ngsi_ld_query::temporal::grouping::{
-    aggregation_grouping::AggregationGrouping,
-    bucket_term::{BucketKind, BucketTerm},
-    entity_member::EntityMember,
-    group_key::GroupKey,
+use andromeda_ngsi_ld_query::{
+    name_stage::Expanded,
+    temporal::grouping::{
+        aggregation_grouping::AggregationGrouping,
+        bucket_term::{BucketKind, BucketTerm},
+        entity_member::EntityMember,
+        group_key::GroupKey,
+    },
 };
 use andromeda_postgresql_query::{
     history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows},
@@ -46,7 +49,7 @@ use sea_query::{Alias, Expr, ExprTrait, JoinType, Order, Query, SelectStatement,
 /// guard, computed from the grouping alone so the SQL builder and the reader
 /// agree without one depending on the other.
 #[must_use]
-pub fn promoted_facets(grouping: &AggregationGrouping) -> PromotedGroupFacets {
+pub fn promoted_facets(grouping: &AggregationGrouping<Expanded>) -> PromotedGroupFacets {
     let mut promoted = PromotedGroupFacets::default();
     for term in grouping.terms() {
         match &term.key {
@@ -115,7 +118,7 @@ const fn bucket_field(bucket: BucketTerm) -> &'static str {
 /// column (`datasetId`, `id`, `scope`) returns none.
 pub fn apply_grouping(
     select: &mut SelectStatement,
-    grouping: &AggregationGrouping,
+    grouping: &AggregationGrouping<Expanded>,
     axis: AttributeHistory,
     branch: &HistoryBranch,
     of: &HistoryOf,
@@ -140,7 +143,7 @@ pub fn apply_grouping(
                 keys.push(expr);
             }
             (GroupKey::Path(path), None) => {
-                project_value_in_effect(select, index, names.attributes.get(&path.attribute), axis, branch, of);
+                project_value_in_effect(select, index, names.attributes.get_str(path.attribute.as_str()), axis, branch, of);
                 for column in [group_key_alias(index), group_key_instant_alias(index)] {
                     select.expr_as(Expr::col((value_key_alias(index), column.clone())), column.clone());
                     keys.push(Expr::col((value_key_alias(index), column)));

@@ -11,7 +11,7 @@
 //! selection conjoins its test of the search row, which PostgreSQL evaluates
 //! before the instance probe it prices higher, with the probe that decides.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     filter::reading::filter_reading::FilterReading,
@@ -95,6 +95,6 @@ pub(crate) fn projected_member_condition(projected: &ProjectedMembers, names: &Q
 /// Attributes `attributes` names, an IRI that is no Attribute name naming
 /// none, as `q` reads their existence.
 fn carrying_any<'n>(attributes: impl Iterator<Item = &'n str>, names: &QueryNames, rows: &EntityRowRefs) -> Condition {
-    let reading = FilterReading::carrying_any(attributes.filter_map(|name| name.parse::<AttributeName>().ok()));
+    let reading = FilterReading::carrying_any(attributes.filter_map(|name| name.parse::<AttributeIri>().ok()));
     compile(&reading, &InstanceScan::Current(rows), names)
 }

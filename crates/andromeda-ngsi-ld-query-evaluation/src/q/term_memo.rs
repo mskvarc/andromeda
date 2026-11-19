@@ -233,15 +233,24 @@ impl TermMemo {
 #[cfg(test)]
 mod tests {
     use crate::q::term_memo::{TermInterner, TermMemo};
-    use andromeda_ngsi_ld_query::filter::{
-        Filter,
-        language_matching::LanguageMatching,
-        reading::{filter_reading::FilterReading, term_reading::TermReading},
+    use andromeda_ngsi_ld_query::{
+        filter::{
+            Filter,
+            language_matching::LanguageMatching,
+            reading::{filter_reading::FilterReading, term_reading::TermReading},
+        },
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
     };
 
     /// The reading of the one term `q` is.
     fn term(q: &str) -> Box<TermReading> {
-        match FilterReading::of(&q.parse::<Filter>().expect("a clause 4.9 filter"), LanguageMatching::TagEquality) {
+        match FilterReading::of(
+            &EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("a clause 4.9 filter"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        ) {
             FilterReading::Term(term) => term,
             FilterReading::All(_) | FilterReading::Any(_) => panic!("{q} is one term"),
         }

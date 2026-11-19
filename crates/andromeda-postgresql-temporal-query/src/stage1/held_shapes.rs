@@ -235,6 +235,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         dataset_selector::DatasetSelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         temporal::{
             compiled::CompiledTemporalQuery,
             contributed_entities::{ContributedEntities, ContributedRendering},
@@ -405,7 +407,9 @@ mod tests {
         };
         let mut compiled = after_2024(TimeProp::Observed);
         compiled.entities.q = Some(CompiledFilter::new(
-            format!("\"{load}\"==\"heavy\"").parse::<Filter>().expect("q parses"),
+            EXAMPLE_NAMESPACE
+                .expanded(format!("\"{load}\"==\"heavy\"").parse::<Filter<Written>>().expect("q parses"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         compiled.contributed = ContributedEntities::new([truck()], ContributedRendering::Merged);

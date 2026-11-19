@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
 use andromeda_ngsi_ld_query_evaluation::q::term_memo::{TermInterner, TermMemo};
 use andromeda_retry::{growth::Growth, retry_delay::RetryDelay, retry_policy::RetryPolicy, schedule::BackoffSchedule};
@@ -347,7 +347,7 @@ impl SubscriptionCache {
             return;
         };
         // clone: the key owns its name, which the compiled subscription keeps
-        let geoproperty = geo_q.geoproperty.clone();
+        let geoproperty = AttributeName::from(geo_q.geoproperty.clone());
 
         // clone: the entry owns its identifier and relation, both borrowed here
         let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.geometry.form(), geo_q.georel.clone()) else {

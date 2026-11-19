@@ -267,7 +267,7 @@ impl GeoTarget {
     /// Where the instances of `geo`'s `GeoProperty` are stored, by the keys
     /// `attribute_names` resolved.
     fn of(geo: &CompiledGeoQuery, attribute_names: &ResolvedNames<AttributeName>) -> GeoTarget {
-        let key = attribute_names.get(&geo.geoproperty);
+        let key = attribute_names.get_str(geo.geoproperty.as_str());
         if geo.geoproperty.as_str() == LOCATION.as_str() {
             return GeoTarget::Location(key);
         }
@@ -289,7 +289,7 @@ mod tests {
         geo_predicate::{condition, matches, probe},
     };
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
     use andromeda_ngsi_ld_query::{
         geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing, geo_query_error::GeoQueryError},
         query_error::QueryError,
@@ -313,13 +313,17 @@ mod tests {
         value.parse().expect("valid attribute name")
     }
 
+    fn iri(value: &str) -> AttributeIri {
+        value.parse().expect("an absolute IRI")
+    }
+
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
     fn point_query(georel: GeoRel, geoproperty: &str) -> CompiledGeoQuery {
         CompiledGeoQuery {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
-            geoproperty: name(geoproperty),
+            geoproperty: iri(geoproperty),
         }
     }
 
@@ -333,7 +337,7 @@ mod tests {
             georel,
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0] }))
                 .expect("point with altitude parses"),
-            geoproperty: name(geoproperty),
+            geoproperty: iri(geoproperty),
         }
     }
 
@@ -577,7 +581,7 @@ mod tests {
                 min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
             },
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [longitude, latitude] })).expect("point parses"),
-            geoproperty: name(CUSTOM_GEOPROPERTY),
+            geoproperty: iri(CUSTOM_GEOPROPERTY),
         }
     }
 

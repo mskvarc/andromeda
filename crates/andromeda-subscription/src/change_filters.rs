@@ -165,6 +165,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         projection::expanded_projection::ExpandedProjection,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -213,7 +215,9 @@ mod tests {
                 selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             },
             compiled_q: Some(SubscriptionQuery::new(CompiledFilter::new(
-                q.parse::<Filter>().expect("the filter parses"),
+                EXAMPLE_NAMESPACE
+                    .expanded(q.parse::<Filter<Written>>().expect("the filter parses"))
+                    .expect("the names expand"),
                 LanguageMatching::TagEquality,
             ))),
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,

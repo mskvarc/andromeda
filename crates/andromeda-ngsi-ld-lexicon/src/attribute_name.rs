@@ -1,6 +1,9 @@
 //! The name under which an attribute is keyed inside an entity.
 
-use crate::reference::{NgsiLdReference, NgsiLdReferenceError, validate_ngsi_ld_name};
+use crate::{
+    attribute_iri::AttributeIri,
+    reference::{NgsiLdReference, NgsiLdReferenceError, validate_ngsi_ld_name},
+};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
 use serde::{Deserialize, Serialize};
@@ -33,9 +36,18 @@ impl From<&NgsiLdReference> for AttributeName {
     }
 }
 
+// Hand-written: no derive converts between two newtypes. Total, because an
+// expanded attribute name is an absolute IRI within the identifier bound, which
+// `validate_ngsi_ld_name` accepts.
+impl From<AttributeIri> for AttributeName {
+    fn from(iri: AttributeIri) -> AttributeName {
+        AttributeName(CompactString::from(iri.as_str()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT, reference::NgsiLdReferenceError};
+    use crate::{attribute_iri::AttributeIri, attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT, reference::NgsiLdReferenceError};
     use indexmap::IndexMap;
     use iri_rs::IriBuf;
 
@@ -77,6 +89,13 @@ mod tests {
     fn a_malformed_attribute_key_fails_to_deserialize() {
         let result = serde_json::from_value::<IndexMap<AttributeName, u8>>(serde_json::json!({"bad name": 1}));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn an_expanded_attribute_iri_is_the_attribute_name_of_the_same_text() {
+        let iri: AttributeIri = "https://example.com/speed".parse().expect("an absolute IRI");
+        let name = AttributeName::from(iri);
+        pretty_assertions::assert_eq!(name, "https://example.com/speed".parse::<AttributeName>().expect("an attribute name"));
     }
 
     name_length_tests!(AttributeName);

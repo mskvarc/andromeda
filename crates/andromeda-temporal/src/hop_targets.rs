@@ -33,7 +33,13 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_entity::document::{attribute_member::AttributeMember, instance_document::InstanceDocument};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_iri::AttributeIri,
+    attribute_name::AttributeName,
+    identifier::Identifier,
+    temporal_format::TemporalFormat,
+    time_prop::TimeProp,
+};
 use andromeda_ngsi_ld_model::temporal::{
     temporal_document::{MergeMode, TemporalDocument},
     temporal_history::TemporalHistory,
@@ -121,7 +127,7 @@ impl TemporalService {
         target: &ContextTarget,
         params: &AdmittedTemporalRequest,
         query_reading: QueryReading<'_>,
-        (hops, reads): (&[Vec<&AttributeName>], &[HopReads<'_>]),
+        (hops, reads): (&[Vec<&AttributeIri>], &[HopReads<'_>]),
         parts: &[&TemporalDocument],
     ) -> Result<HopReading, TemporalError> {
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -142,9 +148,7 @@ impl TemporalService {
                 last_n: None,
                 aggr_methods: None,
                 aggr_period_duration: None,
-                attrs: level_reads
-                    .and_then(HopReads::projection)
-                    .map(|names| names.iter().map(|name| (*name).clone()).collect()),
+                attrs: level_reads.map(|reads| reads.attributes.iter().map(|name| AttributeName::from((*name).clone())).collect()),
                 ..TemporalLinkedWindow::of_request(params)
             };
             let compiled = self
@@ -237,7 +241,7 @@ fn union_of(parts: Vec<TemporalHistory>, timeproperty: TimeProp) -> impl Iterato
 
 /// Every entity the instances of `relationships` in `parts` name, without
 /// repetition; none when no hop crosses this depth.
-fn objects_of<'a>(parts: impl Iterator<Item = &'a TemporalDocument>, relationships: Option<&Vec<&AttributeName>>) -> Vec<Identifier> {
+fn objects_of<'a>(parts: impl Iterator<Item = &'a TemporalDocument>, relationships: Option<&Vec<&AttributeIri>>) -> Vec<Identifier> {
     let Some(relationships) = relationships else {
         return Vec::new();
     };
@@ -269,10 +273,11 @@ mod tests {
         answered_fixture::answered,
         hop_targets::{HopReading, HopTargets, objects_of},
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
         split_filter::SplitFilter,
         temporal::window::{TemporalWindow, TimeInterval},
     };
@@ -315,7 +320,11 @@ mod tests {
     fn free_parking() -> EntitySelection {
         EntitySelection::builder()
             .q(Some(CompiledFilter::new(
-                "\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0".parse().expect("a valid q"),
+                "\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0"
+                    .parse::<Filter<Written>>()
+                    .expect("a valid q")
+                    .into_expanded()
+                    .expect("absolute names"),
                 LanguageMatching::TagEquality,
             )))
             .build()
@@ -358,7 +367,7 @@ mod tests {
     async fn the_targets_are_the_objects_the_relationship_names() {
         let first = answered(&parked()).await;
         let second = answered(&parked()).await;
-        let parked_in: AttributeName = PARKED_IN.parse().expect("a valid attribute name");
+        let parked_in: AttributeIri = PARKED_IN.parse().expect("an absolute IRI");
         let level = vec![&parked_in];
         let objects = objects_of([&first, &second].into_iter(), Some(&level));
         pretty_assertions::assert_eq!(objects, vec!["urn:ngsi-ld:Parking:1".parse::<Identifier>().expect("a valid identifier")]);
@@ -385,8 +394,10 @@ mod tests {
         let selection = EntitySelection::builder()
             .q(Some(CompiledFilter::new(
                 "\"https://example.com/parkedIn\"{\"https://example.com/operator\"{\"https://example.com/name\"}}==\"Acme\""
-                    .parse()
-                    .expect("a valid q"),
+                    .parse::<Filter<Written>>()
+                    .expect("a valid q")
+                    .into_expanded()
+                    .expect("absolute names"),
                 LanguageMatching::TagEquality,
             )))
             .build();
@@ -414,7 +425,7 @@ mod tests {
             PARKED_IN: [{"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Parking:1"}, {"object": "urn:ngsi-ld:Parking:2"}], "observedAt": "2020-08-01T12:10:00Z"}]
         }))
         .await;
-        let parked_in: AttributeName = PARKED_IN.parse().expect("a valid attribute name");
+        let parked_in: AttributeIri = PARKED_IN.parse().expect("an absolute IRI");
         let level = vec![&parked_in];
         let objects: Vec<String> = objects_of([&part].into_iter(), Some(&level)).iter().map(ToString::to_string).collect();
         pretty_assertions::assert_eq!(objects, ["urn:ngsi-ld:Parking:1", "urn:ngsi-ld:Parking:2"]);

@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_query::{
         language_matching::LanguageMatching,
         reading::filter_reading::FilterReading,
     },
+    name_stage::Written,
     namespace_expander::EXAMPLE_NAMESPACE,
     query_error::QueryError,
 };
@@ -58,12 +59,12 @@ enum SetupError {
 /// Run every benchmark, or fail with the reason the fixture cannot be built.
 fn main() -> Result<(), SetupError> {
     let written = hundred_terms();
-    let parsed = written.parse::<Filter>()?;
+    let parsed = written.parse::<Filter<Written>>()?;
     let runtime = Builder::new_current_thread().build()?;
     let json_keys = JsonKeyAttributes::default();
     let mut criterion = Criterion::default().configure_from_args();
     let mut group = criterion.benchmark_group("compile-100-terms");
-    group.bench_function("parse", |bencher| bencher.iter(|| black_box(&written).parse::<Filter>()));
+    group.bench_function("parse", |bencher| bencher.iter(|| black_box(&written).parse::<Filter<Written>>()));
     group.bench_function("expand", |bencher| {
         bencher.iter(|| runtime.block_on(expand_filter(black_box(parsed.clone()), &json_keys, &EXAMPLE_NAMESPACE)));
     });

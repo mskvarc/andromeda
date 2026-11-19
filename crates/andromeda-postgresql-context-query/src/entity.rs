@@ -383,6 +383,8 @@ mod tests {
             value_path::ValuePath,
         },
         geo::compiled_geo_query::CompiledGeoQuery,
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{
             compiled_ordering_term::CompiledOrderingTerm,
             expanded_ordering_target::ExpandedOrderingTarget,
@@ -525,7 +527,9 @@ mod tests {
     fn a_q_filter_probes_inside_the_page_and_the_heads_are_read_outside_it() {
         let mut q = empty_query();
         q.selection.q = Some(CompiledFilter::new(
-            "\"https://example.com/temperature\"!=1".parse::<Filter>().expect("valid q"),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/temperature\"!=1".parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let built = build(&q, &temperature_is_known());
@@ -880,7 +884,9 @@ mod tests {
     fn build_with_q_existence() {
         let mut q = empty_query();
         q.selection.q = Some(CompiledFilter::new(
-            "\"https://example.com/temperature\"".parse::<Filter>().unwrap(),
+            EXAMPLE_NAMESPACE
+                .expanded("\"https://example.com/temperature\"".parse::<Filter<Written>>().unwrap())
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let built = build(&q, &temperature_is_known());

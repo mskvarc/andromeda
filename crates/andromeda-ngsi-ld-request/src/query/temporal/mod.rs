@@ -39,6 +39,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
     filter::Filter,
+    name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
@@ -111,7 +112,7 @@ pub struct TemporalQueryParameters {
     pub attrs: Option<Vec<AttributeName>>,
     /// The `q` filter (clause 4.9), parsed at the request boundary.
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub q: Option<Filter>,
+    pub q: Option<Filter<Written>>,
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
@@ -223,7 +224,7 @@ pub struct TemporalQueryParameters {
     /// the temporal query is forwarded to and propagated unchanged into any
     /// discovery it triggers (clause 5.7.4.4).
     #[serde(default, deserialize_with = "deserialize_optional_filter")]
-    pub csf: Option<Filter>,
+    pub csf: Option<Filter<Written>>,
     /// Attributes whose `q` values are expanded against the context (`expandValues`).
     #[serde(rename = "expandValues")]
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]

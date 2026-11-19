@@ -29,7 +29,7 @@ WHERE
     FROM
       (
         SELECT
-          "context_source_properties" -> ('speed') AS "j"
+          "context_source_properties" -> ('https://example.com/speed') AS "j"
       ) AS "s"
   ) IS NOT NULL
   AND (
@@ -62,7 +62,7 @@ WHERE
               FROM
                 (
                   SELECT
-                    "context_source_properties" -> ('speed') AS "j"
+                    "context_source_properties" -> ('https://example.com/speed') AS "j"
                 ) AS "s"
             ),
             '$[*]'

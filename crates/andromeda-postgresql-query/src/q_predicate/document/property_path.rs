@@ -12,7 +12,7 @@
 //! the value itself, which has no sub-property.
 
 use crate::q_predicate::document::written_time_value::spells;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::value::TimeValueForm};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, attribute_type::AttributeType, time::value::TimeValueForm};
 use andromeda_ngsi_ld_query::filter::{
     instance_metadata::InstanceMetadata,
     reading::{
@@ -44,7 +44,7 @@ const DOCUMENT_FAMILY: AttributeType = AttributeType::Property;
 #[derive(Debug, Clone, Copy)]
 pub struct PropertyPath<'a> {
     /// The property the path starts at, a member of the document.
-    attribute: &'a AttributeName,
+    attribute: &'a AttributeIri,
     /// The sub-properties below it, each a member of the node above.
     sub_properties: &'a [AttributeName],
     /// What the path ends on below the last of them.

@@ -1,6 +1,6 @@
 //! The attributes a request declared to hold raw JSON.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 use derive_more::From;
 use std::collections::HashSet;
 
@@ -20,12 +20,12 @@ use std::collections::HashSet;
 /// The default is the empty set, which is what every filter that carries no
 /// such declaration is expanded under.
 #[derive(Debug, Default, Clone, PartialEq, Eq, From)]
-pub struct JsonKeyAttributes(HashSet<AttributeName>);
+pub struct JsonKeyAttributes(HashSet<AttributeIri>);
 
 impl JsonKeyAttributes {
     /// Whether an expanded attribute name was declared to hold raw JSON.
     #[must_use]
-    pub fn contains(&self, name: &AttributeName) -> bool {
+    pub fn contains(&self, name: &AttributeIri) -> bool {
         self.0.contains(name)
     }
 
@@ -36,8 +36,8 @@ impl JsonKeyAttributes {
     }
 }
 
-impl FromIterator<AttributeName> for JsonKeyAttributes {
-    fn from_iter<I: IntoIterator<Item = AttributeName>>(names: I) -> JsonKeyAttributes {
+impl FromIterator<AttributeIri> for JsonKeyAttributes {
+    fn from_iter<I: IntoIterator<Item = AttributeIri>>(names: I) -> JsonKeyAttributes {
         JsonKeyAttributes(names.into_iter().collect())
     }
 }
@@ -45,24 +45,24 @@ impl FromIterator<AttributeName> for JsonKeyAttributes {
 #[cfg(test)]
 mod tests {
     use crate::filter::json_key_attributes::JsonKeyAttributes;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 
-    fn name(raw: &str) -> AttributeName {
-        raw.parse().expect("valid attribute name")
+    fn name(raw: &str) -> AttributeIri {
+        raw.parse().expect("an absolute IRI")
     }
 
     #[test]
     fn a_filter_that_declared_nothing_opts_no_attribute_in() {
         let declared = JsonKeyAttributes::default();
         assert!(declared.is_empty());
-        assert!(!declared.contains(&name("parkingTickets")));
+        assert!(!declared.contains(&name("https://example.com/parkingTickets")));
     }
 
     #[test]
     fn only_the_declared_attributes_are_recognised() {
-        let declared: JsonKeyAttributes = [name("parkingTickets")].into_iter().collect();
-        assert!(declared.contains(&name("parkingTickets")));
-        assert!(!declared.contains(&name("address")));
+        let declared: JsonKeyAttributes = [name("https://example.com/parkingTickets")].into_iter().collect();
+        assert!(declared.contains(&name("https://example.com/parkingTickets")));
+        assert!(!declared.contains(&name("https://example.com/address")));
         assert!(!declared.is_empty());
     }
 }

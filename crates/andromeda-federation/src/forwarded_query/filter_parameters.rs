@@ -11,7 +11,7 @@ use crate::{
     forwarded_query::ForwardedQuery,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery};
+use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, name_stage::Written};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
 
@@ -26,7 +26,12 @@ impl ForwardedQuery {
     /// expand against the request context, and [`FederationError::JsonLd`] or
     /// [`FederationError::Internal`] when a `jsonKeys` name does not spell in
     /// the forwarding context.
-    pub(super) async fn push_q(&mut self, q: Option<&Filter>, json_keys: Option<&[AttributeName]>, names: &ForwardedNames<'_>) -> Result<(), FederationError> {
+    pub(super) async fn push_q(
+        &mut self,
+        q: Option<&Filter<Written>>,
+        json_keys: Option<&[AttributeName]>,
+        names: &ForwardedNames<'_>,
+    ) -> Result<(), FederationError> {
         let Some(q) = q else {
             return Ok(());
         };
@@ -53,7 +58,7 @@ impl ForwardedQuery {
     /// the merged Entities once and renders them in the client's `join`
     /// (clause 4.5.23). `containedBy` stays behind, because it shapes only the
     /// rendering, which is this broker's.
-    pub(super) fn push_q_join(&mut self, q: Option<&Filter>, join_level: Option<NonZeroU32>) {
+    pub(super) fn push_q_join(&mut self, q: Option<&Filter<Written>>, join_level: Option<NonZeroU32>) {
         if q.is_some_and(Filter::contains_linked_hop) {
             self.push(ForwardedParameter::Join, JoinMode::Inline.to_string());
             self.push_optional(ForwardedParameter::JoinLevel, join_level.map(|level| level.to_string()));
@@ -68,7 +73,7 @@ impl ForwardedQuery {
     ///
     /// Returns [`FederationError::Query`] when a name in the filter does not
     /// expand against the request context.
-    pub(super) async fn push_csf(&mut self, csf: Option<&Filter>, names: &ForwardedNames<'_>) -> Result<(), FederationError> {
+    pub(super) async fn push_csf(&mut self, csf: Option<&Filter<Written>>, names: &ForwardedNames<'_>) -> Result<(), FederationError> {
         if let Some(csf) = csf {
             self.push(ForwardedParameter::Csf, names.csf(csf).await?.to_string());
         }

@@ -7,6 +7,7 @@
 //! memory or in a storage dialect, is a property of that execution and lives
 //! with it.
 
+pub mod absolute_names;
 pub mod attribute_path;
 pub mod compaction;
 pub mod compilation;
@@ -42,8 +43,12 @@ pub mod unicode_escape_error;
 pub mod value_path;
 pub mod written_members;
 
-use crate::filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath};
+use crate::{
+    filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath},
+    name_stage::{NameStage, Written},
+};
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
 /// A parsed `q` filter: `And` and `Or` nodes combine sub-filters, `Term` leaves hold individual Query Terms.
 ///
@@ -53,18 +58,29 @@ use serde::{Deserialize, Serialize};
 /// text a client wrote and must give back an equivalent one. Parsing at
 /// deserialization is what makes a malformed filter a rejected request instead
 /// of a filter that silently matches nothing at first use.
+///
+/// The tree is generic over the [`NameStage`] of its names: a `Filter<Written>`
+/// is what the parser reads, and a `Filter<Expanded>` is what expansion through
+/// the request `@context` makes and what an execution reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub enum Filter {
+#[serde(
+    try_from = "String",
+    into = "String",
+    bound(
+        serialize = "S: NameStage",
+        deserialize = "S: NameStage, Filter<S>: TryFrom<String>, <Filter<S> as TryFrom<String>>::Error: Display"
+    )
+)]
+pub enum Filter<S: NameStage> {
     /// Conjunction: all sub-filters must be true (`;` in NGSI-LD syntax).
-    And(Vec<Filter>),
+    And(Vec<Filter<S>>),
     /// Disjunction: at least one sub-filter must be true (`|` in NGSI-LD syntax).
-    Or(Vec<Filter>),
+    Or(Vec<Filter<S>>),
     /// A leaf query term.
-    Term(QueryTerm),
+    Term(QueryTerm<S>),
 }
 
-impl Filter {
+impl<S: NameStage> Filter<S> {
     /// Whether any query term in this filter traverses a linked entity (the
     /// clause 4.9 `{}` axis).
     ///
@@ -94,7 +110,7 @@ impl Filter {
 
     /// Every Query Term, in pre-order.
     #[must_use]
-    pub fn terms(&self) -> Vec<&QueryTerm> {
+    pub fn terms(&self) -> Vec<&QueryTerm<S>> {
         match self {
             Filter::And(filters) | Filter::Or(filters) => filters.iter().flat_map(Filter::terms).collect(),
             Filter::Term(term) => vec![term],
@@ -103,7 +119,7 @@ impl Filter {
 
     /// The value path every Query Term terminates at, in pre-order.
     #[must_use]
-    pub fn terminal_paths(&self) -> Vec<&ValuePath> {
+    pub fn terminal_paths(&self) -> Vec<&ValuePath<S>> {
         match self {
             Filter::And(filters) | Filter::Or(filters) => filters.iter().flat_map(Filter::terminal_paths).collect(),
             Filter::Term(term) => vec![term.path().terminal()],
@@ -111,7 +127,7 @@ impl Filter {
     }
 
     /// The value path every Query Term terminates at, mutably, in pre-order.
-    pub fn terminal_paths_mut(&mut self) -> Vec<&mut ValuePath> {
+    pub fn terminal_paths_mut(&mut self) -> Vec<&mut ValuePath<S>> {
         match self {
             Filter::And(filters) | Filter::Or(filters) => filters.iter_mut().flat_map(Filter::terminal_paths_mut).collect(),
             Filter::Term(term) => vec![term.path_mut().terminal_mut()],
@@ -131,25 +147,25 @@ impl Filter {
 
 // Parsing lives in `FromStr` so borrowed call sites do not allocate; this
 // adapter exists only because `#[serde(try_from = "String")]` requires it.
-impl TryFrom<String> for Filter {
+impl TryFrom<String> for Filter<Written> {
     type Error = FilterError;
 
-    fn try_from(raw: String) -> Result<Filter, FilterError> {
+    fn try_from(raw: String) -> Result<Filter<Written>, FilterError> {
         raw.parse()
     }
 }
 
 // The wire form is produced by `Display`; this exists only because
 // `#[serde(into = "String")]` demands an `Into<String>` and cannot use it.
-impl From<Filter> for String {
-    fn from(filter: Filter) -> String {
+impl<S: NameStage> From<Filter<S>> for String {
+    fn from(filter: Filter<S>) -> String {
         filter.to_string()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::Filter;
+    use crate::{filter::Filter, name_stage::Written};
 
     #[test]
     fn a_filter_round_trips_through_its_clause_4_9_text() {
@@ -157,10 +173,10 @@ mod tests {
         // resource that is read back must yield a filter that parses to the
         // same tree.
         let raw = "speed>50;brandName==\"Mercedes\"";
-        let json = serde_json::to_string(&raw.parse::<Filter>().expect("valid filter")).expect("serialises");
+        let json = serde_json::to_string(&raw.parse::<Filter<Written>>().expect("valid filter")).expect("serialises");
         pretty_assertions::assert_eq!(json, format!("{raw:?}"));
-        let decoded: Filter = serde_json::from_str(&json).expect("deserialises");
-        pretty_assertions::assert_eq!(decoded, raw.parse::<Filter>().expect("valid filter"));
+        let decoded: Filter<Written> = serde_json::from_str(&json).expect("deserialises");
+        pretty_assertions::assert_eq!(decoded, raw.parse::<Filter<Written>>().expect("valid filter"));
     }
 
     /// Clause 5.7.2.4 measures a filter against `joinLevel` by hop count, so a
@@ -177,14 +193,14 @@ mod tests {
         ];
 
         for (raw, expected) in cases {
-            let filter = raw.parse::<Filter>().expect("valid filter");
+            let filter = raw.parse::<Filter<Written>>().expect("valid filter");
             pretty_assertions::assert_eq!(filter.linked_depth(), expected, "depth of {raw}");
         }
     }
 
     #[test]
     fn a_malformed_filter_is_rejected_when_the_resource_is_deserialized() {
-        let error = serde_json::from_str::<Filter>("\"speed>\"").expect_err("must reject");
+        let error = serde_json::from_str::<Filter<Written>>("\"speed>\"").expect_err("must reject");
         assert!(error.to_string().contains("q expression"), "got {error}");
     }
 }

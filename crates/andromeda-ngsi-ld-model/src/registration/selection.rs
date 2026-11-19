@@ -119,6 +119,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         dataset_selector::DatasetSelector,
         filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
     };
     use serde_json::{Value, json};
@@ -239,9 +241,13 @@ mod tests {
     #[test]
     fn a_context_source_filter_reads_the_mode_and_the_added_properties() {
         let exclusive = FilterReading::of(
-            &"\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\""
-                .parse::<Filter>()
-                .expect("the filter parses"),
+            &EXAMPLE_NAMESPACE
+                .expanded(
+                    "\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\""
+                        .parse::<Filter<Written>>()
+                        .expect("the filter parses"),
+                )
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         );
         let filters = RegistrationFilters { csf: Some(&exclusive), ..NONE };
@@ -249,7 +255,9 @@ mod tests {
         assert!(!filters.admits(&registration(&json!({"mode": "inclusive"}))).expect("admission decides"));
 
         let gold = FilterReading::of(
-            &"\"https://example.org/tier\"==\"gold\"".parse::<Filter>().expect("the filter parses"),
+            &EXAMPLE_NAMESPACE
+                .expanded("\"https://example.org/tier\"==\"gold\"".parse::<Filter<Written>>().expect("the filter parses"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         );
         let filters = RegistrationFilters { csf: Some(&gold), ..NONE };

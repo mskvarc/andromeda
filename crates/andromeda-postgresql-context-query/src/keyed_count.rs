@@ -114,6 +114,8 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         page_window::PageWindow,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
@@ -135,7 +137,12 @@ mod tests {
 
     fn query(q: &str) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.q = Some(CompiledFilter::new(q.parse::<Filter>().expect("valid q"), LanguageMatching::TagEquality));
+        query.selection.q = Some(CompiledFilter::new(
+            EXAMPLE_NAMESPACE
+                .expanded(q.parse::<Filter<Written>>().expect("valid q"))
+                .expect("the names expand"),
+            LanguageMatching::TagEquality,
+        ));
         query
     }
 

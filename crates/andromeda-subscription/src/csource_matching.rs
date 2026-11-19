@@ -94,6 +94,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+        name_stage::Written,
+        namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
     };
@@ -301,7 +303,9 @@ mod tests {
     fn the_context_source_filter_is_matched_against_the_registration_properties() {
         let mut sub = subscription();
         sub.compiled_csf = Some(FilterReading::of(
-            &format!("\"{TIER}\"==\"gold\"").parse::<Filter>().expect("a valid test fixture"),
+            &EXAMPLE_NAMESPACE
+                .expanded(format!("\"{TIER}\"==\"gold\"").parse::<Filter<Written>>().expect("a valid test fixture"))
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         let gold = registration(&json!({TIER: {"type": "Property", "value": "gold"}}));
@@ -318,17 +322,25 @@ mod tests {
     fn the_context_source_filter_reads_the_registration_mode() {
         let mut sub = subscription();
         sub.compiled_csf = Some(FilterReading::of(
-            &"\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\""
-                .parse::<Filter>()
-                .expect("a valid test fixture"),
+            &EXAMPLE_NAMESPACE
+                .expanded(
+                    "\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\""
+                        .parse::<Filter<Written>>()
+                        .expect("a valid test fixture"),
+                )
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         assert!(notified_of_change(&sub, &registration(&json!({"mode": "exclusive"}))));
         assert!(!notified_of_change(&sub, &registration(&json!({"mode": "inclusive"}))));
         sub.compiled_csf = Some(FilterReading::of(
-            &"\"https://uri.etsi.org/ngsi-ld/mode\"==\"inclusive\""
-                .parse::<Filter>()
-                .expect("a valid test fixture"),
+            &EXAMPLE_NAMESPACE
+                .expanded(
+                    "\"https://uri.etsi.org/ngsi-ld/mode\"==\"inclusive\""
+                        .parse::<Filter<Written>>()
+                        .expect("a valid test fixture"),
+                )
+                .expect("the names expand"),
             LanguageMatching::TagEquality,
         ));
         assert!(notified_of_change(&sub, &registration(&json!({}))));
@@ -362,7 +374,9 @@ mod tests {
         ] {
             let mut sub = subscription();
             sub.compiled_csf = Some(FilterReading::of(
-                &csf.parse::<Filter>().expect("a valid test fixture"),
+                &EXAMPLE_NAMESPACE
+                    .expanded(csf.parse::<Filter<Written>>().expect("a valid test fixture"))
+                    .expect("the names expand"),
                 LanguageMatching::TagEquality,
             ));
             pretty_assertions::assert_eq!(notified_of_change(&sub, &declared), selected, "{csf}");
