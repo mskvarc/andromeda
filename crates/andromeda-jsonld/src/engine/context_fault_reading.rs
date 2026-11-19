@@ -115,6 +115,7 @@ const fn json_kind(kind: jstrict::Kind) -> JsonKind {
 }
 
 #[cfg(test)]
+#[expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
 mod tests {
     use crate::{
         context_fault::{ContextFault, ContextLocation},
