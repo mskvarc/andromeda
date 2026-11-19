@@ -3,7 +3,7 @@
 //! An absolute IRI is a valid written attribute name, so the conversion keeps the tree and its trailing members as they are. Only a guard type can be refused: an expanded entity type carries no length bound, and a written one does.
 
 use crate::{
-    filter::{Filter, attribute_path::AttributePath, query_term::QueryTerm, value_path::ValuePath},
+    filter::{Filter, attribute_path::AttributePath, query_term::QueryTerm, trailing_group::TrailingGroup, value_path::ValuePath},
     name_stage::{Expanded, Written},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReferenceError};
@@ -20,6 +20,23 @@ impl Filter<Expanded> {
             Filter::Or(filters) => Ok(Filter::Or(filters.into_iter().map(Filter::into_written).collect::<Result<_, _>>()?)),
             Filter::Term(term) => Ok(Filter::Term(term.into_written()?)),
         }
+    }
+
+    /// This filter in the written stage with every trailing member spelled as the client wrote it, where [`Filter::into_written`] spells it as the member addresses.
+    ///
+    /// A `LanguageProperty` target language or a raw JSON key is read in the spelling the client wrote (clause 4.9), which no `@context` rewrites, so a text that leaves the broker carries that spelling.
+    ///
+    /// # Errors
+    ///
+    /// As [`Filter::into_written`].
+    pub fn into_written_with_member_spelling(self) -> Result<Filter<Written>, NgsiLdReferenceError> {
+        let mut written = self.into_written()?;
+        for path in written.terminal_paths_mut() {
+            if let Some(TrailingGroup::Members(members)) = &mut path.trailing {
+                members.addressed.clone_from(&members.written);
+            }
+        }
+        Ok(written)
     }
 }
 
