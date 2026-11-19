@@ -38,6 +38,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
+    entity_constraint::EntityConstraint,
     filter::Filter,
     name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
@@ -49,7 +50,6 @@ use andromeda_ngsi_ld_query::{
         window::TimeInterval,
     },
     type_selection::TypeSelection,
-    written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use chrono::{DateTime, Utc};
@@ -106,7 +106,7 @@ pub struct TemporalQueryParameters {
     /// above are a flattened summary of it. Never a query string parameter, so
     /// serde skips it and the POST body conversion populates it.
     #[serde(skip)]
-    pub entity_selectors: Vec<WrittenEntitySelector>,
+    pub entity_selectors: Vec<EntityConstraint<Written>>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
@@ -284,8 +284,8 @@ impl_shared_query_params!(TemporalQueryParameters {
 impl TemporalQueryParameters {
     /// The entity selectors the query is the union of (clause 5.2.33).
     #[must_use]
-    pub fn selectors(&self) -> Cow<'_, [WrittenEntitySelector]> {
-        WrittenEntitySelector::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
+    pub fn selectors(&self) -> Cow<'_, [EntityConstraint<Written>]> {
+        EntityConstraint::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
     }
 
     /// Ask the query of `entities` alone, entities its selection has already
@@ -299,7 +299,7 @@ impl TemporalQueryParameters {
     /// also decide which instances are read.
     pub fn select_only(&mut self, entities: Vec<Identifier>) {
         for selector in &mut self.entity_selectors {
-            selector.ids = Some(entities.clone()); // clone: each selector of the union holds its own copy of the list
+            selector.ids.clone_from(&entities); // clone: each selector of the union holds its own copy of the list
         }
         self.id = Some(entities);
     }
@@ -334,11 +334,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
+        entity_constraint::EntityConstraint,
         ordering::ordering_error::OrderingError,
         projection::exclusivity::ProjectionConflict,
         query_error::QueryError,
         temporal::{time_interval_error::TimeIntervalError, window::TimeInterval},
-        written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
@@ -350,12 +350,12 @@ mod tests {
     #[test]
     fn a_query_asked_of_listed_entities_narrows_every_selector_and_keeps_its_narrowing() {
         let mut params = params_from_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&q=speed>10&timerel=after&timeAt=2024-01-01T00:00:00Z");
-        params.entity_selectors.push(WrittenEntitySelector::default());
-        params.entity_selectors.push(WrittenEntitySelector::default());
+        params.entity_selectors.push(EntityConstraint::default());
+        params.entity_selectors.push(EntityConstraint::default());
         let listed: Vec<Identifier> = vec!["urn:ngsi-ld:Vehicle:A".parse().expect("a valid identifier")];
         params.select_only(listed.clone());
         pretty_assertions::assert_eq!(params.id.as_ref(), Some(&listed));
-        assert!(params.entity_selectors.iter().all(|selector| selector.ids.as_ref() == Some(&listed)));
+        assert!(params.entity_selectors.iter().all(|selector| selector.ids == listed));
         assert!(params.entity_type.is_some() && params.id_pattern.is_some() && params.q.is_some());
         let admitted = params.admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE);
         assert!(admitted.is_ok(), "{admitted:?}");
@@ -1022,9 +1022,9 @@ mod tests {
     #[test]
     fn a_wildcard_among_several_body_selectors_refuses_local_false() {
         const WINDOW: &str = "timerel=after&timeAt=2024-01-01T00:00:00Z";
-        let selector = |selection: &str| WrittenEntitySelector {
+        let selector = |selection: &str| EntityConstraint {
             type_selection: Some(selection.parse().expect("a valid type selector")),
-            ..WrittenEntitySelector::default()
+            ..EntityConstraint::default()
         };
         for operation in [TemporalQueryOperation::Query, TemporalQueryOperation::EntityMap] {
             for local in ["", "&local=true", "&local=false"] {

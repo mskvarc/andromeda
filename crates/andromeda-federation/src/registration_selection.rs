@@ -11,11 +11,11 @@ use crate::{
     FederationService,
     entity_read::mode_admitted,
     error::FederationError,
+    expanded_constraints::ExpandedConstraints,
     forwarded_query::client_query::ClientQuery,
     operation::ForwardingOperation,
     read_binding::{ReadIntent, read_binding_for},
     request::{CsrModeFilter, EntityMapInUse},
-    selector_expansion::ExpandedSelectors,
     source_reach::SourceReach,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -28,10 +28,11 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
+    entity_constraint::EntityConstraint,
     filter::reading::filter_reading::FilterReading,
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::Written,
     scope::scope_query::ScopeQuery,
-    written_entity_selector::WrittenEntitySelector,
 };
 use chrono::Utc;
 use tracing::warn;
@@ -41,7 +42,7 @@ pub(crate) struct RegistrationSelection<'a> {
     /// The union of entity selectors the operation asks for (clause 5.2.33): a
     /// registration is contacted when some selector matches it (clause 5.12), each
     /// by its own type selector, identifiers and identifier pattern.
-    pub(crate) selectors: &'a [WrittenEntitySelector],
+    pub(crate) selectors: &'a [EntityConstraint<Written>],
     /// Which of the matching registrations are contacted.
     pub(crate) reach: SourceReach<'a>,
     /// The reading of the expanded context source filter, evaluated against
@@ -141,7 +142,7 @@ impl FederationService {
             self.registrations_of_map(map).await?
         } else {
             let prepared = self.engine.prepare_term_context(context);
-            let expanded = ExpandedSelectors::expand(&self.engine, &prepared, selection.selectors).await?;
+            let expanded = ExpandedConstraints::expand(&self.engine, &prepared, selection.selectors).await?;
             self.csr_repo.find_matching(&expanded.specifications()).await?
         };
         // A forwarded operation matches by clause 5.12, which has no temporal

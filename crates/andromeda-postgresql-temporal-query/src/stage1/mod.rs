@@ -232,7 +232,7 @@ mod tests {
         count_policy::CountPolicy,
         cursor::PageCursor,
         dataset_selector::DatasetSelector,
-        expanded_entity_selector::ExpandedEntitySelector,
+        entity_constraint::EntityConstraint,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::Written,
@@ -292,7 +292,7 @@ mod tests {
     fn stage1_timerel_placeholder_is_offset_after_id_filters() {
         let mut compiled = minimal_compiled();
         compiled.entities.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]))
                 .build(),
         ];
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn stage1_count_reuses_the_result_predicate_bind_order() {
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
+        compiled.entities.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
         let page = built(&compiled, &QueryNames::default());

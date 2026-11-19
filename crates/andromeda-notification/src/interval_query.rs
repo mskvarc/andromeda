@@ -11,8 +11,9 @@
 use andromeda_ngsi_ld_model::entity_selector::EntitySelector as StoredSelector;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
+    name_stage::Expanded,
     query_error::QueryError,
     standing_instant::StandingInstant,
 };
@@ -46,13 +47,9 @@ pub(crate) fn interval_query(sub: &CompiledSubscription, at: DateTime<Utc>) -> R
 
 /// A stored selector as a query compiles it, its type the expanded IRIs the
 /// subscription stored.
-fn compiled_selector(selector: &StoredSelector) -> Result<ExpandedEntitySelector, QueryError> {
+fn compiled_selector(selector: &StoredSelector) -> Result<EntityConstraint<Expanded>, QueryError> {
     // clone: the query owns its selectors, and the subscription lends its own
-    Ok(ExpandedEntitySelector::builder()
-        .ids(selector.id.clone().unwrap_or_default())
-        .id_pattern(selector.id_pattern.clone())
-        .type_selection(Some(selector.type_.clone().into_expanded()?))
-        .build())
+    Ok(EntityConstraint::from(selector.clone()).into_expanded()?)
 }
 
 #[cfg(test)]

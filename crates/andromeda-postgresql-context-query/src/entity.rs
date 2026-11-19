@@ -371,8 +371,8 @@ mod tests {
         count_policy::CountPolicy,
         cursor::PageCursor,
         entity::compiled::CompiledEntityQuery,
+        entity_constraint::EntityConstraint,
         entity_selection::{ConsideredEntities, EntitySelection},
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{
             Filter,
             attribute_path::AttributePath,
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn build_with_ids() {
         let mut q = empty_query();
-        q.selection.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
+        q.selection.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:a", "urn:b"])).build()];
         let built = build(&q, &known_types());
         assert_statement_snapshot!("entity-build-with-ids", built.select);
     }
@@ -686,7 +686,7 @@ mod tests {
     fn considering_no_entity_survives_beside_the_other_filters() {
         let mut q = empty_query();
         q.selection.considered = ConsideredEntities::NoEntity;
-        q.selection.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:a"])).build()];
+        q.selection.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:a"])).build()];
         let built = build(&q, &known_types());
         assert_statement_snapshot!("entity-considering-no-entity-survives-beside-the-other-filters", built.select);
     }
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn a_near_query_with_a_candidate_id_set_binds_one_array_beside_the_geometry() {
         let mut q = empty_query();
-        q.selection.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:a", "urn:b", "urn:c"])).build()];
+        q.selection.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:a", "urn:b", "urn:c"])).build()];
         q.selection.geo = Some(CompiledGeoQuery {
             georel: GeoRel::Near {
                 max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
@@ -727,7 +727,7 @@ mod tests {
     fn build_with_id_pattern() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .id_pattern(Some("urn:ngsi-ld:Vehicle:.*".parse::<Pattern>().unwrap()))
                 .build(),
         ];
@@ -742,7 +742,7 @@ mod tests {
     fn build_with_single_type() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
@@ -756,7 +756,7 @@ mod tests {
     fn an_unknown_type_selector_matches_nothing() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/NeverWritten").into())))
                 .build(),
         ];
@@ -769,7 +769,7 @@ mod tests {
     fn the_count_of_a_type_page_counts_the_walk() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
@@ -783,7 +783,7 @@ mod tests {
     fn a_typed_selector_naming_identifiers_filters_the_search_row() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .ids(ids(&["urn:a"]))
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
@@ -799,7 +799,7 @@ mod tests {
     fn a_typed_geo_query_tests_its_types_on_the_search_row() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(TypeSelection::of_alternatives(vec![
                     vec![iri("https://example.com/Vehicle").into()],
                     vec![iri("https://example.com/Home").into()],
@@ -825,7 +825,7 @@ mod tests {
         let mut q = empty_query();
         // (Home AND Vehicle) OR Motorhome
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(TypeSelection::of_alternatives(vec![
                     vec![iri("https://example.com/Home").into(), iri("https://example.com/Vehicle").into()],
                     vec![iri("https://example.com/Motorhome").into()],
@@ -840,7 +840,7 @@ mod tests {
     fn build_with_count() {
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
@@ -857,11 +857,11 @@ mod tests {
         // match `(A,T2)`.
         let mut q = empty_query();
         q.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .ids(ids(&["urn:ngsi-ld:Entity:A"]))
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/T1").into())))
                 .build(),
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .ids(ids(&["urn:ngsi-ld:Entity:B"]))
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/T2").into())))
                 .build(),

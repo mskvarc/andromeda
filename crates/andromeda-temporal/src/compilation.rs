@@ -4,8 +4,8 @@ use crate::{error::TemporalError, instance_limits::TemporalInstanceLimits, query
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
+    entity_constraint_expansion::expand_entity_constraints,
     entity_selection::{ConsideredEntities, EntitySelection},
-    entity_selector_expansion::expand_entity_selectors,
     filter::{
         compilation::{FilterOptIns, compile_q_filter},
         compiled_filter::CompiledFilter,
@@ -67,7 +67,7 @@ impl TemporalService {
         // Clause 5.2.33: a POST temporal query body's `entities[]` is a union of
         // selectors, compiled by the same helper the entity path uses so the two
         // cannot disagree on what a selection means.
-        let selectors = expand_entity_selectors(&params.selectors(), &expander).await?;
+        let selectors = expand_entity_constraints(&params.selectors(), &expander).await?;
 
         let attr_filter = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), attrs_admission, &expander).await?;
         let projection = compile_projection(params, &expander).await?;

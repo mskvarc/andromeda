@@ -38,11 +38,11 @@
 use crate::error::ParameterError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
+    entity_constraint::EntityConstraint,
     filter::{Filter, referenced_attributes::referenced_attributes},
     geo::written_geo_query::WrittenGeoQuery,
     name_stage::Written,
     type_selection::TypeSelection,
-    written_entity_selector::WrittenEntitySelector,
 };
 use strum::{Display, IntoEnumIterator};
 use typed_builder::TypedBuilder;
@@ -83,7 +83,7 @@ pub struct NarrowingInputs<'a> {
     /// Input (a) as a POST body writes it: one clause 5.2.11 selector per
     /// entry, each carrying its own type selector (clause 5.2.23).
     #[builder(default = Default::default())]
-    entity_selectors: &'a [WrittenEntitySelector],
+    entity_selectors: &'a [EntityConstraint<Written>],
     /// Input (b): the list of Attribute names, in its deprecated spelling.
     #[builder(default = Default::default())]
     attrs: Option<&'a [AttributeName]>,
@@ -120,7 +120,7 @@ impl ExecutionScope {
     /// the flat `type` and the `type` of each clause 5.2.33 selector of a POST
     /// body alike.
     #[must_use]
-    pub fn of(local: Option<bool>, entity_type: Option<&TypeSelection<Written>>, selectors: &[WrittenEntitySelector]) -> ExecutionScope {
+    pub fn of(local: Option<bool>, entity_type: Option<&TypeSelection<Written>>, selectors: &[EntityConstraint<Written>]) -> ExecutionScope {
         if selects_every_type(entity_type, selectors) {
             ExecutionScope::Local
         } else {
@@ -149,7 +149,7 @@ impl ExecutionScope {
 pub fn require_wildcard_locality(
     local: Option<bool>,
     entity_type: Option<&TypeSelection<Written>>,
-    selectors: &[WrittenEntitySelector],
+    selectors: &[EntityConstraint<Written>],
 ) -> Result<(), ParameterError> {
     match local {
         Some(false) if selects_every_type(entity_type, selectors) => Err(ParameterError::WildcardTypeWithLocalFalse),
@@ -159,7 +159,7 @@ pub fn require_wildcard_locality(
 
 /// Whether the flat `type` or the `type` of any clause 5.2.33 selector is the
 /// clause 4.17 `*` that selects every Entity Type.
-fn selects_every_type(entity_type: Option<&TypeSelection<Written>>, selectors: &[WrittenEntitySelector]) -> bool {
+fn selects_every_type(entity_type: Option<&TypeSelection<Written>>, selectors: &[EntityConstraint<Written>]) -> bool {
     entity_type
         .into_iter()
         .chain(selectors.iter().filter_map(|selector| selector.type_selection.as_ref()))

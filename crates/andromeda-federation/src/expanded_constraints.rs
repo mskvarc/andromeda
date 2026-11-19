@@ -1,7 +1,7 @@
-//! A query's entity selectors with their type selections expanded, as the
+//! A query's entity constraints with their type selections expanded, as the
 //! registration preselect reads them (clause 5.12).
 //!
-//! Registrations hold the types they cover expanded, so each selector of the
+//! Registrations hold the types they cover expanded, so each constraint of the
 //! union a client asked for (clause 5.2.33) is matched with its clause 4.17
 //! type selection expanded under the request context, whatever its shape.
 
@@ -12,19 +12,19 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
-    entity_selector_expansion::expand_entity_selectors,
-    expanded_entity_selector::ExpandedEntitySelector,
-    written_entity_selector::WrittenEntitySelector,
+    entity_constraint::EntityConstraint,
+    entity_constraint_expansion::expand_entity_constraints,
+    name_stage::{Expanded, Written},
 };
 
-/// The selectors of one read, each compiled with its type selection expanded.
-pub(crate) struct ExpandedSelectors {
-    /// The compiled selectors, in the order the client wrote them.
-    selectors: Vec<ExpandedEntitySelector>,
+/// The constraints of one read, each compiled with its type selection expanded.
+pub(crate) struct ExpandedConstraints {
+    /// The compiled constraints, in the order the client wrote them.
+    constraints: Vec<EntityConstraint<Expanded>>,
 }
 
-impl ExpandedSelectors {
-    /// Compile every selector under `context`.
+impl ExpandedConstraints {
+    /// Compile every constraint under `context`.
     ///
     /// # Errors
     ///
@@ -33,21 +33,21 @@ impl ExpandedSelectors {
     pub(crate) async fn expand(
         engine: &JsonLdEngine,
         context: &PreparedTermContext,
-        selectors: &[WrittenEntitySelector],
-    ) -> Result<ExpandedSelectors, FederationError> {
-        let selectors = expand_entity_selectors(selectors, &ContextualExpander::new(engine, context)).await?;
-        Ok(ExpandedSelectors { selectors })
+        constraints: &[EntityConstraint<Written>],
+    ) -> Result<ExpandedConstraints, FederationError> {
+        let constraints = expand_entity_constraints(constraints, &ContextualExpander::new(engine, context)).await?;
+        Ok(ExpandedConstraints { constraints })
     }
 
-    /// The clause 5.12 specification each selector is: its expanded type, its
+    /// The clause 5.12 specification each constraint is: its expanded type, its
     /// identifiers and its identifier pattern.
     pub(crate) fn specifications(&self) -> Vec<ExpandedEntitySpecification<'_>> {
-        self.selectors
+        self.constraints
             .iter()
-            .map(|selector| ExpandedEntitySpecification {
-                entity_type: selector.type_selection.as_ref(),
-                ids: &selector.ids,
-                id_pattern: selector.id_pattern.as_ref(),
+            .map(|constraint| ExpandedEntitySpecification {
+                entity_type: constraint.type_selection.as_ref(),
+                ids: &constraint.ids,
+                id_pattern: constraint.id_pattern.as_ref(),
             })
             .collect()
     }
@@ -55,26 +55,26 @@ impl ExpandedSelectors {
 
 #[cfg(test)]
 mod tests {
-    use crate::{fixed_registration_store::offline_service, selector_expansion::ExpandedSelectors};
+    use crate::{expanded_constraints::ExpandedConstraints, fixed_registration_store::offline_service};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_query::{name_stage::Written, type_selection::TypeSelection, written_entity_selector::WrittenEntitySelector};
+    use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written, type_selection::TypeSelection};
     use serde_json::json;
 
-    fn selector(type_: &str) -> WrittenEntitySelector {
-        WrittenEntitySelector {
+    fn selector(type_: &str) -> EntityConstraint<Written> {
+        EntityConstraint {
             type_selection: Some(type_.parse::<TypeSelection<Written>>().expect("a valid type expression")),
-            ..WrittenEntitySelector::default()
+            ..EntityConstraint::default()
         }
     }
 
-    async fn specified(selectors: &[WrittenEntitySelector]) -> Vec<Option<String>> {
+    async fn specified(selectors: &[EntityConstraint<Written>]) -> Vec<Option<String>> {
         let service = offline_service(Vec::new());
         let context = ContextSpec::from_body(
             JsonLiteral::admit(&json!({"Alpha": "https://example.org/Alpha", "Beta": "https://example.org/Beta"}).to_string()).expect("an admissible literal"),
         );
         let prepared = service.engine().prepare_term_context(&context);
-        let expanded = ExpandedSelectors::expand(service.engine(), &prepared, selectors)
+        let expanded = ExpandedConstraints::expand(service.engine(), &prepared, selectors)
             .await
             .expect("the selectors expand");
         expanded
@@ -88,7 +88,7 @@ mod tests {
     /// selector naming none stays unconstrained on the type axis.
     #[tokio::test]
     async fn each_selector_keeps_its_own_expanded_type() {
-        let specifications = specified(&[selector("Alpha"), selector("Beta"), WrittenEntitySelector::default()]).await;
+        let specifications = specified(&[selector("Alpha"), selector("Beta"), EntityConstraint::default()]).await;
         assert!(
             specifications[0].as_deref().is_some_and(|text| text.contains("https://example.org/Alpha")),
             "{specifications:?}"
@@ -119,7 +119,7 @@ mod tests {
         let service = offline_service(Vec::new());
         let prepared = service.engine().prepare_term_context(&ContextSpec::none());
         let selectors = [selector("*")];
-        let expanded = ExpandedSelectors::expand(service.engine(), &prepared, &selectors)
+        let expanded = ExpandedConstraints::expand(service.engine(), &prepared, &selectors)
             .await
             .expect("the selectors expand");
         assert!(matches!(expanded.specifications()[0].entity_type, Some(TypeSelection::Wildcard)));

@@ -52,8 +52,8 @@ use syn::{
 const MATCHED_RESOURCES: [&str; 3] = ["registration", "subscription", "entity_info"];
 
 /// The model module defining the clause 5.2.33 `EntitySelector`. The query
-/// crate's compiled selector lives in `expanded_entity_selector`, and the request
-/// crate's selector type has a name of its own.
+/// crate's selector constraint lives in `entity_constraint`, under a name of its
+/// own.
 const SELECTOR_MODULE: &str = "entity_selector";
 
 /// The methods that match a type selection.

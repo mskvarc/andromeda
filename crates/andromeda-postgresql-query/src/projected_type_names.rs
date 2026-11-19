@@ -47,8 +47,8 @@ mod tests {
     use crate::projected_type_names::projected_type_names;
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::{
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         name_stage::{Expanded, Written},
         namespace_expander::EXAMPLE_NAMESPACE,
@@ -57,9 +57,9 @@ mod tests {
 
     fn selection_with(type_expr: Option<TypeSelection<Expanded>>, q: Option<&str>) -> EntitySelection {
         let mut selection = EntitySelection::default();
-        selection.selectors.push(ExpandedEntitySelector {
+        selection.selectors.push(EntityConstraint {
             type_selection: type_expr,
-            ..ExpandedEntitySelector::default()
+            ..EntityConstraint::default()
         });
         selection.q = q.map(|q| {
             CompiledFilter::new(

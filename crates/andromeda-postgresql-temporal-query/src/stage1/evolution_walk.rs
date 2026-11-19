@@ -247,7 +247,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
-        expanded_entity_selector::ExpandedEntitySelector,
+        entity_constraint::EntityConstraint,
         page_window::PageWindow,
         pattern::Pattern,
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
@@ -285,9 +285,7 @@ mod tests {
             ),
         ]);
         let compiled = typed(vec![
-            ExpandedEntitySelector::builder()
-                .type_selection(TypeSelection::any_of([vehicle(), bus]))
-                .build(),
+            EntityConstraint::builder().type_selection(TypeSelection::any_of([vehicle(), bus])).build(),
         ]);
         let statement = built(&compiled, &names);
         assert_statement_snapshot!("evolution-walk-a-type-disjunction-walks-the-merged-ranges-in-identifier-order", statement);
@@ -321,7 +319,7 @@ mod tests {
     #[test]
     fn a_lone_typed_selector_keeps_its_pattern_over_the_walk() {
         let compiled = typed(vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .id_pattern(Some(".*:7$".parse::<Pattern>().expect("valid pattern")))
                 .type_selection(Some(vehicle()))
                 .build(),
@@ -335,7 +333,7 @@ mod tests {
     #[test]
     fn a_typed_selector_naming_identifiers_keeps_the_catalogue() {
         let compiled = typed(vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .ids(ids(&["urn:ngsi-ld:Vehicle:1"]))
                 .type_selection(Some(vehicle()))
                 .build(),
@@ -350,7 +348,7 @@ mod tests {
     #[test]
     fn several_selectors_pairing_types_with_patterns_keep_the_catalogue() {
         let compiled = typed(vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .id_pattern(Some(".*:7$".parse::<Pattern>().expect("valid pattern")))
                 .type_selection(Some(vehicle()))
                 .build(),
@@ -365,7 +363,7 @@ mod tests {
     fn a_selection_with_an_untyped_selector_keeps_the_catalogue() {
         let compiled = typed(vec![
             vehicle_selector(),
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .id_pattern(Some(".*".parse::<Pattern>().expect("valid pattern")))
                 .build(),
         ]);
@@ -475,7 +473,7 @@ mod tests {
     fn an_attrs_selection_with_an_id_pattern_walks_the_streams_and_keeps_the_pattern() {
         let mut compiled = speed_only();
         compiled.entities.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .id_pattern(Some(".*:7$".parse::<Pattern>().expect("valid pattern")))
                 .build(),
         ];
@@ -498,7 +496,7 @@ mod tests {
         assert_statement_snapshot!("evolution-walk-an-attrs-selection-beside-a-type-or-identifiers-keeps-its-own-walk-1", by_type);
 
         let mut identified = speed_only();
-        identified.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
+        identified.entities.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         let by_identifier = built(&identified, &names);
         assert_statement_snapshot!(
             "evolution-walk-an-attrs-selection-beside-a-type-or-identifiers-keeps-its-own-walk-2",

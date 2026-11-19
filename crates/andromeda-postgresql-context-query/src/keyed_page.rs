@@ -189,8 +189,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         name_stage::Written,
         namespace_expander::EXAMPLE_NAMESPACE,
@@ -236,11 +236,7 @@ mod tests {
         let mut query = query("\"https://example.com/status\"==\"fail\"");
         query.selection.selectors = selected
             .iter()
-            .map(|ty| {
-                ExpandedEntitySelector::builder()
-                    .type_selection(Some(TypeSelection::single(iri(ty).into())))
-                    .build()
-            })
+            .map(|ty| EntityConstraint::builder().type_selection(Some(TypeSelection::single(iri(ty).into()))).build())
             .collect();
         query.selection.attrs = vec![iri("temperature")];
         query

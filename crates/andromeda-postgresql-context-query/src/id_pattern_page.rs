@@ -128,10 +128,10 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
-        name_stage::Written,
+        name_stage::{Expanded, Written},
         namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
@@ -158,8 +158,8 @@ mod tests {
         }
     }
 
-    fn selector(ty: Option<&str>, pattern: &str) -> ExpandedEntitySelector {
-        ExpandedEntitySelector::builder()
+    fn selector(ty: Option<&str>, pattern: &str) -> EntityConstraint<Expanded> {
+        EntityConstraint::builder()
             .type_selection(ty.map(|ty| TypeSelection::single(IriBuf::new(format!("https://example.com/{ty}")).expect("valid IRI").into())))
             .id_pattern(Some(pattern.parse::<Pattern>().expect("valid pattern")))
             .build()

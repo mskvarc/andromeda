@@ -37,7 +37,7 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, dataset_overlap::DatasetOverlap, info::RegistrationInfo},
     registration_matching::entity_specification::EntitySpecification,
 };
-use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
+use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
 use std::num::NonZeroU32;
@@ -253,10 +253,10 @@ impl RegistrationForwarding<'_, '_> {
     /// # Errors
     ///
     /// Returns the errors of [`BlockSelection::of`].
-    async fn selection(&self, selector: &WrittenEntitySelector, block: &RegistrationInfo) -> Result<Option<BlockSelection>, FederationError> {
+    async fn selection(&self, selector: &EntityConstraint<Written>, block: &RegistrationInfo) -> Result<Option<BlockSelection>, FederationError> {
         BlockSelection::of(
             block,
-            selector.ids.as_deref(),
+            selector.named_ids(),
             selector.id_pattern.as_ref(),
             selector.type_selection.as_ref(),
             self.names,
@@ -273,7 +273,7 @@ impl RegistrationForwarding<'_, '_> {
     ///
     /// Returns [`FederationError::JsonLd`] when a client type or attribute
     /// cannot be expanded against the request context.
-    async fn for_block(&self, selector: &WrittenEntitySelector, block: &RegistrationInfo) -> Result<Option<ForwardedQuery>, FederationError> {
+    async fn for_block(&self, selector: &EntityConstraint<Written>, block: &RegistrationInfo) -> Result<Option<ForwardedQuery>, FederationError> {
         let mut query = ForwardedQuery::default();
         match self.client {
             ClientQuery::EntityQuery(params) => {
@@ -408,7 +408,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
+    use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written};
     use andromeda_ngsi_ld_request::{
         entity::GetEntityParams,
         query::{
@@ -747,16 +747,16 @@ mod tests {
 
     /// A POST query naming `selectors`, whose flat members are the flattened
     /// summary the body conversion leaves.
-    fn union_query(selectors: Vec<WrittenEntitySelector>) -> EntityQueryParameters {
+    fn union_query(selectors: Vec<EntityConstraint<Written>>) -> EntityQueryParameters {
         let mut query = entity_query("");
         query.entity_selectors = selectors;
         query
     }
 
-    fn typed(raw: &str) -> WrittenEntitySelector {
-        WrittenEntitySelector {
+    fn typed(raw: &str) -> EntityConstraint<Written> {
+        EntityConstraint {
             type_selection: Some(raw.parse().expect("valid type expression")),
-            ..WrittenEntitySelector::default()
+            ..EntityConstraint::default()
         }
     }
 
@@ -808,8 +808,8 @@ mod tests {
     #[tokio::test]
     async fn a_selector_pairs_its_identifier_with_its_own_type() {
         let reg = registration(&json!([{"entities": [{"type": DEVICE, "id": VEHICLE_X}]}]));
-        let query = union_query(vec![WrittenEntitySelector {
-            ids: Some(vec![uri(VEHICLE_X)]),
+        let query = union_query(vec![EntityConstraint {
+            ids: vec![uri(VEHICLE_X)],
             ..typed("Vehicle")
         }]);
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;

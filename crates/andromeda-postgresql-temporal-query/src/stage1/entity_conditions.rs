@@ -5,9 +5,10 @@
 use crate::{projected_members::projected_member_condition, stage1::evolution_walk::TypeTest, value_filters::value_filter_condition};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
+    entity_constraint::EntityConstraint,
     entity_selection::ConsideredEntities,
-    expanded_entity_selector::ExpandedEntitySelector,
     identifier_axis::IdentifierAxis,
+    name_stage::Expanded,
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
@@ -97,7 +98,7 @@ pub(super) fn build_entity_conditions_for_temporal(
 /// carry the same names on both relations, so the two cannot drift on what a
 /// selector means.
 fn temporal_selector_condition(
-    selector: &ExpandedEntitySelector,
+    selector: &EntityConstraint<Expanded>,
     types: &ResolvedNames<EntityTypeName>,
     type_test: TypeTest,
     pattern_test: PatternTest,
@@ -135,7 +136,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
-        expanded_entity_selector::ExpandedEntitySelector,
+        entity_constraint::EntityConstraint,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::Written,
@@ -162,7 +163,7 @@ mod tests {
         let raw: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
         let mut compiled = minimal_compiled();
         compiled.entities.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .ids(ids(&raw.iter().map(String::as_str).collect::<Vec<_>>()))
                 .build(),
         ];
@@ -244,7 +245,7 @@ mod tests {
     /// aggregation, with an identifier selector and a bounded window.
     fn filtered_compiled() -> CompiledTemporalQuery {
         let mut compiled = minimal_compiled();
-        compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
+        compiled.entities.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
             EXAMPLE_NAMESPACE

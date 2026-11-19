@@ -41,7 +41,7 @@ fn a_planted_identifier_decision_fails_the_gate_with_its_file_and_line() {
 
 #[test]
 fn an_identifier_pattern_read_in_a_source_handling_no_registration_passes() {
-    let source = "use andromeda_ngsi_ld_query::expanded_entity_selector::ExpandedEntitySelector; fn f(s: &ExpandedEntitySelector, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
+    let source = "use andromeda_ngsi_ld_query::entity_constraint::EntityConstraint; fn f(s: &EntityConstraint<Expanded>, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
     assert_eq!(reports(OUTSIDE, source), Vec::<String>::new());
 }
 
@@ -53,7 +53,7 @@ fn a_model_selector_pattern_read_is_flagged() {
 
 #[test]
 fn a_request_selector_pattern_read_passes() {
-    let source = "use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector; fn f(s: &WrittenEntitySelector, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
+    let source = "use andromeda_ngsi_ld_query::entity_constraint::EntityConstraint; fn f(s: &EntityConstraint<Written>, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
     assert_eq!(reports(OUTSIDE, source), Vec::<String>::new());
 }
 
@@ -176,7 +176,7 @@ fn every_decision_inside_the_engine_passes() {
 
 #[test]
 fn the_identifier_definitions_may_build_an_axis_but_decide_no_standing() {
-    let path = "crates/andromeda-ngsi-ld-query/src/expanded_entity_selector.rs";
+    let path = "crates/andromeda-ngsi-ld-query/src/entity_constraint.rs";
     assert_eq!(
         reports(path, "fn f(s: &S) -> IdentifierAxis<'_> { IdentifierAxis::of(&s.ids, s.id_pattern.as_ref()) }"),
         Vec::<String>::new()

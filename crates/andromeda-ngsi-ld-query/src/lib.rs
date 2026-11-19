@@ -29,10 +29,10 @@ pub mod cursor;
 pub mod dataset_selector;
 pub mod defined_token;
 pub mod entity;
+pub mod entity_constraint;
+pub mod entity_constraint_expansion;
 pub mod entity_filters;
 pub mod entity_selection;
-pub mod entity_selector_expansion;
-pub mod expanded_entity_selector;
 pub mod filter;
 pub mod geo;
 pub mod identifier_axis;
@@ -57,7 +57,6 @@ pub mod temporal;
 pub mod term_compactor;
 pub mod term_expander;
 pub mod type_selection;
-pub mod written_entity_selector;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

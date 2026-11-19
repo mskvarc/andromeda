@@ -6,11 +6,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
-    expanded_entity_selector::ExpandedEntitySelector,
+    entity_constraint::EntityConstraint,
     geo::{
         compiled_geo_query::CompiledGeoQuery,
         default_location_narrowing::{DefaultLocationNarrowing, LocationCandidates},
     },
+    name_stage::Expanded,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_spatial_index::{
@@ -26,7 +27,7 @@ struct Accelerable<'a> {
     /// The query's geo filter.
     geo: &'a CompiledGeoQuery,
     /// The query's one entity selector.
-    selector: &'a ExpandedEntitySelector,
+    selector: &'a EntityConstraint<Expanded>,
     /// The expanded types the selector reaches.
     type_iris: Vec<IriBuf>,
 }

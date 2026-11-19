@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::{
     received::ContextualEntity,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
-use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
+use andromeda_ngsi_ld_query::entity_constraint::EntityConstraint;
 
 /// The pages every source answered, each charged to `budget` as a walk charges
 /// its pages: every element the source sent as a row, and the entities it
@@ -311,9 +311,9 @@ impl FederationService {
             .select_registrations(
                 context,
                 RegistrationSelection {
-                    selectors: &[WrittenEntitySelector {
-                        ids: Some(vec![entity_id.clone()]),
-                        ..WrittenEntitySelector::default()
+                    selectors: &[EntityConstraint {
+                        ids: vec![entity_id.clone()],
+                        ..EntityConstraint::default()
                     }],
                     reach,
                     csf: None,

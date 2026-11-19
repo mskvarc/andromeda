@@ -146,8 +146,8 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::Written,
@@ -204,7 +204,7 @@ mod tests {
             .entities(
                 EntitySelection::builder()
                     .selectors(vec![
-                        ExpandedEntitySelector::builder()
+                        EntityConstraint::builder()
                             .type_selection(Some(TypeSelection::single(IriBuf::new(SENSOR.to_owned()).expect("valid IRI").into())))
                             .build(),
                     ])

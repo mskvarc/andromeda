@@ -55,7 +55,7 @@ mod tests {
         query_fixture::{id_pattern, opened, recorded_stage1, stage1_on},
     };
     use andromeda_ngsi_ld_query::{
-        expanded_entity_selector::ExpandedEntitySelector,
+        entity_constraint::EntityConstraint,
         ordering::{icu_collation::IcuCollation, sort_direction::SortDirection},
         page_window::PageWindow,
         pattern::Pattern,
@@ -124,7 +124,7 @@ mod tests {
     fn paired_selectors_read_no_trigrams_and_an_ordering_keeps_the_plain_walk() {
         let mut paired = opened(id_pattern(Some("Sensor"), ".*:0123.*"));
         paired.entities.selectors.push(
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .id_pattern(Some(".*:9.*".parse::<Pattern>().expect("valid pattern")))
                 .build(),
         );

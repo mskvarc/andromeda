@@ -9,8 +9,8 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
     filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
     geo::compiled_geo_query::CompiledGeoQuery,
     name_stage::Written,
@@ -54,7 +54,7 @@ pub(crate) fn iri(name: &str) -> IriBuf {
 pub(crate) fn sensors() -> CompiledEntityQuery {
     let selection = EntitySelection::builder()
         .selectors(vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("Sensor").into())))
                 .build(),
         ])

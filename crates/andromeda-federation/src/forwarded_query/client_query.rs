@@ -10,10 +10,10 @@
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
+    entity_constraint::EntityConstraint,
     filter::Filter,
     name_stage::Written,
     scope::scope_query::ScopeQuery,
-    written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
@@ -73,18 +73,18 @@ impl ClientQuery<'_> {
     /// selector of its flat parameters. A retrieval is the one selector naming
     /// the entity of its path and the client's type, if any.
     #[must_use]
-    pub fn selectors(&self) -> Cow<'_, [WrittenEntitySelector]> {
+    pub fn selectors(&self) -> Cow<'_, [EntityConstraint<Written>]> {
         match self {
             ClientQuery::EntityQuery(params) => params.selectors(),
             ClientQuery::TemporalQuery(params) => params.selectors(),
-            ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![WrittenEntitySelector {
-                ids: Some(vec![(*id).clone()]),
+            ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![EntityConstraint {
+                ids: vec![(*id).clone()],
                 type_selection: params.entity_type.clone(),
                 id_pattern: None,
             }]),
-            ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![WrittenEntitySelector {
-                ids: Some(vec![(*id).clone()]),
-                ..WrittenEntitySelector::default()
+            ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![EntityConstraint {
+                ids: vec![(*id).clone()],
+                ..EntityConstraint::default()
             }]),
         }
     }
