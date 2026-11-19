@@ -10,7 +10,7 @@
 //! the literal keys its client wrote.
 //!
 //! A filter whose names follow a rule of their own, such as the members of a
-//! resource a filter selects, is renamed into the expanded stage by that rule
+//! resource a filter selects, is converted into the expanded stage by that rule
 //! through [`Filter::into_expanded_by`].
 
 use crate::{
@@ -85,7 +85,7 @@ impl TryFrom<String> for Filter<Expanded> {
 }
 
 impl QueryTerm<Written> {
-    /// This query term as an expanded one, each name renamed by the rule
+    /// This query term as an expanded one, each name converted by the rule
     /// given.
     ///
     /// # Errors
@@ -121,7 +121,7 @@ impl QueryTerm<Written> {
 }
 
 impl AttributePath<Written> {
-    /// This attribute path as an expanded one, each name renamed by the rule
+    /// This attribute path as an expanded one, each name converted by the rule
     /// given.
     ///
     /// # Errors
@@ -159,7 +159,7 @@ impl ValuePath<Written> {
         self.into_expanded_by(&absolute_attribute)
     }
 
-    /// This value path as an expanded one, its attribute renamed by the rule
+    /// This value path as an expanded one, its attribute converted by the rule
     /// given.
     ///
     /// # Errors

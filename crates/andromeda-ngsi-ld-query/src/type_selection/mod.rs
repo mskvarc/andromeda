@@ -4,6 +4,12 @@
 //! of entity type names. This module owns its grammar, its parser, its
 //! in-memory evaluation and the expansion of compact names to IRIs; rendering
 //! the expanded tree against a store belongs to that backend.
+//!
+//! One type, [`TypeSelection`], holds both name stages. `expand_type_selection`
+//! turns a `TypeSelection<Written>` into a `TypeSelection<Expanded>` through the
+//! request `@context`, `compact_type_selection` spells it back leaf by leaf in a
+//! reader's terms, and `TypeSelection::into_expanded` checks a stored text whose
+//! types are already absolute IRIs into the expanded stage.
 
 pub mod compaction;
 pub mod expansion;
@@ -156,7 +162,7 @@ impl TypeSelection<Expanded> {
     ///
     /// Returns [`TypeSelectionError::InvalidName`] when a leaf IRI does not
     /// satisfy the clause 4.6.2 type-name grammar, which includes the identifier
-    /// byte bound an expanded type carries none of.
+    /// byte bound that an expanded type does not carry itself.
     pub fn into_written(self) -> Result<TypeSelection<Written>, TypeSelectionError> {
         match self {
             TypeSelection::Wildcard => Ok(TypeSelection::Wildcard),

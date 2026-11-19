@@ -6,8 +6,22 @@
 //! and serialisation back to clause 4.9 syntax. How a filter is evaluated, in
 //! memory or in a storage dialect, is a property of that execution and lives
 //! with it.
+//!
+//! A filter exists in two name stages, one type over both: a `Filter<Written>`
+//! holds the terms as the client wrote them and is what the parser yields, and a
+//! `Filter<Expanded>` holds every attribute name and entity type as the absolute
+//! IRI the request `@context` expands it to, which is what every execution
+//! reads. A tree crosses to the expanded stage through `expand_filter` (the
+//! `@context` expands the terms), or through `Filter::into_expanded` when a
+//! stored text already spells absolute IRIs and only needs checking. It crosses
+//! back through `compact_filter`, which spells the IRIs in the terms of a
+//! reader's `@context`, or `Filter::into_written`, which keeps the IRIs as
+//! text. The sub-attributes and the members of a trailing group are
+//! [`AttributeName`](andromeda_ngsi_ld_lexicon::attribute_name::AttributeName)s
+//! in both stages, and `MemberPath::written` keeps the spelling the client wrote
+//! beside the names the members address: a `LanguageProperty` target language or
+//! a raw JSON key is read as written (clause 4.9), and no `@context` rewrites it.
 
-pub mod absolute_names;
 pub mod attribute_path;
 pub mod compaction;
 pub mod compilation;
@@ -22,6 +36,8 @@ pub mod filter_error;
 pub(crate) mod generated_filters;
 pub mod hop_admission;
 pub mod instance_metadata;
+pub mod into_expanded;
+pub mod into_written;
 pub mod json_key_attributes;
 pub mod language_matching;
 pub mod language_range;
@@ -42,7 +58,6 @@ pub mod trailing_group;
 pub mod unicode_escape_error;
 pub mod value_path;
 pub mod written_members;
-pub mod written_names;
 
 use crate::{
     filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath},

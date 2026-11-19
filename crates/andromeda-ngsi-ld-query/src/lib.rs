@@ -20,6 +20,16 @@
 //! [`term_expander::TermExpander`], and a stored filter read back in a
 //! reader's terms asks a [`term_compactor::TermCompactor`]; the JSON-LD engine
 //! implements both.
+//!
+//! The names a language carries have two stages, [`name_stage::Written`] (as the
+//! client wrote them) and [`name_stage::Expanded`] (absolute IRIs through the
+//! request `@context`). A tree that exists in both is generic over the stage:
+//! [`filter::Filter`], [`type_selection::TypeSelection`],
+//! [`entity_constraint::EntityConstraint`], [`geo::geo_constraint::GeoConstraint`]
+//! and the `aggrGroupBy` trees. Expansion and compaction are the free functions
+//! that cross between the stages, and a stored text is checked into the expanded
+//! stage by `into_expanded`. An execution reads only the expanded stage, so the
+//! compiler refuses to run a tree whose terms have not been expanded.
 
 pub mod candidate_filters;
 pub mod comma_separated_list;

@@ -34,6 +34,11 @@ use chrono::Utc;
 use std::collections::HashSet;
 
 /// Report a subscription whose expiration is due as expired (clause 5.2.12).
+///
+/// The sweeper persisting the clause 5.8.1.4 expiry runs on a cadence, so a
+/// read between the due instant and the sweep reports the status already
+/// reached rather than the one the row still carries. `isActive` is the
+/// client's own member and is left as written.
 fn report_expired_status(subscription: &mut Subscription) {
     let standing = &mut subscription.lifecycle.standing;
     standing.status = standing.reported_status(Utc::now());
@@ -102,6 +107,12 @@ fn compacted_projection(compactor: &NameCompaction, lists: Vec<WrittenProjection
 
 /// The stored `q` in the reader's terms, with the `expandValues` coercion
 /// reverted, or as it stands when it cannot be compacted.
+///
+/// The `q` operands `expandValues` coerced are put back. Table 5.2.12-1 makes
+/// that coercion something done "prior to executing the query", so it belongs
+/// to the filter a match runs and not to the Subscription resource: a client
+/// that created `q=status=="active"` with `expandValues=status` reads back the
+/// filter it wrote.
 async fn compacted_q(
     compactor: &NameCompaction,
     stored: &Filter<Expanded>,
@@ -115,6 +126,10 @@ async fn compacted_q(
 
 /// The stored `csf` in the reader's terms, or as it stands when it cannot be
 /// compacted.
+///
+/// No `expandValues` coercion is reverted: `expandValues` names Entity
+/// attributes, while `csf` addresses a registration's Context Source
+/// Properties.
 async fn compacted_csf(compactor: &NameCompaction, stored: &Filter<Expanded>, spelled: Option<Filter<Written>>) -> Option<Filter<Written>> {
     // clone: compaction consumes the tree and the stored subscription keeps its own
     compact_context_source_filter(stored.clone(), compactor).await.ok().or(spelled)
@@ -127,7 +142,11 @@ fn compacted_geo_q(compactor: &NameCompaction, mut geo_q: GeoConstraint<Written>
     geo_q
 }
 
-/// The names of a stored subscription in the reader's terms.
+/// The names of a stored subscription in the reader's terms (clause 5.5.7).
+///
+/// Both filters are clause 4.9 expressions whose attribute terms were expanded
+/// when the subscription was written. `scopeQ` is a clause 4.19 scope path and
+/// carries no attribute terms, so it is served as stored.
 async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spelled: WrittenSubscriptionTerms) -> WrittenSubscriptionTerms {
     let filters = &stored.filters;
     let opted_in: HashSet<AttributeIri> = filters.expand_values.iter().flatten().cloned().collect();
@@ -159,8 +178,9 @@ async fn compacted_terms(compactor: &NameCompaction, stored: &Subscription, spel
 }
 
 /// A stored subscription as its reader reads it: the names in the terms of the
-/// reader's `@context`, the expiration reported as it stands now, and
-/// `localOnly` only when it is true.
+/// reader's `@context`, the expiration reported as it stands at read time, and
+/// `localOnly` only when it is true, which is the default Table 5.2.12-1 gives
+/// the member.
 ///
 /// # Errors
 ///

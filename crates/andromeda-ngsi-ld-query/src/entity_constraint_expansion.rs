@@ -73,6 +73,8 @@ mod tests {
 
     /// Clause 5.2.33: each selector of a union keeps its own identifiers,
     /// pattern and type, so no pairing across selectors is compiled.
+    /// Clause 5.2.33: each selector of a union keeps its own identifiers,
+    /// pattern and type, so no pairing across selectors is compiled.
     #[tokio::test]
     async fn each_selector_compiles_on_its_own() {
         let constraints = [
@@ -98,6 +100,8 @@ mod tests {
         pretty_assertions::assert_eq!(compiled[1].type_selection, TypeSelection::any_of([type_iri("B"), type_iri("C")]));
     }
 
+    /// Clause 6.4.3.2 leaves `type` optional on a GET query, so a selector
+    /// without one constrains no type.
     /// Clause 6.4.3.2 leaves `type` optional on a GET query, so a selector
     /// without one constrains no type.
     #[tokio::test]
