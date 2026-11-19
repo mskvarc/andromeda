@@ -12,6 +12,8 @@ pub mod builder;
 pub mod compaction_context;
 pub mod context_compactor;
 pub mod context_document;
+pub mod context_document_check;
+pub(crate) mod context_fault_reading;
 pub(crate) mod context_syntax;
 pub mod context_url;
 pub mod expanded_text;

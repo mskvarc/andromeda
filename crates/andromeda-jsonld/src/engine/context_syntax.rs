@@ -1,20 +1,31 @@
 //! A resolved `@context`, read as the context syntax the JSON-LD processor
 //! processes.
 
-use crate::{document_context::ResolvedContext, engine::processor_text::ProcessorTextError, error::JsonLdError};
+use crate::{
+    context_fault::FaultyContext,
+    document_context::ResolvedContext,
+    engine::{context_fault_reading::syntax_fault, processor_text::ProcessorTextError},
+    error::JsonLdError,
+};
 use jsonld::syntax::{Context, TryFromJson};
 use jstrict::parse::parse_str_value;
 
 /// The context syntax `resolved` is.
 ///
+/// A resolved context names every remote document by URL, so a syntax refusal
+/// is in a context written in place, which has no name to report it under.
+///
 /// # Errors
 ///
 /// Returns [`JsonLdError::ProcessorText`] when the processor's reader refuses
 /// the resolved text, which the broker writes itself, and
-/// [`JsonLdError::InlineContextInvalid`] when it is not a JSON-LD context.
+/// [`JsonLdError::ContextUnprocessable`] when it is not a JSON-LD context.
 pub(crate) fn context_syntax(resolved: &ResolvedContext) -> Result<Context, JsonLdError> {
     let value = parse_str_value(resolved.text()).map_err(ProcessorTextError::from)?;
-    Context::try_from_json(&value).map_err(JsonLdError::InlineContextInvalid)
+    Context::try_from_json(&value).map_err(|invalid| JsonLdError::ContextUnprocessable {
+        context: FaultyContext::Unnamed,
+        fault: syntax_fault(&invalid),
+    })
 }
 
 #[cfg(test)]
@@ -32,6 +43,9 @@ mod tests {
     #[test]
     fn an_entry_no_context_takes_is_invalid() {
         let spec = ContextSpec::from_body(JsonLiteral::admit("[3]").expect("admissible"));
-        assert!(matches!(context_syntax(&spec.resolved_context()), Err(JsonLdError::InlineContextInvalid(_))));
+        assert!(matches!(
+            context_syntax(&spec.resolved_context()),
+            Err(JsonLdError::ContextUnprocessable { .. })
+        ));
     }
 }

@@ -21,6 +21,7 @@
 use crate::engine::processor::count_document_expansion;
 use crate::{
     container_terms::container_terms,
+    context_fault::FaultyContext,
     context_graph::check_context_graph,
     context_spec::ContextSpec,
     core_term_aliases::core_term_aliases,
@@ -32,8 +33,8 @@ use crate::{
         processor::JsonLdEngine,
         processor_text::ProcessorTextError,
     },
-    error::JsonLdError,
-    loader::{error::LoaderError, http::HttpContextLoader},
+    error::{JsonLdError, context_error_of_processing},
+    loader::http::HttpContextLoader,
 };
 use andromeda_ngsi_ld_representation::{compact_node::context_reading::ContextReading, context_terms::ContextTerms};
 use iri_rs::IriBuf;
@@ -42,8 +43,8 @@ use jsonld::{
     ExpandError,
     ExpandedDocument,
     context::BindingRef,
-    context_processing::{Error as ProcessingError, Options as ProcessingOptions, Process},
-    expansion::{Error as ExpansionAlgorithmError, Options as ExpansionOptions, SliceExpansionError, expand_slice},
+    context_processing::{Options as ProcessingOptions, Process},
+    expansion::{Options as ExpansionOptions, SliceExpansionError, expand_slice},
 };
 use moka::future::Cache;
 use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
@@ -166,15 +167,7 @@ impl ExpansionContext {
     async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<ExpansionContext, JsonLdError> {
         let resolved = resolved_context(spec, ReferenceReading::Hosted(loader.hosted_contexts()));
         check_context_graph(loader, &resolved).await?;
-        let unprocessed = context_syntax(&resolved).map_err(|error| {
-            // A context that is no JSON-LD context is reported as the
-            // processor's expansion reports it.
-            if let JsonLdError::InlineContextInvalid(invalid) = error {
-                JsonLdError::from(ExpandError::Expansion(ExpansionAlgorithmError::ContextSyntax(invalid)))
-            } else {
-                error
-            }
-        })?;
+        let unprocessed = context_syntax(&resolved)?;
         let active = unprocessed
             .process_full(
                 no_vocabulary_mut(),
@@ -185,7 +178,7 @@ impl ExpansionContext {
                 LoggedWarnings,
             )
             .await
-            .map_err(processing_failure)?
+            .map_err(|error| context_error_of_processing(&error, FaultyContext::named_by(spec)))?
             .into_processed();
         let property_scoped = property_scoped_contexts(&active, loader).await;
         let terms = Arc::new(ContextTerms::new(core_term_aliases(&active), container_terms(&active)));
@@ -229,14 +222,8 @@ impl JsonLdEngine {
 
 /// The context processing options expansion processes a document's
 /// `@context` with.
-fn processing_options() -> ProcessingOptions {
+pub(crate) fn processing_options() -> ProcessingOptions {
     ProcessingOptions::from(ExpansionOptions::default())
-}
-
-/// A context-processing failure, typed as the processor's expansion reports
-/// it.
-fn processing_failure(error: ProcessingError<LoaderError>) -> JsonLdError {
-    JsonLdError::from(ExpandError::Expansion(ExpansionAlgorithmError::ContextProcessing(error)))
 }
 
 /// Process the property-scoped context of every root term that declares one.

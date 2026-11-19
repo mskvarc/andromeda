@@ -6,10 +6,9 @@
 //! different content.
 
 use crate::{
-    hosted_context_locator::HostedContextLocator,
     identifier::ContextIdentifier,
     removal::ContextRemoval,
-    service::memory_store::{MemoryStore, service},
+    service::memory_store::{BrokerRoot, MemoryStore, service},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::compound_context_host::WrapperUse;
@@ -17,19 +16,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdConte
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use url::Url;
 use uuid::{Uuid, Version};
-
-/// Serves every entry under `https://broker.example/<identifier>`.
-struct BrokerRoot;
-
-impl HostedContextLocator for BrokerRoot {
-    fn serving_url(&self, identifier: &JsonLdContextId) -> Url {
-        let mut url = Url::parse("https://broker.example/").expect("a URL");
-        url.set_path(identifier.as_ref());
-        url
-    }
-}
 
 /// The version of the UUID an identifier carries as its local id.
 fn uuid_version(identifier: &JsonLdContextId) -> Option<Version> {

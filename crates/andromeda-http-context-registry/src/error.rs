@@ -13,7 +13,7 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         // Clause 5.13.2.4 applies clause 5.5.4 "in case of invalid @context":
         // the body already parsed as JSON, so data that is no local context is
         // "not syntactically correct" JSON-LD, which is BadRequestData.
-        ContextRegistryError::NoLocalContext(_) | ContextRegistryError::ReloadRequiresCached { .. } => {
+        ContextRegistryError::NoLocalContext(_) | ContextRegistryError::InvalidContext(_) | ContextRegistryError::ReloadRequiresCached { .. } => {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
         }
         ContextRegistryError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
@@ -51,7 +51,12 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 mod tests {
     use crate::error::classify_context_registry_error;
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
-    use andromeda_jsonld::context_subtree::UnusableLocalContext;
+    use andromeda_jsonld::{
+        context_fault::ContextFault,
+        context_subtree::UnusableLocalContext,
+        engine::context_document_check::ContextDocumentRefusal,
+        loader::error::InvalidContextDocument,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -66,6 +71,10 @@ mod tests {
             ),
             (
                 ContextRegistryError::NoLocalContext(UnusableLocalContext::NotAContext),
+                NgsiLdErrorType::BadRequestData,
+            ),
+            (
+                ContextRegistryError::InvalidContext(ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(ContextFault::TooDeep))),
                 NgsiLdErrorType::BadRequestData,
             ),
             (

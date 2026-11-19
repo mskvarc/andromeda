@@ -22,7 +22,7 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::PreloadedContextUrl(_)
         | JsonLdError::EmbeddedContextMissing { .. }
         | JsonLdError::EmbeddedContextInvalid { .. }
-        | JsonLdError::InlineContextInvalid(_)
+        | JsonLdError::ContextUnprocessable { .. }
         | JsonLdError::ScopedUserContext { .. }
         | JsonLdError::EmbeddedUserContext(_)
         | JsonLdError::ClientBuild(_)

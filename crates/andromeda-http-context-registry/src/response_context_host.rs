@@ -65,6 +65,7 @@ fn hosting_failure(error: &ContextRegistryError) -> ContextHostingError {
         ContextRegistryError::StoreUnavailable => ContextHostingError::Persistence(PersistenceFailure::Unavailable),
         ContextRegistryError::Persistence(failure) => ContextHostingError::Persistence(*failure),
         ContextRegistryError::NoLocalContext(_)
+        | ContextRegistryError::InvalidContext(_)
         | ContextRegistryError::NotFound { .. }
         | ContextRegistryError::CachedContextNotServed { .. }
         | ContextRegistryError::ReloadRequiresCached { .. }

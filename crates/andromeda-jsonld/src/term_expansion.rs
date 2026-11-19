@@ -78,7 +78,7 @@ const fn expansion_error(error: &JsonLdError) -> TermExpansionError {
         | JsonLdError::PreloadedContextUrl(_)
         | JsonLdError::EmbeddedContextMissing { .. }
         | JsonLdError::EmbeddedContextInvalid { .. }
-        | JsonLdError::InlineContextInvalid(_)
+        | JsonLdError::ContextUnprocessable { .. }
         | JsonLdError::ScopedUserContext { .. }
         | JsonLdError::EmbeddedUserContext(_)
         | JsonLdError::ClientBuild(_)

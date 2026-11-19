@@ -20,7 +20,11 @@ use crate::{
     store::ContextRegistryStore,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_jsonld::{compound_context_host::WrapperUse, context_subtree::context_subtree, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{
+    compound_context_host::WrapperUse,
+    context_subtree::context_subtree,
+    engine::{context_document_check::check_context_document, processor::JsonLdEngine},
+};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
@@ -53,17 +57,21 @@ impl ContextRegistryService {
     /// Everything the request carried outside the `@context` subtree is
     /// discarded before the document is stored (clause 5.13.2.3). Clause
     /// 5.13.2.4 makes every Add @context "a new entry", so two creations of the
-    /// same document are two entries, each under a fresh random identifier.
+    /// same document are two entries, each under a fresh random identifier,
+    /// and applies the clause 5.5.4 JSON-LD validation to the `@context`, so
+    /// one that is not valid JSON-LD is refused before anything is stored.
     ///
     /// # Errors
     ///
     /// Returns [`ContextRegistryError::NoLocalContext`] when the payload
     /// carries no JSON-LD context in a top-level `@context` member,
-    /// [`ContextRegistryError::Persistence`] when the store cannot record the
-    /// hosted Context, and [`ContextRegistryError::Invariant`] when a freshly
-    /// minted identifier is not one or is already held.
+    /// [`ContextRegistryError::InvalidContext`] when that context is not valid
+    /// JSON-LD, [`ContextRegistryError::Persistence`] when the store cannot
+    /// record the hosted Context, and [`ContextRegistryError::Invariant`] when
+    /// a freshly minted identifier is not one or is already held.
     pub async fn create(&self, payload: &JsonLiteral, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
         let document = hosted_context_subtree(payload)?;
+        check_context_document(&document).await.map_err(ContextRegistryError::InvalidContext)?;
         InsertionPolicy::over(self.store.as_ref(), locator)
             .fresh(&document, ContextCreationKind::Hosted)
             .await
@@ -315,6 +323,9 @@ mod identity_tests;
 
 #[cfg(test)]
 mod memory_store;
+
+#[cfg(test)]
+mod validity_tests;
 
 #[cfg(test)]
 mod tests {

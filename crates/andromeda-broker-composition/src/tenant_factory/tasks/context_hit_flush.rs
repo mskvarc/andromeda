@@ -62,6 +62,7 @@ const fn classify_flush_failure(error: ContextRegistryError) -> TaskFailure<Cont
         ContextRegistryError::Persistence(_) | ContextRegistryError::StoreSaturated | ContextRegistryError::StoreUnavailable => FailureClass::Transient,
         ContextRegistryError::Invariant(_) => FailureClass::InvariantViolation,
         ContextRegistryError::NoLocalContext(_)
+        | ContextRegistryError::InvalidContext(_)
         | ContextRegistryError::NotFound { .. }
         | ContextRegistryError::CachedContextNotServed { .. }
         | ContextRegistryError::ReloadRequiresCached { .. }
