@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::Invali
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_snapshot::error::SnapshotError;
+use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
 use andromeda_tenancy::error::TenancyError;
 use andromeda_upgrade_tests::upgrade_database_error::{UpgradeDatabaseError, UpgradeServerError};
 use sea_query::error::Error as StatementError;
@@ -46,6 +47,15 @@ pub(crate) enum UpgradeTestError {
     /// The broker's tenant registry could not be opened.
     #[error("the tenant registry could not be opened")]
     Registry(#[from] ContextStoreError),
+    /// The broker's obligation read failed.
+    #[error("the obligation read failed")]
+    Obligation(#[source] ContextStoreError),
+    /// The broker's redirect ledger refused a step.
+    #[error("the redirect ledger failed")]
+    Forwarding(#[from] SubscriptionForwardingError),
+    /// A URL the test names is not one.
+    #[error("a URL could not be read")]
+    Url(#[from] url::ParseError),
     /// The broker's tenant registry refused a step.
     #[error("the tenant registry failed")]
     Tenancy(#[from] TenancyError),

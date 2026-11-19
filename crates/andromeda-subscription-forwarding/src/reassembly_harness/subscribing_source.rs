@@ -1,7 +1,7 @@
-//! A context source that answers every subscription placed at it, accepting
-//! it unless told otherwise, and accepts every deletion of one, registered for
-//! `Vehicle` and one attribute named by a user term, which a placement of a
-//! reduced copy is read off.
+//! A context source that answers every subscription placed at it and every
+//! update of one, accepting each unless told otherwise, and accepts every
+//! deletion of one, registered for `Vehicle` and one attribute named by a user
+//! term, which a placement of a reduced copy is read off.
 
 use crate::reassembly_harness::default_iri;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -32,7 +32,8 @@ pub(crate) struct SubscribingSource {
 
 impl SubscribingSource {
     /// A source registered as `registration_id`, inclusive, advertising the
-    /// creation and deletion of subscriptions for `Vehicle` and [`SPEED`].
+    /// creation and deletion of subscriptions for `Vehicle` and [`SPEED`], and
+    /// accepting every update of one.
     pub(crate) async fn start(registration_id: &Identifier) -> SubscribingSource {
         SubscribingSource::start_answering(registration_id, ResponseTemplate::new(201)).await
     }
@@ -40,10 +41,27 @@ impl SubscribingSource {
     /// The source [`SubscribingSource::start`] starts, answering a placed
     /// subscription with `placement`.
     pub(crate) async fn start_answering(registration_id: &Identifier, placement: impl Respond + 'static) -> SubscribingSource {
+        SubscribingSource::start_with(registration_id, placement, ResponseTemplate::new(204)).await
+    }
+
+    /// The source [`SubscribingSource::start`] starts, answering an update of a
+    /// subscription it holds with `update`.
+    pub(crate) async fn start_updating(registration_id: &Identifier, update: impl Respond + 'static) -> SubscribingSource {
+        SubscribingSource::start_with(registration_id, ResponseTemplate::new(201), update).await
+    }
+
+    /// The source [`SubscribingSource::start`] starts, answering a placed
+    /// subscription with `placement` and an update of one with `update`.
+    pub(crate) async fn start_with(registration_id: &Identifier, placement: impl Respond + 'static, update: impl Respond + 'static) -> SubscribingSource {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/ngsi-ld/v1/subscriptions"))
             .respond_with(placement)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path_regex("^/ngsi-ld/v1/subscriptions/[^/]+$"))
+            .respond_with(update)
             .mount(&server)
             .await;
         Mock::given(method("DELETE"))
@@ -63,6 +81,13 @@ impl SubscribingSource {
             "modifiedAt": "2024-01-01T00:00:00Z"
         });
         SubscribingSource { server, registration }
+    }
+
+    /// The source with its registration advertising the update of
+    /// subscriptions as well.
+    pub(crate) fn advertising_updates(mut self) -> SubscribingSource {
+        self.registration["operations"] = json!(["createSubscription", "updateSubscription", "deleteSubscription"]);
+        self
     }
 
     /// The registration as the registration store keeps it, its entity type
@@ -130,6 +155,21 @@ impl SubscribingSource {
             .await
             .iter()
             .map(|request| serde_json::from_slice(&request.body).expect("a placed subscription is JSON"))
+            .collect()
+    }
+
+    /// The path and body of every update of a subscription the source
+    /// received, in the order they arrived.
+    pub(crate) async fn updated(&self) -> Vec<(String, Value)> {
+        self.received(Method::PATCH)
+            .await
+            .iter()
+            .map(|request| {
+                (
+                    request.url.path().to_owned(),
+                    serde_json::from_slice(&request.body).expect("an update of a subscription is JSON"),
+                )
+            })
             .collect()
     }
 

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Answers one request of the signaller by upgrading the hub, stopping the broker of the release and starting the broker of the working tree over the same database.
+read -r _ target _ || exit 0
+while read -r header; do
+  [ "$header" = "$(printf '\r')" ] && break
+  [ -z "$header" ] && break
+done
+# The services of this signaller's own Compose project, whatever the project is named.
+project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$(hostname)")
+container_of() {
+  docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$1"
+}
+status='200 OK'
+case "$target" in
+  # docker stop waits out the release's grace period, so the upgraded broker never shares the database with it.
+  /upgrade-front) body=$(docker stop "$(container_of hub-release)" 2>&1 && docker start "$(container_of hub)" 2>&1) || status='500 Internal Server Error' ;;
+  *) printf 'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'; exit 0 ;;
+esac
+printf 'HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s' "$status" "${#body}" "$body"

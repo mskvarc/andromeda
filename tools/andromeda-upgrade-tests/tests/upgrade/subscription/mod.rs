@@ -1,4 +1,6 @@
 //! The Subscriptions of a v1.0.0 tenant, whose rows the upgrade lets hold
-//! what this build stores for each kind.
+//! what this build stores for each kind, and the companions and copies it
+//! placed, which owe the receiver this build serves.
 
 mod csource_dataset_ids;
+mod receiver_redirects;

@@ -5,7 +5,7 @@ use crate::{
     tenant_factory::{
         background_pacer::BackgroundPacer,
         due_work_check::TenantDueWork,
-        obligation_source::TenantObligations,
+        obligation_source::ObligationSource,
         periodic_due::PeriodicDue,
         tasks::TaskSupervision,
     },
@@ -41,6 +41,9 @@ pub(crate) struct BrokerTenantRuntime {
     task_supervisor: TaskSupervisor,
     /// Paces the tenant's sweeps; told of every use of the runtime.
     pacer: Arc<BackgroundPacer>,
+    /// Where the tenant's earliest outstanding obligation is read, the read
+    /// the pacer takes.
+    obligations: Arc<dyn ObligationSource>,
     /// When the tenant's periodic notification sweeps are next due.
     periodic_due: Arc<PeriodicDue>,
 }
@@ -54,6 +57,7 @@ impl BrokerTenantRuntime {
         transport: Arc<TransportDispatcher>,
         pool: PgPool,
         pacer: Arc<BackgroundPacer>,
+        obligations: Arc<dyn ObligationSource>,
         periodic_due: Arc<PeriodicDue>,
     ) -> BrokerTenantRuntime {
         let TaskSupervision {
@@ -69,6 +73,7 @@ impl BrokerTenantRuntime {
             pool,
             task_supervisor,
             pacer,
+            obligations,
             periodic_due,
         }
     }
@@ -117,7 +122,7 @@ impl TenantRuntime for BrokerTenantRuntime {
     }
 
     fn due_work(&self) -> Arc<dyn DueWorkSource> {
-        Arc::new(TenantDueWork::new(Arc::new(TenantObligations::new(&self.pool)), Arc::clone(&self.commits)))
+        Arc::new(TenantDueWork::new(Arc::clone(&self.obligations), Arc::clone(&self.commits)))
     }
 }
 

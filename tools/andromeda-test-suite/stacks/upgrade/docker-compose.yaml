@@ -1,21 +1,94 @@
 name: test-suite-upgrade
 
-# One database server for the upgrade rehearsals of andromeda-upgrade-tests, which create a database of their own for
-# every test and run no broker. The rehearsals run in the runner service on the same network, so no service publishes a
-# host port.
+# The upgrade tree runs the rehearsals of andromeda-upgrade-tests and the upgrade tests of the suite. The tests run in
+# the runner service on the same network and reach every service by its network name, so no service publishes a host
+# port.
+#
+# The rehearsals create a database of their own for every test on `postgres` and run no broker.
+#
+# The suite's upgrade tests run against a hub that is upgraded on its database. `hub-release` serves the hub on the
+# release ANDROMEDA_RELEASE_IMAGE names, v1.0.0 unless set, over `postgres-hub`, until a test asks the signaller to
+# upgrade it. The signaller then stops it and starts `hub`, the broker image of the working tree, over the same server.
+# `hub` sits under the `upgraded` profile, so `up` never starts it, and its container is created before `up` (as
+# run-suite.sh does) for the signaller to start. Both answer to the name `hub` and advertise the same origin, so what the
+# release placed at a context source names the host the upgraded broker serves.
+
+x-template: &template
+  file: ../templates/docker-compose.yaml
+
+# The hub's settings, the same before and after the upgrade.
+x-hub-environment: &hub-environment
+  ANDROMEDA__SERVER__PORT: "1071"
+  ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-hub:5432/andromeda"
+  ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:hub"
+  ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "hub"
+  ANDROMEDA__SERVER__PUBLIC_URL: "http://hub:1071"
 
 services:
   postgres:
     extends:
-      file: ../templates/docker-compose.yaml
+      <<: *template
       service: postgres
+
+  postgres-hub:
+    extends:
+      <<: *template
+      service: postgres
+
+  # The release the upgrade starts from, pulled rather than built.
+  hub-release:
+    image: ${ANDROMEDA_RELEASE_IMAGE:-ghcr.io/mskvarc/andromeda:1.0.0}
+    pull_policy: missing
+    restart: unless-stopped
+    # The release drains for up to a minute when it stops, and the signaller waits for that.
+    stop_grace_period: 70s
+    depends_on:
+      postgres-hub:
+        condition: service_healthy
+    environment: *hub-environment
+    networks:
+      default:
+        aliases:
+          - hub
+    healthcheck:
+      test: ["CMD", "andromeda", "health"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+
+  hub:
+    extends:
+      <<: *template
+      service: broker
+    profiles: ["upgraded"]
+    depends_on:
+      postgres-hub:
+        condition: service_healthy
+    environment: *hub-environment
+
+  signaller:
+    image: docker:29-cli
+    entrypoint: ["nc", "-lk", "-p", "8080", "-e", "/signaller/handle"]
+    volumes:
+      - ./signaller:/signaller:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   runner:
     extends:
-      file: ../templates/docker-compose.yaml
+      <<: *template
       service: runner
     depends_on:
       postgres:
+        condition: service_healthy
+      hub-release:
+        condition: service_healthy
+      signaller:
         condition: service_healthy
     env_file: runner.env
 

@@ -17,7 +17,7 @@ The HTTP/3 tests talk to the broker through `reqwest`'s `http3` feature, which c
 | `distributed_<area>` | Distributed operations and federation across brokers | `stacks/multi` |
 | `pgbouncer_<area>` | A broker serving every request through a transaction-pooling PgBouncer | `stacks/pgbouncer` |
 | `interoperability` | The ETSI interoperability suites (`IOP_TP`), which run Create Entity, Retrieve Entity and Query Entities across registrations of every mode, each in a default-context and a user-context variant | `stacks/interoperability` |
-| `upgrade`, of `andromeda-upgrade-tests` | The upgrade rehearsals [Upgrade tests](upgrade-tests.md) describes, which need a database server and no broker | `stacks/upgrade` |
+| `upgrade`, of `andromeda-upgrade-tests`, and `upgrade_<area>` | The upgrade rehearsals [Upgrade tests](upgrade-tests.md) describes, which need a database server and no broker, and the suite's tests of a broker upgraded from a release on its database | `stacks/upgrade` |
 
 The `ngsi_ld`, `andromeda`, `distributed` and `pgbouncer` trees build one test target per area (`ngsi_ld_entity`, `andromeda_snapshot`, `distributed_query` and so on), so a change to one area only compiles that area. `--test 'ngsi_ld_*'` selects a whole tree.
 
@@ -27,7 +27,7 @@ Every broker in every stack runs over a PostgreSQL server of its own. Replicas a
 
 `stacks/base` is one broker plus three Mosquitto brokers (anonymous, password and large-message), whose configurations live in `stacks/mosquitto`.
 
-`stacks/upgrade` is one PostgreSQL server and the runner. The upgrade rehearsals create a database of their own for each test on that server, through the administrative login `stacks/upgrade/runner.env` names, and run no broker.
+`stacks/upgrade` is a PostgreSQL server for the rehearsals, a hub broker over a server of its own, a signaller and the runner. The upgrade rehearsals create a database of their own for each test on the rehearsals' server, through the administrative login `stacks/upgrade/runner.env` names, and run no broker. The suite's `upgrade_<area>` tests run against the hub, which the stack describes below.
 
 `stacks/multi` has six broker identities, `broker-a` to `broker-f`. A test registers brokers with one another, so each identity a topology names is a broker of its own, and a setting goes on an identity whose tests it doesn't affect. `broker-e` runs temporal Linked Entity retrieval and the language-ranges level of `q_target_languages`. `broker-f` runs the same level with forwarding bounds of 5 distinct entities, 15 source rows and 3 attribute instances, and captures Snapshots two entities per page.
 
@@ -106,6 +106,12 @@ A test only looks at PostgreSQL and the pooler for what an operator would see th
 
 Registrations are global to a broker, so each case keeps to an entity type and entity identifiers in its own namespace, and every registration it creates names that type. A type of its own only isolates a case for inclusive and auxiliary registrations, though. An exclusive registration conflicts with every exclusive or redirect registration on the same broker that matches its entity id and any of its Attributes, whatever the entity type (ETSI GS CIM 009 v1.9.1 clauses 4.3.6.3 and 5.9.2.4). A redirect registration of `location` for every entity of one case's type matches the entity id of another case's exclusive registration of `location`. The Attribute names don't separate them either, since `location` is a core term and the default-context variant expands every other name under the same vocabulary. That's why the nextest profile `suite`, which `suite-verdict` inherits, puts the `interoperability` binary in a test group of one thread. The user-context variant stores a vocabulary on b1, and the other brokers resolve it by the URL b1 serves it at.
 
+### The upgrade stack
+
+The hub starts as `hub-release`, the broker of the release `ANDROMEDA_RELEASE_IMAGE` names (`ghcr.io/mskvarc/andromeda:1.0.0` unless set), over `postgres-hub`. A test places what it needs on the release, then asks the signaller to upgrade the hub (`BrokerProcess::upgrade`). The signaller stops `hub-release`, waiting out its grace period, and starts `hub`, the broker image of the working tree, over the same server. Both answer to the name `hub` and advertise the same origin, so the runner reaches the hub at one address (`BROKERS__FRONT`) before and after, and what the release placed at a context source names the host the upgraded broker serves. `hub` sits under the `upgraded` profile, so `up` never starts it. Its container has to exist for the signaller to start, so it is created before the stack comes up. `run-suite.sh` does that, and by hand it is `docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded create hub`. The signaller runs `stacks/upgrade/signaller/handle` for each request, as the pgbouncer stack's signaller does.
+
+An upgrade can't be undone within a stack, so each `upgrade_<area>` binary holds one test, which runs the whole scenario before and after the upgrade. `a_upg_rcv_0001` waits for the upgraded hub's background pass, which runs a minute after the hub opens its tenant, so `runner.env` sets the delivery deadline to three minutes.
+
 ## Test groups
 
 The nextest profiles `suite` and `suite-verdict` live in the root `.config/nextest.toml`. `suite-verdict` inherits `suite` and adds the JUnit report, so every group and override is written once. There are three groups.
@@ -164,16 +170,19 @@ docker compose -f tools/andromeda-test-suite/stacks/interoperability/docker-comp
 docker compose -f tools/andromeda-test-suite/stacks/interoperability/docker-compose.yaml run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite -p andromeda-test-suite --test interoperability
 ```
 
-The upgrade rehearsals run under their own profile, `upgrade`, since every other profile leaves them out.
+The upgrade tree runs under its own profile, `upgrade`, since every other profile leaves the rehearsals out. The upgraded hub's container is created before the stack comes up.
 
 ```sh
+docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded create hub
 docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml up -d --wait
-docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile upgrade -p andromeda-upgrade-tests --test upgrade
+docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile upgrade -p andromeda-upgrade-tests --test upgrade -p andromeda-test-suite --test 'upgrade_*'
 ```
+
+A run of the upgrade tree upgrades the hub, so the next run brings the stack down with its databases first, `docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded down -v`.
 
 Nextest keeps its store under the workspace root whatever the target directory is, so every command passes the runner's `stacks/runner/nextest.toml`, which moves the store to `/target/nextest` in the `test-suite-target` volume. `--profile suite-verdict` writes a JUnit report to `/target/nextest/suite-verdict/junit.xml` there, and `--profile upgrade-verdict` to `/target/nextest/upgrade-verdict/junit.xml`. A failing test of the suite prints every exchange it had with a broker.
 
-`tools/andromeda-test-suite/run-suite.sh <tree>` does all of this for one tree, and it's what CI runs for every tree except `pgbouncer`, which CI never runs. It takes `ngsi_ld`, `andromeda`, `etsi`, `annex_c`, `distributed`, `pgbouncer`, `interoperability` or `upgrade`. It rebuilds the runner, broker and database images from the working tree, except each one `ANDROMEDA_IMAGE`, `ANDROMEDA_POSTGRES_IMAGE` or `ANDROMEDA_TEST_SUITE_RUNNER_IMAGE` names, which it pulls instead. Then it brings the tree's stack up and runs the tree under `suite-verdict`, or `upgrade-verdict` for the `upgrade` tree, from the archive in a runner image it pulled, with `--archive-file /andromeda-test-suite.tar.zst --workspace-remap /andromeda` and a `binary_id` filterset in place of `--test`, and compiled from the working tree with a runner it built. Then it copies the report to `REPORT_DIR/<tree>.junit.xml` (`target/suite-reports` unless `REPORT_DIR` says otherwise) and takes the stack down with its databases, keeping the `test-suite-target` and `test-suite-cargo-registry` volumes. It exits with the tests' status, or with the status of the report copy when the tests passed, with 1 when a runner image it pulled has no archive, and with 2 when the tree is missing or unknown. To test a release, name its image in `ANDROMEDA_IMAGE`.
+`tools/andromeda-test-suite/run-suite.sh <tree>` does all of this for one tree, and it's what CI runs for every tree except `pgbouncer`, which CI never runs. It takes `ngsi_ld`, `andromeda`, `etsi`, `annex_c`, `distributed`, `pgbouncer`, `interoperability` or `upgrade`. It rebuilds the runner, broker and database images from the working tree, except each one `ANDROMEDA_IMAGE`, `ANDROMEDA_POSTGRES_IMAGE` or `ANDROMEDA_TEST_SUITE_RUNNER_IMAGE` names, which it pulls instead. Then it brings the tree's stack up, creating the upgraded hub's container first for the `upgrade` tree, and runs the tree under `suite-verdict`, or `upgrade-verdict` for the `upgrade` tree, from the archive in a runner image it pulled, with `--archive-file /andromeda-test-suite.tar.zst --workspace-remap /andromeda` and a `binary_id` filterset in place of `--test`, and compiled from the working tree with a runner it built. Then it copies the report to `REPORT_DIR/<tree>.junit.xml` (`target/suite-reports` unless `REPORT_DIR` says otherwise) and takes the stack down with its databases, keeping the `test-suite-target` and `test-suite-cargo-registry` volumes. It exits with the tests' status, or with the status of the report copy when the tests passed, with 1 when a runner image it pulled has no archive, and with 2 when the tree is missing or unknown. To test a release, name its image in `ANDROMEDA_IMAGE`.
 
 Two runs can't share a Docker host at the same time. Each stack has a fixed project name, so two runs of one stack would collide, and every stack uses the same two volumes, so runs of different stacks would too.
 

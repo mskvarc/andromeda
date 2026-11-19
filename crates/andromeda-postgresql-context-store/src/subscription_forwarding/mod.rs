@@ -2,6 +2,11 @@
 
 /// The statements over the claims of copies whose source has not answered yet.
 mod claim_statements;
+/// The statements over the receiver the companions and copies notify, and
+/// those owed the current one.
+mod redirect_statements;
+/// `RedirectLedger` implementation.
+pub mod redirect_store;
 /// The repository struct.
 pub mod repo;
 /// The statements over the two mapping tables, each resolving a subscription's

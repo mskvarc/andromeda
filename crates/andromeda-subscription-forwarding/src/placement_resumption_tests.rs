@@ -7,14 +7,15 @@ use crate::reassembly_harness::{
     SceneSpec,
     forwarding_maps::{ClaimKeeping, ClaimLease},
     identifier,
+    scripted_answers::{InTurn, already_exists, late_acceptance},
     subscribing_source::{SPEED, SubscribingSource},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use serde_json::{Value, json};
-use std::{collections::VecDeque, sync::Mutex, time::Duration};
+use std::time::Duration;
 use tokio::time::timeout;
-use wiremock::{Request, Respond, ResponseTemplate};
+use wiremock::ResponseTemplate;
 
 /// The registration of the source the copy is placed at.
 const SOURCE: &str = "urn:ngsi-ld:ContextSourceRegistration:resumed";
@@ -25,51 +26,6 @@ const CUT_OFF_AFTER: Duration = Duration::from_millis(200);
 
 /// The forwarding timeout of a registration whose source answers late.
 const FORWARDING_TIMEOUT: Duration = Duration::from_millis(200);
-
-/// Answers each placement with the next answer it holds, and every placement
-/// past them with its last one.
-struct InTurn {
-    /// The answers not given yet, in order.
-    answers: Mutex<VecDeque<ResponseTemplate>>,
-    /// The answer once the others are given.
-    last: ResponseTemplate,
-}
-
-impl InTurn {
-    /// `first` answered once, then `last` to every placement after it.
-    fn new(first: ResponseTemplate, last: ResponseTemplate) -> InTurn {
-        InTurn {
-            answers: Mutex::new(VecDeque::from([first])),
-            last,
-        }
-    }
-}
-
-impl Respond for InTurn {
-    fn respond(&self, _request: &Request) -> ResponseTemplate {
-        self.answers
-            .lock()
-            .expect("the answers are never poisoned")
-            .pop_front()
-            .unwrap_or_else(|| self.last.clone())
-    }
-}
-
-/// An acceptance that comes after [`FORWARDING_TIMEOUT`], so the placement
-/// gets no answer in time while the source may hold the copy.
-fn late_acceptance() -> ResponseTemplate {
-    ResponseTemplate::new(201).set_delay(Duration::from_secs(2))
-}
-
-/// The answer of a source asked to create a subscription it already holds
-/// (`AlreadyExists`, clause 5.5.2).
-fn already_exists() -> ResponseTemplate {
-    ResponseTemplate::new(409).set_body_json(json!({
-        "type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists",
-        "title": "Already exists",
-        "detail": "a subscription with this id already exists"
-    }))
-}
 
 /// A scene whose mappings keep every claim, and whose registration store holds
 /// `registrations`.

@@ -3,10 +3,11 @@
 //! (clause 5.8.1.4, `localOnly=false`).
 
 use crate::{
+    copy_update::CopyUpdate,
     error::SubscriptionForwardingError,
     inbound::InboundCsourceNotification,
     participation::stays_local,
-    reduced_copy::{FilterCarriage, ReducedSubscription},
+    reduced_copy::FilterCarriage,
     service::SubscriptionForwardingService,
 };
 use andromeda_federation::subscription::{SubscriptionForward, SubscriptionForwardAdmission};
@@ -22,6 +23,17 @@ use andromeda_ngsi_ld_model::{
 use andromeda_subscription::deleted_members::DeletedMembers;
 use chrono::Utc;
 use tracing::{debug, warn};
+
+/// How every copy of one subscription is written, whichever request or
+/// notification led to its placement or update.
+pub(crate) struct CopyForm {
+    /// How the copy carries the subscription's filters, as its resolved
+    /// `splitEntities` prescribes.
+    pub(crate) carriage: FilterCarriage,
+    /// The `@context` the copy's terms are written under, the subscription's
+    /// own `jsonldContext`.
+    pub(crate) context: ContextSpec,
+}
 
 /// What one registration named in a companion notification calls for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,12 +86,20 @@ impl SubscriptionForwardingService {
             .map_err(SubscriptionForwardingError::from)
     }
 
+    /// How every copy of `subscription` is written.
+    pub(crate) fn copy_form(&self, subscription: &Subscription) -> CopyForm {
+        CopyForm {
+            carriage: FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities)),
+            context: ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref()),
+        }
+    }
+
     /// The compaction of `context`, which spells the filters of a copy written under it.
     ///
     /// # Errors
     ///
     /// Returns [`SubscriptionForwardingError::JsonLd`] when the context does not resolve or does not process.
-    async fn names_of(&self, context: &ContextSpec) -> Result<NameCompaction, SubscriptionForwardingError> {
+    pub(crate) async fn names_of(&self, context: &ContextSpec) -> Result<NameCompaction, SubscriptionForwardingError> {
         Ok(NameCompaction::new(self.engine.compactor(context).processed_context().await?))
     }
 
@@ -100,38 +120,18 @@ impl SubscriptionForwardingService {
         decision: ForwardDecision,
         deleted: &DeletedMembers,
     ) -> Result<(), SubscriptionForwardingError> {
-        let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
-        let context = &ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
+        let form = self.copy_form(subscription);
         match decision {
             ForwardDecision::Create => {
-                let names = self.names_of(context).await?;
-                self.place_copy(subscription, registration, carriage, context, &names).await?;
+                let names = self.names_of(&form.context).await?;
+                self.place_copy(subscription, registration, form.carriage, &form.context, &names).await?;
             }
-            ForwardDecision::Update { remote } => {
-                let names = self.names_of(context).await?;
-                // Boxed: the fragment is held across the forward, and the request is a wide value.
-                let fragment = Box::new(
-                    ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage, &names)
-                        .await?
-                        .as_fragment(deleted, carriage),
-                );
-                let forwarded = self
-                    .federation
-                    .forward_subscription(
-                        registration,
-                        SubscriptionForward::Update {
-                            remote_id: &remote,
-                            body: &fragment,
-                            context,
-                        },
-                    )
-                    .await;
-                if forwarded.admission == SubscriptionForwardAdmission::Forwarded
-                    && let Some(failure) = forwarded.failure()
-                {
+            ForwardDecision::Update { remote } => match self.update_copy(subscription, registration, &remote, &form, deleted).await? {
+                CopyUpdate::Taken | CopyUpdate::NotAdvertised => {}
+                CopyUpdate::Refused(failure) | CopyUpdate::Withheld(failure) => {
                     warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy could not be updated at the source");
                 }
-            }
+            },
             ForwardDecision::Delete { remote } => {
                 let forwarded = self
                     .federation

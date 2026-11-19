@@ -54,6 +54,18 @@ pub enum ClaimOrigin {
     TakenOver,
 }
 
+/// Which send left the copy a settled claim names at its source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldCopy {
+    /// The source accepted the copy as the settling placement sent it, so the
+    /// copy names the receiver this broker serves.
+    AsSent,
+    /// The source answered that it already holds the copy, which an earlier
+    /// send left there. That send may have named a receiver this broker no
+    /// longer serves, so the copy is owed the current one.
+    EarlierSend,
+}
+
 /// A claim whose lease ran out before the source's answer settled it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaleClaim {

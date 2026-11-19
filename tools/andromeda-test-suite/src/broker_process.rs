@@ -1,8 +1,9 @@
-//! Stopping and starting a broker's process from a test, through the stack's signaller.
+//! Stopping, starting and upgrading a broker's process from a test, through the stack's signaller.
 //!
 //! The signaller is a service of the stack holding the container runtime's socket; it sends SIGTERM to a broker's
-//! process, as an orchestrator does when it stops the broker, and starts the container again. Only the brokers whose
-//! tests stop them are named, and nothing else uses them.
+//! process, as an orchestrator does when it stops the broker, and starts the container again. On the upgrade stack it
+//! stops the broker of the release the stack starts from and starts the broker of the working tree over the same
+//! database. Only the brokers whose tests stop or upgrade them are named, and nothing else uses them.
 
 use crate::{
     config::{BrokerRole, SuiteConfig},
@@ -48,6 +49,8 @@ pub enum SignalAction {
     Terminate,
     /// Start the stopped container.
     Start,
+    /// Stop the broker of the release and start the broker of the working tree over its database.
+    Upgrade,
 }
 
 /// The process of one broker of the stack.
@@ -96,6 +99,22 @@ impl BrokerProcess {
     /// Returns [`BrokerProcessError`] when the signaller refuses or the broker does not answer within two minutes.
     pub async fn start(&self) -> Result<(), BrokerProcessError> {
         self.signal(SignalAction::Start).await?;
+        self.serving().await
+    }
+
+    /// Stops the broker of the release the stack started from and starts the broker of the working tree over the same
+    /// database, under the same address, then waits until it answers requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BrokerProcessError`] when the signaller refuses or the broker does not answer within two minutes.
+    pub async fn upgrade(&self) -> Result<(), BrokerProcessError> {
+        self.signal(SignalAction::Upgrade).await?;
+        self.serving().await
+    }
+
+    /// Waits until the broker answers a request.
+    async fn serving(&self) -> Result<(), BrokerProcessError> {
         eventually(SERVING_BOUND, || async {
             match self.http.get(self.broker.clone()).send().await {
                 Ok(_) => Poll::Ready(()),
@@ -121,5 +140,32 @@ impl BrokerProcess {
         self.signaller
             .join(&format!("{action}-{}", self.name))
             .map_err(BrokerProcessError::Unaddressable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::broker_process::{BrokerProcess, SignalAction};
+    use googletest::prelude::*;
+    use url::Url;
+
+    fn front() -> Result<BrokerProcess> {
+        Ok(BrokerProcess {
+            signaller: Url::parse("http://signaller:8080/")?,
+            broker: Url::parse("http://hub:1071")?,
+            name: "front".to_owned(),
+            http: reqwest::Client::new(),
+        })
+    }
+
+    #[gtest]
+    fn the_signaller_is_asked_for_an_action_on_a_broker_by_the_action_and_the_broker_name() -> Result<()> {
+        let process = front()?;
+        verify_that!(
+            process.address_of(SignalAction::Terminate)?.as_str(),
+            eq("http://signaller:8080/terminate-front")
+        )?;
+        verify_that!(process.address_of(SignalAction::Start)?.as_str(), eq("http://signaller:8080/start-front"))?;
+        verify_that!(process.address_of(SignalAction::Upgrade)?.as_str(), eq("http://signaller:8080/upgrade-front"))
     }
 }

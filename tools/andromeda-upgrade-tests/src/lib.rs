@@ -35,6 +35,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-store",
         "andromeda-snapshot",
+        "andromeda-subscription",
+        "andromeda-subscription-forwarding",
         "andromeda-tenancy",
     ],
     allow_production_dependencies: ["sqlx"],

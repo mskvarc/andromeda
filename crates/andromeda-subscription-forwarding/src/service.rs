@@ -3,6 +3,7 @@
 use crate::{
     mapping::{ForwardedSubscriptionRouter, SubscriptionForwardingStore},
     receiver::ReceiverEndpoint,
+    redirect_ledger::RedirectLedger,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
@@ -31,6 +32,8 @@ pub struct SubscriptionForwardingService {
     pub(crate) csource_subscriptions: Arc<SubscriptionService<CsrSubscriptionVariant>>,
     /// The tenant-scoped identifier mappings.
     pub(crate) mappings: Arc<dyn SubscriptionForwardingStore>,
+    /// The companions and copies owed the current receiver.
+    pub(crate) redirects: Arc<dyn RedirectLedger>,
     /// The platform-wide route from minted identifiers to tenants.
     pub(crate) router: Arc<dyn ForwardedSubscriptionRouter>,
     /// Forwarding to context sources.

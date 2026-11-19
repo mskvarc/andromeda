@@ -33,6 +33,8 @@ andromeda-postgresql-attribute-instance.workspace = true
 andromeda-postgresql-seaquery = { workspace = true, features = ["test-support"] }
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-snapshot.workspace = true
+andromeda-subscription.workspace = true
+andromeda-subscription-forwarding.workspace = true
 andromeda-tenancy.workspace = true
 chrono = "0.4.45"
 pretty_assertions = "1.4.1"

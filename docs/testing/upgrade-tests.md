@@ -82,9 +82,12 @@ The crate's one test target, `upgrade`, has seven groups of tests.
 - A document v1.0.0 stored holds the `startAt` and `endAt` of `observationInterval` and `managementInterval` as plain strings. After the upgrade it equals, member for member, the document this build's own builder writes for the same registration, each instant declared as a `DateTime` with its text kept, an open interval still without `endAt`.
 - A member a registrant added that holds an object with a `startAt` of its own keeps it as written, and a document holding no time interval comes through unchanged.
 
-`subscription` covers the Subscription rows a v1.0.0 tenant stored, whose check on context-source rows migration 0038 adds again without `dataset_ids`.
+`subscription` covers the Subscription rows a v1.0.0 tenant stored, whose check on context-source rows migration 0038 adds again without `dataset_ids`, and the companions and copies it placed, which migration 0040 lets owe the receiver this build serves.
 
 - A context-source Subscription row holds the `datasetId` its client wrote after the upgrade, and the check still holds `local_only` at its default. The check is added without reading a row, and the rows v1.0.0 stored stay.
+- A tenant that has not adopted the receiver this build serves is due at once. Adopting it, through the broker's own repository, makes the companion and the copy v1.0.0 placed owe it, and leaves out a copy whose claim is open. Once both are recorded as updated, adopting the same receiver again owes nothing, and only the open claim's lease is left due.
+
+The suite's upgrade tests carry the same upgrade end to end, against a broker upgraded from v1.0.0 on its database, as [Test suite](test-suite.md#the-upgrade-stack) describes.
 
 ## Running
 

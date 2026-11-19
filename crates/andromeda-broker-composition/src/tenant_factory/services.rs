@@ -143,7 +143,7 @@ pub(super) fn construct_services(
         snapshot_preparation_slots,
         snapshot_delivery_signal,
     );
-    let edge = DistributedSubscriptionEdge::resolve(config.public_url.as_ref(), subscription_router, &forwarding, &storage.tenant);
+    let edge = DistributedSubscriptionEdge::resolve(config.receiver.as_ref(), subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(
         storage,
         signals,

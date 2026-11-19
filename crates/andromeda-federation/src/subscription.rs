@@ -87,6 +87,13 @@ impl SubscriptionForwardAdmission {
         SubscriptionForwardAdmission::of(ForwardingOperation::CreateSubscription, registration)
     }
 
+    /// Whether `registration` advertises the update of subscriptions, so a
+    /// caller can tell before it builds a fragment whether one would be sent.
+    #[must_use]
+    pub fn of_update(registration: &ContextSourceRegistration) -> SubscriptionForwardAdmission {
+        SubscriptionForwardAdmission::of(ForwardingOperation::UpdateSubscription, registration)
+    }
+
     /// Whether `registration` advertises `operation` (clause 5.8.1.4, "if the
     /// Context Source Registration indicates support for ...").
     fn of(operation: ForwardingOperation, registration: &ContextSourceRegistration) -> SubscriptionForwardAdmission {
@@ -226,7 +233,37 @@ mod tests {
         outcome::ForwardedWriteOutcome,
         subscription::{ForwardedSubscription, SubscriptionForwardAdmission},
     };
+    use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use serde_json::json;
     use std::sync::Arc;
+
+    fn registration_advertising(operations: &[&str]) -> ContextSourceRegistration {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:peer",
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "operations": operations,
+            "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid registration")
+    }
+
+    /// Clause 5.8.1.4: a copy is updated only at a source whose registration
+    /// indicates support for the Update Subscription operation.
+    #[test]
+    fn the_update_admission_follows_the_update_subscription_operation() {
+        pretty_assertions::assert_eq!(
+            SubscriptionForwardAdmission::of_update(&registration_advertising(&["createSubscription", "updateSubscription"])),
+            SubscriptionForwardAdmission::Forwarded
+        );
+        pretty_assertions::assert_eq!(
+            SubscriptionForwardAdmission::of_update(&registration_advertising(&["createSubscription", "deleteSubscription"])),
+            SubscriptionForwardAdmission::NotAdvertised
+        );
+    }
 
     fn forwarded(outcome: ForwardedWriteOutcome) -> ForwardedSubscription {
         ForwardedSubscription {

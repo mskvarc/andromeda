@@ -5,6 +5,7 @@ use crate::{
     store_fault::{persistence_error, undecodable},
     subscription_forwarding::{
         claim_statements::{lease_claim_statement, settle_claim_statement, stale_claims_statement, take_over_claim_statement},
+        redirect_statements::owe_copy_statement,
         repo::SubscriptionForwardingRepository,
         statements::{
             companion_of_statement,
@@ -25,7 +26,7 @@ use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_subscription_forwarding::{
     error::SubscriptionForwardingError,
-    forwarded_claim::{ClaimOrigin, ForwardedClaim, StaleClaim},
+    forwarded_claim::{ClaimOrigin, ForwardedClaim, HeldCopy, StaleClaim},
     mapping::SubscriptionForwardingStore,
 };
 use futures::future::BoxFuture;
@@ -153,6 +154,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         &'life0 self,
         local: &'life1 Identifier,
         registration: &'life2 Identifier,
+        held: HeldCopy,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -161,9 +163,30 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
+            // One transaction, so a copy an earlier send left is never settled
+            // without owing the current receiver.
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             settle_claim_statement(local, registration)
                 .to_query()
-                .execute(self.pool())
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
+            match held {
+                HeldCopy::AsSent => {}
+                HeldCopy::EarlierSend => {
+                    owe_copy_statement(local, registration)?
+                        .to_query()
+                        .execute(&mut *transaction)
+                        .await
+                        .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
+                }
+            }
+            transaction
+                .commit()
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             Ok(())

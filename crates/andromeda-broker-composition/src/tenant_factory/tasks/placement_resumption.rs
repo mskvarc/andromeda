@@ -1,5 +1,6 @@
 //! The pass that places again the subscription copies whose placement was cut
-//! off before the context source answered (clause 5.8.1.4).
+//! off before the context source answered, and updates the companions and
+//! copies that owe the receiver this broker serves (clause 5.8.1.4).
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_retry::schedule::BackoffSchedule;
@@ -17,17 +18,20 @@ use andromeda_task_runtime::{
 };
 use std::{sync::Arc, time::Duration};
 
-/// How often the pass runs once an abandoned claim is due. An abandoned copy
-/// reaches its source at most this long after its claim's lease ends.
+/// How often the pass runs once an abandoned claim or an owed update is due.
+/// An abandoned copy reaches its source at most this long after its claim's
+/// lease ends, and an owed update at most this long after it falls due.
 const RESUMPTION_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Register the task that, every [`RESUMPTION_INTERVAL`] the pacer admits,
-/// places again each copy whose claim outlived its lease.
+/// places again each copy whose claim outlived its lease, then updates each
+/// companion and copy whose update to the current receiver is due.
 ///
 /// The tenant's obligation read holds the earliest end of an unsettled claim's
-/// lease, so the pacer rests the pass while no claim is due and wakes a
-/// dormant tenant when one is. The task is observed, not tenant-degrading, and
-/// a claim a pass could not place stays for the next one.
+/// lease and the earliest owed update, so the pacer rests the pass while
+/// neither is due and wakes a dormant tenant when one is. The task is
+/// observed, not tenant-degrading, and a claim or update a pass could not
+/// carry out stays for a later one.
 ///
 /// # Errors
 ///
@@ -51,7 +55,10 @@ pub(super) fn register_placement_resumption(
         let pacer = Arc::clone(&pacer);
         async move {
             pacer
-                .run(async move { forwarding.resume_stale_placements().await.map_err(classify_resumption_failure) })
+                .run(async move {
+                    forwarding.resume_stale_placements().await.map_err(classify_resumption_failure)?;
+                    forwarding.redirect_overdue().await.map_err(classify_resumption_failure)
+                })
                 .await
         }
     });
@@ -61,7 +68,8 @@ pub(super) fn register_placement_resumption(
         .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
-/// How the runtime treats a pass that could not read the abandoned claims. A
+/// How the runtime treats a pass that could not read the abandoned claims or
+/// the owed updates. A
 /// store that failed, was saturated or was unreachable may answer the next
 /// pass, as every other store-backed task is retried, so a database error never
 /// stops the pass for good. Every other failure needs a change before a pass

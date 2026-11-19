@@ -6,6 +6,7 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated};
 use andromeda_postgresql_temporal_store::error::TemporalStoreError;
+use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
 use andromeda_tenancy::{error::TenancyError, runtime_build_failure::RuntimeBuildFailure, saturated_wait::SaturatedWait, tenant_ref::TenantRef};
 use sqlx::Error as SqlxError;
 use thiserror::Error;
@@ -28,6 +29,9 @@ pub(super) enum TenantAssemblyError {
     /// A part of the runtime refused to be constructed.
     #[error("tenant runtime construction failed: {0}")]
     Invariant(#[from] AssemblyInvariant),
+    /// The receiver context sources notify could not be adopted.
+    #[error("tenant subscription receiver adoption failed: {0}")]
+    ReceiverAdoption(#[from] SubscriptionForwardingError),
 }
 
 impl TenantAssemblyError {
@@ -41,6 +45,7 @@ impl TenantAssemblyError {
             }
             TenantAssemblyError::JsonLd(_) => RuntimeBuildFailure::JsonLdEngine,
             TenantAssemblyError::Invariant(_) => RuntimeBuildFailure::Invariant,
+            TenantAssemblyError::ReceiverAdoption(error) => receiver_adoption_failure(error),
         }
     }
 
@@ -57,6 +62,7 @@ impl TenantAssemblyError {
             TenantAssemblyError::Database(error) => is_pool_saturated(error),
             TenantAssemblyError::ContextStore(error) => error.is_pool_saturation(),
             TenantAssemblyError::TemporalStoragePolicy(error) => matches!(error, TemporalStoreError::Database(inner) if is_pool_saturated(inner)),
+            TenantAssemblyError::ReceiverAdoption(error) => matches!(error, SubscriptionForwardingError::StoreSaturated),
             TenantAssemblyError::JsonLd(_) | TenantAssemblyError::Invariant(_) => false,
         }
     }
@@ -80,6 +86,24 @@ impl TenantAssemblyError {
             tenant: tenant.clone(), // clone: the returned error must own the tenant it names.
             cause: self.build_failure(),
         }
+    }
+}
+
+/// The backend-neutral cause of a receiver adoption that failed. The ledger
+/// fails only in its store, so any other failure breaks an invariant.
+const fn receiver_adoption_failure(error: &SubscriptionForwardingError) -> RuntimeBuildFailure {
+    match error {
+        SubscriptionForwardingError::Persistence(failure) => RuntimeBuildFailure::Persistence(*failure),
+        SubscriptionForwardingError::StoreSaturated => RuntimeBuildFailure::Persistence(PersistenceFailure::Saturated),
+        SubscriptionForwardingError::StoreUnavailable => RuntimeBuildFailure::Persistence(PersistenceFailure::Unavailable),
+        SubscriptionForwardingError::Subscription(_)
+        | SubscriptionForwardingError::Federation(_)
+        | SubscriptionForwardingError::Registration(_)
+        | SubscriptionForwardingError::Entity(_)
+        | SubscriptionForwardingError::JsonLd(_)
+        | SubscriptionForwardingError::Representation(_)
+        | SubscriptionForwardingError::UnknownSubscription { .. }
+        | SubscriptionForwardingError::Internal(_) => RuntimeBuildFailure::Invariant,
     }
 }
 
