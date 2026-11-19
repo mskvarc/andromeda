@@ -7,6 +7,8 @@
 //! extractor that can refuse it for another reason, and they hold whether or not
 //! the addressed tenant resolves.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     addressed_uri::addressed_uri,
     content_kind::admit_content_kind,

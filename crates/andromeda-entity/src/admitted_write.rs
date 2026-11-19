@@ -132,7 +132,7 @@ impl<'a, W> AdmittedAttribute<'a, W> {
 
 /// A write payload as the transport decoded it into the typed compact model,
 /// which the admission expands.
-pub trait WritePayload: Send {
+pub trait WritePayload: Sync {
     /// What the payload holds under an attribute name.
     type Member;
 
@@ -148,15 +148,13 @@ pub trait WritePayload: Send {
     /// Expand the payload under `expansion`'s context, after the concise
     /// rewrite `normalization` names.
     fn expand<'s>(
-        self,
+        &'s self,
         expansion: &'s EntityExpansion<'s>,
         normalization: Normalization,
-    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
-    where
-        Self: 's;
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's;
 }
 
-impl<M: WrittenMember + Sync> WritePayload for &Entity<M> {
+impl<M: WrittenMember + Sync> WritePayload for Entity<M> {
     type Member = M;
 
     fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
@@ -164,18 +162,15 @@ impl<M: WrittenMember + Sync> WritePayload for &Entity<M> {
     }
 
     fn expand<'s>(
-        self,
+        &'s self,
         expansion: &'s EntityExpansion<'s>,
         normalization: Normalization,
-    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
-    where
-        Self: 's,
-    {
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's {
         expansion.entity(self, normalization)
     }
 }
 
-impl<M: WrittenMember + Sync> WritePayload for &EntityPatch<M> {
+impl<M: WrittenMember + Sync> WritePayload for EntityPatch<M> {
     type Member = M;
 
     fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
@@ -183,13 +178,10 @@ impl<M: WrittenMember + Sync> WritePayload for &EntityPatch<M> {
     }
 
     fn expand<'s>(
-        self,
+        &'s self,
         expansion: &'s EntityExpansion<'s>,
         normalization: Normalization,
-    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
-    where
-        Self: 's,
-    {
+    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's {
         expansion.entity_patch(self, normalization)
     }
 }
@@ -217,9 +209,9 @@ mod tests {
         let entity: Entity = serde_json::from_value(written.clone()).expect("an entity");
         let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a patch");
         let fragment: EntityPatch<MergeMember> = serde_json::from_value(written).expect("a merge fragment");
-        let from_entity = (&entity).expand(&expansion, Normalization::Entity).await.expect("the entity expands");
-        let from_patch = (&patch).expand(&expansion, Normalization::Entity).await.expect("the patch expands");
-        let from_fragment = (&fragment).expand(&expansion, Normalization::Entity).await.expect("the fragment expands");
+        let from_entity = entity.expand(&expansion, Normalization::Entity).await.expect("the entity expands");
+        let from_patch = patch.expand(&expansion, Normalization::Entity).await.expect("the patch expands");
+        let from_fragment = fragment.expand(&expansion, Normalization::Entity).await.expect("the fragment expands");
         pretty_assertions::assert_eq!(from_patch, from_entity);
         pretty_assertions::assert_eq!(from_fragment, from_entity);
     }

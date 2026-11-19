@@ -43,6 +43,7 @@ use andromeda_retry::retry_policy::RetryAttempt;
 use std::{
     collections::{HashMap, HashSet},
     mem::take,
+    ops::ControlFlow,
 };
 
 /// What a batch path reads before it builds its writes.
@@ -137,21 +138,28 @@ impl EntityService {
         let _id_guards = self.acquire_id_locks(placement.target(), &chunk_ids).await;
 
         let mut pending = entries;
-        let contended = self
-            .retry_contended(async |attempt| {
-                let entries = take(&mut pending);
-                let remaining = match attempt {
-                    RetryAttempt::First => self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut progress).await?,
-                    RetryAttempt::Retry(_) => {
-                        let pending_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the re-read owns the identifiers
-                        let now = progress.instant.next();
-                        self.rewrite_attempt(placement, rewrite, entries, &pending_ids, now, &mut progress).await?
-                    }
-                };
-                pending = remaining;
-                if pending.is_empty() { Ok(()) } else { Err(ContendedAttempt::Lost) }
-            })
-            .await;
+        let mut run = self.contended_run();
+        let contended = loop {
+            let entries = take(&mut pending);
+            let remaining = match run.attempt() {
+                RetryAttempt::First => self.rewrite_attempt(placement, rewrite, entries, &chunk_ids, now, &mut progress).await,
+                RetryAttempt::Retry(_) => {
+                    let pending_ids: Vec<Identifier> = entries.iter().map(|entry| R::id(entry).clone()).collect(); // clone: the re-read owns the identifiers
+                    let now = progress.instant.next();
+                    self.rewrite_attempt(placement, rewrite, entries, &pending_ids, now, &mut progress).await
+                }
+            };
+            let outcome = match remaining {
+                Ok(remaining) => {
+                    pending = remaining;
+                    if pending.is_empty() { Ok(()) } else { Err(ContendedAttempt::Lost) }
+                }
+                Err(error) => Err(ContendedAttempt::from(error)),
+            };
+            if let ControlFlow::Break(settled) = run.settle(outcome, ContendedAttempt::retried).await {
+                break settled;
+            }
+        };
         let mut settled = progress.settled;
         match contended {
             Ok(()) => Ok(settled),

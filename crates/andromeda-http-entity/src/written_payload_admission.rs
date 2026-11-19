@@ -132,13 +132,13 @@ pub(crate) trait WrittenEntityPayload: WritePayload {
     fn screen(&self) -> Result<(), CompactKeyError>;
 }
 
-impl<M: WrittenMember + Sync> WrittenEntityPayload for &Entity<M> {
+impl<M: WrittenMember + Sync> WrittenEntityPayload for Entity<M> {
     fn screen(&self) -> Result<(), CompactKeyError> {
         screen_compact_entity(self)
     }
 }
 
-impl<M: WrittenMember + Sync> WrittenEntityPayload for &EntityPatch<M> {
+impl<M: WrittenMember + Sync> WrittenEntityPayload for EntityPatch<M> {
     fn screen(&self) -> Result<(), CompactKeyError> {
         screen_compact_patch(self)
     }
@@ -154,7 +154,7 @@ impl<M: WrittenMember + Sync> WrittenEntityPayload for &EntityPatch<M> {
 /// 5.5.4 refuses for `W`.
 pub(crate) async fn admit_written_entity<W: EntityWriteKind>(
     service: &EntityService,
-    payload: impl WrittenEntityPayload<Member = W::Member>,
+    payload: &impl WrittenEntityPayload<Member = W::Member>,
     context: &AdmittedContext,
     families: WrittenFamilies,
 ) -> Result<AdmittedEntity<W>, WrittenPayloadRefusal> {

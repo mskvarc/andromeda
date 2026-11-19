@@ -3,6 +3,8 @@
 //! Extracts the optional `NGSILD-Tenant` header from the request, producing
 //! a [`TenantHeader`] that carries the tenant name (or `None` for the default tenant).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::ngsild_tenant::{NgsiLdTenant, NgsiLdTenantError};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};

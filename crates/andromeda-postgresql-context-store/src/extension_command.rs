@@ -17,6 +17,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use sea_query::{Expr, ExprTrait, Func, SimpleExpr};
 use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
+use std::ops::ControlFlow;
 use strum::IntoEnumIterator;
 
 /// Why the database refused an extension command it did not fail on.
@@ -50,18 +51,21 @@ pub(crate) fn refusal(error: &sqlx::Error) -> Option<ExtensionCommandRefusal> {
 /// Run `command` as the first statement of a connection opened for it, opening
 /// another and running it again while it is refused a lock.
 pub(crate) async fn run_on_own_connection(options: &PgConnectOptions, command: &impl Command) -> Result<(), sqlx::Error> {
-    SCHEMA_CHANGE_LOCK_RETRY
-        .run(
-            &TokioRetryDelay,
-            |error, _| is_lock_not_available(error),
-            |_| async move {
-                let mut connection = PgConnection::connect_with(options).await?;
-                let outcome = command.to_query().execute(&mut connection).await;
-                connection.close().await?;
-                outcome.map(drop)
-            },
-        )
-        .await
+    let mut run = SCHEMA_CHANGE_LOCK_RETRY.start(&TokioRetryDelay);
+    loop {
+        let outcome = run_once_on_own_connection(options, command).await;
+        if let ControlFlow::Break(settled) = run.settle(outcome, |error, _| is_lock_not_available(error)).await {
+            return settled;
+        }
+    }
+}
+
+/// Run `command` as the first statement of a connection opened for it alone.
+async fn run_once_on_own_connection(options: &PgConnectOptions, command: &impl Command) -> Result<(), sqlx::Error> {
+    let mut connection = PgConnection::connect_with(options).await?;
+    let outcome = command.to_query().execute(&mut connection).await;
+    connection.close().await?;
+    outcome.map(drop)
 }
 
 /// Whether the session's role may create the extension `name`: as a

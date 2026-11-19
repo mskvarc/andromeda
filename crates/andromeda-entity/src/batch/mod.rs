@@ -78,12 +78,13 @@ use crate::{
     side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
+use andromeda_fan_out::bounded::fan_out_ordered;
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use std::collections::HashSet;
 
 /// What a batch entity holds under an attribute name, as the batch moves it
@@ -189,9 +190,10 @@ impl EntityService {
                 return Ok(batch);
             }
 
-            let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(deduped))
-                .map(|chunk| async move { self.batch_create_chunk(placement, chunk, now).await })
-                .buffered(self.batch_execution.chunk_write_concurrency)
+            let chunk_results: Vec<Result<BatchResult, EntityError>> =
+                fan_out_ordered(self.round_chunks(deduped), self.batch_execution.chunk_write_concurrency, |chunk| async move {
+                    self.batch_create_chunk(placement, chunk, now).await
+                })
                 .collect()
                 .await;
             collect_chunks(&mut batch, chunk_results)?;
@@ -232,9 +234,10 @@ impl EntityService {
             }
 
             let chunk_len = self.batch_chunk_len(unique_ids.len());
-            let chunk_results: Vec<Result<DeleteChunkOutcome, EntityError>> = stream::iter(unique_ids.chunks(chunk_len))
-                .map(|chunk| async move { self.batch_delete_chunk(placement, chunk, now).await })
-                .buffered(self.batch_execution.chunk_write_concurrency)
+            let chunk_results: Vec<Result<DeleteChunkOutcome, EntityError>> =
+                fan_out_ordered(unique_ids.chunks(chunk_len), self.batch_execution.chunk_write_concurrency, |chunk| async move {
+                    self.batch_delete_chunk(placement, chunk, now).await
+                })
                 .collect()
                 .await;
 
@@ -284,9 +287,10 @@ impl EntityService {
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
             for round in rounds.into_rounds() {
-                let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move { self.batch_update_chunk(placement, chunk, overwrite, now).await })
-                    .buffered(self.batch_execution.chunk_write_concurrency)
+                let chunk_results: Vec<Result<BatchResult, EntityError>> =
+                    fan_out_ordered(self.round_chunks(round), self.batch_execution.chunk_write_concurrency, |chunk| async move {
+                        self.batch_update_chunk(placement, chunk, overwrite, now).await
+                    })
                     .collect()
                     .await;
                 collect_chunks(&mut batch, chunk_results)?;
@@ -324,9 +328,10 @@ impl EntityService {
             let rounds = SameIdRounds::from_entries(entities, AdmittedBatchEntity::id);
             let mut batch = BatchResult::empty();
             for round in rounds.into_rounds() {
-                let chunk_results: Vec<Result<BatchResult, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move { self.batch_merge_chunk(placement, chunk, now).await })
-                    .buffered(self.batch_execution.chunk_write_concurrency)
+                let chunk_results: Vec<Result<BatchResult, EntityError>> =
+                    fan_out_ordered(self.round_chunks(round), self.batch_execution.chunk_write_concurrency, |chunk| async move {
+                        self.batch_merge_chunk(placement, chunk, now).await
+                    })
                     .collect()
                     .await;
                 collect_chunks(&mut batch, chunk_results)?;
@@ -373,8 +378,8 @@ impl EntityService {
             let mut created = Vec::new();
 
             for round in rounds.into_rounds() {
-                let chunk_results: Vec<Result<UpsertChunkOutcome, EntityError>> = stream::iter(self.round_chunks(round))
-                    .map(|chunk| async move {
+                let chunk_results: Vec<Result<UpsertChunkOutcome, EntityError>> =
+                    fan_out_ordered(self.round_chunks(round), self.batch_execution.chunk_write_concurrency, |chunk| async move {
                         let mut chunk_errors = Vec::new();
                         let outcome = match policy {
                             UpsertPolicy::Update => self.batch_upsert_update_chunk(placement, chunk, &mut chunk_errors, now).await,
@@ -382,7 +387,6 @@ impl EntityService {
                         };
                         outcome.map(|(result, chunk_created)| (result, chunk_errors, chunk_created))
                     })
-                    .buffered(self.batch_execution.chunk_write_concurrency)
                     .collect()
                     .await;
 

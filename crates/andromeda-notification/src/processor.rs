@@ -40,6 +40,7 @@ use andromeda_delivery::{
     },
 };
 use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::EntityQueryService};
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::queried::linked_states::LinkedStates;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -54,7 +55,7 @@ use andromeda_subscription::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -266,14 +267,12 @@ impl NotificationProcessor {
             compaction_cache: &compaction_cache,
             identity,
         };
-        let attempts: Vec<Option<Result<(), NotificationAttemptFailure>>> = stream::iter(matching)
-            .map(|compiled_sub| {
-                let change = &change;
-                async move { self.notify_subscription(&compiled_sub, change).await }
-            })
-            .buffer_unordered(NOTIFICATION_CONCURRENCY)
-            .collect()
-            .await;
+        let attempts: Vec<Option<Result<(), NotificationAttemptFailure>>> = fan_out_unordered(matching, NOTIFICATION_CONCURRENCY, |compiled_sub| {
+            let change = &change;
+            async move { self.notify_subscription(&compiled_sub, change).await }
+        })
+        .collect()
+        .await;
         aggregate_delivery_outcomes(attempts)
     }
 

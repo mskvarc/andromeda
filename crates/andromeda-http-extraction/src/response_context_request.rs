@@ -8,6 +8,8 @@
 //! allows ([`ContextUrl`]), and the `apiRoot` the wrapper's URL is built on
 //! ([`ApiRoot`]). An operation that renders nothing extracts neither.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{api_root::ApiRoot, context::ContextUrl};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;

@@ -52,13 +52,14 @@ use crate::{
     request::TriggeringRequest,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, operation::selection::OverwritePolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use andromeda_ngsi_ld_request::options::UpsertMode;
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use std::collections::HashMap;
 
 /// The batch provision operation being forwarded, with the option that
@@ -193,20 +194,18 @@ impl FederationService {
             .collect::<Vec<_>>();
         let candidates = &candidates;
         let request = &request;
-        let results = stream::iter(candidates)
-            .map(|csr| async move {
-                let narrowed = narrow_input(csr, candidates, request.entities);
-                if narrowed.is_empty() {
-                    return Vec::new();
-                }
-                if looped {
-                    return looped_back(csr, narrowed);
-                }
-                self.drive_registration(csr, narrowed, request).await
-            })
-            .buffer_unordered(self.csr_concurrency)
-            .collect::<Vec<Vec<BatchForwardedResult>>>()
-            .await;
+        let results = fan_out_unordered(candidates, self.csr_concurrency, |csr| async move {
+            let narrowed = narrow_input(csr, candidates, request.entities);
+            if narrowed.is_empty() {
+                return Vec::new();
+            }
+            if looped {
+                return looped_back(csr, narrowed);
+            }
+            self.drive_registration(csr, narrowed, request).await
+        })
+        .collect::<Vec<Vec<BatchForwardedResult>>>()
+        .await;
         Ok(results.into_iter().flatten().collect())
     }
 
@@ -279,14 +278,12 @@ impl FederationService {
                     .collect()
             }
             FallbackPlan::PerEntity(write) => {
-                stream::iter(narrowed)
-                    .map(|entity| async move {
-                        let outcome = self.single_write(write, csr, &entity, request).await;
-                        result(&entity, outcome)
-                    })
-                    .buffer_unordered(self.csr_concurrency)
-                    .collect()
-                    .await
+                fan_out_unordered(narrowed, self.csr_concurrency, |entity| async move {
+                    let outcome = self.single_write(write, csr, &entity, request).await;
+                    result(&entity, outcome)
+                })
+                .collect()
+                .await
             }
             FallbackPlan::NotAdvertised => {
                 if !is_proxied(csr) {

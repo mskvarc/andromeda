@@ -237,7 +237,7 @@ impl EntityService {
     /// [`EntityError::Validation`] of a document clause 5.5.4 refuses for `W`.
     pub async fn admit_entity_write<W: EntityWriteKind>(
         &self,
-        payload: impl WritePayload<Member = W::Member>,
+        payload: &impl WritePayload<Member = W::Member>,
         context: &AdmittedContext,
         families: WrittenFamilies,
     ) -> Result<AdmittedEntity<W>, EntityError> {

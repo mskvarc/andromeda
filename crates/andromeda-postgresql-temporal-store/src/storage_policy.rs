@@ -17,6 +17,8 @@
 //! broker's own sweep converts them past `temporal.columnstore_after`
 //! ([`crate::columnstore_conversion`]).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     bounded_lock_wait::{StatementWrite, execute_with_bounded_lock_wait},
     chunk_skipping_enablement::reconcile_chunk_skipping,

@@ -6,6 +6,8 @@
 //! which every binding of the operation calls. This seam owns only the decoding
 //! and the clause 6.3.20 classification of a failure to decode.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;

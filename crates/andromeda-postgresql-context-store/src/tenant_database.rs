@@ -24,7 +24,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use sea_query::{Alias, Expr, ExprTrait, Query};
 use sqlx::{Connection, PgConnection};
-use std::{num::NonZeroU32, time::Duration};
+use std::{num::NonZeroU32, ops::ControlFlow, time::Duration};
 
 /// What a database created by [`create_database_if_missing`] starts as.
 #[derive(Debug, Clone, Copy)]
@@ -208,17 +208,17 @@ async fn create_database(
 /// new tenant. A create that lost the race to a concurrent create of the same
 /// name (42P04) finds its database already made by another call.
 async fn create_database_with_retry(conn: &mut PgConnection, definition: &DatabaseDefinition, made: DatabaseCreation) -> Result<DatabaseCreation, sqlx::Error> {
-    CREATE_DATABASE_RETRY
-        .run(
-            &TokioRetryDelay,
-            |error, _| is_transient_create_failure(error),
-            async |_| match definition.to_query().execute(&mut *conn).await {
-                Ok(_) => Ok(made),
-                Err(error) if is_database_already_exists(&error) => Ok(DatabaseCreation::AlreadyPresent),
-                Err(error) => Err(error),
-            },
-        )
-        .await
+    let mut run = CREATE_DATABASE_RETRY.start(&TokioRetryDelay);
+    loop {
+        let outcome = match definition.to_query().execute(&mut *conn).await {
+            Ok(_) => Ok(made),
+            Err(error) if is_database_already_exists(&error) => Ok(DatabaseCreation::AlreadyPresent),
+            Err(error) => Err(error),
+        };
+        if let ControlFlow::Break(settled) = run.settle(outcome, |error, _| is_transient_create_failure(error)).await {
+            return settled;
+        }
+    }
 }
 
 /// Whether a copy failed because of its template: the template does not exist

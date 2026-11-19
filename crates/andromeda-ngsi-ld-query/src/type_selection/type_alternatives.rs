@@ -90,15 +90,20 @@ impl<S: NameStage> TypeAlternatives<S> {
             .map(TypeAlternatives)
     }
 
-    /// The selection with every type replaced by what the asynchronous `leaf` makes of it, which fails at the first type it refuses. The shape is kept, so the result is as non-empty as the selection.
+    /// The selection with every type replaced by what the future `leaf` starts for it resolves to, which fails at the first type it refuses. The shape is kept, so the result is as non-empty as the selection.
+    ///
+    /// A future of `leaf` may borrow its type for as long as the selection is
+    /// borrowed, one lifetime for every type rather than a fresh one per call,
+    /// so stable Rust proves a caller's future `Send` from the future's own
+    /// type.
     ///
     /// # Errors
     ///
     /// The first error `leaf` returns.
-    pub async fn try_map_async<U: NameStage, E>(
-        &self,
-        mut leaf: impl AsyncFnMut(&S::EntityType) -> Result<U::EntityType, E>,
-    ) -> Result<TypeAlternatives<U>, E> {
+    pub async fn try_map_async<'s, U: NameStage, E, F>(&'s self, mut leaf: impl FnMut(&'s S::EntityType) -> F) -> Result<TypeAlternatives<U>, E>
+    where
+        F: Future<Output = Result<U::EntityType, E>>,
+    {
         let mut conjunctions = Vec::with_capacity(self.0.len());
         for conjunction in &self.0 {
             let mut mapped = Vec::with_capacity(conjunction.len());
@@ -149,6 +154,7 @@ impl<S: NameStage> Display for TypeAlternatives<S> {
 mod tests {
     use crate::{name_stage::Written, type_selection::type_alternatives::TypeAlternatives};
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReferenceError};
+    use std::future::ready;
 
     fn name(raw: &str) -> EntityTypeName {
         raw.parse().expect("valid type name")
@@ -166,7 +172,7 @@ mod tests {
         let selection = TypeAlternatives::<Written>::new(vec![vec![name("A"), name("B")], vec![name("C")]]).expect("non-empty");
 
         let mapped = selection
-            .try_map_async::<Written, NgsiLdReferenceError>(async |entity_type| entity_type.as_str().to_lowercase().parse())
+            .try_map_async::<Written, NgsiLdReferenceError, _>(|entity_type| ready(entity_type.as_str().to_lowercase().parse()))
             .await
             .expect("every type maps");
 
@@ -179,13 +185,13 @@ mod tests {
         let mut visited = Vec::new();
 
         let refused = selection
-            .try_map_async::<Written, &str>(async |entity_type| {
+            .try_map_async::<Written, &str, _>(|entity_type| {
                 visited.push(entity_type.as_str().to_owned());
-                if entity_type.as_str() == "B" {
+                ready(if entity_type.as_str() == "B" {
                     Err("refused")
                 } else {
                     Ok(entity_type.clone())
-                }
+                })
             })
             .await;
 

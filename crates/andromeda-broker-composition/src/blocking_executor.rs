@@ -5,7 +5,8 @@ use andromeda_entity::{
     error::EntityError,
     port::blocking_executor::{BlockingExecutor, BlockingTask},
 };
-use futures::{StreamExt, future::BoxFuture, stream};
+use andromeda_fan_out::bounded::fan_out_unordered;
+use futures::{StreamExt, future::BoxFuture};
 use std::num::NonZeroUsize;
 use tokio::task::spawn_blocking;
 
@@ -23,9 +24,7 @@ impl BlockingExecutor for TokioBlockingExecutor {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let mut outcomes = stream::iter(tasks)
-                .map(|task| spawn_blocking(move || task.run()))
-                .buffer_unordered(concurrency.get());
+            let mut outcomes = fan_out_unordered(tasks, concurrency.get(), |task| spawn_blocking(move || task.run()));
             let mut first_error = None;
             while let Some(outcome) = outcomes.next().await {
                 let error = match outcome {

@@ -2,6 +2,8 @@
 //! 6.18.3.2): the query a client wrote, or a followed pointer naming a query a
 //! client sent by POST.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     admitted_temporal_query::{AdmittedTemporalQuery, TemporalQueryAdmission, installed_admission},
     posted_reference::{decode_posted_reference, names_posted_query},

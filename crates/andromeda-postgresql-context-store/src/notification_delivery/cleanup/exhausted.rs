@@ -23,8 +23,8 @@ use sqlx::postgres::PgPool;
 /// Returns [`ContextStoreError::Database`] when a statement fails for a reason
 /// other than a reaped branch.
 pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
-    sweep_branches(pool, async |target| {
-        purge_branch(pool, target, RetentionClock::Exhausted, cutoff, EventReaping::Keep).await
+    sweep_branches(pool, |target| async move {
+        purge_branch(pool, &target, RetentionClock::Exhausted, cutoff, EventReaping::Keep).await
     })
     .await
 }

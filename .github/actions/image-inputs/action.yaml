@@ -17,8 +17,8 @@ outputs:
 runs:
   using: composite
   steps:
-    # Stable cargo reads the manifests, so the pinned nightly is not installed for this, and --no-deps keeps it off the
-    # network.
+    # Any stable cargo reads the manifests, so the pinned toolchain is not installed for this, and --no-deps keeps it off
+    # the network.
     - name: Read the workspace
       shell: bash
       run: |

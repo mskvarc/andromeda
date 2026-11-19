@@ -30,6 +30,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-entity",
         "andromeda-failure-classification",
+        "andromeda-fan-out",
         "andromeda-federation",
         "andromeda-http-headers",
         "andromeda-json-literal",

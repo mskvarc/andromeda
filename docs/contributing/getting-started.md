@@ -2,7 +2,13 @@
 
 ## Toolchain
 
-`rust-toolchain.toml` pins the nightly toolchain the workspace builds with, together with `clippy` and `rustfmt`. Rustup installs it the first time you run `cargo` in the repository. The workspace uses Rust edition 2024.
+`rust-toolchain.toml` pins the stable toolchain the workspace builds, lints and tests with, together with `clippy`. Rustup installs it the first time you run `cargo` in the repository. The workspace uses Rust edition 2024.
+
+Formatting runs a pinned nightly rustfmt, because `rustfmt.toml` uses options only a nightly reads. Install it once.
+
+```sh
+rustup toolchain install nightly-2026-09-25 --profile minimal --component rustfmt
+```
 
 The SQL tooling calls two external programs, `pg_format` and Squawk. On macOS, install `pg_format` with Homebrew. Homebrew has no Squawk formula, so install Squawk through npm.
 
@@ -37,7 +43,7 @@ The black-box test suite and the local stacks need Docker with Compose.
 CI requires every one of these checks to pass, so run them before you open a pull request.
 
 ```sh
-cargo fmt --all
+cargo +nightly-2026-09-25 fmt --all
 taplo fmt
 cargo clippy --workspace --all-targets --all-features
 cargo nextest run --workspace --exclude andromeda-test-suite
@@ -49,7 +55,7 @@ cargo run -p andromeda-sql -- lint
 cargo run -p andromeda-sql -- verify --against origin/main
 ```
 
-`cargo fmt` runs the toolchain `rust-toolchain.toml` pins, which is the one CI checks formatting with. Don't override it with `+nightly`, because a newer nightly can format differently.
+Format with exactly that nightly, the one CI checks formatting with. A plain `cargo fmt` runs the stable rustfmt, which ignores the unstable options and rewrites the imports, and a floating `+nightly` can format differently.
 
 The `andromeda` crate is a binary with no library target, so never pass it `--lib`. The black-box suite needs a live stack, so it is left out here. [Testing](testing.md) explains how to run the suite.
 

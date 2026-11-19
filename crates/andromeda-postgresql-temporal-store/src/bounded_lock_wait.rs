@@ -18,6 +18,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use sea_query::{Query, SelectStatement};
 use sqlx::{PgConnection, PgPool};
+use std::ops::ControlFlow;
 
 /// A storage-policy write: one statement or one command.
 pub(crate) trait BoundedWrite: Sync {
@@ -50,18 +51,22 @@ impl<C: Command + Sync> BoundedWrite for CommandWrite<C> {
 ///
 /// Returns the write's error, or the refused lock once every attempt is spent.
 pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, write: &impl BoundedWrite) -> Result<(), sqlx::Error> {
-    SCHEMA_CHANGE_LOCK_RETRY
-        .run(
-            &TokioRetryDelay,
-            |error, _| is_lock_not_available(error),
-            async |_| {
-                let mut transaction = pool.begin().await?;
-                lock_timeout_statement().to_query().execute(&mut *transaction).await?;
-                write.execute(&mut transaction).await?;
-                transaction.commit().await
-            },
-        )
-        .await
+    let mut run = SCHEMA_CHANGE_LOCK_RETRY.start(&TokioRetryDelay);
+    loop {
+        let outcome = execute_under_lock_timeout(pool, write).await;
+        if let ControlFlow::Break(settled) = run.settle(outcome, |error, _| is_lock_not_available(error)).await {
+            return settled;
+        }
+    }
+}
+
+/// Run `write` once, in a transaction whose lock waits end after
+/// [`SCHEMA_CHANGE_LOCK_TIMEOUT`].
+async fn execute_under_lock_timeout(pool: &PgPool, write: &impl BoundedWrite) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    lock_timeout_statement().to_query().execute(&mut *transaction).await?;
+    write.execute(&mut transaction).await?;
+    transaction.commit().await
 }
 
 /// `SELECT set_config('lock_timeout', '<n>ms', true)`.

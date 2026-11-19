@@ -30,7 +30,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
-use std::slice::from_ref;
+use std::{ops::ControlFlow, slice::from_ref};
 
 /// What one attempt of a computed write asked the store to do.
 #[derive(Clone, Copy)]
@@ -96,32 +96,38 @@ impl EntityService {
         let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
         let mut instant = AttemptInstant::default();
-        self.retry_contended(async |_| {
-            let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
-                return Ok(None);
-            };
-            let now = instant.next();
-            let Some(mut write) = build(&snapshot, now)? else {
-                return Ok(None);
-            };
-            write.precondition = Precondition::UnchangedSince(snapshot.version);
+        let mut run = self.contended_run();
+        let settled = loop {
+            let outcome = async {
+                let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
+                    return Ok(None);
+                };
+                let now = instant.next();
+                let Some(mut write) = build(&snapshot, now)? else {
+                    return Ok(None);
+                };
+                write.precondition = Precondition::UnchangedSince(snapshot.version);
 
-            let committed = self.writes.commit(target, now, vec![write]).await.map_err(EntityError::from)?;
-            let outcome = single(committed).map_err(EntityError::from)?;
-            match after_attempt(&outcome) {
-                AfterAttempt::Settled => Ok(Some(outcome)),
-                AfterAttempt::Vanished => Ok(None),
-                // The next attempt re-reads the state the write is computed
-                // from.
-                AfterAttempt::Reread => Err(ContendedAttempt::Lost),
-                AfterAttempt::Restamp(latest) => {
-                    instant.refused(latest);
-                    Err(ContendedAttempt::Lost)
+                let committed = self.writes.commit(target, now, vec![write]).await.map_err(EntityError::from)?;
+                let outcome = single(committed).map_err(EntityError::from)?;
+                match after_attempt(&outcome) {
+                    AfterAttempt::Settled => Ok(Some(outcome)),
+                    AfterAttempt::Vanished => Ok(None),
+                    // The next attempt re-reads the state the write is computed
+                    // from.
+                    AfterAttempt::Reread => Err(ContendedAttempt::Lost),
+                    AfterAttempt::Restamp(latest) => {
+                        instant.refused(latest);
+                        Err(ContendedAttempt::Lost)
+                    }
                 }
             }
-        })
-        .await
-        .map_err(|failure| failure.into_entity_error(id))
+            .await;
+            if let ControlFlow::Break(settled) = run.settle(outcome, ContendedAttempt::retried).await {
+                break settled;
+            }
+        };
+        settled.map_err(|failure| failure.into_entity_error(id))
     }
 
     /// Commit a read-modify-write and hand back whatever its computation

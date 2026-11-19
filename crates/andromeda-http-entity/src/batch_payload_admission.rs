@@ -102,15 +102,9 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
         Some(shared) => Some(shared.admit_for_request(engine).await.with_entity_instance(uri)?),
         None => None,
     };
-    let submitted = run_in_batch_scope(screened_batch_entities(
-        async |context: &BatchContext| context.admit(engine).await.map_err(EntityError::from),
-        shared,
-        items,
-        batch.blocking_decode(),
-        &mut refused,
-    ))
-    .await
-    .with_entity_instance(uri)?;
+    let submitted = run_in_batch_scope(screened_batch_entities(engine, shared, items, batch.blocking_decode(), &mut refused))
+        .await
+        .with_entity_instance(uri)?;
     let (admitted, placements) = service.admit_batch_write(kind, submitted).await;
     for (id, error) in placements {
         refused.push(batch_entity_error(
@@ -123,7 +117,7 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
 }
 
 /// The compact screening of a batch's entities, each distinct context they
-/// name admitted once through `admit_context`, the `shared` one the request
+/// name admitted once through `context_admitter`, the `shared` one the request
 /// already admitted for every entity never again.
 ///
 /// Every item is decoded once its context was admitted, through the aliases of
@@ -137,7 +131,7 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
 /// unretrievable or unprocessable fails the operation, and so does a decoding
 /// task that ends without an outcome.
 async fn screened_batch_entities<M: WrittenMember + MemberReading + Send + 'static>(
-    mut admit_context: impl AsyncFnMut(&BatchContext) -> Result<EntityContextAdmission, EntityError>,
+    context_admitter: &impl BatchContextAdmitter,
     shared: Option<AdmittedBatchContext>,
     items: Vec<BatchItem>,
     blocking_decode: Option<&BlockingDecodePolicy>,
@@ -148,7 +142,7 @@ async fn screened_batch_entities<M: WrittenMember + MemberReading + Send + 'stat
     for mut item in items {
         let admission = match decided.entry(item.context.id()) {
             Entry::Occupied(seen) => seen.into_mut(),
-            Entry::Vacant(slot) => slot.insert(context_admission(admit_context(&item.context).await)?),
+            Entry::Vacant(slot) => slot.insert(context_admission(context_admitter.admit(&item.context).await)?),
         };
         let admitted = match admission {
             ContextAdmission::Admitted(admitted) => admitted,
@@ -220,6 +214,19 @@ async fn screened_batch_entities<M: WrittenMember + MemberReading + Send + 'stat
     Ok(submitted)
 }
 
+/// What admits each distinct `@context` a batch names, as clause 5.5.7
+/// admits a user `@context`.
+pub(crate) trait BatchContextAdmitter: Sync {
+    /// Admit `context`, or say why it fails the entities naming it.
+    fn admit<'a>(&'a self, context: &'a BatchContext) -> impl Future<Output = Result<EntityContextAdmission, EntityError>> + Send + 'a;
+}
+
+impl BatchContextAdmitter for JsonLdEngine {
+    async fn admit(&self, context: &BatchContext) -> Result<EntityContextAdmission, EntityError> {
+        context.admit(self).await.map_err(EntityError::from)
+    }
+}
+
 /// What the clause 5.5.7 admission of one context a batch names decided.
 enum ContextAdmission {
     /// The context resolved, declares nothing clause 5.5.7 refuses, and
@@ -254,7 +261,10 @@ fn context_admission(outcome: Result<EntityContextAdmission, EntityError>) -> Re
 
 #[cfg(test)]
 mod tests {
-    use crate::{batch_payload_admission::screened_batch_entities, written_payload_admission::WrittenPayloadRefusal};
+    use crate::{
+        batch_payload_admission::{BatchContextAdmitter, screened_batch_entities},
+        written_payload_admission::WrittenPayloadRefusal,
+    };
     use andromeda_entity::error::EntityError;
     use andromeda_http_extraction::batch_item_decoding::{BatchItem, ItemIdentifier};
     use andromeda_json_literal::JsonLiteral;
@@ -271,6 +281,7 @@ mod tests {
     use axum::body::Bytes;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A context the fake admission cannot retrieve.
     const UNRETRIEVABLE: &str = "https://contexts.example/unretrievable.jsonld";
@@ -354,7 +365,7 @@ mod tests {
     async fn an_entity_embedding_a_context_is_refused_on_its_own() {
         let mut refused = Vec::new();
         let rendered = screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| admission_of(context).await,
+            &FakeAdmission::default(),
             None,
             items_embedding(
                 &[("urn:ngsi-ld:Building:a", ADMITTED), ("urn:ngsi-ld:Building:b", ADMITTED)],
@@ -380,7 +391,7 @@ mod tests {
     async fn an_unretrievable_context_outranks_an_embedded_one() {
         let mut refused = Vec::new();
         screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| admission_of(context).await,
+            &FakeAdmission::default(),
             None,
             items_embedding(&[("urn:ngsi-ld:Building:a", UNRETRIEVABLE)], &["urn:ngsi-ld:Building:a"]),
             None,
@@ -418,7 +429,7 @@ mod tests {
     async fn an_undecodable_entity_is_refused_once_its_context_loaded() {
         let mut refused = Vec::new();
         let rendered = screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| admission_of(context).await,
+            &FakeAdmission::default(),
             None,
             items_undecodable(
                 &[
@@ -473,7 +484,7 @@ mod tests {
         .collect();
         let mut refused = Vec::new();
 
-        let rendered = screened_batch_entities::<AttributeValue>(async |context: &BatchContext| admission_of(context).await, None, batch, None, &mut refused)
+        let rendered = screened_batch_entities::<AttributeValue>(&FakeAdmission::default(), None, batch, None, &mut refused)
             .await
             .expect("an entity observed past microseconds does not fail the operation");
 
@@ -483,6 +494,20 @@ mod tests {
             refused_types(&refused),
             vec![("urn:ngsi-ld:Building:b".to_owned(), "BadRequestData".to_owned())]
         );
+    }
+
+    /// The fake admission: [`admission_of`], counting the contexts it is
+    /// asked to admit.
+    #[derive(Default)]
+    struct FakeAdmission {
+        admissions: AtomicUsize,
+    }
+
+    impl BatchContextAdmitter for FakeAdmission {
+        fn admit<'a>(&'a self, context: &'a BatchContext) -> impl Future<Output = Result<EntityContextAdmission, EntityError>> + Send + 'a {
+            self.admissions.fetch_add(1, Ordering::Relaxed);
+            admission_of(context)
+        }
     }
 
     /// The admission the fake decides for `context`: the two failures named
@@ -509,7 +534,7 @@ mod tests {
     async fn only_the_entities_naming_an_unretrievable_context_are_refused() {
         let mut refused = Vec::new();
         let rendered = screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| admission_of(context).await,
+            &FakeAdmission::default(),
             None,
             items(&[
                 ("urn:ngsi-ld:Building:a", ADMITTED),
@@ -547,7 +572,7 @@ mod tests {
     async fn a_scoped_context_fails_the_operation() {
         let mut refused = Vec::new();
         let outcome = screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| admission_of(context).await,
+            &FakeAdmission::default(),
             None,
             items(&[("urn:ngsi-ld:Building:a", ADMITTED), ("urn:ngsi-ld:Building:b", SCOPED)]),
             None,
@@ -580,23 +605,14 @@ mod tests {
                 decode_bounds: None,
             })
             .collect();
-        let mut admissions = 0_usize;
+        let admission = FakeAdmission::default();
         let mut refused = Vec::new();
 
-        let rendered = screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| {
-                admissions += 1;
-                admission_of(context).await
-            },
-            Some(admitted),
-            items,
-            None,
-            &mut refused,
-        )
-        .await
-        .expect("the batch is admitted");
+        let rendered = screened_batch_entities::<AttributeValue>(&admission, Some(admitted), items, None, &mut refused)
+            .await
+            .expect("the batch is admitted");
 
-        pretty_assertions::assert_eq!(admissions, 0);
+        pretty_assertions::assert_eq!(admission.admissions.load(Ordering::Relaxed), 0);
         pretty_assertions::assert_eq!(rendered.len(), 2);
         assert!(refused.is_empty(), "{refused:?}");
     }
@@ -604,13 +620,10 @@ mod tests {
     /// Entities naming one and the same context have it admitted once.
     #[tokio::test]
     async fn a_shared_context_is_admitted_once() {
-        let mut admissions = 0_usize;
+        let admission = FakeAdmission::default();
         let mut refused = Vec::new();
         let rendered = screened_batch_entities::<AttributeValue>(
-            async |context: &BatchContext| {
-                admissions += 1;
-                admission_of(context).await
-            },
+            &admission,
             None,
             items(&[
                 ("urn:ngsi-ld:Building:a", ADMITTED),
@@ -623,7 +636,7 @@ mod tests {
         .await
         .expect("the batch is admitted");
 
-        pretty_assertions::assert_eq!(admissions, 1);
+        pretty_assertions::assert_eq!(admission.admissions.load(Ordering::Relaxed), 1);
         pretty_assertions::assert_eq!(rendered.len(), 3);
         assert!(refused.is_empty(), "{refused:?}");
     }
@@ -655,7 +668,7 @@ mod tests {
         batch.push(aliased_item(&mut contexts, 1, "urn:ngsi-ld:Building:b", ALIASING));
         let mut refused = Vec::new();
 
-        let rendered = screened_batch_entities::<AttributeValue>(async |context: &BatchContext| admission_of(context).await, None, batch, None, &mut refused)
+        let rendered = screened_batch_entities::<AttributeValue>(&FakeAdmission::default(), None, batch, None, &mut refused)
             .await
             .expect("the batch is admitted");
 
@@ -673,10 +686,9 @@ mod tests {
         item.embedded = find_embedded_context(br#"{"speed": {"@context": {}}}"#).expect("valid JSON");
         let mut refused = Vec::new();
 
-        let rendered =
-            screened_batch_entities::<AttributeValue>(async |context: &BatchContext| admission_of(context).await, None, vec![item], None, &mut refused)
-                .await
-                .expect("an embedded context does not fail the operation");
+        let rendered = screened_batch_entities::<AttributeValue>(&FakeAdmission::default(), None, vec![item], None, &mut refused)
+            .await
+            .expect("an embedded context does not fail the operation");
 
         assert!(rendered.is_empty());
         pretty_assertions::assert_eq!(
@@ -696,8 +708,7 @@ mod tests {
             batch.push(aliased_item(&mut contexts, 1, "urn:ngsi-ld:Building:b", context));
             let mut refused = Vec::new();
 
-            let outcome =
-                screened_batch_entities::<AttributeValue>(async |context: &BatchContext| admission_of(context).await, None, batch, None, &mut refused).await;
+            let outcome = screened_batch_entities::<AttributeValue>(&FakeAdmission::default(), None, batch, None, &mut refused).await;
 
             let Err(WrittenPayloadRefusal::Batch(refusal)) = outcome else {
                 panic!("the operation fails under {context}");

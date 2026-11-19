@@ -3,6 +3,8 @@
 //! Decodes the query string through [`decode_query`], whose refusal names the
 //! parameter at fault and carries its clause 6.3.20 error type.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query_parameter::QueryParameterSet;
