@@ -1,7 +1,7 @@
 use crate::{
     change::{CsourceSubscriptionChange, UpsertKind},
     error::SubscriptionError,
-    expanded_filters::ExpandedFilters,
+    expanded_terms::ExpandedTerms,
     request_validation,
     term_expansion,
     variant::{RegistrationMatchReach, SubscriptionVariant},
@@ -33,10 +33,10 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
 
     async fn expand_terms(
         &self,
-        request: &mut SubscriptionRequest,
+        request: &SubscriptionRequest,
         context: &ContextSpec,
         admitted_q: Option<&AdmittedFilter>,
-    ) -> Result<ExpandedFilters, SubscriptionError> {
+    ) -> Result<ExpandedTerms, SubscriptionError> {
         term_expansion::expand_common_subscription_terms(&self.engine, request, context, admitted_q).await
     }
 

@@ -15,7 +15,7 @@
 
 use crate::notification::NotificationTrigger;
 use andromeda_ngsi_ld_entity::reads::attribute_change::{AttributeChange, AttributeChangeKind};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -122,7 +122,7 @@ impl EntityChange {
     /// deleted with no attribute at all still raises its entity-level trigger
     /// for a subscription that watches every attribute.
     #[must_use]
-    pub fn is_owed_to(&self, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeName>>) -> bool {
+    pub fn is_owed_to(&self, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeIri>>) -> bool {
         let lifecycle_owed = self.lifecycle_trigger().is_some_and(|trigger| {
             triggers.contains(&trigger) && (watched.is_none() || self.instances.iter().any(|instance| is_watched(&instance.key.attr, watched)))
         });
@@ -134,7 +134,7 @@ impl EntityChange {
     /// `attributeDeleted` (listed, or through `entityUpdated`) on a watched
     /// attribute.
     #[must_use]
-    pub fn is_deletion_owed_to(&self, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeName>>) -> bool {
+    pub fn is_deletion_owed_to(&self, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeIri>>) -> bool {
         self.instances
             .iter()
             .any(|instance| instance.kind == AttributeChangeKind::Deleted && instance_owed(instance, triggers, watched))
@@ -143,13 +143,13 @@ impl EntityChange {
 
 /// Whether `attribute` is among `watched`; every attribute is when `watched`
 /// is absent (clause 5.8.1.4).
-fn is_watched(attribute: &AttributeName, watched: Option<&HashSet<AttributeName>>) -> bool {
-    watched.is_none_or(|names| names.contains(attribute))
+fn is_watched(attribute: &AttributeName, watched: Option<&HashSet<AttributeIri>>) -> bool {
+    watched.is_none_or(|names| names.contains(attribute.as_str()))
 }
 
 /// Whether `instance` raises one of `triggers` on an attribute among
 /// `watched`.
-fn instance_owed(instance: &AttributeChange, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeName>>) -> bool {
+fn instance_owed(instance: &AttributeChange, triggers: &[NotificationTrigger], watched: Option<&HashSet<AttributeIri>>) -> bool {
     triggers.contains(&attribute_trigger(instance.kind)) && is_watched(&instance.key.attr, watched)
 }
 
@@ -163,7 +163,7 @@ mod tests {
         attribute_change::{AttributeChange, AttributeChangeKind},
         attribute_instance_key::AttributeInstanceKey,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -171,8 +171,8 @@ mod tests {
         raw.parse().expect("a valid attribute name")
     }
 
-    fn watching(raw: &[&str]) -> HashSet<AttributeName> {
-        raw.iter().map(|attribute| name(attribute)).collect()
+    fn watching(raw: &[&str]) -> HashSet<AttributeIri> {
+        raw.iter().map(|attribute| attribute.parse().expect("a valid attribute IRI")).collect()
     }
 
     fn instance(attribute: &str, dataset: Option<&str>, kind: AttributeChangeKind) -> AttributeChange {

@@ -8,41 +8,22 @@
 //! matching consumes. The lists are stored expanded too, so the stored members
 //! name the same IRIs the stored `q` is expanded under.
 
-use crate::error::SubscriptionError;
+use crate::{error::SubscriptionError, term_expansion::expand_names};
 use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use andromeda_ngsi_ld_model::clearable::Clearable;
-use andromeda_ngsi_ld_query::{
-    filter::{compilation::FilterOptIns, expansion::expand_attribute_names},
-    term_expander::TermExpander,
-};
+use andromeda_ngsi_ld_query::term_expander::TermExpander;
 
-/// Expand both lists a write names in place, and the opt-ins the `q` is
-/// compiled under. A list the write does not name, and one it clears, opts
-/// nothing in.
+/// Expand both lists a write names. A list the write does not name, and one
+/// it clears, opts nothing in.
 ///
 /// # Errors
 ///
 /// Returns [`SubscriptionError::Query`] when a name does not expand to a
 /// usable attribute name.
 pub(crate) async fn expanded_opt_ins(
-    expand_values: &mut Clearable<Vec<AttributeName>>,
-    json_keys: &mut Clearable<Vec<AttributeName>>,
+    expand_values: &Clearable<Vec<AttributeName>>,
+    json_keys: &Clearable<Vec<AttributeName>>,
     expander: &impl TermExpander,
-) -> Result<FilterOptIns, SubscriptionError> {
-    Ok(FilterOptIns {
-        expand_values: expand_list(expand_values, expander).await?.into_iter().collect(),
-        json_keys: expand_list(json_keys, expander).await?.into_iter().collect(),
-    })
-}
-
-/// Expand the names of one opt-in list the write names, and give the expanded
-/// names, none for a list the write does not name.
-async fn expand_list(list: &mut Clearable<Vec<AttributeName>>, expander: &impl TermExpander) -> Result<Vec<AttributeIri>, SubscriptionError> {
-    let Some(names) = list.as_set_mut() else {
-        return Ok(Vec::new());
-    };
-    let iris = expand_attribute_names(names, expander).await?;
-    // clone: the write keeps its list, spelled as an attribute name, while the filter expansion reads the IRIs
-    *names = iris.iter().cloned().map(AttributeName::from).collect();
-    Ok(iris)
+) -> Result<(Clearable<Vec<AttributeIri>>, Clearable<Vec<AttributeIri>>), SubscriptionError> {
+    Ok((expand_names(expand_values, expander).await?, expand_names(json_keys, expander).await?))
 }

@@ -1,7 +1,7 @@
 //! Filters held back from the local query when `splitEntities` is in effect.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::compilation::AdmittedFilter, geo::written_geo_query::WrittenGeoQuery, scope::scope_query::ScopeQuery};
+use andromeda_ngsi_ld_query::{filter::compilation::AdmittedFilter, geo::geo_constraint::GeoConstraint, name_stage::Written, scope::scope_query::ScopeQuery};
 
 /// The `q`, `geoQ` and `scopeQ` parameters a `splitEntities` request removes
 /// from the query it runs locally, so they can be evaluated once against the
@@ -19,7 +19,7 @@ pub struct DeferredSplitFilters {
     /// The deferred `q`, as the request's validation admitted it.
     pub q: Option<AdmittedFilter>,
     /// Deferred complete geo-query.
-    pub geo: Option<WrittenGeoQuery>,
+    pub geo: Option<GeoConstraint<Written>>,
     /// Deferred `scopeQ` scope query.
     pub scope_q: Option<ScopeQuery>,
     /// The request's `jsonKeys` declaration, which travels with the deferred

@@ -33,10 +33,15 @@ use andromeda_ngsi_ld_model::{
     registration_matching::selector_reduction::reduced_selectors,
     subscription::{Subscription, SubscriptionType},
     subscription_request::SubscriptionRequest,
+    written_subscription_terms::WrittenSubscriptionTerms,
 };
 use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use andromeda_subscription::deleted_members::{DeletableMember, DeletedMembers};
+use andromeda_subscription::{
+    deleted_members::{DeletableMember, DeletedMembers},
+    error::SubscriptionError,
+    subscription_invariant::SubscriptionInvariant,
+};
 
 /// Whether the copy keeps the filters of the original.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,10 +89,10 @@ fn narrow_names(names: Option<&[AttributeName]>, declared: Option<&[&AttributeNa
 /// The `watchedAttributes` of the copy: the subscription's narrowed to the
 /// names the registration declares, and none for a periodic subscription
 /// (Table 5.2.12-1).
-fn copy_watched_attributes(subscription: &Subscription, declared: Option<&[&AttributeName]>) -> Option<Vec<AttributeName>> {
+fn copy_watched_attributes(subscription: &Subscription, watched: Option<&[AttributeName]>, declared: Option<&[&AttributeName]>) -> Option<Vec<AttributeName>> {
     match subscription.delivery.time_interval {
         Some(_) => None,
-        None => narrow_names(subscription.selection.watched_attributes.as_deref(), declared),
+        None => narrow_names(watched, declared),
     }
 }
 
@@ -116,16 +121,22 @@ pub struct ReducedSubscription {
 
 impl ReducedSubscription {
     /// Reduce `subscription` to what `registration` matches, notifying
-    /// `receiver`, under the identifier `minted`.
-    #[must_use]
+    /// `receiver`, under the identifier `minted`. The names the copy carries
+    /// are spelled as the absolute IRIs the subscription stores them as.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionError::Internal`] when a stored name has no
+    /// written spelling, which the store never holds.
     pub fn reduce(
         subscription: &Subscription,
         registration: &ContextSourceRegistration,
         receiver: &ReceiverEndpoint,
         minted: &Identifier,
         carriage: FilterCarriage,
-    ) -> ReducedSubscription {
-        let selectors = reduced_selectors(subscription.selection.entities.as_deref(), &registration.coverage.information);
+    ) -> Result<ReducedSubscription, SubscriptionError> {
+        let terms = WrittenSubscriptionTerms::try_from(subscription).map_err(SubscriptionInvariant::from)?;
+        let selectors = reduced_selectors(terms.entities.as_deref(), &registration.coverage.information);
         let declared = declared_attributes(registration);
         let keeps_filters = carriage == FilterCarriage::Keep;
 
@@ -142,27 +153,27 @@ impl ReducedSubscription {
             ..NotificationRequest::default()
         };
 
-        ReducedSubscription {
+        Ok(ReducedSubscription {
             request: SubscriptionRequest {
                 id: Some(minted.clone()),
                 type_: Some(SubscriptionType),
                 subscription_name: Clearable::from_option(subscription.subscription_name.clone()),
                 description: Clearable::from_option(subscription.description.clone()),
                 entities: Clearable::from_option(selectors.filter(|selectors| !selectors.is_empty())),
-                watched_attributes: Clearable::from_option(copy_watched_attributes(subscription, declared.as_deref())),
+                watched_attributes: Clearable::from_option(copy_watched_attributes(subscription, terms.watched_attributes.as_deref(), declared.as_deref())),
                 notification_trigger: Clearable::from_option(subscription.selection.notification_trigger.clone()),
                 time_interval: Clearable::from_option(subscription.delivery.time_interval),
-                q: Clearable::from_option(subscription.filters.q.as_ref().filter(|_| keeps_filters).cloned()),
-                geo_q: Clearable::from_option(subscription.filters.geo_q.as_ref().filter(|_| keeps_filters).cloned()),
+                q: Clearable::from_option(terms.q.filter(|_| keeps_filters)),
+                geo_q: Clearable::from_option(terms.geo_q.filter(|_| keeps_filters)),
                 scope_q: Clearable::from_option(subscription.filters.scope_q.as_ref().filter(|_| keeps_filters).cloned()),
-                csf: Clearable::from_option(subscription.filters.csf.clone()),
+                csf: Clearable::from_option(terms.csf),
                 dataset_id: Clearable::from_option(copy_dataset_ids(subscription, registration)),
                 notification: Some(notification),
                 throttling: Clearable::from_option(subscription.delivery.throttling),
                 expires_at: Clearable::from_option(subscription.lifecycle.standing.expires_at),
                 ..SubscriptionRequest::default()
             },
-        }
+        })
     }
 
     /// The same request as an update fragment: everything but the identifier
@@ -256,6 +267,7 @@ mod tests {
         serde_json::to_value(request).expect("the request writes")
     }
 
+    const EXPANDED_Q: &str = r#""https://example.org/speed">10"#;
     const VEHICLE: &str = "https://example.org/Vehicle";
     const SPEED: &str = "https://example.org/speed";
     const COLOUR: &str = "https://example.org/colour";
@@ -271,7 +283,7 @@ mod tests {
             "type": "Subscription",
             "entities": [{"type": VEHICLE}, {"type": "https://example.org/Building"}],
             "watchedAttributes": [SPEED, COLOUR],
-            "q": "speed>10",
+            "q": EXPANDED_Q,
             "notification": {
                 "attributes": [SPEED, COLOUR],
                 "pick": stored_projection(SPEED),
@@ -309,12 +321,13 @@ mod tests {
     #[test]
     fn the_copy_is_narrowed_to_the_registration_and_notifies_this_broker() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
-        let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep);
+        let copy =
+            ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).expect("the subscription is reducible");
         let document = written(&copy.request);
         pretty_assertions::assert_eq!(document["id"], json!("urn:ngsi-ld:Subscription:forwarded-1"));
         pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE}]));
         pretty_assertions::assert_eq!(document["watchedAttributes"], json!([SPEED]));
-        pretty_assertions::assert_eq!(document["q"], json!("speed>10"));
+        pretty_assertions::assert_eq!(document["q"], json!(EXPANDED_Q));
         pretty_assertions::assert_eq!(
             document["notification"]["endpoint"]["uri"],
             json!("http://broker-a:1056/ngsi-ld/andromeda/v1/notifications")
@@ -346,7 +359,11 @@ mod tests {
             {"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:.*"},
             {"type": VEHICLE, "idPattern": "urn:ngsi-ld:Building:.*"}
         ]));
-        let document = written(&ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
+        let document = written(
+            &ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .expect("the subscription is reducible")
+                .request,
+        );
         pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
     }
 
@@ -359,14 +376,19 @@ mod tests {
             {"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:1"},
             {"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}
         ]));
-        let document = written(&ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
+        let document = written(
+            &ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .expect("the subscription is reducible")
+                .request,
+        );
         pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
     }
 
     #[test]
     fn split_entities_strip_the_filters() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
-        let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Strip);
+        let copy =
+            ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Strip).expect("the subscription is reducible");
         let document = written(&copy.request);
         assert!(document.get("q").is_none());
         // A registration declaring no attribute covers every watched one.
@@ -399,7 +421,8 @@ mod tests {
     fn the_copy_keeps_show_changes() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
-            let copy = ReducedSubscription::reduce(&subscription_showing_changes(Some(true)), &registration, &receiver(), &minted(), carriage);
+            let copy = ReducedSubscription::reduce(&subscription_showing_changes(Some(true)), &registration, &receiver(), &minted(), carriage)
+                .expect("the subscription is reducible");
             pretty_assertions::assert_eq!(written(&copy.request)["notification"]["showChanges"], json!(true), "{carriage:?}");
             let fragment = written(&copy.as_fragment(&DeletedMembers::default(), carriage));
             pretty_assertions::assert_eq!(fragment["notification"]["showChanges"], json!(true), "{carriage:?}");
@@ -411,7 +434,8 @@ mod tests {
                 &receiver(),
                 &minted(),
                 FilterCarriage::Keep,
-            );
+            )
+            .expect("the subscription is reducible");
             let document = written(&copy.request);
             assert_ne!(document["notification"].get("showChanges"), Some(&json!(true)), "{show_changes:?}: {document}");
         }
@@ -441,7 +465,7 @@ mod tests {
                     "id": "urn:ngsi-ld:Subscription:local",
                     "type": "Subscription",
                     "entities": [{"type": VEHICLE}],
-                    "q": "speed>10",
+                    "q": EXPANDED_Q,
                     "scopeQ": "/Madrid",
                     "notification": notification,
                     "status": "active",
@@ -450,7 +474,11 @@ mod tests {
                 }))
                 .expect("valid subscription");
 
-                let document = written(&ReducedSubscription::reduce(&subscription, &registration, &receiver(), &minted(), carriage).request);
+                let document = written(
+                    &ReducedSubscription::reduce(&subscription, &registration, &receiver(), &minted(), carriage)
+                        .expect("the subscription is reducible")
+                        .request,
+                );
 
                 for member in ["attributes", "pick", "omit"] {
                     assert!(
@@ -476,7 +504,7 @@ mod tests {
             "id": "urn:ngsi-ld:Subscription:local",
             "type": "Subscription",
             "entities": [{"type": VEHICLE}],
-            "q": "speed>10",
+            "q": EXPANDED_Q,
             "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify"}},
             "status": "active",
             "createdAt": "2024-01-01T00:00:00Z",
@@ -497,7 +525,7 @@ mod tests {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let local = subscription_filtering_sources(Some(GOLD_TIER));
         for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
-            let copy = ReducedSubscription::reduce(&local, &registration, &receiver(), &minted(), carriage);
+            let copy = ReducedSubscription::reduce(&local, &registration, &receiver(), &minted(), carriage).expect("the subscription is reducible");
             pretty_assertions::assert_eq!(written(&copy.request)["csf"], json!(GOLD_TIER), "{carriage:?}");
             let fragment = written(&copy.as_fragment(&DeletedMembers::default(), carriage));
             pretty_assertions::assert_eq!(fragment["csf"], json!(GOLD_TIER), "{carriage:?}");
@@ -510,6 +538,7 @@ mod tests {
                 &minted(),
                 FilterCarriage::Keep,
             )
+            .expect("the subscription is reducible")
             .request,
         );
         assert!(unfiltered.get("csf").is_none(), "{unfiltered}");
@@ -536,6 +565,7 @@ mod tests {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
         let fragment = written(
             &ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .expect("the subscription is reducible")
                 .as_fragment(&DeletedMembers::default(), FilterCarriage::Keep),
         );
         pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
@@ -599,7 +629,8 @@ mod tests {
             (None, None, None),
         ] {
             for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
-                let copy = ReducedSubscription::reduce(&subscription_naming(named), &registration_listing(listed), &receiver(), &minted(), carriage);
+                let copy = ReducedSubscription::reduce(&subscription_naming(named), &registration_listing(listed), &receiver(), &minted(), carriage)
+                    .expect("the subscription is reducible");
                 pretty_assertions::assert_eq!(
                     written(&copy.request).get("datasetId"),
                     carried.as_ref(),
@@ -622,13 +653,15 @@ mod tests {
                 &receiver(),
                 &minted(),
                 carriage,
-            );
+            )
+            .expect("the subscription is reducible");
             pretty_assertions::assert_eq!(
                 written(&narrowed.as_fragment(&DeletedMembers::default(), carriage))["datasetId"],
                 json!([DATASET_A]),
                 "{carriage:?}"
             );
-            let unnarrowed = ReducedSubscription::reduce(&subscription_naming(None), &registration_listing(None), &receiver(), &minted(), carriage);
+            let unnarrowed = ReducedSubscription::reduce(&subscription_naming(None), &registration_listing(None), &receiver(), &minted(), carriage)
+                .expect("the subscription is reducible");
             let fragment = written(&unnarrowed.as_fragment(&DeletedMembers::default(), carriage));
             pretty_assertions::assert_eq!(fragment["datasetId"], json!(["urn:ngsi-ld:null"]), "{carriage:?}");
             assert!(
@@ -643,6 +676,7 @@ mod tests {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let fragment = written(
             &ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .expect("the subscription is reducible")
                 .as_fragment(&DeletedMembers::default(), FilterCarriage::Keep),
         );
         assert!(fragment.get("id").is_none());
@@ -655,7 +689,11 @@ mod tests {
     fn fragment_under(information: &Value, local: &Subscription, update: &Value, carriage: FilterCarriage) -> Value {
         let registration = registration(information);
         let deleted = DeletedMembers::of(&serde_json::from_value(update.clone()).expect("a readable fragment"));
-        written(&ReducedSubscription::reduce(local, &registration, &receiver(), &minted(), carriage).as_fragment(&deleted, carriage))
+        written(
+            &ReducedSubscription::reduce(local, &registration, &receiver(), &minted(), carriage)
+                .expect("the subscription is reducible")
+                .as_fragment(&deleted, carriage),
+        )
     }
 
     /// The fragment a local update of `local` produces for a registration of
@@ -788,7 +826,11 @@ mod tests {
         periodic.delivery.time_interval = Some(60.0);
         let naming = json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]);
         for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
-            let copy = written(&ReducedSubscription::reduce(&periodic, &registration(&naming), &receiver(), &minted(), carriage).request);
+            let copy = written(
+                &ReducedSubscription::reduce(&periodic, &registration(&naming), &receiver(), &minted(), carriage)
+                    .expect("the subscription is reducible")
+                    .request,
+            );
             pretty_assertions::assert_eq!(copy["timeInterval"], json!(60), "{carriage:?}");
             assert!(copy.get("watchedAttributes").is_none(), "{carriage:?}: {copy}");
             let fragment = fragment_under(&naming, &periodic, &json!({"subscriptionName": "fleet"}), carriage);
@@ -801,7 +843,11 @@ mod tests {
     #[test]
     fn a_registration_that_covers_none_of_the_selectors_yields_no_entities_member() {
         let registration = registration(&json!([{"entities": [{"type": "https://example.org/Sensor"}]}]));
-        let document = written(&ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
+        let document = written(
+            &ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .expect("the subscription is reducible")
+                .request,
+        );
         assert!(document.get("entities").is_none());
         pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Split), FilterCarriage::Strip);
         pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Complete), FilterCarriage::Keep);

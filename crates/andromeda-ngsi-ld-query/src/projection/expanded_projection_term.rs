@@ -1,7 +1,10 @@
 //! Terms of the `attrs`, `pick` and `omit` selection lists (clause 4.21).
 
+use crate::projection::{projection_error::ProjectionError, stored_projection_term::StoredProjectionTerm};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use iri_rs::IriBuf;
+use serde::{Deserialize, Serialize};
 
 /// One member of an attribute selection list.
 ///
@@ -13,7 +16,8 @@ use iri_rs::IriBuf;
 /// term against three string literals wherever it matters.
 ///
 /// It displays as the keyword, or as the expanded name of the Attribute.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
+#[serde(try_from = "StoredProjectionTerm", into = "StoredProjectionTerm")]
 pub enum ExpandedProjectionTerm {
     /// The entity identifier.
     #[display("id")]
@@ -49,6 +53,19 @@ impl ExpandedProjectionTerm {
             // this match; anything else names an attribute.
             _ => None,
         }
+    }
+
+    /// Check that every attribute name of this term and of its linked terms is within the identifier bound a stored name keeps.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectionError::InvalidAttributeName`] for the first expanded name that is no attribute name.
+    pub fn check_name_bound(&self) -> Result<(), ProjectionError> {
+        if let ExpandedProjectionTerm::Attribute { iri, linked } = self {
+            iri.as_str().parse::<AttributeName>().map_err(ProjectionError::InvalidAttributeName)?;
+            linked.iter().try_for_each(ExpandedProjectionTerm::check_name_bound)?;
+        }
+        Ok(())
     }
 
     /// Whether this term names the attribute an entity keys as `key` and whose

@@ -1,7 +1,8 @@
 //! Compilation of the geo query parameter group into a [`CompiledGeoQuery`].
 
 use crate::{
-    geo::{admission::GeoQueryAdmission, compiled_geo_query::CompiledGeoQuery, geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
+    geo::{admission::GeoQueryAdmission, compiled_geo_query::CompiledGeoQuery, geo_constraint::GeoConstraint, geo_query_error::GeoQueryError},
+    name_stage::Written,
     query_error::QueryError,
     term_expander::TermExpander,
 };
@@ -30,7 +31,7 @@ use andromeda_ngsi_ld_vocabulary::compact::properties;
 /// [`GeoQueryError::InvalidGeoproperty`] when it expands to no usable attribute
 /// name.
 pub async fn compile_geo_query(
-    geo_query: Option<&WrittenGeoQuery>,
+    geo_query: Option<&GeoConstraint<Written>>,
     expander: &impl TermExpander,
     admission: GeoQueryAdmission,
 ) -> Result<Option<CompiledGeoQuery>, QueryError> {
@@ -54,9 +55,9 @@ mod tests {
         geo::{
             admission::GeoQueryAdmission,
             compilation::compile_geo_query,
+            geo_constraint::GeoConstraint,
             geo_query_error::GeoQueryError,
             near_distance_band::NearDistanceBand,
-            written_geo_query::WrittenGeoQuery,
         },
         namespace_expander::EXAMPLE_NAMESPACE_TYPED,
         query_error::QueryError,
@@ -79,7 +80,7 @@ mod tests {
 
     #[tokio::test]
     async fn expansion_consumes_a_decoded_geo_query_without_reparsing_components() {
-        let geo_query = WrittenGeoQuery::from_wire(
+        let geo_query = GeoConstraint::from_wire(
             "within",
             "Point",
             serde_json::from_value(serde_json::json!([1.0, 2.0])).expect("coordinates"),
@@ -95,7 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_distance_band_compiles_only_under_the_extension() {
-        let geo_query = WrittenGeoQuery::from_wire(
+        let geo_query = GeoConstraint::from_wire(
             "near;minDistance==500;maxDistance==10000",
             "Point",
             serde_json::from_value(serde_json::json!([1.0, 2.0])).expect("coordinates"),
@@ -116,6 +117,6 @@ mod tests {
 
     #[test]
     fn malformed_geo_wire_values_fail_before_compilation() {
-        assert!(WrittenGeoQuery::from_wire("within", "Point", serde_json::from_value(serde_json::json!([1.0])).expect("coordinates"), None).is_err());
+        assert!(GeoConstraint::from_wire("within", "Point", serde_json::from_value(serde_json::json!([1.0])).expect("coordinates"), None).is_err());
     }
 }

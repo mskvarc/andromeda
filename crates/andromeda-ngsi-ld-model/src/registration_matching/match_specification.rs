@@ -5,19 +5,19 @@ use crate::{
     registration::{ContextSourceRegistration, info::RegistrationInfo},
     registration_matching::entity_specification::EntitySpecification,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// What a request specifies for matching (clause 5.12): its entity
-/// specifications, any of which may match, and the attribute names it asks for.
+/// specifications, any of which may match, and the attribute names it asks for,
+/// in whichever expanded spelling the request holds them.
 #[derive(Debug, Clone, Copy)]
-pub struct RegistrationMatchSpecification<'spec> {
+pub struct RegistrationMatchSpecification<'spec, A> {
     /// The entity specifications; empty when the request specifies no entity.
     pub entities: &'spec [EntitySpecification<'spec>],
     /// The attribute names, expanded; empty means every attribute is requested.
-    pub attributes: &'spec [AttributeName],
+    pub attributes: &'spec [A],
 }
 
-impl RegistrationMatchSpecification<'_> {
+impl<A: AsRef<str>> RegistrationMatchSpecification<'_, A> {
     /// Whether some `RegistrationInfo` of `registration` matches: the
     /// registration covers what the request specifies.
     #[must_use]
@@ -56,7 +56,7 @@ impl RegistrationMatchSpecification<'_> {
         if declared.peek().is_none() {
             return true;
         }
-        declared.any(|name| self.attributes.contains(name))
+        declared.any(|name| self.attributes.iter().any(|asked| asked.as_ref() == name.as_str()))
     }
 }
 
@@ -117,7 +117,7 @@ mod tests {
             ids: &ids,
             id_pattern: Some(&nomatch),
         }];
-        let specification = RegistrationMatchSpecification {
+        let specification = RegistrationMatchSpecification::<AttributeName> {
             entities: &entities,
             attributes: &[],
         };
@@ -133,11 +133,11 @@ mod tests {
             id_pattern: None,
         }];
         let speed = [name("speed")];
-        let asked = RegistrationMatchSpecification {
+        let asked = RegistrationMatchSpecification::<AttributeName> {
             entities: &entities,
             attributes: &speed,
         };
-        let nothing_asked = RegistrationMatchSpecification {
+        let nothing_asked = RegistrationMatchSpecification::<AttributeName> {
             entities: &entities,
             attributes: &[],
         };
@@ -158,7 +158,7 @@ mod tests {
         let id = uri("urn:ngsi-ld:Vehicle:1");
         let entities = [EntitySpecification::of_entity(&[], &id)];
         let speed = name("https://example.org/speed");
-        let specification = RegistrationMatchSpecification {
+        let specification = RegistrationMatchSpecification::<AttributeName> {
             entities: &entities,
             attributes: slice::from_ref(&speed),
         };
@@ -189,7 +189,7 @@ mod tests {
             id_pattern: None,
         }];
         let speed = [name("speed")];
-        let specification = RegistrationMatchSpecification {
+        let specification = RegistrationMatchSpecification::<AttributeName> {
             entities: &entities,
             attributes: &speed,
         };

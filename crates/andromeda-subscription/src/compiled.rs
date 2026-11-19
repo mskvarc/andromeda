@@ -17,12 +17,7 @@ use crate::{
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    identifier::Identifier,
-    positive_milliseconds::PositiveMilliseconds,
-    spec_version::SpecVersion,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, identifier::Identifier, positive_milliseconds::PositiveMilliseconds, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
     key_value_pair::KeyValuePair,
@@ -68,14 +63,14 @@ pub struct CompiledCsrSubscription {
     /// as failed (Table 5.2.15-1 `timeout`).
     pub endpoint_timeout: Option<PositiveMilliseconds>,
     /// Entity selectors applied to context-source information.
-    pub selectors: Vec<EntitySelector>,
+    pub selectors: Vec<EntitySelector<Expanded>>,
     /// The expanded attribute names matched against registrations, or every
     /// attribute when empty.
     ///
     /// Clauses 5.11.7 and 5.12: the combination of `watchedAttributes` and
     /// `notification.attributes`; when neither names an attribute, every
     /// attribute matches.
-    pub matching_attrs: Vec<AttributeName>,
+    pub matching_attrs: Vec<AttributeIri>,
     /// The `temporalQ` the registrations' intervals are matched against
     /// (clause 5.11.2.4); absent means only latest-information registrations
     /// are considered.
@@ -146,9 +141,9 @@ pub struct CompiledSubscription {
     /// Events that trigger this subscription.
     pub triggers: Vec<NotificationTrigger>,
     /// Expanded watched attribute names, or every attribute when absent.
-    pub watched_attrs: Option<HashSet<AttributeName>>,
+    pub watched_attrs: Option<HashSet<AttributeIri>>,
     /// Entity selectors evaluated during matching.
-    pub selectors: Vec<EntitySelector>,
+    pub selectors: Vec<EntitySelector<Expanded>>,
     /// Minimum seconds between notifications.
     pub throttling_secs: Option<f64>,
     /// Periodic notification interval in seconds.

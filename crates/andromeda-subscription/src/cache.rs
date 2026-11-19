@@ -446,7 +446,7 @@ mod tests {
             selectors: vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: type_.parse().expect("invalid fixture type expression:"),
+                type_: format!("https://example.com/{type_}").parse().expect("invalid fixture type expression:"),
             }],
             throttling_secs: None,
             time_interval_secs: None,
@@ -706,7 +706,11 @@ mod tests {
     /// `attribute` as it does since `selected`.
     fn watching(attribute: &str, selected: i64) -> CompiledSubscription {
         let mut subscription = make_compiled_sub("churn", 9, "Vehicle", vec!["attributeUpdated"]);
-        subscription.watched_attrs = Some([attribute.parse().expect("a valid attribute name")].into_iter().collect());
+        subscription.watched_attrs = Some(
+            [format!("https://example.com/{attribute}").parse().expect("a valid attribute name")]
+                .into_iter()
+                .collect(),
+        );
         subscription.notifying_since = NotifyingSince {
             active: at(0),
             selected: at(selected),
@@ -718,12 +722,12 @@ mod tests {
     fn update_of(attribute: &str) -> ChangeEvent {
         ChangeEvent::builder()
             .entity_id("urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier"))
-            .entity_types(vec!["Vehicle".parse().expect("a valid type name")])
+            .entity_types(vec!["https://example.com/Vehicle".parse().expect("a valid type name")])
             .change(EntityChange::new(
                 EntityLifecycle::Modified,
                 vec![AttributeChange {
                     key: AttributeInstanceKey {
-                        attr: attribute.parse().expect("a valid attribute name"),
+                        attr: format!("https://example.com/{attribute}").parse().expect("a valid attribute name"),
                         dataset_id: None,
                     },
                     kind: AttributeChangeKind::Updated,
@@ -758,7 +762,7 @@ mod tests {
     #[test]
     fn a_change_committed_under_a_superseded_selection_is_matched_by_it() {
         let cache = reselected();
-        assert_eq!(matched_watching(&cache, "seq", 1_500), vec![vec!["seq".to_owned()]]);
+        assert_eq!(matched_watching(&cache, "seq", 1_500), vec![vec!["https://example.com/seq".to_owned()]]);
         assert_eq!(matched_watching(&cache, "other", 1_500), Vec::<Vec<String>>::new());
     }
 
@@ -766,10 +770,10 @@ mod tests {
     fn a_change_committed_after_the_update_is_matched_only_by_the_selection_in_force() {
         let cache = reselected();
         assert_eq!(matched_watching(&cache, "seq", 2_500), Vec::<Vec<String>>::new());
-        assert_eq!(matched_watching(&cache, "other", 2_500), vec![vec!["other".to_owned()]]);
+        assert_eq!(matched_watching(&cache, "other", 2_500), vec![vec!["https://example.com/other".to_owned()]]);
         assert_eq!(
             matched_watching(&cache, "other", 2_000),
-            vec![vec!["other".to_owned()]],
+            vec![vec!["https://example.com/other".to_owned()]],
             "the update's own instant is the new selection's"
         );
     }

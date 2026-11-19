@@ -23,7 +23,8 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
     filter::language_targeting::LanguageTargeting,
-    geo::{reference_geometry::ReferenceGeometry, written_geo_query::WrittenGeoQuery},
+    geo::{geo_constraint::GeoConstraint, reference_geometry::ReferenceGeometry},
+    name_stage::Written,
     ordering::{
         icu_collation::IcuCollation,
         ordering_direction::OrderingDirection,
@@ -176,7 +177,7 @@ fn push_dataset_list(buffer: &mut String, value: Option<&[DatasetSelector]>) {
 ///
 /// Coordinates still encoded are keyed by their text, so two spellings of one
 /// geometry compile once each.
-fn push_geo_query(buffer: &mut String, value: Option<&WrittenGeoQuery>) {
+fn push_geo_query(buffer: &mut String, value: Option<&GeoConstraint<Written>>) {
     if let Some(value) = value {
         push_field(buffer, Some(&value.georel.to_string()));
         let geometry = match &value.reference {

@@ -169,6 +169,26 @@ impl TypeSelection<Expanded> {
                 .map(TypeSelection::Alternatives),
         }
     }
+
+    /// Check that every leaf IRI satisfies the clause 4.6.2 type-name grammar,
+    /// the identifier byte bound included, which a stored selection keeps its
+    /// types within.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeSelectionError::InvalidName`] for the first leaf that does
+    /// not.
+    pub fn check_written_bound(&self) -> Result<(), TypeSelectionError> {
+        match self {
+            TypeSelection::Wildcard => Ok(()),
+            TypeSelection::Alternatives(alternatives) => alternatives.leaves().try_for_each(|iri| {
+                iri.as_str()
+                    .parse::<EntityTypeName>()
+                    .map(drop)
+                    .map_err(|source| TypeSelectionError::InvalidName { position: 0, source })
+            }),
+        }
+    }
 }
 
 impl FromStr for TypeSelection<Written> {
@@ -186,6 +206,16 @@ impl TryFrom<String> for TypeSelection<Written> {
 
     fn try_from(raw: String) -> Result<TypeSelection<Written>, TypeSelectionError> {
         raw.parse()
+    }
+}
+
+// Hand-written: the text of an expanded selection is parsed as the written
+// stage and then checked, which no derive expresses.
+impl FromStr for TypeSelection<Expanded> {
+    type Err = QueryError;
+
+    fn from_str(raw: &str) -> Result<TypeSelection<Expanded>, QueryError> {
+        Ok(raw.parse::<TypeSelection<Written>>()?.into_expanded()?)
     }
 }
 

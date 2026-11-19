@@ -60,7 +60,7 @@ fn validate_selector(values: &SubscriptionWriteValues) -> Result<(), Subscriptio
 mod tests {
     use crate::{
         error::SubscriptionError,
-        expanded_filters::ExpandedFilters,
+        expanded_terms::ExpandedTerms,
         fields::SubscriptionWriteValues,
         merged_validation::validate_merged_subscription,
         subscription_validation_reason::SubscriptionValidationReason,
@@ -77,7 +77,7 @@ mod tests {
             target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
-        let expanded = ExpandedFilters::under_example_namespace(&request);
+        let expanded = ExpandedTerms::under_example_namespace(&request);
         SubscriptionWriteValues::from_create(request, expanded)
     }
 

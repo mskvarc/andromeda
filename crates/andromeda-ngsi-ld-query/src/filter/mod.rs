@@ -42,6 +42,7 @@ pub mod trailing_group;
 pub mod unicode_escape_error;
 pub mod value_path;
 pub mod written_members;
+pub mod written_names;
 
 use crate::{
     filter::{filter_error::FilterError, query_term::QueryTerm, target_language::LanguageSelector, value_path::ValuePath},

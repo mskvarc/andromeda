@@ -97,7 +97,7 @@ impl SubscriptionForwardingService {
             ForwardDecision::Update { remote } => {
                 // Boxed: the fragment is held across the forward, and the request is a wide value.
                 let fragment =
-                    Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage).as_fragment(deleted, carriage));
+                    Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage)?.as_fragment(deleted, carriage));
                 let forwarded = self
                     .federation
                     .forward_subscription(

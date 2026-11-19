@@ -111,7 +111,7 @@ impl SubscriptionForwardingService {
         };
         self.router.register(&remote, &self.tenant).await?;
         // Boxed, since the copy is held across the forward and the request is a wide value.
-        let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage).request);
+        let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage)?.request);
         let forwarded = self
             .federation
             .forward_subscription(registration, SubscriptionForward::Create { body: &copy, context })

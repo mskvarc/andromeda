@@ -17,11 +17,7 @@
 use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarding_context::Rewording, term_resolver::TermResolver};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    entity_type_name::EntityTypeName,
-    reference::{NgsiLdReference, NgsiLdReferenceError},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_query::{
     filter::{
         Filter,
@@ -242,7 +238,7 @@ impl<'a> ForwardedNames<'a> {
     /// # Errors
     ///
     /// As [`ForwardedNames::attr`].
-    pub(crate) async fn geoproperty(&self, name: &NgsiLdReference) -> Result<NgsiLdReference, FederationError> {
+    pub(crate) async fn geoproperty(&self, name: &AttributeName) -> Result<AttributeName, FederationError> {
         match self.rewording {
             Rewording::AsInbound => Ok(name.clone()),
             Rewording::Reword => {

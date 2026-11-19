@@ -10,12 +10,7 @@ use crate::{
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_iri::AttributeIri,
-    attribute_name::AttributeName,
-    context_source_pseudonym::ContextSourcePseudonym,
-    identifier::Identifier,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{
@@ -234,8 +229,8 @@ fn registration_matching_the_query(
         .attrs
         .iter()
         // clone: the bound check consumes the IRI the compiled query keeps
-        .map(|iri| AttributeIri::try_from(iri.clone()).map(AttributeName::from).map_err(FilterError::from))
-        .collect::<Result<Vec<AttributeName>, _>>()
+        .map(|iri| AttributeIri::try_from(iri.clone()).map_err(FilterError::from))
+        .collect::<Result<Vec<AttributeIri>, _>>()
         .map_err(QueryError::from)?;
     let specification = RegistrationMatchSpecification {
         entities: &entities,

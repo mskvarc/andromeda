@@ -10,7 +10,7 @@
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_query::{
     filter::{Filter, expansion::expand_context_source_filter, reading::filter_reading::FilterReading},
-    geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, compiled_geo_query::CompiledGeoQuery, written_geo_query::WrittenGeoQuery},
+    geo::{admission::GeoQueryAdmission, compilation::compile_geo_query, compiled_geo_query::CompiledGeoQuery, geo_constraint::GeoConstraint},
     name_stage::Written,
     query_error::QueryError,
 };
@@ -46,7 +46,7 @@ impl ExpandedRegistrationFilters {
         engine: &JsonLdEngine,
         context: &ContextSpec,
         csf: Option<&Filter<Written>>,
-        geo: Option<&WrittenGeoQuery>,
+        geo: Option<&GeoConstraint<Written>>,
         admission: GeoQueryAdmission,
     ) -> Result<ExpandedRegistrationFilters, QueryError> {
         let prepared_context = engine.prepare_term_context(context);
@@ -81,7 +81,7 @@ mod tests {
     use crate::{expanded_registration_filters::ExpandedRegistrationFilters, fixed_registration_store::generous_geo_admission};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, name_stage::Written};
+    use andromeda_ngsi_ld_query::{filter::Filter, geo::geo_constraint::GeoConstraint, name_stage::Written};
     use serde_json::json;
 
     fn engine() -> JsonLdEngine {
@@ -115,7 +115,7 @@ mod tests {
     /// to `location`.
     #[tokio::test]
     async fn the_geoquery_is_compiled_with_its_default_geoproperty() {
-        let input: WrittenGeoQuery =
+        let input: GeoConstraint<Written> =
             serde_urlencoded::from_str("georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B-3.7%2C40.4%5D").expect("a decodable geoquery");
         let filters = ExpandedRegistrationFilters::expand(&engine(), &ContextSpec::none(), None, Some(&input), generous_geo_admission())
             .await

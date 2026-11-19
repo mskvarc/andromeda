@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
     name_stage::{Expanded, Written},
     projection::expanded_projection::ExpandedProjection,
     term_expander::TermExpansionError,
-    type_selection::type_selection_error::TypeSelectionError,
+    type_selection::{TypeSelection, type_selection_error::TypeSelectionError},
 };
 use andromeda_ngsi_ld_query_evaluation::{
     q::{
@@ -183,7 +183,10 @@ fn subscription(key: i64, q: Filter<Expanded>, terms: &TermInterner) -> Result<A
         selectors: vec![EntitySelector {
             id: None,
             id_pattern: None,
-            type_: ENTITY_TYPE.as_str().parse()?,
+            type_: ENTITY_TYPE
+                .as_str()
+                .parse::<TypeSelection<Expanded>>()
+                .map_err(|_not_expanded| TermExpansionError::NotAnIri)?,
         }],
         throttling_secs: None,
         time_interval_secs: None,

@@ -7,9 +7,9 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity_constraint::EntityConstraint,
     identifier_axis::IdentifierAxis,
-    name_stage::Written,
+    name_stage::{Expanded, NameStage, Written},
     pattern::Pattern,
-    type_selection::TypeSelection,
+    type_selection::{TypeSelection, type_selection_error::TypeSelectionError},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 
@@ -18,8 +18,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as Deser
 /// Selects entities by type and optionally by id or id pattern. Table 5.2.33-1
 /// lists every member the selector has, so a member outside them is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct EntitySelector {
+#[serde(
+    rename_all = "camelCase",
+    deny_unknown_fields,
+    bound(serialize = "S: NameStage", deserialize = "S: NameStage, TypeSelection<S>: Deserialize<'de>")
+)]
+pub struct EntitySelector<S: NameStage> {
     /// The entity identifiers the selector admits.
     ///
     /// Table 5.2.33-1 types `id` as "String or String[]" of "Valid URI(s)": one
@@ -42,10 +46,10 @@ pub struct EntitySelector {
     /// alternate, as in `(Building|Tower)`. Matching is by whole type name:
     /// `Building` does not match an entity typed `MyBuilding`.
     #[serde(rename = "type")]
-    pub type_: TypeSelection<Written>,
+    pub type_: TypeSelection<S>,
 }
 
-impl EntitySelector {
+impl<S: NameStage> EntitySelector<S> {
     /// What this selector constrains about the entity identifier, `id` taking
     /// precedence over `idPattern` (clauses 5.2.8 and 5.2.33).
     #[must_use]
@@ -53,19 +57,47 @@ impl EntitySelector {
         IdentifierAxis::of(self.id.as_deref().unwrap_or_default(), self.id_pattern.as_ref())
     }
 
+    /// The selector with the same identifier axis and the type selection
+    /// `type_`, which may be in another name stage.
+    #[must_use]
+    pub fn with_type<T: NameStage>(&self, type_: TypeSelection<T>) -> EntitySelector<T> {
+        EntitySelector {
+            // clone: the retyped selector is owned apart from this one
+            id: self.id.clone(),
+            // clone: the retyped selector is owned apart from this one
+            id_pattern: self.id_pattern.clone(),
+            type_,
+        }
+    }
+
     /// Whether this selector selects the entity typed `types` and identified
     /// by `id`: the types satisfy the clause 4.17 expression and the
     /// identifier its identifier axis.
     #[must_use]
-    pub fn selects<S: AsRef<str>>(&self, types: &[S], id: &Identifier) -> bool {
+    pub fn selects<T: AsRef<str>>(&self, types: &[T], id: &Identifier) -> bool {
         self.type_.matches(types) && self.identifier_axis().admits(id)
+    }
+}
+
+impl EntitySelector<Expanded> {
+    /// This selector in the written stage, its type names spelled as the absolute IRIs they are.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeSelectionError::InvalidName`] for a type IRI past the identifier bound a written name carries.
+    pub fn into_written(self) -> Result<EntitySelector<Written>, TypeSelectionError> {
+        Ok(EntitySelector {
+            id: self.id,
+            id_pattern: self.id_pattern,
+            type_: self.type_.into_written()?,
+        })
     }
 }
 
 /// The constraint a query holds for the selector it was sent: an absent `id`
 /// is no identifier constraint, and the required `type` is the selection.
-impl From<EntitySelector> for EntityConstraint<Written> {
-    fn from(selector: EntitySelector) -> EntityConstraint<Written> {
+impl<S: NameStage> From<EntitySelector<S>> for EntityConstraint<S> {
+    fn from(selector: EntitySelector<S>) -> EntityConstraint<S> {
         EntityConstraint {
             ids: selector.id.unwrap_or_default(),
             id_pattern: selector.id_pattern,
@@ -82,7 +114,7 @@ impl From<EntitySelector> for EntityConstraint<Written> {
 /// all constrains nothing, as for a Subscription naming `watchedAttributes`
 /// only (clause 5.8.1.4).
 #[must_use]
-pub fn selectors_select<S: AsRef<str>>(selectors: &[EntitySelector], types: &[S], id: &Identifier) -> bool {
+pub fn selectors_select<S: NameStage, T: AsRef<str>>(selectors: &[EntitySelector<S>], types: &[T], id: &Identifier) -> bool {
     selectors.is_empty() || selectors.iter().any(|selector| selector.selects(types, id))
 }
 
@@ -135,7 +167,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written, type_selection::TypeSelection};
     use serde_json::json;
 
-    fn selector(wire: serde_json::Value) -> EntitySelector {
+    fn selector(wire: serde_json::Value) -> EntitySelector<Written> {
         serde_json::from_value(wire).expect("a readable selector")
     }
 
@@ -149,8 +181,8 @@ mod tests {
     fn an_entity_selector_type_is_a_selection_string() {
         assert!(selector(json!({"type": "Vehicle"})).type_.as_single_type().is_some());
         assert!(matches!(&selector(json!({"type": "Vehicle|Car"})).type_, TypeSelection::Alternatives(alternatives) if alternatives.iter().count() == 2));
-        assert!(serde_json::from_value::<EntitySelector>(json!({"type": ["Vehicle", "Car"]})).is_err());
-        assert!(serde_json::from_value::<EntitySelector>(json!({"type": 5})).is_err());
+        assert!(serde_json::from_value::<EntitySelector<Written>>(json!({"type": ["Vehicle", "Car"]})).is_err());
+        assert!(serde_json::from_value::<EntitySelector<Written>>(json!({"type": 5})).is_err());
     }
 
     /// Clause 4.17 decides the types, clause 5.2.33 the identifier, with `id`
@@ -213,7 +245,7 @@ mod tests {
             json!({"type": "Vehicle", "id": []}),
             json!({"type": "Vehicle", "ids": ["urn:ngsi-ld:Vehicle:1"]}),
         ] {
-            assert!(serde_json::from_value::<EntitySelector>(wire.clone()).is_err(), "{wire}");
+            assert!(serde_json::from_value::<EntitySelector<Written>>(wire.clone()).is_err(), "{wire}");
         }
     }
 
@@ -238,7 +270,7 @@ mod tests {
     /// Whether the selectors written as `wire` select the entity
     /// `urn:ngsi-ld:A:1` of type `A`.
     fn selects_the_entity(wire: serde_json::Value) -> bool {
-        let selectors: Vec<EntitySelector> = serde_json::from_value(wire).expect("readable selectors");
+        let selectors: Vec<EntitySelector<Written>> = serde_json::from_value(wire).expect("readable selectors");
         selectors_select(&selectors, &["A"], &id("urn:ngsi-ld:A:1"))
     }
 

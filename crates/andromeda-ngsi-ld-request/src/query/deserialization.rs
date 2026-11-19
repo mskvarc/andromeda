@@ -6,12 +6,12 @@ use crate::{
     query_parameter_set,
 };
 use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     comma_separated_list::{ListedMemberKind, listed_values},
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::{geo_query_error::GeoQueryError, written_geo_query::WrittenGeoQuery},
+    geo::{geo_constraint::GeoConstraint, geo_query_error::GeoQueryError},
     name_stage::Written,
     pattern::Pattern,
     projection::{written_projection_list::WrittenProjectionList, written_projection_term::WrittenProjectionTerm},
@@ -21,7 +21,7 @@ use std::num::{IntErrorKind, NonZeroU32};
 
 /// A complete optional geo-query decoded from URL parameters.
 #[derive(Debug, Clone, Default)]
-pub struct OptionalGeoQuery(pub Option<WrittenGeoQuery>);
+pub struct OptionalGeoQuery(pub Option<GeoConstraint<Written>>);
 
 query_parameter_set!(OptionalGeoQuery {
     Georel,
@@ -40,7 +40,7 @@ struct GeoQueryParameters {
     /// `GeoJSON` coordinates.
     coordinates: Option<QueryCoordinates>,
     /// Optional `GeoProperty` reference.
-    geoproperty: Option<NgsiLdReference>,
+    geoproperty: Option<AttributeName>,
 }
 
 /// The rejection of a `georel` sent without `geometry` and `coordinates`:
@@ -89,9 +89,9 @@ pub fn decode_geo_query(
     georel: &str,
     geometry_type: &str,
     coordinates: QueryCoordinates,
-    geoproperty: Option<NgsiLdReference>,
-) -> Result<WrittenGeoQuery, GeoQueryDecodeError> {
-    WrittenGeoQuery::from_wire(georel, geometry_type, coordinates, geoproperty).map_err(GeoQueryDecodeError::from)
+    geoproperty: Option<AttributeName>,
+) -> Result<GeoConstraint<Written>, GeoQueryDecodeError> {
+    GeoConstraint::from_wire(georel, geometry_type, coordinates, geoproperty).map_err(GeoQueryDecodeError::from)
 }
 
 /// Geo-query decoding failure at a request boundary.

@@ -2,6 +2,7 @@
 //!
 //! - [`rows`]: `SubscriptionRow` persistence struct.
 //! - [`mapper`]: PgRow → row → domain conversion.
+//! - [`stored_members`]: the members read in the expanded stage.
 //! - [`stored_subscription_error`]: a stored row that does not read back.
 //! - [`stored_kind`]: which family a statement addresses.
 //! - [`status_code`]: the number a lifecycle state is stored as.
@@ -50,6 +51,8 @@ pub mod rows;
 pub(crate) mod status_code;
 /// Which subscription family a statement addresses.
 pub(crate) mod stored_kind;
+/// The members of a stored subscription that are read in the expanded stage.
+mod stored_members;
 /// What a subscription row that no longer reads back as a subscription looks like.
 pub mod stored_subscription_error;
 /// The surrogate key of a subscription named by its URI.

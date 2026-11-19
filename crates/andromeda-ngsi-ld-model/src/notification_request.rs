@@ -13,6 +13,7 @@
 //! naming nothing.
 
 use crate::{
+    expanded_notification_terms::ExpandedNotificationTerms,
     ignored_member,
     query::non_empty_member,
     subscription::{Endpoint, NotificationParams},
@@ -129,23 +130,23 @@ where
     )
 }
 
-impl TryFrom<NotificationRequest> for NotificationParams {
-    type Error = NotificationRequestError;
-
+impl NotificationRequest {
     /// The parameters the request describes, their output-only members left
-    /// for the store to supply.
+    /// for the store to supply and their names the `expanded` ones.
     ///
-    /// The `pick` and `omit` lists are taken as they stand, so the caller
-    /// expands their names first when the parameters are to be stored.
-    fn try_from(request: NotificationRequest) -> Result<NotificationParams, NotificationRequestError> {
+    /// # Errors
+    ///
+    /// Returns [`NotificationRequestError::EndpointMissing`] when the request
+    /// names no `endpoint`.
+    pub fn into_params(self, expanded: ExpandedNotificationTerms) -> Result<NotificationParams, NotificationRequestError> {
         let NotificationRequest {
-            attributes,
+            attributes: _,
             format,
             endpoint,
             sys_attrs,
             show_changes,
-            pick,
-            omit,
+            pick: _,
+            omit: _,
             join,
             join_level,
             status: (),
@@ -156,15 +157,15 @@ impl TryFrom<NotificationRequest> for NotificationParams {
             last_failure: (),
             created_at: (),
             modified_at: (),
-        } = request;
+        } = self;
         Ok(NotificationParams {
-            attributes,
+            attributes: expanded.attributes,
             format,
             endpoint: endpoint.ok_or(NotificationRequestError::EndpointMissing)?,
             sys_attrs,
             show_changes,
-            pick,
-            omit,
+            pick: expanded.pick,
+            omit: expanded.omit,
             join,
             join_level,
             last_notification: None,
@@ -180,8 +181,8 @@ impl TryFrom<NotificationRequest> for NotificationParams {
 #[cfg(test)]
 mod tests {
     use crate::{
+        expanded_notification_terms::ExpandedNotificationTerms,
         notification_request::{NotificationRequest, NotificationRequestError},
-        subscription::NotificationParams,
     };
     use serde_json::json;
 
@@ -216,12 +217,13 @@ mod tests {
     /// Clause 5.8.2.4: the output-only members are accepted and ignored.
     #[test]
     fn output_only_members_are_ignored_and_the_parameters_leave_them_to_the_store() {
-        let params = NotificationParams::try_from(request(json!({
+        let params = request(json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
             "timesSent": 3,
             "lastNotification": "2024-01-01T00:00:00Z",
             "status": "ok"
-        })))
+        }))
+        .into_params(ExpandedNotificationTerms::default())
         .expect("an endpoint is present");
         assert!(params.times_sent.is_none() && params.last_notification.is_none() && params.status.is_none());
     }
@@ -241,7 +243,7 @@ mod tests {
     /// whatever they hold, and the parameters leave every output member unset.
     #[test]
     fn the_generated_notification_members_are_accepted_whatever_they_hold() {
-        let params = NotificationParams::try_from(request(json!({
+        let params = request(json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
             "status": 5,
             "timesSent": "many",
@@ -251,7 +253,8 @@ mod tests {
             "lastFailure": null,
             "createdAt": null,
             "modifiedAt": 3
-        })))
+        }))
+        .into_params(ExpandedNotificationTerms::default())
         .expect("an endpoint is present");
         assert!(
             params.status.is_none()
@@ -290,7 +293,7 @@ mod tests {
     #[test]
     fn a_notification_without_an_endpoint_is_no_set_of_parameters() {
         pretty_assertions::assert_eq!(
-            NotificationParams::try_from(request(json!({"format": "normalized"}))).err(),
+            request(json!({"format": "normalized"})).into_params(ExpandedNotificationTerms::default()).err(),
             Some(NotificationRequestError::EndpointMissing)
         );
     }

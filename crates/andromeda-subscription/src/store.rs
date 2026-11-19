@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
     notification::NotificationTrigger,
@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
+    geo::geo_constraint::GeoConstraint,
     name_stage::Expanded,
     page_window::PageWindow,
     scope::scope_query::ScopeQuery,
@@ -40,9 +40,9 @@ pub struct SubscriptionFields<'a> {
     /// Free-text description of the subscription.
     pub description: Option<&'a str>,
     /// Validated entity selectors.
-    pub entities: Option<&'a [EntitySelector]>,
+    pub entities: Option<&'a [EntitySelector<Expanded>]>,
     /// Attribute IRIs that trigger notifications when changed.
-    pub watched_attributes: Option<&'a [AttributeName]>,
+    pub watched_attributes: Option<&'a [AttributeIri]>,
     /// Events that trigger a notification (e.g., entityCreated).
     pub notification_trigger: Option<&'a [NotificationTrigger]>,
     /// Periodic notification interval in seconds.
@@ -50,7 +50,7 @@ pub struct SubscriptionFields<'a> {
     /// NGSI-LD query expression for filtering entities.
     pub q: Option<&'a Filter<Expanded>>,
     /// Geo-spatial query.
-    pub geo_q: Option<&'a WrittenGeoQuery>,
+    pub geo_q: Option<&'a GeoConstraint<Expanded>>,
     /// Scope query expression.
     pub scope_q: Option<&'a ScopeQuery>,
     /// Context source filter.
@@ -70,10 +70,10 @@ pub struct SubscriptionFields<'a> {
     pub temporal_q: Option<&'a TemporalQuery>,
     /// Expanded attribute names whose `q` operands were coerced through the
     /// `@context` (Table 5.2.12-1 `expandValues`).
-    pub expand_values: Option<&'a [AttributeName]>,
+    pub expand_values: Option<&'a [AttributeIri]>,
     /// Expanded attribute names whose `q` object keys were expanded while
     /// their values were left uninterpreted (Table 5.2.12-1 `jsonKeys`).
-    pub json_keys: Option<&'a [AttributeName]>,
+    pub json_keys: Option<&'a [AttributeIri]>,
     /// The clause 4.15 language filter notifications are reduced by.
     pub lang: Option<&'a LanguageFilter>,
     /// JSON-LD context URI associated with the subscription.

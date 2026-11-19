@@ -6,7 +6,7 @@ use crate::{
     stored_subscription::StoredSubscription,
     subscription_query::SubscriptionQuery,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
     notification::effective_notification_triggers,
@@ -16,19 +16,13 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
-    name_stage::{Expanded, Written},
-    projection::{
-        expanded_projection::ExpandedProjection,
-        expanded_projection_term::ExpandedProjectionTerm,
-        written_projection_list::WrittenProjectionList,
-        written_projection_term::WrittenProjectionTerm,
-    },
+    name_stage::Expanded,
+    projection::{expanded_projection::ExpandedProjection, expanded_projection_list::ExpandedProjectionList, expanded_projection_term::ExpandedProjectionTerm},
     temporal::window::TimeInterval,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use iri_rs::IriBuf;
-use std::collections::HashSet;
-use tracing::{debug, error};
+use tracing::error;
 
 /// Compile a stored subscription into a pre-compiled form for fast matching.
 ///
@@ -37,11 +31,19 @@ use tracing::{debug, error};
 /// compilation alongside everything the match itself needs. The filters'
 /// target languages select keys by `language_matching`, the broker's live
 /// mode.
+#[must_use]
 pub fn compile_subscription(stored: &StoredSubscription, language_matching: LanguageMatching) -> CompiledSubscription {
     let sub = &stored.subscription;
-    let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
+    let selectors = stored_selectors(sub);
     let triggers = effective_notification_triggers(sub.selection.notification_trigger.as_deref());
-    let watched_attrs = sub.selection.watched_attributes.clone().map(HashSet::from_iter);
+    // clone: compiled state owns its names apart from the persisted value
+    let watched_attrs = sub.selection.watched_attributes.as_deref().map(|names| names.iter().cloned().collect());
+    let compiled_q = if sub.unreadable.is_empty() {
+        // clone: compiled state owns its filter AST.
+        sub.filters.q.clone().map(|q| SubscriptionQuery::new(CompiledFilter::new(q, language_matching)))
+    } else {
+        Some(fail_closed_query(language_matching))
+    };
     CompiledSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
         key: stored.key,
@@ -57,8 +59,8 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         selectors,
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
-        notification_attributes: notification_attributes(&sub.notification, sub.id.as_ref()),
-        notification_projection: notification_projection(&sub.notification, sub.id.as_ref()),
+        notification_attributes: notification_attributes(&sub.notification),
+        notification_projection: notification_projection(&sub.notification),
         notification_format: sub.notification.format,
         notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
             SysAttrsInclusion::Include
@@ -68,12 +70,8 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
         notifying_since: stored.notifying_since,
-        compiled_q: sub
-            .filters
-            .q
-            .clone() // clone: compiled state owns its filter AST.
-            .map(|q| SubscriptionQuery::new(CompiledFilter::new(stored_filter(q, sub.id.as_ref()), language_matching))),
-        compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
+        compiled_q,
+        compiled_geo_q: stored_geo_filter(sub),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
         notification_join: sub.notification.join,
@@ -88,7 +86,12 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
 /// (clauses 5.11.2.4 and 5.12).
 #[must_use]
 pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscription {
-    let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
+    let selectors = stored_selectors(sub);
+    let compiled_csf = if sub.unreadable.is_empty() {
+        sub.filters.csf.as_ref().map(FilterReading::of_context_source_filter)
+    } else {
+        Some(FilterReading::of_context_source_filter(&Filter::Or(Vec::new())))
+    };
     CompiledCsrSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
         standing: sub.lifecycle.standing,
@@ -105,39 +108,50 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
             .temporal_q
             .as_ref()
             .and_then(|temporal_q| compile_temporal_q(temporal_q, sub.id.as_ref())),
-        geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
+        geo_q: stored_geo_filter(sub),
         scope_q: sub.filters.scope_q.clone(),       // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(), // clone: compiled state owns dataset identifiers.
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        compiled_csf: sub
-            .filters
-            .csf
-            .clone() // clone: the stored filter is checked into an owned tree.
-            .map(|csf| FilterReading::of_context_source_filter(&stored_filter(csf, sub.id.as_ref()))),
+        compiled_csf,
     }
 }
 
-/// The expanded stage of a stored filter.
-///
-/// A stored text that names a term where an absolute IRI has to stand is a
-/// defined filter the broker cannot evaluate. It admits no entity, as a stored
-/// `geoQ` that no longer compiles does, and an empty disjunction is the filter
-/// no entity satisfies.
-fn stored_filter(filter: Filter<Written>, subscription: &str) -> Filter<Expanded> {
-    filter.into_expanded().unwrap_or_else(|refused| {
-        error!(subscription, %refused, "a stored filter is not expanded, so it selects nothing");
-        Filter::Or(Vec::new())
-    })
+/// The stored `entities` of `sub` as compiled state holds them: none when the
+/// store listed a member it could not read, since the subscription then selects
+/// nothing.
+fn stored_selectors(sub: &Subscription) -> Vec<EntitySelector<Expanded>> {
+    if !sub.unreadable.is_empty() {
+        let members = sub.unreadable.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        error!(subscription = %sub.id, members, "a stored member is not in the expanded stage, so the subscription selects nothing");
+        return Vec::new();
+    }
+    // clone: compiled state owns its selectors apart from the persisted value
+    sub.selection.entities.clone().unwrap_or_default()
+}
+
+/// The query no entity satisfies, for a subscription whose stored members cannot be read.
+fn fail_closed_query(language_matching: LanguageMatching) -> SubscriptionQuery {
+    SubscriptionQuery::new(CompiledFilter::new(Filter::<Expanded>::Or(Vec::new()), language_matching))
+}
+
+/// The geo restriction of a stored subscription: none that selects an entity
+/// when a stored member could not be read.
+fn stored_geo_filter(sub: &Subscription) -> SubscriptionGeoFilter {
+    if sub.unreadable.is_empty() {
+        SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref())
+    } else {
+        SubscriptionGeoFilter::Unusable
+    }
 }
 
 /// The attribute identifiers a context-source subscription matches with
 /// (clauses 5.11.7 and 5.12): the combination of `watchedAttributes` and
 /// `notification.attributes`, without repetition. Empty, when neither names an
 /// attribute, stands for every attribute.
-fn csource_matching_attributes(watched: Option<&[AttributeName]>, notified: Option<&[AttributeName]>) -> Vec<AttributeName> {
-    let mut combined: Vec<AttributeName> = Vec::new();
+fn csource_matching_attributes(watched: Option<&[AttributeIri]>, notified: Option<&[AttributeIri]>) -> Vec<AttributeIri> {
+    let mut combined: Vec<AttributeIri> = Vec::new();
     for name in watched.into_iter().flatten().chain(notified.into_iter().flatten()) {
         if !combined.contains(name) {
             combined.push(name.clone()); // clone: compiled state owns the combined names
@@ -169,81 +183,60 @@ pub fn compile_temporal_q(temporal_q: &TemporalQuery, sub_id: &str) -> Option<Co
     }
 }
 
-/// Compile the clause 5.2.14 `pick` and `omit` members into the projection a
-/// query's `pick`/`omit` parameters compile to (clause 4.21).
+/// Compile the clause 4.21 `pick` and `omit` members of a stored notification.
 ///
 /// The stored names were expanded through the subscription's `@context` when
 /// the resource was written (clause 5.5.7), at every nesting level, except the
 /// three clause 4.21 keywords, which name structural members of the
-/// representation rather than attributes and are kept as written. The terms of
-/// every string of one member form one list.
+/// representation rather than attributes. The terms of every string of one
+/// member form one list.
 #[must_use]
-pub fn notification_projection(notification: &NotificationParams, sub_id: &str) -> ExpandedProjection {
+pub fn notification_projection(notification: &NotificationParams) -> ExpandedProjection {
+    let terms = |lists: &Option<Vec<ExpandedProjectionList>>| -> Vec<ExpandedProjectionTerm> {
+        // clone: compiled state owns its projection terms apart from the persisted value
+        lists.iter().flatten().flat_map(|list| list.iter().cloned()).collect()
+    };
     ExpandedProjection::builder()
-        .pick(projection_terms(notification.pick.as_deref().unwrap_or_default(), sub_id))
-        .omit(projection_terms(notification.omit.as_deref().unwrap_or_default(), sub_id))
+        .pick(terms(&notification.pick))
+        .omit(terms(&notification.omit))
         .build()
 }
 
 /// Compile the clause 5.2.14 `attributes` member, "a synonym for pick"
-/// (Table 5.2.14.1-1), into the expanded IRIs it lists.
-///
-/// The stored names were expanded through the subscription's `@context` when
-/// the resource was written (clause 5.5.7). An absent member compiles to an
-/// empty list, which narrows nothing.
+/// (Table 5.2.14.1-1), into the expanded IRIs it lists. An absent member
+/// compiles to an empty list, which narrows nothing.
 #[must_use]
-pub fn notification_attributes(notification: &NotificationParams, sub_id: &str) -> Vec<IriBuf> {
-    notification
-        .attributes
-        .iter()
-        .flatten()
-        .filter_map(|name| expanded_attribute(name.as_str(), sub_id))
-        .collect()
-}
-
-/// The compiled terms of one stored `pick` or `omit` member.
-fn projection_terms(lists: &[WrittenProjectionList], sub_id: &str) -> Vec<ExpandedProjectionTerm> {
-    lists.iter().flat_map(|list| compiled_terms(list, sub_id)).collect()
-}
-
-/// The compiled form of stored terms, recursing into each attribute term's
-/// clause 4.21 linked-entity sub-projection.
-fn compiled_terms(terms: &[WrittenProjectionTerm], sub_id: &str) -> Vec<ExpandedProjectionTerm> {
-    terms
-        .iter()
-        .filter_map(|term| match ExpandedProjectionTerm::keyword(term.name.as_str()) {
-            Some(keyword) => Some(keyword),
-            None => expanded_attribute(term.name.as_str(), sub_id).map(|iri| ExpandedProjectionTerm::Attribute {
-                iri,
-                linked: compiled_terms(&term.linked, sub_id),
-            }),
-        })
-        .collect()
-}
-
-/// The expanded IRI a stored attribute name spells.
-///
-/// A name that is not an absolute IRI can address nothing in an expanded
-/// entity, so it is left out rather than carried as a name that never matches.
-fn expanded_attribute(name: &str, sub_id: &str) -> Option<IriBuf> {
-    match IriBuf::new(name.to_owned()) {
-        Ok(iri) => Some(iri),
-        Err(error) => {
-            debug!(subscription = sub_id, name, %error, "Subscription projection member is not an expanded attribute name");
-            None
-        }
-    }
+pub fn notification_attributes(notification: &NotificationParams) -> Vec<IriBuf> {
+    notification.attributes.iter().flatten().map(|name| name.as_iri().clone()).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_attributes, notification_projection};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::{query::temporal_query::TemporalQuery, subscription::NotificationParams};
+    use crate::{
+        compilation::{
+            compile_csource_subscription,
+            compile_subscription,
+            compile_temporal_q,
+            csource_matching_attributes,
+            notification_attributes,
+            notification_projection,
+        },
+        geo_filter::SubscriptionGeoFilter,
+        notifying_since::NotifyingSince,
+        stored_subscription::StoredSubscription,
+    };
+    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, time_prop::TimeProp};
+    use andromeda_ngsi_ld_model::{
+        query::temporal_query::TemporalQuery,
+        subscription::{NotificationParams, Subscription, unreadable_member::UnreadableMember},
+    };
     use andromeda_ngsi_ld_query::{
+        filter::language_matching::LanguageMatching,
         projection::{expanded_projection_term::ExpandedProjectionTerm, written_projection_list::WrittenProjectionList},
         temporal::window::TimeInterval,
     };
+    use chrono::DateTime;
     use iri_rs::IriBuf;
 
     fn notification(value: serde_json::Value) -> NotificationParams {
@@ -273,7 +266,7 @@ mod tests {
             "omit": stored(&["scope,type"])
         }));
 
-        let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
+        let projection = notification_projection(&notification);
 
         pretty_assertions::assert_eq!(
             projection.pick,
@@ -291,7 +284,7 @@ mod tests {
             "pick": stored(&["https://example.com/owner{id,https://example.com/employer{https://example.com/size}}"])
         }));
 
-        let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
+        let projection = notification_projection(&notification);
 
         pretty_assertions::assert_eq!(
             projection.pick,
@@ -309,7 +302,7 @@ mod tests {
     fn a_subscription_without_pick_or_omit_compiles_to_the_empty_projection() {
         let notification = notification(serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}}));
 
-        let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
+        let projection = notification_projection(&notification);
 
         assert!(projection.pick.is_empty() && projection.omit.is_empty());
     }
@@ -321,7 +314,7 @@ mod tests {
             "pick": stored(&["speed", "https://example.com/colour"])
         }));
 
-        let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
+        let projection = notification_projection(&notification);
 
         pretty_assertions::assert_eq!(projection.pick.len(), 1);
     }
@@ -336,13 +329,15 @@ mod tests {
         }));
 
         pretty_assertions::assert_eq!(
-            notification_attributes(&notification, "urn:ngsi-ld:Subscription:test"),
+            notification_attributes(&notification),
             vec![IriBuf::new("https://example.com/speed".to_owned()).expect("valid IRI")]
         );
     }
 
-    fn names(raw: &[&str]) -> Vec<AttributeName> {
-        raw.iter().map(|name| name.parse().expect("valid attribute name")).collect()
+    fn names(raw: &[&str]) -> Vec<AttributeIri> {
+        raw.iter()
+            .map(|name| format!("https://example.com/{name}").parse().expect("valid attribute IRI"))
+            .collect()
     }
 
     /// Clauses 5.11.7 and 5.12: the attribute identifiers are the combination
@@ -355,7 +350,7 @@ mod tests {
         pretty_assertions::assert_eq!(csource_matching_attributes(Some(&watched), None), names(&["speed"]));
         pretty_assertions::assert_eq!(csource_matching_attributes(None, Some(&notified)), names(&["brandName", "speed"]));
         pretty_assertions::assert_eq!(csource_matching_attributes(Some(&watched), Some(&[])), names(&["speed"]));
-        assert_eq!(csource_matching_attributes(None, None), [] as [AttributeName; 0]);
+        assert_eq!(csource_matching_attributes(None, None), [] as [AttributeIri; 0]);
     }
 
     /// The `temporalQ` a request writes, read as the request model reads it.
@@ -398,5 +393,58 @@ mod tests {
         );
         assert!(serde_json::from_value::<TemporalQuery>(serde_json::json!({"timerel": "after"})).is_err());
         assert!(serde_json::from_value::<TemporalQuery>(serde_json::json!({"timerel": "soon", "timeAt": "2020-06-01T00:00:00Z"})).is_err());
+    }
+
+    /// A subscription the store listed a member of as unreadable.
+    fn subscription_with_unreadable_member() -> Subscription {
+        let mut subscription: Subscription = serde_json::from_value(serde_json::json!({
+            "id": "urn:ngsi-ld:Subscription:corrupt",
+            "type": "Subscription",
+            "entities": [{"type": "https://example.com/Vehicle"}],
+            "notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("a valid subscription");
+        subscription.unreadable = vec![UnreadableMember::Q];
+        subscription
+    }
+
+    #[test]
+    fn an_entity_subscription_with_an_unreadable_member_selects_no_entity() {
+        let at = StoreInstant::new(DateTime::from_timestamp(0, 0).expect("an instant in range"));
+        let stored = StoredSubscription {
+            key: SubscriptionKey::try_from(9).expect("a surrogate key"),
+            subscription: subscription_with_unreadable_member(),
+            notifying_since: NotifyingSince { active: at, selected: at },
+        };
+
+        let compiled = compile_subscription(&stored, LanguageMatching::default());
+
+        assert!(compiled.compiled_q.is_some(), "the filter no entity satisfies stands in");
+        assert!(
+            matches!(compiled.compiled_geo_q, SubscriptionGeoFilter::Unusable),
+            "{:?}",
+            compiled.compiled_geo_q
+        );
+        pretty_assertions::assert_eq!(compiled.selectors.len(), 0);
+    }
+
+    #[test]
+    fn a_context_source_subscription_with_an_unreadable_member_selects_no_registration() {
+        let compiled = compile_csource_subscription(&subscription_with_unreadable_member());
+
+        assert!(compiled.compiled_csf.is_some(), "the filter no registration satisfies stands in");
+        assert!(matches!(compiled.geo_q, SubscriptionGeoFilter::Unusable), "{:?}", compiled.geo_q);
+    }
+
+    #[test]
+    fn a_notification_name_that_is_no_absolute_iri_is_left_out_of_the_stored_list() {
+        let notification = notification(serde_json::json!({
+            "endpoint": {"uri": "https://receiver.example.com/notify"},
+            "attributes": ["https://example.com/speed", "colour"]
+        }));
+        pretty_assertions::assert_eq!(notification_attributes(&notification).len(), 1);
     }
 }

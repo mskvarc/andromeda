@@ -85,7 +85,7 @@ mod tests {
         csource_matching::{csource_subscription_follows_registration_changes, csource_subscription_selects_registration, matching_information},
         geo_filter::SubscriptionGeoFilter,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
         entity_selector::EntitySelector,
         registration::ContextSourceRegistration,
@@ -94,7 +94,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         filter::{Filter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
-        name_stage::Written,
+        name_stage::{Expanded, Written},
         namespace_expander::EXAMPLE_NAMESPACE,
         scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
@@ -138,11 +138,11 @@ mod tests {
         }
     }
 
-    fn selector(raw_type: &str) -> EntitySelector {
+    fn selector(raw_type: &str) -> EntitySelector<Expanded> {
         serde_json::from_value(json!({"type": raw_type})).expect("selector parses")
     }
 
-    fn name(raw: &str) -> AttributeName {
+    fn name(raw: &str) -> AttributeIri {
         raw.parse().expect("valid attribute name")
     }
 

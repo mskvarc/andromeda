@@ -24,7 +24,7 @@ pub enum AttributeCoverage {
 /// entity_id)` on the entity axis (clause 5.12).
 fn matching_entries<'csr>(csr: &'csr ContextSourceRegistration, entity_types: &[EntityTypeName], entity_id: &Identifier) -> Vec<&'csr RegistrationInfo> {
     let entity = EntitySpecification::of_entity(entity_types, entity_id);
-    RegistrationMatchSpecification {
+    RegistrationMatchSpecification::<AttributeName> {
         entities: slice::from_ref(&entity),
         attributes: &[],
     }

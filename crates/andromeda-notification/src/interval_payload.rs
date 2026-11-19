@@ -64,8 +64,8 @@ impl PeriodicPayload<'_> {
     /// Entities and rendered in its `notification.format`. Every step after
     /// the selection is written the way a change-driven notification writes it.
     pub(crate) async fn entities(&self, sub: &Subscription, entities: Vec<EntityState>, data: DataShape<'_>) -> Result<NotificationData, NotificationError> {
-        let projection = notification_projection(&sub.notification, sub.id.as_ref());
-        let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
+        let projection = notification_projection(&sub.notification);
+        let attributes = notification_attributes(&sub.notification);
         let rule = periodic_rule(sub, &projection, &attributes);
         // Table 5.2.14-1: without `sysAttrs` a notification carries no clause
         // 4.8 system attribute, the instances' included.
@@ -231,8 +231,8 @@ mod tests {
     #[test]
     fn a_periodic_notification_carries_only_the_selected_dataset_instances() {
         let sub = subscription(&json!({"datasetId": [FRENCH]}));
-        let projection = notification_projection(&sub.notification, sub.id.as_ref());
-        let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
+        let projection = notification_projection(&sub.notification);
+        let attributes = notification_attributes(&sub.notification);
         let state = building();
         let selected = Selection::of(&state, periodic_rule(&sub, &projection, &attributes)).apply(&state).into_owned();
         assert_eq!(name_datasets(&selected), vec![Some(FRENCH)]);
@@ -242,8 +242,8 @@ mod tests {
     #[test]
     fn a_periodic_notification_without_a_dataset_selection_carries_every_instance() {
         let sub = subscription(&json!({}));
-        let projection = notification_projection(&sub.notification, sub.id.as_ref());
-        let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
+        let projection = notification_projection(&sub.notification);
+        let attributes = notification_attributes(&sub.notification);
         let state = building();
         assert_eq!(Selection::of(&state, periodic_rule(&sub, &projection, &attributes)), Selection::Whole);
     }
