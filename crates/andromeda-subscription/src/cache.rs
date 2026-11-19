@@ -30,7 +30,7 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use iri_rs::IriBuf;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, num::NonZeroU32, sync::Arc, time::Duration};
+use std::{collections::HashMap, num::NonZeroU32, ops::ControlFlow, sync::Arc, time::Duration};
 use tracing::{debug, error, warn};
 
 /// How often, and how far apart, one reconcile pass reads a subscription whose
@@ -200,16 +200,17 @@ impl SubscriptionCache {
     /// it changes again or the cache is reloaded.
     pub async fn reconcile_dirty(&self, repo: &(impl SubscriptionStore + ?Sized), delay: &dyn RetryDelay) {
         for (target, id) in self.refreshes.unreachable() {
-            let outcome = REFRESH_RETRY
-                .run(
-                    delay,
-                    |error: &SubscriptionError, retry| {
-                        warn!("Failed to load subscription {} for cache reconcile (retry {}): {}", id, retry, error);
-                        error.is_transient()
-                    },
-                    async |_| self.refresh(&target, &id, repo).await,
-                )
-                .await;
+            let retryable = |error: &SubscriptionError, retry| {
+                warn!("Failed to load subscription {} for cache reconcile (retry {}): {}", id, retry, error);
+                error.is_transient()
+            };
+            let mut run = REFRESH_RETRY.start(delay);
+            let outcome = loop {
+                let outcome = self.refresh(&target, &id, repo).await;
+                if let ControlFlow::Break(settled) = run.settle(outcome, &retryable).await {
+                    break settled;
+                }
+            };
             match outcome {
                 Ok(()) => {}
                 Err(error) if error.is_transient() => warn!("Subscription {} stays as cached until the next reconcile: {}", id, error),

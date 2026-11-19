@@ -16,6 +16,8 @@
 //! `%` included, is percent-encoded, so `/`, `?` and `#` stay inside the
 //! segment and the segment decodes back to the identifier as written.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::api_root::{ApiRoot, ConfiguredApiRoot};
 use andromeda_http_headers::location::Location;
 use andromeda_http_response::{api_root_path::api_root_path, headers::with_location};

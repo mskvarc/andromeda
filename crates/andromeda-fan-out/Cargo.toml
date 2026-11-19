@@ -1,0 +1,21 @@
+[package]
+name = "andromeda-fan-out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "Bounded fan-out of one future per item, a bounded number at once, as a stream declared Send"
+
+[lints]
+workspace = true
+
+[dependencies]
+futures = "0.3.34"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }

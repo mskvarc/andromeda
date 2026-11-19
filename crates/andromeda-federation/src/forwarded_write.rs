@@ -19,12 +19,13 @@ use crate::{
     transport::ForwardedRequest,
     write_answer::with_full_update_result_names,
 };
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use std::borrow::Cow;
 use tracing::{debug, warn};
 use url::Url;
@@ -158,9 +159,7 @@ pub(crate) struct ForwardWrite<'a> {
 impl FederationService {
     /// Send every planned write, at most `csr_concurrency` at a time.
     pub(crate) async fn execute_writes(&self, planned: Vec<PlannedWrite<'_>>) -> Vec<ForwardedWriteResult> {
-        stream::iter(planned)
-            .map(|write| self.execute_write(write))
-            .buffer_unordered(self.csr_concurrency)
+        fan_out_unordered(planned, self.csr_concurrency, |write| self.execute_write(write))
             .collect()
             .await
     }

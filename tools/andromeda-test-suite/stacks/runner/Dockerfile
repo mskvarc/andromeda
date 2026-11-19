@@ -7,10 +7,10 @@
 # binaries of the suite and of the upgrade rehearsals as one nextest archive, so a run compiles nothing.
 FROM rust:1.99.1-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 AS toolchain
 
-ARG TOOLCHAIN=nightly-2026-09-25
+ARG TOOLCHAIN=1.100.0
 ARG NEXTEST_VERSION=0.9.149
 
-RUN rustup toolchain install "${TOOLCHAIN}" --profile minimal --component clippy --component rustfmt \
+RUN rustup toolchain install "${TOOLCHAIN}" --profile minimal --component clippy \
     && rustup default "${TOOLCHAIN}"
 
 RUN cargo install cargo-nextest --locked --version "${NEXTEST_VERSION}"

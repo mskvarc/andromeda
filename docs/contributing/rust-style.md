@@ -6,7 +6,7 @@ Every crate takes its lint levels from `[workspace.lints]`, so a rule never hold
 
 ## Formatting
 
-Format with `cargo fmt`. `rustfmt.toml` turns on unstable options (`unstable_features`, `imports_layout`, `imports_granularity`), so only a nightly rustfmt formats the code correctly, and `cargo fmt` runs the nightly that `rust-toolchain.toml` pins.
+Format with `cargo +nightly-2026-09-25 fmt`. `rustfmt.toml` turns on unstable options (`unstable_features`, `imports_layout`, `imports_granularity`), which only a nightly rustfmt reads. A stable rustfmt ignores them with a warning and formats the imports differently. The workspace builds, lints and tests on the stable toolchain `rust-toolchain.toml` pins, and only formatting runs the nightly, the one `RUSTFMT_TOOLCHAIN` names in the CI workflow. An editor that formats on save runs the same rustfmt, for rust-analyzer through `rust-analyzer.rustfmt.overrideCommand` set to `["rustup", "run", "nightly-2026-09-25", "rustfmt", "--edition", "2024"]`.
 
 ## Imports
 
@@ -14,6 +14,7 @@ Format with `cargo fmt`. `rustfmt.toml` turns on unstable options (`unstable_fea
 - Import with `crate::` paths rather than `super::`.
 - A path of three or more segments is never written inline. Import it and use the short name. Two-segment paths such as `url::Url`, `serde_json::Value` or `std::fmt` are fine inline, and the rule applies everywhere, in bodies, field types, signatures, trait bounds and where clauses (`clippy::absolute_paths`).
 - Glob imports are not allowed (`clippy::wildcard_imports`).
+- Clippy 1.100 reads an item of three or more segments inside a grouped import, such as `http::header::CONTENT_TYPE` in `use axum::{extract::State, http::header::CONTENT_TYPE}`, as an inline path (rust-lang/rust-clippy#17985), and the `Crate` import granularity rustfmt applies writes every import of a crate as one group. A file that trips it carries `#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]` after its module documentation. A lint attribute on the `use` item itself is refused (`clippy::useless_attribute`). Once a clippy without the defect is pinned, every such expectation is unfulfilled and warns, which is the signal to delete them.
 
 ## Matching
 
@@ -72,6 +73,18 @@ A `bool` parameter or return value becomes a two-variant enum, such as `enum Vis
 - Use `RwLock` rather than `Mutex` for state that is mostly read.
 - Use `IndexMap` when iteration order matters.
 - The workspace denies a lock guard held across an `.await` (`clippy::await_holding_lock`), an `async fn` whose future isn't `Send` (`clippy::future_not_send`), and an `Arc` around a type that can't cross threads (`clippy::arc_with_non_send_sync`). Each would deadlock the runtime or keep a task from moving between worker threads.
+
+### Futures that must be `Send` on stable Rust
+
+A request handler or a spawned task needs its future to be `Send`, and stable Rust proves that only when nothing inside it hides a borrow behind a type it must reason about for every lifetime (rust-lang/rust#100013). A future built from such a shape compiles where it is written and fails at the route or the spawn that awaits it, with `implementation of Send is not general enough` or `higher-ranked lifetime error`. Five shapes produce it, and each has a replacement that costs nothing at run time.
+
+- A parameter of an `AsyncFn`, `AsyncFnMut` or `AsyncFnOnce` closure. A closure that only borrows takes `impl FnOnce() -> F` or `impl FnMut(..) -> F` with `F: Future`, and the caller passes `|| async move { .. }` or a call returning a future. A future that borrows the closure's argument borrows it for one lifetime the function names, `impl FnMut(&'s T) -> F` over data borrowed for `'s`, as `TypeAlternatives::try_map_async` does. A closure that changes its captured state between calls becomes a loop in the caller.
+- A retry around such a closure. A retry is a `RetryRun` from `RetryPolicy::start`. The caller runs each attempt inline, hands its outcome to `settle` and continues or breaks on the `ControlFlow` it returns, so an attempt borrows and changes the caller's state as ordinary code.
+- A closure that returns a future inside a futures combinator (`stream::iter(..).map(|item| ..).buffer_unordered(..)`, `.buffered(..)`). A bounded fan-out goes through `fan_out_unordered` or `fan_out_ordered` in `andromeda-fan-out`, whose stream names its futures by a declared `Send` bound.
+- An iterator built from a closure and held across an `.await`. A named function returns it as `impl Iterator<Item = ..> + Send`, as `linked_maps` in `andromeda-entity-map` does.
+- A trait method returning `impl Future + Send` that is implemented for a type carrying a lifetime, or whose signature needs `Self: 'a`. The trait is implemented for the owned type and takes `&'a self`, as `WritePayload` does, or the closure argument becomes a small trait implemented for a type without a lifetime, as `BatchContextAdmitter` is.
+
+CI builds on stable, so any of these shapes that reaches a `Send` future fails the build, and the compiler is the gate.
 
 ## Macros
 

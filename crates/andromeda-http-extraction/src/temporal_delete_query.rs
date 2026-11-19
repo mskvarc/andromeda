@@ -8,6 +8,8 @@
 //! window check). The `TooManyResults` bound is not an extraction concern: it
 //! turns on a pre-count the service runs, so it is not decided here.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
 use andromeda_failure_classification::parameter_failure::classify_parameter_error;
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse, request_refusal::RequestRefusal};

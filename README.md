@@ -24,7 +24,7 @@
 
 <p align="center">
   <a href="LICENSE.md"><img alt="license: EUPL-1.2" src="https://img.shields.io/badge/license-EUPL--1.2-blue"></a>
-  <img alt="rust: nightly" src="https://img.shields.io/badge/rust-nightly-orange">
+  <img alt="rust: 1.100" src="https://img.shields.io/badge/rust-1.100-orange">
   <img alt="ngsi-ld v1.9.1" src="https://img.shields.io/badge/ngsi--ld-v1.9.1-8a2be2">
   <a href="../../actions/workflows/ci.yaml?query=branch%3Amain"><img alt="ci" src="../../actions/workflows/ci.yaml/badge.svg?branch=main&event=push"></a>
   <a href="../../actions/workflows/suite.yaml"><img alt="suite" src="../../actions/workflows/suite.yaml/badge.svg"></a>

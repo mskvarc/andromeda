@@ -34,6 +34,7 @@ use sqlx::{
     PgPool,
     migrate::{MigrateError, Migrator},
 };
+use std::ops::ControlFlow;
 
 /// The session a migration run's migrators run in.
 pub(crate) struct MigrationSession {
@@ -64,14 +65,13 @@ impl MigrationSession {
     /// Run `migrator` through the migration `through`, or through its last
     /// one when `None`, running it again while a migration is refused a lock.
     pub(crate) async fn run(&mut self, migrator: &Migrator, through: Option<MigrationVersion>) -> Result<(), MigrateError> {
-        let connection = &mut self.connection;
-        SCHEMA_CHANGE_LOCK_RETRY
-            .run(
-                &TokioRetryDelay,
-                |error, _| migration_lock_not_available(error),
-                async |_| migrator.run_direct(through.map(MigrationVersion::get), &mut *connection, false).await,
-            )
-            .await
+        let mut run = SCHEMA_CHANGE_LOCK_RETRY.start(&TokioRetryDelay);
+        loop {
+            let outcome = migrator.run_direct(through.map(MigrationVersion::get), &mut self.connection, false).await;
+            if let ControlFlow::Break(settled) = run.settle(outcome, |error, _| migration_lock_not_available(error)).await {
+                return settled;
+            }
+        }
     }
 
     /// Run `migrator` through the migration `through` with `search_path` as

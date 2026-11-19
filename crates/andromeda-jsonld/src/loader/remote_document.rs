@@ -25,12 +25,12 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
-use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
+use andromeda_retry::{retry_number::RetryNumber, retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
 use reqwest::{Response, header::HeaderMap};
-use std::{num::NonZeroU32, str::from_utf8, sync::Arc, time::Duration};
+use std::{num::NonZeroU32, ops::ControlFlow, str::from_utf8, sync::Arc, time::Duration};
 use tracing::warn;
 
 /// A parsed remote context, the freshness its response granted it, and where
@@ -203,19 +203,27 @@ pub(crate) async fn fetch_and_parse_retrying(
     // Boxed: the requests that await a context fetch are already deep
     // futures, and holding the retry loop inline takes their layout past the
     // compiler's query depth.
-    Box::pin(TRANSPORT_RETRY.run(
-        &TokioRetryDelay,
-        |error: &LoaderError, retry| {
-            let transient = is_transient_transport_failure(error);
-            if transient {
-                let delay = TRANSPORT_RETRY.schedule.delay(retry);
-                warn!(url = %error.url, error = %error.kind, ?delay, "Remote context fetch failed at the transport level; retrying");
+    Box::pin(async move {
+        let mut run = TRANSPORT_RETRY.start(&TokioRetryDelay);
+        loop {
+            let outcome = fetch_and_parse(client, url, max_bytes, default_lifetime).await;
+            if let ControlFlow::Break(settled) = run.settle(outcome, retried_transport_failure).await {
+                return settled;
             }
-            transient
-        },
-        |_| fetch_and_parse(client, url, max_bytes, default_lifetime),
-    ))
+        }
+    })
     .await
+}
+
+/// Whether a fetch that failed with `error` runs again, logging the retry it
+/// leads to.
+fn retried_transport_failure(error: &LoaderError, retry: RetryNumber) -> bool {
+    let transient = is_transient_transport_failure(error);
+    if transient {
+        let delay = TRANSPORT_RETRY.schedule.delay(retry);
+        warn!(url = %error.url, error = %error.kind, ?delay, "Remote context fetch failed at the transport level; retrying");
+    }
+    transient
 }
 
 /// Whether a loader failure is a transient transport error worth retrying.

@@ -11,6 +11,8 @@
 //! admission itself is the route's: it is installed as a request extension of
 //! the [`TemporalQueryAdmission`] type the binding names.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, jsonld::JsonLd, query::ValidatedQuery, submitted_body::SubmittedBody};
 use andromeda_failure_classification::{
     classified_report::ClassifiedReport,

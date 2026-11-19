@@ -290,6 +290,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-configuration",
         "andromeda-context-commit",
         "andromeda-context-space",
+        "andromeda-fan-out",
         "andromeda-federation",
         "andromeda-json-literal",
         "andromeda-jsonld",

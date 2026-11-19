@@ -33,7 +33,7 @@ use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, LockType, Query, SelectStatement};
 use sqlx::{PgPool, Postgres, Transaction};
-use std::{num::NonZeroU32, time::Duration};
+use std::{num::NonZeroU32, ops::ControlFlow, time::Duration};
 use tracing::info;
 
 /// Bounded retries for a branch-reaping transaction that a deadlock rolls back.
@@ -53,14 +53,27 @@ const fn is_contended(error: &SnapshotError, _retry: RetryNumber) -> bool {
     matches!(error, SnapshotError::Contended)
 }
 
+/// Run `reap` again while a deadlock rolls its transaction back, up to
+/// [`BRANCH_REAP_RETRY`] attempts.
+async fn reap_retrying<T, F>(mut reap: impl FnMut() -> F) -> Result<T, SnapshotError>
+where
+    F: Future<Output = Result<T, SnapshotError>>,
+{
+    let mut run = BRANCH_REAP_RETRY.start(&TokioRetryDelay);
+    loop {
+        let outcome = reap().await;
+        if let ControlFlow::Break(settled) = run.settle(outcome, is_contended).await {
+            return settled;
+        }
+    }
+}
+
 /// Delete one snapshot by identifier: drop its branch schemas, then delete the
 /// control record, which cascades the preparation and outbox rows. Retries a
 /// transaction a deadlock with branch delivery rolls back, up to
 /// [`BRANCH_REAP_RETRY`] attempts.
 pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Identifier) -> Result<u64, SnapshotError> {
-    BRANCH_REAP_RETRY
-        .run(&TokioRetryDelay, is_contended, async |_| delete_snapshot_once(pool, id).await)
-        .await
+    reap_retrying(|| delete_snapshot_once(pool, id)).await
 }
 
 /// Delete one Snapshot's control record and branch schema in a single
@@ -96,12 +109,8 @@ async fn delete_snapshot_once(pool: &PgPool, id: &Identifier) -> Result<u64, Sna
 /// branch schemas no control record owns any more, returning the number of
 /// expired Snapshots deleted.
 pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
-    let deleted = BRANCH_REAP_RETRY
-        .run(&TokioRetryDelay, is_contended, async |_| delete_expired_snapshots_once(pool, cutoff).await)
-        .await?;
-    let swept = BRANCH_REAP_RETRY
-        .run(&TokioRetryDelay, is_contended, async |_| sweep_orphan_branches_once(pool).await)
-        .await?;
+    let deleted = reap_retrying(|| delete_expired_snapshots_once(pool, cutoff)).await?;
+    let swept = reap_retrying(|| sweep_orphan_branches_once(pool)).await?;
     if swept > 0 {
         info!(
             swept_snapshots = swept,

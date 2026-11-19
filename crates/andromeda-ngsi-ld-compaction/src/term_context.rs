@@ -9,6 +9,8 @@
 //! compaction depend on more than the term itself (see
 //! [`Undecidable`](crate::undecidable::Undecidable)).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     compacted::{Compacted, ProcessorCompacted},
     undecidable::Undecidable,

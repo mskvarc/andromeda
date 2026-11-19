@@ -1,5 +1,7 @@
 //! Typed route parameters with NGSI-LD problem-detail rejections.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     addressed_uri::addressed_uri,
     path_segment::{InvalidPathSegment, PathSegments},

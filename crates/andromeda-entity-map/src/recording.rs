@@ -10,7 +10,13 @@
 //! listed, and whether the page applied the request's filters at all. Those two
 //! are the parameters of [`EntityMapService::record_read`].
 
-use crate::{contribution::SourceContribution, error::EntityMapError, pruning::PageCheck, reuse::EntityMapUse, service::EntityMapService};
+use crate::{
+    contribution::{SourceContribution, linked_maps},
+    error::EntityMapError,
+    pruning::PageCheck,
+    reuse::EntityMapUse,
+    service::EntityMapService,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::future::Future;
 
@@ -132,10 +138,9 @@ impl EntityMapService {
     {
         match map_use {
             EntityMapUse::Reuse(map) => {
-                let links = contributions
-                    .iter()
-                    .filter_map(|contribution| contribution.linked_map.as_ref().map(|linked| (&contribution.registration, linked)));
-                self.record_linked_maps(&map.id, links).await.map_err(RecordingFailure::Store)?;
+                self.record_linked_maps(&map.id, linked_maps(&contributions))
+                    .await
+                    .map_err(RecordingFailure::Store)?;
                 match filtering {
                     // Clause 5.5.9.3: the entities of a reused map are rechecked
                     // while the page is prepared, and the ones that no longer

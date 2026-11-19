@@ -6,6 +6,8 @@
 //! (clause 6.3.2), and any other parameter `400 InvalidRequest` (clause
 //! 6.3.20).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query, query_refusal::QueryRefusal};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, SnapshotQParseError};

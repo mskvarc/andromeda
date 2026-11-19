@@ -40,7 +40,7 @@ enum KeyRange {
 /// Returns [`ContextStoreError::Database`] when a statement fails for a reason
 /// other than a reaped branch.
 pub async fn purge_orphan_events_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
-    sweep_branches(pool, async |target| purge_orphans_in_branch(pool, target, cutoff).await).await
+    sweep_branches(pool, |target| async move { purge_orphans_in_branch(pool, &target, cutoff).await }).await
 }
 
 /// Walk `target`'s event keys range by range, removing the orphans among them.

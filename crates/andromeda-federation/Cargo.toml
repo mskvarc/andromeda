@@ -16,6 +16,7 @@ workspace = true
 andromeda-configuration.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity-map.workspace = true
+andromeda-fan-out.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true

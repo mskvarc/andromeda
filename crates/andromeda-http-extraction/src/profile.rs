@@ -7,6 +7,8 @@
 //! version is negotiated by `Prefer: ngsi-ld=<version>` alone (clause 6.3.6),
 //! so a profile never turns a 200 into a 203.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, classification::classify_context_link_error, request_links::RequestLinks};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;

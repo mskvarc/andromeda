@@ -13,13 +13,14 @@ use crate::{
     request::{EntityMapInUse, TriggeringRequest},
     source_read::SourceRead,
 };
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     query::body::Query,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use http::StatusCode;
 use url::Url;
 
@@ -89,7 +90,7 @@ impl FederationService {
     /// batch query), telling each the location of the map in use (clause
     /// 5.5.14), and read each answer with `read`. Both answer with the entities
     /// they carried, so the caller reads them the same way (clause 6.3.17).
-    pub(crate) async fn fan_out_read<T>(
+    pub(crate) async fn fan_out_read<T: Send>(
         &self,
         targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
         read: impl Fn(&ContextSourceRegistration, ForwardGetOutcome) -> Option<T> + Sync,
@@ -102,30 +103,28 @@ impl FederationService {
             cacheability,
             entity_map,
         } = conditions;
-        stream::iter(targets)
-            .map(|(registration, forwarded)| async move {
-                let source = SourceRead::builder()
-                    .registration(&registration)
-                    .inbound(context)
-                    .triggering(triggering)
-                    .linked_map(entity_map.location_for(&registration.id))
-                    .build();
-                let outcome = match forwarded {
-                    ForwardedRead::Get(url) => self.forward_get(source, url, cacheability).await,
-                    ForwardedRead::PostQuery { url, body } => self.forward_post_query(source, url, &body).await,
-                };
-                let error_status = outcome.error_status();
-                let entry = read(&registration, outcome);
-                SourceAnswer {
-                    mode: registration.access.mode.unwrap_or_default(),
-                    error_status,
-                    entry,
-                    registration: registration.id,
-                }
-            })
-            .buffer_unordered(self.csr_concurrency)
-            .collect()
-            .await
+        fan_out_unordered(targets, self.csr_concurrency, |(registration, forwarded)| async move {
+            let source = SourceRead::builder()
+                .registration(&registration)
+                .inbound(context)
+                .triggering(triggering)
+                .linked_map(entity_map.location_for(&registration.id))
+                .build();
+            let outcome = match forwarded {
+                ForwardedRead::Get(url) => self.forward_get(source, url, cacheability).await,
+                ForwardedRead::PostQuery { url, body } => self.forward_post_query(source, url, &body).await,
+            };
+            let error_status = outcome.error_status();
+            let entry = read(&registration, outcome);
+            SourceAnswer {
+                mode: registration.access.mode.unwrap_or_default(),
+                error_status,
+                entry,
+                registration: registration.id,
+            }
+        })
+        .collect()
+        .await
     }
 }
 

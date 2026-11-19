@@ -4,6 +4,8 @@
 //! [`IncomingVia`] that carries the parsed Via chain (or `None` when absent).
 //! Used for loop detection in distributed NGSI-LD forwarding (clause 6.3.18).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use andromeda_http_headers::via::Via;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::{

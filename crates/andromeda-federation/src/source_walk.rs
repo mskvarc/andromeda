@@ -43,10 +43,11 @@ use crate::{
     source_continuation::SourceContinuation,
     source_read::SourceRead,
 };
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, registration::ContextSourceRegistration};
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use std::{collections::HashSet, mem, num::NonZeroU32};
 use url::Url;
 
@@ -199,15 +200,15 @@ impl FederationService {
     /// Returns [`ResultBudgetExceeded`] once the targets together have
     /// answered more distinct entities, or sent more elements, than `budget`
     /// allows.
-    pub(crate) async fn fan_out_walk<A: WalkedAnswer>(
+    pub(crate) async fn fan_out_walk<A: WalkedAnswer + Send>(
         &self,
         targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
         conditions: ForwardedGetConditions<'_>,
         budget: &ResultBudget,
     ) -> Result<Vec<SourceAnswer<A>>, ResultBudgetExceeded> {
-        let mut walks = stream::iter(targets)
-            .map(|(registration, first)| async move { self.walk_source::<A>(&registration, first, conditions, budget).await })
-            .buffer_unordered(self.csr_concurrency);
+        let mut walks = fan_out_unordered(targets, self.csr_concurrency, |(registration, first)| async move {
+            self.walk_source::<A>(&registration, first, conditions, budget).await
+        });
         let mut answers = Vec::new();
         while let Some(walk) = walks.next().await {
             answers.push(walk?);

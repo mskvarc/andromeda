@@ -15,10 +15,11 @@ use crate::{
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use tracing::warn;
 
 /// How many active registrations one discovery pagination round-trip loads.
@@ -84,44 +85,42 @@ impl FederationService {
 
         let resolver = TermResolver::new(&self.engine, context);
         let resolver = &resolver;
-        stream::iter(csrs)
-            .map(|csr| async move {
-                let url = match self.spelled_discovery(&csr, context, resolver, discovered, query_string).await {
-                    Ok((segments, query_string)) => {
-                        let segments = segments.iter().map(String::as_str).collect::<Vec<_>>();
-                        build_discovery_url(csr.access.endpoint.url(), &segments, &query_string)
-                    }
-                    Err(error) => Err(error),
-                };
-                let read = SourceRead::builder().registration(&csr).inbound(context).triggering(triggering).build();
-                // Clause 6.3.17 allows caching for `/entities` only.
-                let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
-                let registration_id = Some(csr.id.clone());
-                match outcome {
-                    ForwardGetOutcome::Success(response) => Some(ForwardedDiscoveryResult {
-                        registration_id,
-                        body: Some(response.body),
-                        naming: *response.naming,
-                        warnings: response.warnings,
-                    }),
-                    // 404 is not abnormal per spec clause 6.3.17
-                    ForwardGetOutcome::NotFound(_) => None,
-                    other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
-                        let warning = other.warning(&csr.id)?;
-                        warn!("Discovery forwarding to context source {} failed: {}", csr.id, warning);
-                        Some(ForwardedDiscoveryResult {
-                            registration_id,
-                            body: None,
-                            naming: ContextSpec::none(),
-                            warnings: vec![warning],
-                        })
-                    }
+        fan_out_unordered(csrs, self.csr_concurrency, |csr| async move {
+            let url = match self.spelled_discovery(&csr, context, resolver, discovered, query_string).await {
+                Ok((segments, query_string)) => {
+                    let segments = segments.iter().map(String::as_str).collect::<Vec<_>>();
+                    build_discovery_url(csr.access.endpoint.url(), &segments, &query_string)
                 }
-            })
-            .buffer_unordered(self.csr_concurrency)
-            .filter_map(|entry| async move { entry })
-            .collect()
-            .await
+                Err(error) => Err(error),
+            };
+            let read = SourceRead::builder().registration(&csr).inbound(context).triggering(triggering).build();
+            // Clause 6.3.17 allows caching for `/entities` only.
+            let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
+            let registration_id = Some(csr.id.clone());
+            match outcome {
+                ForwardGetOutcome::Success(response) => Some(ForwardedDiscoveryResult {
+                    registration_id,
+                    body: Some(response.body),
+                    naming: *response.naming,
+                    warnings: response.warnings,
+                }),
+                // 404 is not abnormal per spec clause 6.3.17
+                ForwardGetOutcome::NotFound(_) => None,
+                other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
+                    let warning = other.warning(&csr.id)?;
+                    warn!("Discovery forwarding to context source {} failed: {}", csr.id, warning);
+                    Some(ForwardedDiscoveryResult {
+                        registration_id,
+                        body: None,
+                        naming: ContextSpec::none(),
+                        warnings: vec![warning],
+                    })
+                }
+            }
+        })
+        .filter_map(|entry| async move { entry })
+        .collect()
+        .await
     }
 
     /// The discovery path segments and query string `registration` is sent,

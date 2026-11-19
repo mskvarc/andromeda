@@ -3,6 +3,8 @@
 //! Extracts the optional `NGSILD-Snapshot` header from the request, producing
 //! a [`SnapshotHeader`] that carries the snapshot URN (or `None` when absent).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::ngsild_snapshot::NgsiLdSnapshot;
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};

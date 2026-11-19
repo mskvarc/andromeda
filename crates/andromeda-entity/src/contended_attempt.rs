@@ -1,10 +1,10 @@
-//! One attempt of a compare-and-set write, and the loop that repeats it while
+//! One attempt of a compare-and-set write, and the run that repeats it while
 //! a concurrent writer keeps superseding it.
 
 use crate::{EntityService, error::EntityError};
 use andromeda_context_commit::write_retry::{WRITE_ATTEMPTS, WRITE_RETRY};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_retry::retry_policy::RetryAttempt;
+use andromeda_retry::{retry_number::RetryNumber, retry_run::RetryRun};
 use derive_more::{From, IsVariant};
 
 /// Why one attempt of a compare-and-set write did not settle.
@@ -19,6 +19,11 @@ pub(crate) enum ContendedAttempt {
 }
 
 impl ContendedAttempt {
+    /// Whether the attempt runs again, which only a lost one does.
+    pub(crate) const fn retried(&self, _retry: RetryNumber) -> bool {
+        self.is_lost()
+    }
+
     /// The error a write to `id` reports: a lost last attempt is contention
     /// over the whole budget.
     pub(crate) fn into_entity_error(self, id: &Identifier) -> EntityError {
@@ -30,15 +35,12 @@ impl ContendedAttempt {
 }
 
 impl EntityService {
-    /// Run `attempt` until it settles, fails, or loses the whole write budget.
+    /// A run of one compare-and-set write, which ends once an attempt settles,
+    /// fails, or the write budget is lost.
     ///
     /// A lost attempt is followed by the write backoff, which separates
     /// writers that collided rather than restarting them together.
-    ///
-    /// # Errors
-    ///
-    /// The failure of the attempt that ended the loop.
-    pub(crate) async fn retry_contended<T>(&self, attempt: impl AsyncFnMut(RetryAttempt) -> Result<T, ContendedAttempt>) -> Result<T, ContendedAttempt> {
-        WRITE_RETRY.run(&*self.retry_delay, |failure, _| failure.is_lost(), attempt).await
+    pub(crate) fn contended_run(&self) -> RetryRun<'_> {
+        WRITE_RETRY.start(&*self.retry_delay)
     }
 }

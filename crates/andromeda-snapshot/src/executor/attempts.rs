@@ -18,11 +18,12 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use andromeda_retry::{
+    retry_number::RetryNumber,
     retry_policy::{RetryAttempt, RetryPolicy},
     tokio_retry_delay::TokioRetryDelay,
 };
 use futures::future::BoxFuture;
-use std::{iter::repeat_with, num::NonZeroU32, time::Duration};
+use std::{iter::repeat_with, num::NonZeroU32, ops::ControlFlow, time::Duration};
 use tracing::warn;
 
 /// Attempts one claimed preparation is given before it records `failure`.
@@ -121,33 +122,40 @@ impl PreparationClaim<'_> {
     /// `failure` could be recorded is [`PreparationEnd::ClaimLost`], not an
     /// error.
     pub(crate) async fn run<'f>(&self, mut attempt: impl FnMut() -> BoxFuture<'f, Result<(), SnapshotError>>) -> Result<PreparationEnd, SnapshotError> {
-        let outcome = PREPARATION_RETRY
-            .run(
-                &TokioRetryDelay,
-                |failure, retry| match failure {
-                    PreparationFailure::Attempt(error) => match error.recurrence() {
-                        Recurrence::Transient => {
-                            warn!(snapshot_id = %self.id, attempt = retry.get(), %error, "Snapshot preparation attempt failed transiently; restarting it");
-                            true
-                        }
-                        Recurrence::Persistent => false,
-                    },
-                    PreparationFailure::Restart(_) | PreparationFailure::ClaimLost => false,
-                },
-                async |run| {
-                    match run {
-                        RetryAttempt::First => (),
-                        RetryAttempt::Retry(_) => self.restart().await?,
-                    }
-                    attempt().await.map_err(PreparationFailure::Attempt)
-                },
-            )
-            .await;
+        let mut run = PREPARATION_RETRY.start(&TokioRetryDelay);
+        let outcome = loop {
+            let restarted = match run.attempt() {
+                RetryAttempt::First => Ok(()),
+                RetryAttempt::Retry(_) => self.restart().await,
+            };
+            let outcome = match restarted {
+                Ok(()) => attempt().await.map_err(PreparationFailure::Attempt),
+                Err(failure) => Err(failure),
+            };
+            if let ControlFlow::Break(settled) = run.settle(outcome, |failure, retry| self.restarts_after(failure, retry)).await {
+                break settled;
+            }
+        };
         match outcome {
             Ok(()) => Ok(PreparationEnd::Completed),
             Err(PreparationFailure::Attempt(error)) => self.record_failure(&error).await,
             Err(PreparationFailure::Restart(error)) => Err(error),
             Err(PreparationFailure::ClaimLost) => Ok(PreparationEnd::ClaimLost),
+        }
+    }
+
+    /// Whether the claim restarts after `failure` for the attempt `retry`,
+    /// logging the restart. Only an attempt that failed transiently does.
+    fn restarts_after(&self, failure: &PreparationFailure, retry: RetryNumber) -> bool {
+        match failure {
+            PreparationFailure::Attempt(error) => match error.recurrence() {
+                Recurrence::Transient => {
+                    warn!(snapshot_id = %self.id, attempt = retry.get(), %error, "Snapshot preparation attempt failed transiently; restarting it");
+                    true
+                }
+                Recurrence::Persistent => false,
+            },
+            PreparationFailure::Restart(_) | PreparationFailure::ClaimLost => false,
         }
     }
 

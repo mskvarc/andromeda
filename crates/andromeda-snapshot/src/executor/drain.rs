@@ -15,8 +15,9 @@ use crate::{
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use futures::{StreamExt, future::BoxFuture, stream};
+use futures::{StreamExt, future::BoxFuture};
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -81,7 +82,7 @@ impl DrainWorker<'_> {
             if jobs.is_empty() {
                 return Ok(moved);
             }
-            let ends: Vec<Option<PreparationEnd>> = stream::iter(jobs).map(&prepare).buffer_unordered(self.max_per_round).collect().await;
+            let ends: Vec<Option<PreparationEnd>> = fan_out_unordered(jobs, self.max_per_round, &prepare).collect().await;
             moved += ends.iter().flatten().filter(|end| end.left_preparing()).count();
             if ends.iter().all(Option::is_none) {
                 return Ok(moved);

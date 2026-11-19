@@ -108,6 +108,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-delivery",
         "andromeda-entity",
+        "andromeda-fan-out",
         "andromeda-http-headers",
         "andromeda-jsonld",
         "andromeda-linked-retrieval",

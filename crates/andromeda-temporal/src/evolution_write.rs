@@ -39,7 +39,7 @@ use andromeda_ngsi_ld_entity::history::current_state_fold::fold_into_current_sta
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use derive_more::{From, IsVariant};
-use std::sync::Arc;
+use std::{ops::ControlFlow, sync::Arc};
 
 impl TemporalService {
     /// Add every instance of `evolution` to the Temporal Evolution of
@@ -62,42 +62,43 @@ impl TemporalService {
     /// write cannot be landed.
     pub(crate) async fn commit_evolution(&self, target: &ContextTarget, entity_id: &Identifier, evolution: &WrittenEvolution) -> Result<(), TemporalError> {
         let mut instant = AttemptInstant::default();
-        let settled = WRITE_RETRY
-            .run(
-                &*self.retry_delay,
-                |attempt: &EvolutionAttempt, _| attempt.is_lost(),
-                async |_| {
-                    let current = self
-                        .entity_reader
-                        .get_snapshot(target, entity_id)
-                        .await
-                        .map_err(TemporalError::from_entity_failure)?;
-                    let now = instant.next();
-                    let EvolutionWrite { write, events } = evolution_write(
-                        &self.notifier,
-                        target,
-                        entity_id,
-                        evolution,
-                        current.as_ref(),
-                        now,
-                        self.limits.payload_budget.json_values,
-                    )?;
-                    let committed = self.writes.commit(target, now, vec![write]).await.map_err(TemporalError::from)?;
-                    let outcome = single(committed).map_err(TemporalError::from)?;
-                    match after_attempt(&outcome) {
-                        AfterAttempt::Settled => Ok((events, outcome.changed_at())),
-                        // A concurrent writer created or changed the Entity, or
-                        // deleted it, since the read: the fold is recomputed
-                        // against what it did.
-                        AfterAttempt::Reread | AfterAttempt::Vanished => Err(EvolutionAttempt::Lost),
-                        AfterAttempt::Restamp(latest) => {
-                            instant.refused(latest);
-                            Err(EvolutionAttempt::Lost)
-                        }
+        let mut run = WRITE_RETRY.start(&*self.retry_delay);
+        let settled = loop {
+            let outcome = async {
+                let current = self
+                    .entity_reader
+                    .get_snapshot(target, entity_id)
+                    .await
+                    .map_err(TemporalError::from_entity_failure)?;
+                let now = instant.next();
+                let EvolutionWrite { write, events } = evolution_write(
+                    &self.notifier,
+                    target,
+                    entity_id,
+                    evolution,
+                    current.as_ref(),
+                    now,
+                    self.limits.payload_budget.json_values,
+                )?;
+                let committed = self.writes.commit(target, now, vec![write]).await.map_err(TemporalError::from)?;
+                let outcome = single(committed).map_err(TemporalError::from)?;
+                match after_attempt(&outcome) {
+                    AfterAttempt::Settled => Ok((events, outcome.changed_at())),
+                    // A concurrent writer created or changed the Entity, or
+                    // deleted it, since the read: the fold is recomputed
+                    // against what it did.
+                    AfterAttempt::Reread | AfterAttempt::Vanished => Err(EvolutionAttempt::Lost),
+                    AfterAttempt::Restamp(latest) => {
+                        instant.refused(latest);
+                        Err(EvolutionAttempt::Lost)
                     }
-                },
-            )
+                }
+            }
             .await;
+            if let ControlFlow::Break(settled) = run.settle(outcome, |attempt: &EvolutionAttempt, _| attempt.is_lost()).await {
+                break settled;
+            }
+        };
         match settled {
             Ok((events, committed_at)) => {
                 // The events describe the attempt the store accepted, never one

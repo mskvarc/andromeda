@@ -31,7 +31,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_telemetry::entity::{self, EntityOperation};
-use std::sync::Arc;
+use std::{ops::ControlFlow, sync::Arc};
 
 impl EntityService {
     /// Create the new NGSI-LD entity `id` from its admitted payload, returning
@@ -51,8 +51,9 @@ impl EntityService {
         let result: Result<Identifier, EntityError> = async {
             let mut created = Arc::new(EntityState::try_from(admitted.into_document())?);
             let mut instant = AttemptInstant::default();
-            let (outcome, events) = self
-                .retry_contended(async |_| {
+            let mut run = self.contended_run();
+            let settled = loop {
+                let outcome = async {
                     let now = instant.next();
                     // Clause 4.8: a created entity's attribute instances carry the
                     // write instant as both createdAt and modifiedAt. Only this
@@ -76,9 +77,13 @@ impl EntityService {
                         | WriteOutcome::NoEntityChange
                         | WriteOutcome::Refused(_)) => Ok((landed, events)),
                     }
-                })
-                .await
-                .map_err(|failure| failure.into_entity_error(id))?;
+                }
+                .await;
+                if let ControlFlow::Break(settled) = run.settle(outcome, ContendedAttempt::retried).await {
+                    break settled;
+                }
+            };
+            let (outcome, events) = settled.map_err(|failure| failure.into_entity_error(id))?;
 
             // A conflicting insert is 409, per NGSI-LD 6.4.3.1. It reaches here as a
             // precondition failure rather than a duplicate-key error, which is what

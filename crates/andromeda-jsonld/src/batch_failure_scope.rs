@@ -55,7 +55,10 @@ where
 ///
 /// Returns the failure remembered for `reference`, or the one `resolve` fails
 /// with.
-pub(crate) async fn resolve_within_batch<T>(reference: &IriBuf, resolve: impl AsyncFnOnce() -> Result<T, Arc<LoaderError>>) -> Result<T, Arc<LoaderError>> {
+pub(crate) async fn resolve_within_batch<T, F>(reference: &IriBuf, resolve: impl FnOnce() -> F) -> Result<T, Arc<LoaderError>>
+where
+    F: Future<Output = Result<T, Arc<LoaderError>>>,
+{
     if let Some(failure) = remembered_failure(reference) {
         return Err(failure);
     }
@@ -101,9 +104,12 @@ mod tests {
         loader::error::LoaderError,
     };
     use iri_rs::IriBuf;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        future::{Ready, ready},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     fn reference(text: &str) -> IriBuf {
@@ -111,20 +117,17 @@ mod tests {
     }
 
     /// A resolution of `url` that fails, counted in `attempts` only once it
-    /// runs.
-    fn failing<'a>(url: &'a IriBuf, attempts: &'a AtomicUsize) -> impl AsyncFnOnce() -> Result<(), Arc<LoaderError>> + 'a {
-        async move || {
-            attempts.fetch_add(1, Ordering::Relaxed);
-            Err(Arc::new(LoaderError::fetch_disabled(url.clone())))
-        }
+    /// is started.
+    fn failing(url: &IriBuf, attempts: &AtomicUsize) -> Ready<Result<(), Arc<LoaderError>>> {
+        attempts.fetch_add(1, Ordering::Relaxed);
+        ready(Err(Arc::new(LoaderError::fetch_disabled(url.clone()))))
     }
 
-    /// A resolution that succeeds, counted in `attempts` only once it runs.
-    fn succeeding(attempts: &AtomicUsize) -> impl AsyncFnOnce() -> Result<(), Arc<LoaderError>> + '_ {
-        async move || {
-            attempts.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }
+    /// A resolution that succeeds, counted in `attempts` only once it is
+    /// started.
+    fn succeeding(attempts: &AtomicUsize) -> Ready<Result<(), Arc<LoaderError>>> {
+        attempts.fetch_add(1, Ordering::Relaxed);
+        ready(Ok(()))
     }
 
     #[tokio::test]
@@ -133,8 +136,8 @@ mod tests {
         let attempts = AtomicUsize::new(0);
 
         let (first, second) = run_in_batch_scope(async {
-            let first = resolve_within_batch(&url, failing(&url, &attempts)).await;
-            let second = resolve_within_batch(&url, failing(&url, &attempts)).await;
+            let first = resolve_within_batch(&url, || failing(&url, &attempts)).await;
+            let second = resolve_within_batch(&url, || failing(&url, &attempts)).await;
             (first, second)
         })
         .await;
@@ -153,10 +156,10 @@ mod tests {
         let attempts = AtomicUsize::new(0);
 
         let other_outcome = run_in_batch_scope(async {
-            resolve_within_batch(&unreachable, failing(&unreachable, &attempts))
+            resolve_within_batch(&unreachable, || failing(&unreachable, &attempts))
                 .await
                 .expect_err("the reference fails");
-            resolve_within_batch(&other, succeeding(&attempts)).await
+            resolve_within_batch(&other, || succeeding(&attempts)).await
         })
         .await;
 
@@ -170,8 +173,8 @@ mod tests {
         let attempts = AtomicUsize::new(0);
 
         run_in_batch_scope(async {
-            resolve_within_batch(&url, succeeding(&attempts)).await.expect("the first resolution");
-            resolve_within_batch(&url, succeeding(&attempts)).await.expect("the second resolution");
+            resolve_within_batch(&url, || succeeding(&attempts)).await.expect("the first resolution");
+            resolve_within_batch(&url, || succeeding(&attempts)).await.expect("the second resolution");
         })
         .await;
 
@@ -184,7 +187,7 @@ mod tests {
         let attempts = AtomicUsize::new(0);
 
         for _ in 0..2 {
-            run_in_batch_scope(resolve_within_batch(&url, failing(&url, &attempts)))
+            run_in_batch_scope(resolve_within_batch(&url, || failing(&url, &attempts)))
                 .await
                 .expect_err("the reference fails");
         }
@@ -197,10 +200,10 @@ mod tests {
         let url = reference("https://example.com/unreachable.jsonld");
         let attempts = AtomicUsize::new(0);
 
-        resolve_within_batch(&url, failing(&url, &attempts))
+        resolve_within_batch(&url, || failing(&url, &attempts))
             .await
             .expect_err("the first resolution fails");
-        resolve_within_batch(&url, failing(&url, &attempts))
+        resolve_within_batch(&url, || failing(&url, &attempts))
             .await
             .expect_err("the second resolution fails");
 

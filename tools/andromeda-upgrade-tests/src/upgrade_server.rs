@@ -8,6 +8,7 @@ use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, toki
 use std::{
     env::{self, VarError},
     num::NonZeroU32,
+    ops::ControlFlow,
     time::Duration,
 };
 use url::Url;
@@ -70,16 +71,17 @@ impl UpgradeServer {
     /// holds the database once the wait is over, and
     /// [`UpgradeDatabaseError::Store`] when the drop fails.
     pub async fn drop_database(&self, name: &TenantDatabaseName) -> Result<(), UpgradeDatabaseError> {
-        DROP_RETRY
-            .run(
-                &TokioRetryDelay,
-                |error, _| matches!(error, UpgradeDatabaseError::StillConnected),
-                async |_| match drop_database_unless_in_use(&self.url, name).await? {
-                    DatabaseDrop::Dropped => Ok(()),
-                    DatabaseDrop::InUse => Err(UpgradeDatabaseError::StillConnected),
-                },
-            )
-            .await
+        let mut run = DROP_RETRY.start(&TokioRetryDelay);
+        loop {
+            let outcome = match drop_database_unless_in_use(&self.url, name).await {
+                Ok(DatabaseDrop::Dropped) => Ok(()),
+                Ok(DatabaseDrop::InUse) => Err(UpgradeDatabaseError::StillConnected),
+                Err(error) => Err(UpgradeDatabaseError::from(error)),
+            };
+            if let ControlFlow::Break(settled) = run.settle(outcome, |error, _| matches!(error, UpgradeDatabaseError::StillConnected)).await {
+                return settled;
+            }
+        }
     }
 }
 

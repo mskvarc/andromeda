@@ -23,7 +23,7 @@ use crate::{
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_retry::{growth::Growth, retry_delay::RetryDelay, retry_number::RetryNumber, retry_policy::RetryPolicy, schedule::BackoffSchedule};
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
-use std::{iter::successors, num::NonZeroU32, sync::Arc, time::Duration};
+use std::{iter::successors, num::NonZeroU32, ops::ControlFlow, sync::Arc, time::Duration};
 use tracing::warn;
 
 /// The wait before each further request to record a round: a tenth of a
@@ -70,35 +70,41 @@ impl DeliveryAcknowledgement {
         settlements: &[DeliverySettlement],
         refill: Option<ClaimRequest<'_>>,
     ) -> Result<SettledRound, NotificationError> {
-        let round = self
-            .retry
-            .run(
-                self.delay.as_ref(),
-                |error, retry| match error {
-                    NotificationError::Persistence(failure) => {
-                        warn!(
-                            deliveries = settlements.len(),
-                            worker_id = %self.worker_id,
-                            retry = retry.get(),
-                            error = %failure,
-                            event = "notification_delivery_acknowledgement_retried"
-                        );
-                        true
-                    }
-                    NotificationError::Entity(_)
-                    | NotificationError::Subscription(_)
-                    | NotificationError::Registration(_)
-                    | NotificationError::JsonLd(_)
-                    | NotificationError::Compaction(_)
-                    | NotificationError::Representation(_)
-                    | NotificationError::Rendering(_)
-                    | NotificationError::Invariant(_) => false,
-                },
-                async |_| self.store.settle_and_claim(&self.worker_id, settlements, refill).await,
-            )
-            .await?;
+        let mut run = self.retry.start(self.delay.as_ref());
+        let round = loop {
+            let outcome = self.store.settle_and_claim(&self.worker_id, settlements, refill).await;
+            if let ControlFlow::Break(settled) = run.settle(outcome, |error, retry| self.asked_again(error, retry, settlements)).await {
+                break settled?;
+            }
+        };
         self.count(settlements, &round.answers);
         Ok(round)
+    }
+
+    /// Whether a round of `settlements` the store failed with `error` is
+    /// asked again as `retry`, logging the retry. Only a transient store
+    /// failure is.
+    fn asked_again(&self, error: &NotificationError, retry: RetryNumber, settlements: &[DeliverySettlement]) -> bool {
+        match error {
+            NotificationError::Persistence(failure) => {
+                warn!(
+                    deliveries = settlements.len(),
+                    worker_id = %self.worker_id,
+                    retry = retry.get(),
+                    error = %failure,
+                    event = "notification_delivery_acknowledgement_retried"
+                );
+                true
+            }
+            NotificationError::Entity(_)
+            | NotificationError::Subscription(_)
+            | NotificationError::Registration(_)
+            | NotificationError::JsonLd(_)
+            | NotificationError::Compaction(_)
+            | NotificationError::Representation(_)
+            | NotificationError::Rendering(_)
+            | NotificationError::Invariant(_) => false,
+        }
     }
 
     /// Report each lost lease and count every settlement under the queue

@@ -1,5 +1,5 @@
 //! Retry policy: how long to wait before an operation is run again, and the
-//! loop that runs it.
+//! run that repeats it.
 //!
 //! One law serves every retry in the broker: a first delay grows by a
 //! [`Growth`](crate::growth::Growth) multiplier, saturates at a ceiling and is
@@ -23,8 +23,10 @@ pub mod jitter;
 pub mod retry_delay;
 /// The 1-based ordinal of a retry.
 pub mod retry_number;
-/// The bounded loop that runs an operation again.
+/// How often, and how far apart, a failed operation is run again.
 pub mod retry_policy;
+/// One bounded run of an operation, driven by the caller's loop.
+pub mod retry_run;
 /// The delay before any retry, evaluated at its retry number.
 pub mod schedule;
 /// Why a configured schedule is refused.

@@ -24,7 +24,7 @@ pub async fn compact_type_selection(
     match type_selection {
         TypeSelection::Wildcard => Ok(TypeSelection::Wildcard),
         TypeSelection::Alternatives(alternatives) => alternatives
-            .try_map_async(async |iri| compactor.compact_type(iri).await)
+            .try_map_async(|iri| compactor.compact_type(iri))
             .await
             .map(TypeSelection::Alternatives),
     }

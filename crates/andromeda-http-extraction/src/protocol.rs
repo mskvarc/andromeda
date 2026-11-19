@@ -4,6 +4,8 @@
 //! Via headers into a single extractor to reduce handler parameter counts
 //! (ETSI GS CIM 009 clauses 5.5.9.3, 6.3.5, 6.3.6, 6.3.18, 6.3.21, 6.3.22).
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     addressed_uri::addressed_uri,
     language::LanguageNegotiation,

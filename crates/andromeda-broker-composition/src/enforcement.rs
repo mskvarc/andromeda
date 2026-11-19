@@ -23,6 +23,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity",
         "andromeda-entity-map",
         "andromeda-extensions",
+        "andromeda-fan-out",
         "andromeda-federation",
         "andromeda-health",
         "andromeda-http-api",

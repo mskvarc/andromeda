@@ -50,7 +50,7 @@ use andromeda_ngsi_ld_model::{
     notification::ChangeOrigin,
 };
 use andromeda_telemetry::entity::{self, EntityOperation};
-use std::sync::Arc;
+use std::{ops::ControlFlow, sync::Arc};
 
 impl EntityService {
     /// Delete an entity by its URI (NGSI-LD 5.6.6).
@@ -66,19 +66,25 @@ impl EntityService {
         let timer = entity::start(EntityOperation::Delete);
         let result: Result<(), EntityError> = async {
             let mut instant = AttemptInstant::default();
-            self.retry_contended(async |_| match self.delete_attempt(target, entity, instant).await? {
-                AfterAttempt::Settled => Ok(()),
-                AfterAttempt::Vanished => Err(ContendedAttempt::Failed(EntityError::not_found(id))),
-                // A write landed between the read and the deletion: read the
-                // entity again.
-                AfterAttempt::Reread => Err(ContendedAttempt::Lost),
-                AfterAttempt::Restamp(latest) => {
-                    instant.refused(latest);
-                    Err(ContendedAttempt::Lost)
+            let mut run = self.contended_run();
+            let settled = loop {
+                let outcome = match self.delete_attempt(target, entity, instant).await {
+                    Ok(AfterAttempt::Settled) => Ok(()),
+                    Ok(AfterAttempt::Vanished) => Err(ContendedAttempt::Failed(EntityError::not_found(id))),
+                    // A write landed between the read and the deletion: read the
+                    // entity again.
+                    Ok(AfterAttempt::Reread) => Err(ContendedAttempt::Lost),
+                    Ok(AfterAttempt::Restamp(latest)) => {
+                        instant.refused(latest);
+                        Err(ContendedAttempt::Lost)
+                    }
+                    Err(error) => Err(ContendedAttempt::from(error)),
+                };
+                if let ControlFlow::Break(settled) = run.settle(outcome, ContendedAttempt::retried).await {
+                    break settled;
                 }
-            })
-            .await
-            .map_err(|failure| failure.into_entity_error(id))
+            };
+            settled.map_err(|failure| failure.into_entity_error(id))
         }
         .await;
         timer.finish_result(&result);

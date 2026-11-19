@@ -261,12 +261,14 @@ impl HttpContextLoader {
     /// a reference that already failed fails again at once, with no attempt of
     /// its own.
     async fn load_entry(&self, requested: &IriBuf) -> Result<LoadedContext, Arc<LoaderError>> {
-        let loaded = resolve_within_batch(requested, async || match self.resolution_of(requested)? {
-            Resolution::Stored(identifier) => match self.load_stored(&identifier).await? {
-                StoredLookup::Held(loaded) => Ok(*loaded),
-                StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await,
-            },
-            Resolution::Url => self.load_url(requested, CachedCopy::Recorded).await,
+        let loaded = resolve_within_batch(requested, || async move {
+            match self.resolution_of(requested)? {
+                Resolution::Stored(identifier) => match self.load_stored(&identifier).await? {
+                    StoredLookup::Held(loaded) => Ok(*loaded),
+                    StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await,
+                },
+                Resolution::Url => self.load_url(requested, CachedCopy::Recorded).await,
+            }
         })
         .await?;
         note_source(requested, &loaded.document);

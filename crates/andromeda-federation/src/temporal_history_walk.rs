@@ -22,6 +22,7 @@ use crate::{
     result_budget::ResultBudget,
     temporal_answer_reading::ReadTemporalEntity,
 };
+use andromeda_fan_out::bounded::fan_out_unordered;
 use andromeda_ngsi_ld_lexicon::{
     time::{date_time::NgsiLdDateTime, rendering::instant_text},
     time_rel::TimeRel,
@@ -29,7 +30,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::{received::ContextualEntity, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use url::Url;
 
 /// The window parameters a resumed request rewrites.
@@ -51,13 +52,13 @@ impl FederationService {
         conditions: ForwardedGetConditions<'_>,
         budget: HistoryBudget<'_>,
     ) -> Result<Vec<SourceAnswer<ReceivedTemporalAnswer<ReadTemporalEntity>>>, QueryForwardingError> {
-        stream::iter(targets)
-            .map(|(registration, first)| async move { self.walk_history(&registration, first, conditions, budget).await })
-            .buffer_unordered(self.csr_concurrency)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect()
+        fan_out_unordered(targets, self.csr_concurrency, |(registration, first)| async move {
+            self.walk_history(&registration, first, conditions, budget).await
+        })
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect()
     }
 
     /// Walk one target's answer, then resume it past every partial answer

@@ -6,6 +6,8 @@
 //! reading of the request's `Link` headers that [`crate::request_links`]
 //! keeps.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{
     addressed_uri::addressed_uri,
     classification::classify_context_link_error,

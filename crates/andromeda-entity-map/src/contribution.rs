@@ -24,3 +24,15 @@ pub struct SourceContribution {
     /// linked.
     pub linked_map: Option<Identifier>,
 }
+
+/// Each registration among `contributions` that answered with a map, beside
+/// that map.
+///
+/// The pairs are named by a declared `Send` bound rather than by the closure
+/// that picks them, so a caller holding them across an await is proven
+/// `Send` from the bound alone.
+pub fn linked_maps(contributions: &[SourceContribution]) -> impl Iterator<Item = (&Identifier, &Identifier)> + Send {
+    contributions
+        .iter()
+        .filter_map(|contribution| contribution.linked_map.as_ref().map(|linked| (&contribution.registration, linked)))
+}

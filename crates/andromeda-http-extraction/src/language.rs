@@ -5,6 +5,8 @@
 //! by the endpoint-specific request model so each wire value is decoded exactly
 //! once, and the handler lets a `lang` outrank the header.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::accept_language::AcceptedLanguage;
 use andromeda_http_headers::language::LanguageFilter;
 use axum::{extract::FromRequestParts, http::request::Parts};

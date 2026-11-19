@@ -37,7 +37,7 @@ pub(crate) async fn admitted_context(service: &EntityService, context: &ContextS
 /// is refused.
 pub(crate) async fn admitted_entity<W: EntityWriteKind>(
     service: &EntityService,
-    payload: impl WritePayload<Member = W::Member>,
+    payload: &impl WritePayload<Member = W::Member>,
     context: &ContextSpec,
 ) -> AdmittedEntity<W> {
     let context = admitted_context(service, context).await;

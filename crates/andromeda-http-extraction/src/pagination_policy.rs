@@ -10,6 +10,8 @@
 //! the policy holds a followed cursor to, and the request as a client reaches
 //! it through the configured `apiRoot`, which every pointer rebuilds.
 
+#![expect(clippy::absolute_paths, reason = "clippy reads a nested item of a grouped import as an inline path")]
+
 use crate::{addressed_uri::addressed_uri, api_root::ConfiguredApiRoot, context::ContextUrl};
 use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_http_response::{
