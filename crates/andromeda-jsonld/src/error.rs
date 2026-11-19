@@ -9,16 +9,19 @@
 //! rather than pre-rendered into one message.
 
 use crate::{
+    context_fault::{ContextFault, FaultyContext},
     context_graph::ContextGraphError,
     context_term::ContextTerm,
-    engine::processor_text::ProcessorTextError,
+    engine::{
+        context_fault_reading::{extraction_failure, processing_fault, syntax_fault},
+        processor_text::ProcessorTextError,
+    },
     loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError},
 };
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_representation::embedded_context_admission::EmbeddedContext;
 use iri_rs::{InvalidIri, IriBuf};
-use jsonld::{CompactError, ContextLoadError, ExpandError, compaction, context_processing, expansion};
-use jsonld_syntax::context::InvalidContext;
+use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, compaction, context_processing, expansion};
 use reqwest::StatusCode;
 use std::{io, path::PathBuf};
 use thiserror::Error;
@@ -125,9 +128,19 @@ pub enum JsonLdError {
         source: JsonLiteralError,
     },
 
-    /// An inline context could not be parsed as valid JSON-LD.
-    #[error("inline context is invalid: {0}")]
-    InlineContextInvalid(#[source] InvalidContext),
+    /// A `@context` is not valid JSON-LD: the processor refused its syntax or
+    /// the processing of one of its definitions, with no document it names
+    /// failing to load.
+    ///
+    /// Clause 5.5.4: data that is "not syntactically correct, according to the
+    /// @context" is `BadRequestData`, and so is the `@context` itself.
+    #[error("{context} {fault}")]
+    ContextUnprocessable {
+        /// The `@context` the fault was found in.
+        context: FaultyContext,
+        /// What is wrong with it, and where.
+        fault: ContextFault,
+    },
 
     /// A user `@context` declares a JSON-LD Scoped Context.
     ///
@@ -242,7 +255,7 @@ impl JsonLdError {
     /// a user context that redefines a protected core term is the one failure
     /// a retry without that context can fix.
     #[must_use]
-    pub const fn is_protected_term_error(error: &CompactError<LoaderError>) -> bool {
+    pub fn is_protected_term_error(error: &CompactError<LoaderError>) -> bool {
         match error {
             CompactError::ContextProcessing(processing) | CompactError::Expand(ExpandError::ContextProcessing(processing)) => {
                 is_protected_term_redefinition(processing)
@@ -269,23 +282,32 @@ impl JsonLdError {
 }
 
 /// Whether a context-processing failure is specifically a protected-term
-/// redefinition.
-const fn is_protected_term_redefinition(error: &context_processing::Error<LoaderError>) -> bool {
-    matches!(error, context_processing::Error::ProtectedTermRedefinition)
+/// redefinition, located in the term redefined or not.
+fn is_protected_term_redefinition(error: &context_processing::Error<LoaderError>) -> bool {
+    matches!(error.cause(), context_processing::Error::ProtectedTermRedefinition)
 }
 
-/// Recover the loader failure buried inside a typed [`ExpandError`].
+/// The typed context failure buried inside an [`ExpandError`], or `None` for
+/// a defect of the document being expanded.
 ///
 /// The typed `LoadError<LoaderError>` exposes its source directly, so no
-/// downcast is needed.
+/// downcast is needed. The context the failure is in has no name here.
 fn context_error_of_expansion(error: &ExpandError<LoaderError>) -> Option<JsonLdError> {
     match error {
         ExpandError::Loading(load) | ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
-        ExpandError::ContextLoading(ContextLoadError::ContextExtractionFailed(_)) => None,
-        ExpandError::ContextProcessing(processing) => context_error_of_processing(processing),
+        ExpandError::ContextLoading(ContextLoadError::ContextExtractionFailed { target, error }) => Some(unextractable_context(target, error)),
+        ExpandError::ContextProcessing(processing) => Some(context_error_of_processing(processing, FaultyContext::Unnamed)),
+        // Written as `if let` rather than an exhaustive match because
+        // `expansion::Error` is a foreign enum of document grammar violations,
+        // of which only these two concern the `@context`.
         ExpandError::Expansion(expanding) => {
             if let expansion::Error::ContextProcessing(processing) = expanding {
-                context_error_of_processing(processing)
+                Some(context_error_of_processing(processing, FaultyContext::Unnamed))
+            } else if let expansion::Error::ContextSyntax(invalid) = expanding {
+                Some(JsonLdError::ContextUnprocessable {
+                    context: FaultyContext::Unnamed,
+                    fault: syntax_fault(invalid),
+                })
             } else {
                 None
             }
@@ -297,33 +319,59 @@ fn context_error_of_expansion(error: &ExpandError<LoaderError>) -> Option<JsonLd
 fn context_error_of_compaction(error: &CompactError<LoaderError>) -> Option<JsonLdError> {
     match error {
         CompactError::Loading(load) | CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
-        CompactError::ContextLoading(ContextLoadError::ContextExtractionFailed(_)) | CompactError::Compaction(_) => None,
-        CompactError::ContextProcessing(processing) => context_error_of_processing(processing),
+        CompactError::ContextLoading(ContextLoadError::ContextExtractionFailed { target, error }) => Some(unextractable_context(target, error)),
+        CompactError::ContextProcessing(processing) => Some(context_error_of_processing(processing, FaultyContext::Unnamed)),
+        // Written as `if let` for the reason `context_error_of_expansion` gives.
+        CompactError::Compaction(compacting) => {
+            if let compaction::Error::ContextProcessing(processing) = compacting {
+                Some(context_error_of_processing(processing, FaultyContext::Unnamed))
+            } else {
+                None
+            }
+        }
         CompactError::Expand(expand) => context_error_of_expansion(expand),
     }
 }
 
-/// The loader failure a context-processing error wraps, if it wraps one, or
-/// the invalid reference graph it reports.
+/// The typed failure a context-processing error reports for the `@context`
+/// named `context`.
 ///
-/// A `context overflow` or a `recursive context inclusion` is a `@context`
-/// whose references cycle or run on, which clause 5.5.6 answers with
-/// `BadRequestData` exactly as [`crate::context_graph`] refuses it.
+/// A loader failure keeps its URL, status and reason. A `context overflow` or
+/// a `recursive context inclusion` is a `@context` whose references cycle or
+/// run on, which clause 5.5.6 answers with `BadRequestData` exactly as
+/// [`crate::context_graph`] refuses it. A document the processor loaded but
+/// read no context from is named by its URL. Every other failure is a fault
+/// of the `@context` itself, located in the term whose definition failed.
 ///
 /// Written as `if let` rather than an exhaustive match because
 /// `context_processing::Error` is a foreign enum of twenty-odd grammar
-/// violations, none of which carries a loader failure or a reference-graph
-/// fault, and enumerating them here would only restate that list.
-fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -> Option<JsonLdError> {
-    if let context_processing::Error::ContextLoadingFailed(load) = error {
-        Some(JsonLdError::from(&load.source))
+/// violations, every one of which is the same fault of the `@context`, and
+/// enumerating them here would only restate that list.
+pub(crate) fn context_error_of_processing(error: &context_processing::Error<LoaderError>, context: FaultyContext) -> JsonLdError {
+    let cause = error.cause();
+    if let context_processing::Error::ContextLoadingFailed(load) = cause {
+        JsonLdError::from(&load.source)
+    } else if let context_processing::Error::ContextExtractionFailed { target, error } = cause {
+        unextractable_context(target, error)
     } else if matches!(
-        error,
+        cause,
         context_processing::Error::ContextOverflow | context_processing::Error::RecursiveContextInclusion
     ) {
-        Some(ContextGraphError::ProcessorOverflow.into())
+        ContextGraphError::ProcessorOverflow.into()
     } else {
-        None
+        JsonLdError::ContextUnprocessable {
+            context,
+            fault: processing_fault(error),
+        }
+    }
+}
+
+/// The failure of a document at `target` the processor loaded but read no
+/// context from.
+fn unextractable_context(target: &IriBuf, error: &ExtractContextError) -> JsonLdError {
+    JsonLdError::ContextInvalid {
+        url: target.clone(), // clone: the processor keeps its error, and the failure owns the URL
+        source: extraction_failure(error),
     }
 }
 
@@ -331,6 +379,7 @@ fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -
 mod tests {
     use crate::{
         context_cache::ContextCacheError,
+        context_fault::{ContextFault, FaultyContext},
         context_graph::ContextGraphError,
         context_subtree::UnusableLocalContext,
         context_term::ContextTerm,
@@ -340,7 +389,17 @@ mod tests {
     use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
-    use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, LoadError, compaction, context_processing, expansion};
+    use jsonld::{
+        CompactError,
+        ContextLoadError,
+        ExpandError,
+        ExtractContextError,
+        LoadError,
+        compaction,
+        context_processing,
+        expansion,
+        syntax::{ErrorCode, context::definition::KeyOrKeywordRef},
+    };
     use reqwest::StatusCode;
 
     fn url() -> IriBuf {
@@ -356,6 +415,33 @@ mod tests {
 
     fn load_error() -> LoadError<LoaderError> {
         LoadError::new(url(), loader_error())
+    }
+
+    /// `error` as the processor reports it while defining the term `term`.
+    fn located(term: &str, error: context_processing::Error<LoaderError>) -> context_processing::Error<LoaderError> {
+        context_processing::Error::TermDefinition {
+            term: KeyOrKeywordRef::from(term).to_owned(),
+            error: Box::new(error),
+        }
+    }
+
+    /// The document at [`url`] the processor loaded and read no `@context` from.
+    fn unextractable() -> ContextLoadError<LoaderError> {
+        ContextLoadError::ContextExtractionFailed {
+            target: url(),
+            error: ExtractContextError::NoContext,
+        }
+    }
+
+    /// Whether `error` names the unextractable document at [`url`].
+    fn names_the_unextractable_document(error: Option<JsonLdError>) -> bool {
+        matches!(
+            error,
+            Some(JsonLdError::ContextInvalid {
+                url: named,
+                source: InvalidContextDocument::NoContext(UnusableLocalContext::NoContextMember),
+            }) if named == url()
+        )
     }
 
     #[test]
@@ -403,12 +489,17 @@ mod tests {
         assert!(is_protected_term_redefinition(&context_processing::Error::ProtectedTermRedefinition));
         assert!(!is_protected_term_redefinition(&context_processing::Error::InvalidBaseIri));
         assert!(!is_protected_term_redefinition(&context_processing::Error::ContextLoadingFailed(load_error())));
+        assert!(is_protected_term_redefinition(&located(
+            "type",
+            context_processing::Error::ProtectedTermRedefinition
+        )));
     }
 
     #[test]
     fn a_protected_term_redefinition_is_recognised_through_every_nesting() {
-        let cases: [CompactError<LoaderError>; 4] = [
+        let cases: [CompactError<LoaderError>; 5] = [
             CompactError::ContextProcessing(context_processing::Error::ProtectedTermRedefinition),
+            CompactError::ContextProcessing(located("type", context_processing::Error::ProtectedTermRedefinition)),
             CompactError::Expand(ExpandError::ContextProcessing(context_processing::Error::ProtectedTermRedefinition)),
             CompactError::Compaction(compaction::Error::ContextProcessing(context_processing::Error::ProtectedTermRedefinition)),
             CompactError::Expand(ExpandError::Expansion(expansion::Error::ContextProcessing(
@@ -438,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn context_error_of_expansion_recovers_only_the_loader_failures() {
+    fn context_error_of_expansion_types_every_context_failure_and_leaves_document_defects() {
         assert!(
             context_error_of_expansion(&ExpandError::Loading(load_error())).is_some_and(|error| error.is_context_not_available()),
             "a direct load failure is a context error"
@@ -448,19 +539,25 @@ mod tests {
             "a failed context document load is a context error"
         );
         assert!(
-            context_error_of_expansion(&ExpandError::ContextLoading(ContextLoadError::ContextExtractionFailed(
-                ExtractContextError::NoContext
-            )))
-            .is_none(),
-            "a missing @context is a document defect, not a load failure"
+            names_the_unextractable_document(context_error_of_expansion(&ExpandError::ContextLoading(unextractable()))),
+            "a document with no @context is named by its URL"
         );
         assert!(
             context_error_of_expansion(&ExpandError::ContextProcessing(context_processing::Error::ContextLoadingFailed(load_error()))).is_some(),
             "a load failure nested in context processing is still a context error"
         );
         assert!(
-            context_error_of_expansion(&ExpandError::ContextProcessing(context_processing::Error::ProtectedTermRedefinition)).is_none(),
-            "a protected-term redefinition is not a load failure"
+            matches!(
+                context_error_of_expansion(&ExpandError::ContextProcessing(located("speed", context_processing::Error::InvalidIriMapping))),
+                Some(JsonLdError::ContextUnprocessable {
+                    context: FaultyContext::Unnamed,
+                    fault: ContextFault::TermDefinition {
+                        reason: ErrorCode::InvalidIriMapping,
+                        ..
+                    },
+                })
+            ),
+            "a refused term definition is a fault of the @context, located in the term"
         );
         assert!(
             context_error_of_expansion(&ExpandError::Expansion(expansion::Error::ContextProcessing(
@@ -480,9 +577,10 @@ mod tests {
     /// refusal rather than an opaque expansion or compaction failure.
     #[test]
     fn a_processor_overflow_or_recursive_inclusion_is_a_context_graph_refusal() {
-        let refusals: [fn() -> context_processing::Error<LoaderError>; 2] = [
+        let refusals: [fn() -> context_processing::Error<LoaderError>; 3] = [
             || context_processing::Error::ContextOverflow,
             || context_processing::Error::RecursiveContextInclusion,
+            || located("gear", context_processing::Error::ContextOverflow),
         ];
         for refusal in refusals {
             let expanded = JsonLdError::from(ExpandError::ContextProcessing(refusal()));
@@ -499,15 +597,18 @@ mod tests {
     }
 
     #[test]
-    fn context_error_of_compaction_recovers_only_the_loader_failures() {
+    fn context_error_of_compaction_types_every_context_failure_and_leaves_document_defects() {
         assert!(context_error_of_compaction(&CompactError::Loading(load_error())).is_some());
         assert!(context_error_of_compaction(&CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load_error()))).is_some());
-        assert!(
-            context_error_of_compaction(&CompactError::ContextLoading(ContextLoadError::ContextExtractionFailed(
-                ExtractContextError::NoContext
-            )))
-            .is_none()
-        );
+        assert!(names_the_unextractable_document(context_error_of_compaction(&CompactError::ContextLoading(
+            unextractable()
+        ))));
+        assert!(matches!(
+            context_error_of_compaction(&CompactError::Compaction(compaction::Error::ContextProcessing(
+                context_processing::Error::InvalidBaseIri
+            ))),
+            Some(JsonLdError::ContextUnprocessable { .. })
+        ));
         assert!(context_error_of_compaction(&CompactError::ContextProcessing(context_processing::Error::ContextLoadingFailed(load_error()))).is_some());
         assert!(
             context_error_of_compaction(&CompactError::Expand(ExpandError::Loading(load_error()))).is_some(),
@@ -517,9 +618,18 @@ mod tests {
     }
 
     #[test]
-    fn context_error_of_processing_maps_only_the_loading_failure() {
-        assert!(context_error_of_processing(&context_processing::Error::ContextLoadingFailed(load_error())).is_some());
-        assert!(context_error_of_processing(&context_processing::Error::ProtectedTermRedefinition).is_none());
+    fn context_error_of_processing_names_the_context_a_fault_is_in() {
+        assert!(
+            context_error_of_processing(&context_processing::Error::ContextLoadingFailed(load_error()), FaultyContext::Url(url())).is_context_not_available()
+        );
+        let fault = context_error_of_processing(
+            &located("speed", context_processing::Error::ProtectedTermRedefinition),
+            FaultyContext::Url(url()),
+        );
+        pretty_assertions::assert_eq!(
+            fault.to_string(),
+            "the @context https://example.com/ctx.jsonld cannot define the term speed: protected term redefinition"
+        );
     }
 
     #[test]

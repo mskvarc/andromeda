@@ -7,7 +7,7 @@
 //! its reason as separate fields all the way to whoever renders the Problem
 //! Detail, instead of being flattened into one message at the boundary.
 
-use crate::{context_cache::ContextCacheError, context_subtree::UnusableLocalContext, error::JsonLdError};
+use crate::{context_cache::ContextCacheError, context_fault::ContextFault, context_subtree::UnusableLocalContext, error::JsonLdError};
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use iri_rs::{InvalidIri, IriBuf};
@@ -117,6 +117,13 @@ pub enum InvalidContextDocument {
     /// The document carries no usable top-level `@context`.
     #[error("the document has no usable top-level @context: {0}")]
     NoContext(#[source] UnusableLocalContext),
+    /// The document has more than one top-level `@context` member, so which one
+    /// is its context is not stated.
+    #[error("the document has more than one top-level @context member")]
+    DuplicateContext,
+    /// The document's `@context` is not a valid JSON-LD context.
+    #[error("the @context {0}")]
+    InvalidContext(ContextFault),
 }
 
 impl LoaderError {
@@ -212,7 +219,7 @@ mod tests {
             | JsonLdError::PreloadedContextUrl(_)
             | JsonLdError::EmbeddedContextMissing { .. }
             | JsonLdError::EmbeddedContextInvalid { .. }
-            | JsonLdError::InlineContextInvalid(_)
+            | JsonLdError::ContextUnprocessable { .. }
             | JsonLdError::ClientBuild(_)
             | JsonLdError::Expansion(_)
             | JsonLdError::Compaction(_)

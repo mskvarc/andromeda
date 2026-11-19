@@ -1,7 +1,7 @@
 //! Failures reported by Context Registry policy and implementations.
 
 use crate::{identifier::ContextIdentifier, registry_invariant::RegistryInvariant};
-use andromeda_jsonld::{context_subtree::UnusableLocalContext, error::JsonLdError};
+use andromeda_jsonld::{context_subtree::UnusableLocalContext, engine::context_document_check::ContextDocumentRefusal, error::JsonLdError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use iri_rs::IriBuf;
@@ -15,6 +15,10 @@ pub enum ContextRegistryError {
     /// holds no JSON-LD context (clause 5.13.2.3).
     #[error("payload must carry a JSON-LD context in a top-level @context member: {0}")]
     NoLocalContext(#[source] UnusableLocalContext),
+    /// A hosted Context payload carries a `@context` that is not valid
+    /// JSON-LD: clause 5.13.2.4 applies the clause 5.5.4 validation to it.
+    #[error(transparent)]
+    InvalidContext(ContextDocumentRefusal),
     /// The requested Context is not registered.
     #[error("context not found: {identifier}")]
     NotFound {

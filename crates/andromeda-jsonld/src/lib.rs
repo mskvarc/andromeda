@@ -21,6 +21,8 @@
 //! Clause 5.13.2.3's rule that everything outside a referenced context
 //! object's `@context` subtree is discarded belongs to no single caller, so
 //! [`context_subtree`] owns it for the resolver and the Context Registry alike.
+//! For the same reason [`context_fault`] states where and why any `@context`
+//! is not valid JSON-LD, whichever operation the processor refused it in.
 //!
 //! Which `@context` a response or a notification names (clauses 5.2.3 and
 //! 4.4) depends on what the documents a request named leave in force last,
@@ -57,6 +59,7 @@ pub mod compound_context_host;
 pub mod configured_engine;
 pub mod container_terms;
 pub mod context_cache;
+pub mod context_fault;
 pub mod context_graph;
 pub mod context_registry;
 pub mod context_spec;

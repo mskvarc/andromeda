@@ -124,6 +124,7 @@ filter = '''
 package(andromeda-test-suite) & binary(~ngsi_ld_) & (
     test(/(^|::)(n_csr_cre_0018|n_csr_cre_9005|n_csr_qry_0011|n_csr_qry_0014|n_csr_qry_0015|n_csr_qry_9001|n_csr_qry_9094|n_css_qry_0003|n_css_qry_0006)_/)
   | test(/(^|::)(n_css_qry_0011|n_css_qry_9001|n_css_qry_9003|n_css_qry_9004|n_ctx_add_0002|n_ctx_add_0003|n_ctx_add_0004|n_ctx_add_0005|n_ctx_add_0006)_/)
+  | test(/(^|::)(n_ctx_add_9003|n_ctx_add_9004|n_ctx_add_9005|n_ctx_add_9006|n_ctx_add_9007|n_ctx_add_9008|n_ctx_add_9009)_/)
   | test(/(^|::)(n_ctx_cmp_0018|n_ctx_cmp_0020|n_ctx_cmp_0029|n_ctx_cmp_0039|n_ctx_lst_0002|n_ctx_lst_0003|n_ctx_lst_0006|n_ctx_lst_0007)_/)
   | test(/(^|::)(n_ctx_lst_0009|n_ctx_lst_3001|n_ctx_lst_3002|n_ctx_lst_3003|n_ctx_srv_0008|n_ctx_srv_0019|n_ctx_srv_0020)_/)
   | test(/(^|::)(n_dsc_att_0001|n_dsc_tyi_0010|n_dsc_typ_0001)_/)

@@ -29,7 +29,7 @@ compact_str = "0.10.0"
 derive_more = { version = "2.1.1", features = ["as_ref"] }
 indexmap = "2.14.2"
 iri-rs = "4.1.1"
-jsonld = "0.27.1"
+jsonld = "0.28.0"
 langtag = "1.1.0"
 rdfx = "0.25.0"
 serde = "1.0.229"
@@ -40,7 +40,7 @@ thiserror = "2.0.21"
 [dev-dependencies]
 allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
-jsonld = { version = "0.27.1", features = ["serde-json"] }
+jsonld = { version = "0.28.0", features = ["serde-json"] }
 pretty_assertions = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

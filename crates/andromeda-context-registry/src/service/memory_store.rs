@@ -1,10 +1,12 @@
-//! An in-memory Context Registry store for tests that need no database.
+//! An in-memory Context Registry store for tests that need no database, and
+//! the URL root the entries of such tests are served under.
 
 use crate::{
     context_page::ContextPage,
     creation_kind::ContextCreationKind,
     detail_level::ContextDetailLevel,
     fetched_context::FetchedContext,
+    hosted_context_locator::HostedContextLocator,
     insertion::ContextInsertion,
     list_query::ContextListQuery,
     listed_contexts::ListedContexts,
@@ -20,6 +22,17 @@ use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_query::page_reach::PageReach;
 use std::sync::{Arc, RwLock};
 use url::Url;
+
+/// Serves every entry under `https://broker.example/<identifier>`.
+pub(super) struct BrokerRoot;
+
+impl HostedContextLocator for BrokerRoot {
+    fn serving_url(&self, identifier: &JsonLdContextId) -> Url {
+        let mut url = Url::parse("https://broker.example/").expect("a URL");
+        url.set_path(identifier.as_ref());
+        url
+    }
+}
 
 /// One stored row: its identifier, kind and document.
 pub(super) struct Row {

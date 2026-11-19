@@ -15,7 +15,7 @@ workspace = true
 [dependencies]
 hex-literal = "1.1.0"
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
-jsonld = { version = "0.27.1", features = ["vocab"] }
+jsonld = { version = "0.28.0", features = ["vocab"] }
 urn-rs = { version = "1.0.0", features = ["static"] }
 
 [dev-dependencies]
