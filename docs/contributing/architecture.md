@@ -42,6 +42,20 @@ Every configuration type, key and choice has an operator-facing description in `
 - **Renderers own every transformation.** A handler configures a renderer through its builder and calls `render()`. It never calls a transformation itself or edits the rendered output.
 - **Crate bans are architecture checks.** A rule that bans a crate or confines it to one owner crate is a gate in `andromeda-architecture-checks`, not an entry in `deny.toml`.
 
+### Replayed side-effect jobs
+
+A batch request on the live branch that sends `Prefer: respond-async` and reaches the configured minimum batch size defers the notifications of its writes. Each commit writes the Entity rows and their history intents in one transaction. A broker that records durable deliveries commits the Subscription matches in that same transaction and owes nothing afterwards. A live-delivery broker records none at commit, so the commit also queues one durable side-effect job carrying every change it made, each with the Entity state the change left behind, or for a deletion the state it removed. A worker drains the job and replays it after that commit.
+
+A replay works only from what the job carries. It never re-runs the request and never reads an Entity's current row, because other writes may have changed it since. A durable-delivery broker draining the job matches each carried change against its Subscriptions, filters and notifies with the carried state, and commits those matches. A live-delivery broker commits only the job's removal and hands the carried changes to its in-process notification worker once that commit has landed. Neither changes an Entity row or records history, because the commit that queued the job queued the history as intents in its own transaction. That is how the history rule above holds for jobs.
+
+The replay resumes the original commit's write record and numbers its rows from the first ordinal that commit left free, after the commit's own consequences and never over one of them. The matches keep the order their changes were raised in, so every attempt numbers its rows the same way.
+
+The replay removes its job as the first statement of its transaction, and only while it still holds the job's lease. A replay that lost its lease is refused before it writes anything. Only one replay transaction of a job can commit, because only one can remove its row. Any attempt that does not commit rolls the removal back with whatever it wrote, so a job's consequences land exactly once.
+
+The unit test `a_replay_commits_notification_consequences_only` in `andromeda-entity` pins the replay's shape. Three owed changes of two Entities replay as two writes that hold only their matches, with no Entity change, no history and no further job.
+
+Everything a replay writes derives from what the original commit stored in the job. Never re-run the request in a job, and never read current Entity state there. When a job needs something it cannot derive from what it carries, compute it at the original commit and store it in the job.
+
 ### No duplication
 
 When two places need the same functionality, it moves into the module that owns the concept. When two crates need it, it becomes a library crate of its own under `crates/`. Code is never copied between crates or modules.
