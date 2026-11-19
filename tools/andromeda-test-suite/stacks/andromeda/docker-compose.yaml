@@ -553,7 +553,7 @@ services:
   # through its control API on port 8474: it closes every connection and refuses new ones until restored. The image
   # has no shell, so no healthcheck; the broker restarts until the proxy carries its first connection.
   database-proxy:
-    image: ghcr.io/shopify/toxiproxy:2.12.0
+    image: ghcr.io/shopify/toxiproxy:2.13.0
     command: ["-host=0.0.0.0", "-config=/etc/toxiproxy/database-proxy.json"]
     volumes:
       - ./database-proxy.json:/etc/toxiproxy/database-proxy.json:ro
