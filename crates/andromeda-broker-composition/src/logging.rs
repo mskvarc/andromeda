@@ -21,7 +21,7 @@ use file_rotate::{
 };
 use std::{
     fs,
-    io::Error as IoError,
+    io::{self, Error as IoError, IsTerminal},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -54,7 +54,8 @@ pub(crate) enum TracingInitError {
 /// Install composition-owned tracing before any runtime resource is opened.
 ///
 /// A compact stdout layer is always installed, honouring `RUST_LOG` and falling
-/// back to the configured level. When file logging is enabled a second,
+/// back to the configured level. It is coloured only when stdout is a terminal
+/// and `NO_COLOR` is unset. When file logging is enabled a second,
 /// independently filtered structured layer writes to a rotating file; its
 /// [`WorkerGuard`] is returned so the caller can keep the non-blocking appender
 /// alive for the process lifetime.
@@ -66,7 +67,14 @@ pub(crate) enum TracingInitError {
 /// already installed for the process.
 pub(crate) fn initialize(config: &BrokerConfig) -> Result<Option<WorkerGuard>, TracingInitError> {
     let log = &config.observability.log;
-    let stdout_layer = fmt::layer().compact().with_filter(stdout_env_filter(log.level));
+    let stdout_layer = fmt::layer().compact();
+    // The formatter's default colours unless `NO_COLOR` is set; a pipe or a file gets plain text regardless.
+    let stdout_layer = if io::stdout().is_terminal() {
+        stdout_layer
+    } else {
+        stdout_layer.with_ansi(false)
+    };
+    let stdout_layer = stdout_layer.with_filter(stdout_env_filter(log.level));
 
     let (file_layer, guard) = match log.file.mode {
         FeatureMode::Disabled => (None, None),
