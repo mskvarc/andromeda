@@ -217,8 +217,9 @@ impl ContextRegistryService {
     /// of a kind other than `Cached`, [`ContextRegistryError::MissingSourceUrl`]
     /// when a cached Context records no remote source,
     /// [`ContextRegistryError::ContextUnavailable`] when the remote document
-    /// cannot be downloaded, [`ContextRegistryError::Persistence`] when the store
-    /// cannot complete the deletion or the replacement, and
+    /// cannot be downloaded, [`ContextRegistryError::InvalidDownload`] when the
+    /// download is not valid JSON-LD, [`ContextRegistryError::Persistence`]
+    /// when the store cannot complete the deletion or the replacement, and
     /// [`ContextRegistryError::Invariant`] when the stored identifier is not an
     /// IRI reference the in-process cache can be invalidated by.
     pub async fn remove(&self, requested: &ContextIdentifier, removal: ContextRemoval) -> Result<(), ContextRegistryError> {
@@ -281,6 +282,16 @@ impl ContextRegistryService {
                 source_url: source_url.clone(), // clone: the error owns this copy, and the original remains for invalidating the previous document.
                 source: Box::new(error),
             })?;
+        // Clause 5.13.5.4: "If downloading fails, or the downloaded @context is
+        // invalid according to JSON and JSON-LD validation of clause 5.5.4, then
+        // an error of type LdContextNotAvailable shall be raised", and "in case
+        // of any error, the operation ends without removing the existing
+        // @context": the stored row and the in-process copy are left as they
+        // were. The download is validated as Add @context validates a client's
+        // document.
+        if let Err(refusal) = check_context_document(&downloaded.document).await {
+            return Err(ContextRegistryError::InvalidDownload { source_url, refusal });
+        }
         // Clause 5.13.5.4: "the existing @context is replaced with the newly
         // downloaded one." The resolver hands the download back already reduced
         // to its `@context` subtree (clause 5.13.2.3), which is exactly the
@@ -323,6 +334,9 @@ mod identity_tests;
 
 #[cfg(test)]
 mod memory_store;
+
+#[cfg(test)]
+mod reload_tests;
 
 #[cfg(test)]
 mod validity_tests;

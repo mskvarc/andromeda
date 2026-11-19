@@ -24,6 +24,7 @@ pub mod broker;
 pub mod broker_metrics;
 pub mod broker_process;
 pub mod budget;
+pub mod cached_revision;
 pub mod callback_server;
 pub mod change_clock_lock;
 pub mod claimed_deletion;

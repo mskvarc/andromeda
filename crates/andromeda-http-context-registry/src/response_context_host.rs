@@ -71,6 +71,7 @@ fn hosting_failure(error: &ContextRegistryError) -> ContextHostingError {
         | ContextRegistryError::ReloadRequiresCached { .. }
         | ContextRegistryError::MissingSourceUrl { .. }
         | ContextRegistryError::ContextUnavailable { .. }
+        | ContextRegistryError::InvalidDownload { .. }
         | ContextRegistryError::Invariant(_) => ContextHostingError::Persistence(PersistenceFailure::ContractBroken.record(error)),
     }
 }

@@ -57,6 +57,17 @@ pub enum ContextRegistryError {
         #[source]
         source: Box<JsonLdError>,
     },
+    /// A remote Context downloaded for reload is not valid JSON-LD: clause
+    /// 5.13.5.4 applies the clause 5.5.4 validation to the download and
+    /// refuses it as it refuses one that fails.
+    #[error("the context downloaded from {source_url} is not valid JSON-LD: {refusal}")]
+    InvalidDownload {
+        /// The remote Context source.
+        source_url: IriBuf,
+        /// What is wrong with the downloaded document.
+        #[source]
+        refusal: ContextDocumentRefusal,
+    },
     /// A persistence implementation could not complete an operation.
     #[error("context registry persistence failed: {0}")]
     Persistence(#[source] PersistenceFailure),

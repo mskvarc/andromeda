@@ -34,3 +34,4 @@ andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["macros", "rt", "time"] }
 uuid = "1.29.2"
+wiremock = "0.6.5"
