@@ -285,9 +285,14 @@ impl BlockingExecutor for GatedBlockingExecutor {
             let (done, finished) = oneshot::channel();
             let gate = Arc::clone(&self.gate);
             self.queued.fetch_add(1, Ordering::SeqCst);
+            // The gate is released before the outcome is sent, so a caller that
+            // closes the gate once `execute` returns never finds it still read.
             thread::spawn(move || {
-                let _open = gate.read_blocking();
-                let _ignored = done.send(task.run());
+                let outcome = {
+                    let _open = gate.read_blocking();
+                    task.run()
+                };
+                let _ignored = done.send(outcome);
             });
             finished
         });
