@@ -20,7 +20,11 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         // Clause 5.13.4.4: serving the full content of a `Cached` @context
         // "shall give back OperationNotSupported".
         ContextRegistryError::CachedContextNotServed { .. } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, error.to_string()),
-        ContextRegistryError::ContextUnavailable { .. } => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
+        // Clause 5.13.5.4: a reload whose download fails, or whose download is
+        // invalid by the clause 5.5.4 validation, raises LdContextNotAvailable.
+        ContextRegistryError::ContextUnavailable { .. } | ContextRegistryError::InvalidDownload { .. } => {
+            ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string())
+        }
         // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
         ContextRegistryError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         ContextRegistryError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
@@ -60,6 +64,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use iri_rs::IriBuf;
 
     #[test]
     fn focused_context_registry_categories_and_disclosure_are_stable() {
@@ -84,6 +89,13 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (ContextRegistryError::ReloadRequiresCached { identifier }, NgsiLdErrorType::BadRequestData),
+            (
+                ContextRegistryError::InvalidDownload {
+                    source_url: IriBuf::new("https://example.org/vehicle.jsonld".to_owned()).expect("an IRI"),
+                    refusal: ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(ContextFault::TooDeep)),
+                },
+                NgsiLdErrorType::LdContextNotAvailable,
+            ),
             (
                 ContextRegistryError::Persistence(PersistenceFailure::StatementRejected),
                 NgsiLdErrorType::InternalError,

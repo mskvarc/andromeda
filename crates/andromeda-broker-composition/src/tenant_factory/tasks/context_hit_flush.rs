@@ -67,7 +67,8 @@ const fn classify_flush_failure(error: ContextRegistryError) -> TaskFailure<Cont
         | ContextRegistryError::CachedContextNotServed { .. }
         | ContextRegistryError::ReloadRequiresCached { .. }
         | ContextRegistryError::MissingSourceUrl { .. }
-        | ContextRegistryError::ContextUnavailable { .. } => FailureClass::Permanent,
+        | ContextRegistryError::ContextUnavailable { .. }
+        | ContextRegistryError::InvalidDownload { .. } => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }

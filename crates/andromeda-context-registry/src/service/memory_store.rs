@@ -20,6 +20,7 @@ use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::Json
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_query::page_reach::PageReach;
+use iri_rs::IriBuf;
 use std::sync::{Arc, RwLock};
 use url::Url;
 
@@ -34,12 +35,14 @@ impl HostedContextLocator for BrokerRoot {
     }
 }
 
-/// One stored row: its identifier, kind and document.
+/// One stored row: its identifier, kind, source and document.
 pub(super) struct Row {
     /// The row's local identifier, as written.
     pub(super) identifier: String,
     /// The row's lifecycle kind.
     pub(super) kind: ContextKind,
+    /// The URL a `Cached` row was downloaded from; `None` for every other kind.
+    pub(super) source_url: Option<IriBuf>,
     /// The row's stored document.
     pub(super) payload: JsonLiteral,
 }
@@ -57,6 +60,18 @@ impl MemoryStore {
         self.rows.write().expect("the store lock").push(Row {
             identifier: identifier.to_string(),
             kind,
+            source_url: None,
+            payload,
+        });
+    }
+
+    /// Hold `payload` under `identifier` as the `Cached` entry of a download
+    /// from `source_url`.
+    pub(super) fn hold_download(&self, identifier: &JsonLdContextId, source_url: IriBuf, payload: JsonLiteral) {
+        self.rows.write().expect("the store lock").push(Row {
+            identifier: identifier.to_string(),
+            kind: ContextKind::Cached,
+            source_url: Some(source_url),
             payload,
         });
     }
@@ -121,7 +136,7 @@ impl ContextRegistryStore for MemoryStore {
             Ok(self.read(identifier.as_str(), |row| StoredContext {
                 identifier: identifier.clone(),
                 kind: row.kind.clone(),
-                source_url: None,
+                source_url: row.source_url.clone(),
             }))
         })
     }
@@ -139,13 +154,28 @@ impl ContextRegistryStore for MemoryStore {
         })
     }
 
-    fn replace_download<'a>(&'a self, _identifier: &'a Identifier, _download: &'a DownloadedContext) -> ContextRegistryFuture<'a, ContextMutation> {
-        Box::pin(async move { Ok(ContextMutation::Missing) })
+    fn replace_download<'a>(&'a self, identifier: &'a Identifier, download: &'a DownloadedContext) -> ContextRegistryFuture<'a, ContextMutation> {
+        Box::pin(async move {
+            let mut rows = self.rows.write().expect("the store lock");
+            Ok(match rows.iter_mut().find(|row| row.identifier == identifier.as_str()) {
+                Some(row) => {
+                    row.payload = download.document.clone();
+                    ContextMutation::Applied
+                }
+                None => ContextMutation::Missing,
+            })
+        })
     }
 }
 
 /// A service over `store`, with an engine that never reaches the network.
 pub(super) fn service(store: &Arc<MemoryStore>) -> ContextRegistryService {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("the offline engine builds");
+    ContextRegistryService::new(Arc::clone(store) as Arc<dyn ContextRegistryStore>, engine)
+}
+
+/// A service over `store`, with an engine that downloads remote contexts.
+pub(super) fn downloading_service(store: &Arc<MemoryStore>) -> ContextRegistryService {
+    let engine = JsonLdEngine::builder().allow_remote(true).build().expect("the downloading engine builds");
     ContextRegistryService::new(Arc::clone(store) as Arc<dyn ContextRegistryStore>, engine)
 }

@@ -1,17 +1,17 @@
-//! Whether a `@context` document a client hands over to be stored holds a
-//! valid JSON-LD context.
+//! Whether a `@context` document the broker is to store holds a valid JSON-LD
+//! context: one a client hands over to Add @context, or one downloaded to
+//! reload a Cached `@context`.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.13.2.4 applies "the behaviour described in
-//! clause 5.5.4 about JSON and JSON-LD validation" to an invalid `@context`,
-//! and clause 5.5.4 answers JSON-LD that is not syntactically correct with
-//! `BadRequestData`. The document's `@context` is read as the JSON-LD processor
-//! reads a context document and, when that needs no other document, processed
-//! as the processor processes it, against an empty active context, with the
-//! result discarded.
+//! ETSI GS CIM 009 v1.9.1 clauses 5.13.2.4 and 5.13.5.4 apply the JSON and
+//! JSON-LD validation of clause 5.5.4 to both, and each operation names the
+//! error type its own refusal is answered with. The document's `@context` is
+//! read as the JSON-LD processor reads a context document and, when that needs
+//! no other document, processed as the processor processes it, against an
+//! empty active context, with the result discarded.
 //!
 //! A `@context` that names another document, by URL or by `@import` at any
 //! depth, is checked only as far as its syntax: processing it needs that
-//! document, and storing a `@context` retrieves nothing.
+//! document, and the check retrieves nothing.
 
 use crate::{
     engine::{
@@ -109,9 +109,9 @@ mod tests {
         }
     }
 
-    /// Storing a `@context` retrieves nothing, so one naming another document
-    /// is processed no further than its syntax, however its own definitions
-    /// would process once that document is read.
+    /// The check retrieves nothing, so a `@context` naming another document is
+    /// processed no further than its syntax, however its own definitions would
+    /// process once that document is read.
     #[tokio::test]
     async fn a_context_naming_another_document_is_checked_only_for_its_syntax() {
         for document in [
