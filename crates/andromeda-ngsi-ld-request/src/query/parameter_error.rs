@@ -23,8 +23,11 @@ pub enum QueryParameterError {
         level: i64,
     },
     /// `joinLevel` was an integer too large for any machine integer.
-    #[error("joinLevel is not a positive integer: {0}")]
+    #[error("joinLevel is not a positive integer")]
     JoinLevelOverflow(#[source] ParseIntError),
+    /// A count such as `lastN` was not a positive integer.
+    #[error("not a positive integer")]
+    NotAPositiveInteger,
     /// A duration parameter was not an ISO 8601 duration.
     #[error(transparent)]
     DurationInvalid(Iso8601DurationError),

@@ -2,9 +2,10 @@
 //!
 //! Table 5.2.9-1 makes `endpoint` the dereferenceable URI through which the
 //! Context Source exposes its NGSI-LD interface, and clause 6.2 gives the root
-//! of that interface the scheme `http` or `https`. A URI of any other scheme
-//! names no NGSI-LD interface a forwarded request could reach, so the body
-//! refuses it as it is read, as it refuses a URI that is not dereferenceable.
+//! of that interface the scheme `http` or `https`. A value that is no absolute
+//! URI, or a URI of any other scheme, names no NGSI-LD interface a forwarded
+//! request could reach, so the body refuses it as it is read, in the words of
+//! that one rule.
 //!
 //! The registration stores the [`DereferenceableUri`] alone, which takes any
 //! scheme: the rule binds what a request writes, and every stored registration
@@ -15,24 +16,35 @@ use derive_more::Into;
 use serde::Deserialize;
 use thiserror::Error;
 
-/// A registration `endpoint` whose scheme is `http` or `https`.
+/// A registration `endpoint` that is an absolute `http` or `https` URI.
 #[derive(Debug, Deserialize, Into)]
-#[serde(try_from = "DereferenceableUri")]
+#[serde(try_from = "String")]
 pub(crate) struct ContextSourceEndpoint(DereferenceableUri);
 
-/// An `endpoint` whose scheme is neither `http` nor `https`.
+/// An `endpoint` that is no NGSI-LD API root.
 #[derive(Debug, Error)]
-#[error("endpoint must be an http or https URI, the schemes of an NGSI-LD API root, and {} is neither", .0.url().scheme())]
-pub(crate) struct NotAnApiRoot(DereferenceableUri);
+pub(crate) enum NotAnApiRoot {
+    /// The value is no absolute URI at all.
+    #[error("endpoint must be an absolute http or https URI, the schemes of an NGSI-LD API root")]
+    NotAnAbsoluteUri,
+    /// The URI's scheme is neither `http` nor `https`.
+    #[error(
+        "endpoint must be an absolute http or https URI, the schemes of an NGSI-LD API root, and {} is neither",
+        .0.url().scheme()
+    )]
+    OtherScheme(DereferenceableUri),
+}
 
-// Validating conversion: the scheme decides, which no derive checks.
-impl TryFrom<DereferenceableUri> for ContextSourceEndpoint {
+// Validating conversion: the URI grammar and the scheme decide, which no
+// derive checks.
+impl TryFrom<String> for ContextSourceEndpoint {
     type Error = NotAnApiRoot;
 
-    fn try_from(endpoint: DereferenceableUri) -> Result<ContextSourceEndpoint, NotAnApiRoot> {
+    fn try_from(written: String) -> Result<ContextSourceEndpoint, NotAnApiRoot> {
+        let endpoint = written.parse::<DereferenceableUri>().map_err(|_not_a_uri| NotAnApiRoot::NotAnAbsoluteUri)?;
         match endpoint.url().scheme() {
             "http" | "https" => Ok(ContextSourceEndpoint(endpoint)),
-            _other => Err(NotAnApiRoot(endpoint)),
+            _other => Err(NotAnApiRoot::OtherScheme(endpoint)),
         }
     }
 }
@@ -43,8 +55,8 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::dereferenceable_uri::DereferenceableUri;
     use pretty_assertions::assert_eq;
 
-    fn uri(written: &str) -> DereferenceableUri {
-        written.parse().expect("a dereferenceable URI")
+    fn endpoint(written: &str) -> Result<ContextSourceEndpoint, NotAnApiRoot> {
+        ContextSourceEndpoint::try_from(written.to_owned())
     }
 
     /// The written spelling survives, as Table 5.2.9-1 has the broker serve
@@ -52,7 +64,7 @@ mod tests {
     #[test]
     fn an_http_or_https_endpoint_keeps_its_spelling() {
         for written in ["http://my.csource.org:1026", "https://my.csource.org/broker1", "HTTPS://My.CSource.org"] {
-            let endpoint = ContextSourceEndpoint::try_from(uri(written)).expect("an NGSI-LD API root");
+            let endpoint = endpoint(written).expect("an NGSI-LD API root");
             assert_eq!(DereferenceableUri::from(endpoint).as_str(), written);
         }
     }
@@ -62,29 +74,42 @@ mod tests {
     #[test]
     fn an_endpoint_of_another_scheme_is_no_api_root() {
         for written in ["ftp://x/y", "file:///etc/passwd", "mqtt://broker:1883/topic", "urn:ngsi-ld:ContextSource:1"] {
-            let refusal = ContextSourceEndpoint::try_from(uri(written));
-            assert!(matches!(refusal, Err(NotAnApiRoot(ref endpoint)) if endpoint.as_str() == written), "{written}");
+            let refusal = endpoint(written);
+            assert!(
+                matches!(refusal, Err(NotAnApiRoot::OtherScheme(ref endpoint)) if endpoint.as_str() == written),
+                "{written}"
+            );
+        }
+    }
+
+    /// A value that is no absolute URI names no scheme at all.
+    #[test]
+    fn a_value_that_is_no_absolute_uri_is_no_api_root() {
+        for written in ["nope", "/ngsi-ld/v1", "", "http://"] {
+            assert!(matches!(endpoint(written), Err(NotAnApiRoot::NotAnAbsoluteUri)), "{written}");
         }
     }
 
     /// The refusal is the `detail` a client reads, so it names the member, the
-    /// schemes it takes and the one it was given.
+    /// URIs it takes and, when there is one, the scheme it was given.
     #[test]
-    fn the_refusal_names_the_member_the_schemes_it_takes_and_the_one_given() {
-        let refusal = ContextSourceEndpoint::try_from(uri("file:///etc/passwd")).expect_err("no NGSI-LD API root");
+    fn the_refusal_names_the_member_and_what_it_takes() {
         assert_eq!(
-            refusal.to_string(),
-            "endpoint must be an http or https URI, the schemes of an NGSI-LD API root, and file is neither"
+            endpoint("file:///etc/passwd").expect_err("no NGSI-LD API root").to_string(),
+            "endpoint must be an absolute http or https URI, the schemes of an NGSI-LD API root, and file is neither"
+        );
+        assert_eq!(
+            endpoint("nope").expect_err("no URI").to_string(),
+            "endpoint must be an absolute http or https URI, the schemes of an NGSI-LD API root"
         );
     }
 
-    /// The body reads the member through the same check, and a value that is
-    /// no URI at all keeps the refusal of a URI that is not dereferenceable.
     #[test]
     fn the_member_is_read_through_the_check() {
         assert!(serde_json::from_str::<ContextSourceEndpoint>(r#""https://my.csource.org""#).is_ok());
-        assert!(serde_json::from_str::<ContextSourceEndpoint>(r#""ftp://x/y""#).is_err());
-        let refusal = serde_json::from_str::<ContextSourceEndpoint>(r#""nope""#).expect_err("no URI").to_string();
-        assert!(refusal.starts_with("value is not a dereferenceable URI"), "{refusal}");
+        for refused in [r#""ftp://x/y""#, r#""nope""#] {
+            let refusal = serde_json::from_str::<ContextSourceEndpoint>(refused).expect_err(refused).to_string();
+            assert!(refusal.starts_with("endpoint must be an absolute http or https URI"), "{refusal}");
+        }
     }
 }

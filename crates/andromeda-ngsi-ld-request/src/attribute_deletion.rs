@@ -5,7 +5,7 @@ use crate::{
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
 };
-use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, name_stage::Written, type_selection::TypeSelection};
+use andromeda_ngsi_ld_query::{dataset_selector::DatasetSelector, name_stage::Written, query_flag::deserialize_optional_flag, type_selection::TypeSelection};
 use serde::Deserialize;
 
 /// Declare a parameter struct of an attribute deletion: the `datasetId`,
@@ -28,9 +28,11 @@ macro_rules! attribute_deletion_params {
             pub dataset_id: Option<DatasetSelector>,
             /// Whether every instance of the attribute is deleted.
             #[serde(rename = "deleteAll")]
+            #[serde(default, deserialize_with = "deserialize_optional_flag")]
             pub delete_all: Option<bool>,
             $($extra)*
             /// Whether the operation is confined to this broker (clause 6.3.18).
+            #[serde(default, deserialize_with = "deserialize_optional_flag")]
             pub local: Option<bool>,
         }
     };

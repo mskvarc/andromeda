@@ -1,5 +1,6 @@
 //! Whether a query reports the total number of its matches (clause 6.3.13).
 
+use crate::query_flag::{NotAFlag, parse_flag};
 use serde::Deserialize;
 
 /// Whether a query reports the total number of matches (clause 6.3.13).
@@ -11,7 +12,7 @@ use serde::Deserialize;
 /// It is read from the Boolean `count` URL parameter of Table 6.3.13-1, and an
 /// absent parameter asks for no count.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
-#[serde(from = "bool")]
+#[serde(try_from = "String")]
 pub enum CountPolicy {
     /// Build and run the count statement, and emit `NGSILD-Results-Count`.
     Emit,
@@ -25,6 +26,15 @@ pub enum CountPolicy {
 impl From<bool> for CountPolicy {
     fn from(count: bool) -> CountPolicy {
         if count { CountPolicy::Emit } else { CountPolicy::Omit }
+    }
+}
+
+// Validating conversion: the query-string word decides, which no derive reads.
+impl TryFrom<String> for CountPolicy {
+    type Error = NotAFlag;
+
+    fn try_from(written: String) -> Result<CountPolicy, NotAFlag> {
+        parse_flag(&written).map(CountPolicy::from)
     }
 }
 
@@ -59,7 +69,8 @@ mod tests {
     /// Table 6.3.13-1 types `count` as a Boolean, so any other word is refused.
     #[test]
     fn a_count_that_is_no_boolean_is_refused() {
-        assert!(read("count=yes").is_err());
-        assert!(read("count=TRUE").is_err());
+        for query in ["count=yes", "count=TRUE"] {
+            pretty_assertions::assert_eq!(read(query).map_err(|error| error.to_string()), Err("not true or false".to_owned()), "{query}");
+        }
     }
 }

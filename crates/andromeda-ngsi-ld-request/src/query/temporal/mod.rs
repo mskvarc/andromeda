@@ -14,10 +14,11 @@ use crate::{
             deserialize_optional_iso8601_duration,
             deserialize_optional_join_level,
             deserialize_optional_pattern,
+            deserialize_optional_positive_integer,
             deserialize_optional_projection_terms,
             deserialize_optional_uri_csv,
         },
-        temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel, deserialize_optional_aggr_methods},
+        temporal::deserialization::deserialize_optional_aggr_methods,
     },
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
@@ -44,6 +45,7 @@ use andromeda_ngsi_ld_query::{
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
+    query_flag::deserialize_optional_flag,
     scope::scope_query::ScopeQuery,
     temporal::{
         aggregation_period::{AggregationPeriod, optional},
@@ -118,7 +120,7 @@ pub struct TemporalQueryParameters {
     pub geo: OptionalGeoQuery,
 
     /// How the window relates to the given instants (clause 4.11 `timerel`).
-    #[serde(default, deserialize_with = "deserialize_option_timerel")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
     #[serde(rename = "timeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
@@ -127,12 +129,12 @@ pub struct TemporalQueryParameters {
     #[serde(rename = "endTimeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
-    #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timeproperty: Option<TimeProp>,
 
     /// How many instances per attribute the response carries (`lastN`), a
     /// "Positive integer", so `lastN=0` fails to decode as `BadRequestData`.
-    #[serde(rename = "lastN")]
+    #[serde(rename = "lastN", default, deserialize_with = "deserialize_optional_positive_integer")]
     pub last_n: Option<NonZeroU32>,
     /// The representation the response uses (clause 4.5.1 `format`).
     pub format: Option<WrittenValue<TemporalFormat>>,
@@ -203,10 +205,12 @@ pub struct TemporalQueryParameters {
     #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 
     /// Whether the query creates an entity map for stable pagination (`entityMap`).
     #[serde(rename = "entityMap")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub entity_map: Option<bool>,
     /// How long a created entity map lives, as an ISO 8601 duration (`entityMapLifetime`).
     #[serde(rename = "entityMapLifetime")]
@@ -214,6 +218,7 @@ pub struct TemporalQueryParameters {
     pub entity_map_lifetime: Option<Iso8601Duration>,
     /// Whether attributes split across Context Sources are merged after forwarding (`splitEntities`).
     #[serde(rename = "splitEntities")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub split_entities: Option<bool>,
 
     /// The scope query expression (clause 4.18 `scopeQ`).

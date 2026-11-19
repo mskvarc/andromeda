@@ -139,11 +139,21 @@ mod tests {
         );
     }
 
+    /// A Boolean or a number that does not decode is refused naming the rule
+    /// it breaks; a value that is none of a parameter's tokens is named with
+    /// the tokens, so the client sees what to write instead.
     #[test]
-    fn a_refused_value_is_not_quoted_back() {
-        for query in ["count=sideways", "join=sideways", "limit=sideways", "orderBy=name&orderGeometry=sideways"] {
-            let detail = decode_query::<EntityQueryParameters>(query).expect_err(query).to_string();
-            assert!(!detail.contains("sideways"), "{query}: {detail}");
+    fn a_refused_value_is_named_only_where_it_is_none_of_the_tokens() {
+        for (query, detail) in [
+            ("count=sideways", "invalid query parameter count: not true or false"),
+            ("limit=sideways", "invalid query parameter limit: not a non-negative integer"),
+            ("join=sideways", "invalid query parameter join: 'sideways' is not one of inline, flat, @none"),
+            (
+                "orderBy=name&orderGeometry=sideways",
+                "invalid query parameter orderGeometry: 'sideways' is not one of Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon",
+            ),
+        ] {
+            pretty_assertions::assert_eq!(decode_query::<EntityQueryParameters>(query).expect_err(query).to_string(), detail, "{query}");
         }
     }
 

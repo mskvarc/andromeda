@@ -273,6 +273,27 @@ where
     .transpose()
 }
 
+/// Deserialize an optional count that is a positive integer, such as `lastN`
+/// (Table 6.19.3.1-1).
+///
+/// # Errors
+///
+/// Returns a deserialization error carrying
+/// [`QueryParameterError::NotAPositiveInteger`] when the value is no integer,
+/// is below 1 or is beyond `u32`.
+pub fn deserialize_optional_positive_integer<'de, D>(deserializer: D) -> Result<Option<NonZeroU32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| {
+        value
+            .parse::<NonZeroU32>()
+            .map_err(|_not_positive| DeserializeError::custom(QueryParameterError::NotAPositiveInteger))
+    })
+    .transpose()
+}
+
 /// Deserialize an optional ISO-8601 calendar duration at the request boundary.
 ///
 /// # Errors
@@ -299,6 +320,7 @@ mod tests {
         JOIN_LEVEL_NOT_AN_INTEGER,
         OptionalGeoQuery,
         deserialize_optional_join_level,
+        deserialize_optional_positive_integer,
     };
     use serde::Deserialize;
     use std::num::NonZeroU32;
@@ -355,6 +377,24 @@ mod tests {
         }
         pretty_assertions::assert_eq!(join_level("joinLevel=3"), Ok(NonZeroU32::new(3)));
         pretty_assertions::assert_eq!(join_level(""), Ok(None));
+    }
+
+    #[derive(Deserialize)]
+    struct LastNCarrier {
+        #[serde(rename = "lastN", default, deserialize_with = "deserialize_optional_positive_integer")]
+        last_n: Option<NonZeroU32>,
+    }
+
+    /// Table 6.19.3.1-1 types `lastN` as a positive integer, so zero, a
+    /// negative number and a word are refused alike, saying so.
+    #[test]
+    fn a_count_that_is_no_positive_integer_says_so() {
+        for refused in ["lastN=0", "lastN=-1", "lastN=abc", "lastN=1.5", "lastN=4294967296", "lastN="] {
+            let error = serde_urlencoded::from_str::<LastNCarrier>(refused).err().expect(refused).to_string();
+            pretty_assertions::assert_eq!(error, "not a positive integer", "{refused}");
+        }
+        let read = serde_urlencoded::from_str::<LastNCarrier>("lastN=3").expect("a positive integer").last_n;
+        pretty_assertions::assert_eq!(read, NonZeroU32::new(3));
     }
 
     #[test]

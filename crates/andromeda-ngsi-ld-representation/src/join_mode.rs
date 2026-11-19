@@ -1,10 +1,10 @@
 //! How a linked entity reaches the response (clause 4.5.23).
 
 use serde::{Deserialize, Serialize};
-use strum::{Display, EnumString};
+use strum::{Display, EnumString, VariantNames};
 
 /// Join mode for linked entities (ETSI GS CIM 009 clause 4.5.23).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, VariantNames)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum JoinMode {

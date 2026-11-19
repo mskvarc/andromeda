@@ -12,9 +12,11 @@
 //! which category a particular internal failure falls into is broker policy and
 //! belongs to the layer that holds that failure. Nothing here names a
 //! framework, so the same shapes serve the server answering a request and the
-//! forwarding client reading someone else's answer.
+//! forwarding client reading someone else's answer. Every `detail` is a
+//! [`detail_text::DetailText`], one line of prose whoever wrote it.
 
 pub mod batch_operation;
+pub mod detail_text;
 pub mod error_type;
 pub mod problem_detail;
 mod problem_document_error;

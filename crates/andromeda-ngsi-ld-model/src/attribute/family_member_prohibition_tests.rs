@@ -238,7 +238,7 @@ fn decoded(node: &Value) -> Result<(), String> {
 /// The refusal of an instance of `family` carrying `member`.
 fn prohibited(family: AttributeType, member: &str) -> String {
     format!(
-        "the node at / is refused: the attribute carries the member {member}, which defines the value of another attribute family and is never present on a {family}"
+        "the value at / is refused: the attribute carries the member {member}, which defines the value of another attribute family and is never present on a {family}"
     )
 }
 
@@ -353,7 +353,7 @@ fn a_prohibited_member_is_refused_in_an_entity_a_fragment_and_a_merge_fragment()
     for (payload, at) in payloads.iter().zip(["/temperature", "/temperature/accuracy"]) {
         let text = payload.to_string();
         let expected = format!(
-            "the node at {at} is refused: the attribute carries the member object, which defines the value of another attribute family and is never present on a Property"
+            "the value at {at} is refused: the attribute carries the member object, which defines the value of another attribute family and is never present on a Property"
         );
         assert_eq!(
             <Entity>::from_request_text(text.as_bytes(), ContextReading::keyword_spellings())

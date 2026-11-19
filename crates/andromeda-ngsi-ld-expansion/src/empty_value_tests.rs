@@ -113,7 +113,7 @@ async fn a_property_without_a_value_member_is_refused_where_it_stands() {
         panic!("the compact model refuses the Property");
     };
     let refusal = refusal.to_string();
-    assert!(refusal.contains("/tags") && refusal.contains("missing field `value`"), "{refusal}");
+    assert!(refusal.contains("/tags") && refusal.contains("the member 'value' is missing"), "{refusal}");
 }
 
 /// The other value members name at least one target (clause 4.5.3.2), term

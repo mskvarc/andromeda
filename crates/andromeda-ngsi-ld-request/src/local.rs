@@ -4,6 +4,7 @@ use crate::{
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
 };
+use andromeda_ngsi_ld_query::query_flag::deserialize_optional_flag;
 use serde::Deserialize;
 
 /// Query parameters for endpoints that accept only `local`.
@@ -17,6 +18,7 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct LocalOnlyParams {
     /// Whether the operation is confined to this broker.
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 

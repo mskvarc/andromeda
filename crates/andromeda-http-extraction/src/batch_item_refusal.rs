@@ -68,7 +68,7 @@ mod tests {
             error.error.error_type,
             BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::BadRequestData))
         );
-        pretty_assertions::assert_eq!(error.error.detail, "an application/json batch item must not contain @context");
+        pretty_assertions::assert_eq!(error.error.detail.as_str(), "an application/json batch item must not contain @context");
         assert!(error.registration_id.is_none());
     }
 }

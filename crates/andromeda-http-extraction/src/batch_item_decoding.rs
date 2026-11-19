@@ -308,7 +308,7 @@ mod tests {
             panic!("the item is refused against its id: {refusal:?}");
         };
         pretty_assertions::assert_eq!(error.entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
-        pretty_assertions::assert_eq!(error.error.detail, "an application/ld+json batch item must contain @context");
+        pretty_assertions::assert_eq!(error.error.detail.as_str(), "an application/ld+json batch item must contain @context");
     }
 
     /// Table 5.2.17-1 sets no length on `entityId`: an aliased `id` too long

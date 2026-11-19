@@ -48,6 +48,8 @@
 //! text. [`container_terms`] is its companion for the shape compaction gives a
 //! member written under a term with a container of the context's own, and
 //! [`compact_node::context_reading`] reads a node through both.
+//! [`decode_message`] words a failure of such a decoding without the place the
+//! reader stopped at, which locates nothing for the client.
 //!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
@@ -64,6 +66,7 @@ pub mod concise_reading;
 pub mod container_terms;
 pub mod context_terms;
 pub mod core_term_aliases;
+pub mod decode_message;
 pub mod embedded_context_admission;
 pub mod family_member_admission;
 pub mod join_mode;

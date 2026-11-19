@@ -1,4 +1,4 @@
-//! A geometry collection refusal names order geometry without quoting it.
+//! A geometry collection refusal names order geometry and the geometries it takes.
 
 use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done, problem::problem, wire::request_to};
 use googletest::prelude::*;
@@ -13,14 +13,14 @@ use ngsi_ld::{
     },
 };
 
-/// Pins: the `BadRequestData` answering `orderGeometry=GeometryCollection` names the `orderGeometry` parameter and
-/// the rule broken in its detail, without quoting the refused value
+/// Pins: the `BadRequestData` answering `orderGeometry=GeometryCollection` names the `orderGeometry` parameter, the
+/// value sent and the geometry types the parameter takes in its detail
 /// Clause: 6.3.2, 4.23.3, 5.7.2.4
 /// Recorded: 6.3.2 leaves the detail of a `ProblemDetails` to the implementation (it "should convey more
-/// information about the error"); Andromeda names the parameter and the rule, never the refused value
+/// information about the error"); Andromeda names the parameter, the token sent and the tokens it takes
 #[gtest]
 #[tokio::test]
-async fn o_qry_ord_0010_a_geometry_collection_refusal_names_order_geometry_without_quoting_it() -> Result<()> {
+async fn o_qry_ord_0010_a_geometry_collection_refusal_names_order_geometry_and_the_geometries_it_takes() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let building_id = namespace.urn("Building", 1)?;
@@ -41,8 +41,9 @@ async fn o_qry_ord_0010_a_geometry_collection_refusal_names_order_geometry_witho
     let answer = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(request).await;
     expect_that!(
         &answer,
-        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
-            .with_detail("invalid query parameter orderGeometry: not one of the values the parameter defines")
+        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(
+            "invalid query parameter orderGeometry: 'GeometryCollection' is not one of Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon"
+        )
     );
     Ok(())
 }

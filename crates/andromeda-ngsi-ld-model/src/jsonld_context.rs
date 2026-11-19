@@ -4,12 +4,12 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::instant_serde};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
-use strum::{Display, EnumIter, EnumString, IntoStaticStr};
+use strum::{Display, EnumIter, EnumString, IntoStaticStr, VariantNames};
 use typed_builder::TypedBuilder;
 use url::Url;
 
 /// Kind of JSON-LD @context managed by the broker (ETSI GS CIM 009 clause 5.13).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr, VariantNames)]
 #[strum(serialize_all = "PascalCase")]
 pub enum ContextKind {
     /// Fetched from its origin and held in the broker's cache.

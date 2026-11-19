@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_query::count_policy::CountPolicy;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, query_flag::deserialize_optional_flag};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Deserialize;
 
@@ -22,6 +22,7 @@ pub struct UpsertParams {
     /// Whether existing entities are replaced or updated.
     pub options: Option<WrittenValue<UpsertMode>>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 
@@ -34,6 +35,7 @@ pub struct UpdateParams {
     /// Whether existing attributes may be overwritten.
     pub options: Option<WrittenValue<OverwritePolicy>>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 
@@ -94,6 +96,7 @@ pub struct PostQueryParams {
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 

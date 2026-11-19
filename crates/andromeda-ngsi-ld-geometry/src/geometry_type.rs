@@ -7,13 +7,13 @@
 //! coordinates it describes.
 
 use serde::{Deserialize, Serialize};
-use strum::{Display, EnumString};
+use strum::{Display, EnumString, VariantNames};
 
 /// The `type` member of a `GeoJSON` geometry object (IETF RFC 7946 section 1.4).
 ///
 /// The variant names are the RFC's tokens verbatim, which is also the casing
 /// NGSI-LD carries them in (clause 4.7); no serde renaming applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, VariantNames)]
 pub enum GeometryType {
     /// A single position.
     Point,

@@ -136,9 +136,11 @@ const fn ordering_error_type(error: &OrderingError) -> NgsiLdErrorType {
 /// request data the operation does not accept.
 const fn pattern_error_type(error: &PatternError) -> NgsiLdErrorType {
     match error {
-        PatternError::Regex(_) | PatternError::RepeatedQuantifier | PatternError::NonPosixConstruct { .. } | PatternError::Translation(_) => {
-            NgsiLdErrorType::BadRequestData
-        }
+        PatternError::Syntax(_)
+        | PatternError::RepeatedQuantifier
+        | PatternError::NonPosixConstruct { .. }
+        | PatternError::Translation(_)
+        | PatternError::TooLarge(_) => NgsiLdErrorType::BadRequestData,
     }
 }
 

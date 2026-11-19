@@ -46,6 +46,18 @@ pub(crate) struct AdmittedBody {
     pub(crate) decode_bounds: Option<RequestDecodeBounds>,
 }
 
+/// What the top level of a body is read as, which decides who refuses an
+/// empty array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopLevel {
+    /// One document, a JSON object: an empty array is refused here as no
+    /// document at all.
+    Document,
+    /// A batch, a JSON array of items, whose reader refuses an empty one in
+    /// the words of what the items are.
+    Batch,
+}
+
 /// The user `@context` a client body submitted: the context it names and the
 /// first `@context` it embeds below a document's top level (clause 5.5.7),
 /// which the user `@context` admission refuses.
@@ -61,8 +73,8 @@ pub(crate) fn submitted_context(context: ContextSpec, text: &[u8], uri: &Uri) ->
 
 /// Apply every NGSI-LD body precondition to `req` (clauses 6.3.4 and 6.3.5,
 /// the JSON value limit and the number range), read its `@context`, and hand
-/// the admitted body to `finish`, on the blocking pool when the payload is
-/// large.
+/// the admitted body, whose top level is read as `top_level`, to `finish`, on
+/// the blocking pool when the payload is large.
 ///
 /// # Errors
 ///
@@ -71,9 +83,10 @@ pub(crate) fn submitted_context(context: ContextSpec, text: &[u8], uri: &Uri) ->
 pub(crate) async fn admit_request_body<S: Send + Sync, T: Send + 'static>(
     req: Request,
     state: &S,
+    top_level: TopLevel,
     finish: impl FnOnce(AdmittedBody) -> Result<T, ExtractorRejection> + Send + 'static,
 ) -> Result<T, ExtractorRejection> {
-    read_body(req, state).await?.decode(finish).await
+    read_body(req, state).await?.decode(top_level, finish).await
 }
 
 /// A request body that passed the clause 6.3.4 and 6.3.5 header
@@ -109,18 +122,20 @@ impl ReadBody {
     /// `InternalError` when the blocking task fails.
     async fn decode<T: Send + 'static>(
         self,
+        top_level: TopLevel,
         finish: impl FnOnce(AdmittedBody) -> Result<T, ExtractorRejection> + Send + 'static,
     ) -> Result<T, ExtractorRejection> {
         let uri = self.uri.clone(); // clone: the closure moves the body, so the failure path keeps its own copy of the URI
         let blocking_decode = self.blocking_decode.clone();
-        decode_payload(blocking_decode.as_ref(), self.bytes.len(), move || self.admit().and_then(finish))
+        decode_payload(blocking_decode.as_ref(), self.bytes.len(), move || self.admit(top_level).and_then(finish))
             .await
             .map_err(|failure| ExtractorRejection::Classified(ProblemResponse::classified(failure.report(), uri.clone())))?
     }
 
     /// Count the payload's values against the request limit, check its
-    /// numbers, and read its `@context`, all from its text.
-    fn admit(self) -> Result<AdmittedBody, ExtractorRejection> {
+    /// numbers, and read its `@context`, all from its text, its top level read
+    /// as `top_level`.
+    fn admit(self, top_level: TopLevel) -> Result<AdmittedBody, ExtractorRejection> {
         let ReadBody {
             bytes,
             content_kind,
@@ -138,9 +153,11 @@ impl ReadBody {
         admit_json_text(&bytes).map_err(|refusal| BodyAdmissionRefusal::from(refusal).into_rejection(uri.clone()))?;
         let envelope = BodyEnvelope::read(&bytes).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?;
 
-        // An empty array is neither an NGSI-LD entity nor a batch payload.
-        if envelope.is_empty_array() {
-            return Err(BodyAdmissionRefusal::EmptyArray.into_rejection(uri));
+        // An empty array is no document; a batch reader refuses it as an
+        // empty array of the items it reads.
+        match top_level {
+            TopLevel::Document if envelope.is_empty_array() => return Err(BodyAdmissionRefusal::EmptyArray.into_rejection(uri)),
+            TopLevel::Document | TopLevel::Batch => {}
         }
 
         // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD

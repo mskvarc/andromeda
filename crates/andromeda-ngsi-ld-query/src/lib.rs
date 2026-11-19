@@ -57,6 +57,7 @@ mod parse_behaviour_tests;
 pub mod pattern;
 pub mod projection;
 pub mod query_error;
+pub mod query_flag;
 pub mod query_identity;
 mod query_text;
 pub mod read_order;

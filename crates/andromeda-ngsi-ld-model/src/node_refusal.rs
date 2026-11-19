@@ -15,7 +15,7 @@ use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
-use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeNodeFault;
+use andromeda_ngsi_ld_representation::{attribute_type_validation::AttributeNodeFault, decode_message::DecodeMessage};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use derive_more::Display;
 use std::error::Error;
@@ -100,13 +100,13 @@ pub enum NodeRefusal {
     #[error("a JSON null stands where a value is required")]
     Null,
     /// A member the entity or the instance's family requires is absent.
-    #[error("missing field `{member}`")]
+    #[error("the member '{member}' is missing")]
     Missing {
         /// The member.
         member: RefusedMember,
     },
     /// A member does not decode as what the entity or the family holds in it.
-    #[error("invalid '{member}' member: {source}")]
+    #[error("invalid '{member}' member: {}", DecodeMessage(.source))]
     Member {
         /// The member.
         member: RefusedMember,
@@ -180,7 +180,7 @@ pub enum NodeRefusal {
 
 /// A refusal and where it stands, from the top of the document read.
 #[derive(Debug, Error)]
-#[error("the node at {path} is refused: {refusal}")]
+#[error("the value at {path} is refused: {refusal}")]
 pub struct RefusedNode {
     /// Where the refused node stands.
     pub path: JsonPointer,

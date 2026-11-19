@@ -19,7 +19,7 @@ use crate::{
     representation_parameter::WrittenValue,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-use andromeda_ngsi_ld_query::count_policy::CountPolicy;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, query_flag::deserialize_optional_flag};
 use serde::Deserialize;
 
 /// The query string of `POST /temporal/entityOperations/query`.
@@ -46,6 +46,7 @@ pub struct TemporalPostQueryParams {
     pub options: Option<WrittenValue<TemporalRepresentationOptions>>,
     /// Whether the operation is confined to this broker (clause 5.5.13), which
     /// clause 5.7.4.4 admits as an entity selection criterion of its own.
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 

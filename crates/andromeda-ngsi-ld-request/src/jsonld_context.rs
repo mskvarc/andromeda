@@ -9,7 +9,7 @@ use crate::{
     query_parameter_set,
 };
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
-use andromeda_ngsi_ld_query::defined_token::deserialize_optional_token;
+use andromeda_ngsi_ld_query::{defined_token::deserialize_optional_token, query_flag::deserialize_optional_flag};
 use serde::Deserialize;
 
 /// The page size of List @contexts: 100 when the request names no `limit`,
@@ -35,6 +35,7 @@ pub struct ListParams {
     #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub kind: Option<ContextKind>,
     /// Whether the response uses the detailed representation (`details`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub details: Option<bool>,
 }
 
@@ -50,6 +51,7 @@ query_parameter_set!(ListParams { Kind, Details } + PageParameters);
 #[serde(deny_unknown_fields)]
 pub struct ServeParams {
     /// Whether the response uses the detailed representation (`details`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub details: Option<bool>,
 }
 
@@ -60,6 +62,7 @@ query_parameter_set!(ServeParams { Details });
 #[serde(deny_unknown_fields)]
 pub struct DeleteParams {
     /// Whether the context is refetched rather than served from cache (`reload`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub reload: Option<bool>,
 }
 

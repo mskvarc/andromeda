@@ -1,9 +1,9 @@
 //! The temporal relationship a temporal query filters by (ETSI GS CIM 009 clause 4.11).
 
-use strum::{Display, EnumString};
+use strum::{Display, EnumString, VariantNames};
 
 /// Temporal relationship for time-based filtering (clause 4.11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, VariantNames)]
 #[strum(serialize_all = "camelCase")]
 pub enum TimeRel {
     /// time < timeAt (exclusive upper bound).
