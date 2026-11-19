@@ -114,6 +114,8 @@ mod suppression_window;
 mod term_expansion;
 /// Throttling-window arithmetic.
 pub mod throttle;
+/// Whether an update fragment replaces the stored members the broker cannot read.
+mod unreadable_replacement;
 /// What one kind of subscription does differently from the other.
 pub mod variant;
 

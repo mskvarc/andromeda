@@ -11,6 +11,7 @@ use crate::{
 };
 use andromeda_federation::subscription::{SubscriptionForward, SubscriptionForwardAdmission};
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::CsrTriggerReason,
@@ -73,6 +74,15 @@ impl SubscriptionForwardingService {
             .map_err(SubscriptionForwardingError::from)
     }
 
+    /// The compaction of `context`, which spells the filters of a copy written under it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SubscriptionForwardingError::JsonLd`] when the context does not resolve or does not process.
+    async fn names_of(&self, context: &ContextSpec) -> Result<NameCompaction, SubscriptionForwardingError> {
+        Ok(NameCompaction::new(self.engine.compactor(context).processed_context().await?))
+    }
+
     /// Carry out one decision for `subscription` at `registration`; `deleted`
     /// names the members the local update removed, which an update of the
     /// copy sends as deletions.
@@ -93,11 +103,18 @@ impl SubscriptionForwardingService {
         let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
         let context = &ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
         match decision {
-            ForwardDecision::Create => self.place_copy(subscription, registration, carriage, context).await?,
+            ForwardDecision::Create => {
+                let names = self.names_of(context).await?;
+                self.place_copy(subscription, registration, carriage, context, &names).await?;
+            }
             ForwardDecision::Update { remote } => {
+                let names = self.names_of(context).await?;
                 // Boxed: the fragment is held across the forward, and the request is a wide value.
-                let fragment =
-                    Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage)?.as_fragment(deleted, carriage));
+                let fragment = Box::new(
+                    ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage, &names)
+                        .await?
+                        .as_fragment(deleted, carriage),
+                );
                 let forwarded = self
                     .federation
                     .forward_subscription(

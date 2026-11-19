@@ -1,7 +1,13 @@
 //! Typed subscription persistence values: what a create body or an update
 //! fragment becomes once it is merged with what is stored.
 
-use crate::{error::SubscriptionError, expanded_terms::ExpandedTerms, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason};
+use crate::{
+    error::SubscriptionError,
+    expanded_terms::ExpandedTerms,
+    store::SubscriptionFields,
+    subscription_validation_reason::SubscriptionValidationReason,
+    unreadable_replacement::ensure_replaced,
+};
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
@@ -178,8 +184,11 @@ impl SubscriptionWriteValues {
     /// # Errors
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
-    /// fragment's notification names no endpoint.
+    /// fragment's notification names no endpoint, and
+    /// [`crate::subscription_invariant::SubscriptionInvariant::UnreadableMemberKept`] when `existing` holds a
+    /// member the broker cannot read that the fragment does not replace.
     pub(crate) fn merged(request: SubscriptionRequest, expanded: ExpandedTerms, existing: Subscription) -> Result<SubscriptionWriteValues, SubscriptionError> {
+        ensure_replaced(&existing.unreadable, &expanded, &request)?;
         let Subscription {
             subscription_name,
             description,

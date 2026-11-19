@@ -3,7 +3,7 @@
 use crate::{entity_selector::EntitySelector, subscription::Subscription};
 use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_query::{
-    filter::Filter,
+    filter::{Filter, filter_error::FilterError},
     geo::geo_constraint::GeoConstraint,
     name_stage::Written,
     projection::{
@@ -22,15 +22,20 @@ pub enum WrittenTermsError {
     /// An entity selector's type is past the identifier bound a written name carries.
     #[error(transparent)]
     EntityType(#[from] TypeSelectionError),
-    /// A `q` or `csf` guard type is past the identifier bound a written name carries.
+    /// An entity type or a `q` or `csf` guard type is past the identifier bound a written name carries, and no term of the `@context` abbreviates it.
     #[error(transparent)]
-    Filter(#[from] NgsiLdReferenceError),
+    Name(#[from] NgsiLdReferenceError),
+    /// A stored `q` or `csf` has no spelling in the terms of the `@context`.
+    #[error(transparent)]
+    Compaction(#[from] Box<FilterError>),
     /// A projection term is no written term.
     #[error(transparent)]
     Projection(#[from] ProjectionError),
 }
 
-/// The members of a stored subscription that hold names, spelled in the written stage: each name is the absolute IRI the stored subscription holds, until the reader's `@context` compacts it.
+/// The members of a stored subscription that hold names, spelled in the written stage: each name is the absolute IRI the stored subscription holds, until the `@context` of the reader or of the context source the names travel to compacts it.
+///
+/// A `q` or `csf` is held as the tree the subscription stores, so a trailing member is the IRI it addresses: a `LanguageProperty` target language is no IRI, and only the compaction into a `@context` gives it back.
 #[derive(Debug, Clone, Default)]
 pub struct WrittenSubscriptionTerms {
     /// The entity selectors (clause 5.2.12 `entities`).
@@ -95,11 +100,11 @@ impl TryFrom<&Subscription> for WrittenSubscriptionTerms {
             pick: notification.pick.as_deref().map(written_projection).transpose()?,
             omit: notification.omit.as_deref().map(written_projection).transpose()?,
             // clone: the written filter is owned apart from the stored subscription
-            q: filters.q.clone().map(Filter::into_written_with_member_spelling).transpose()?,
+            q: filters.q.clone().map(Filter::into_written).transpose()?,
             // clone: the written geo-query is owned apart from the stored subscription
             geo_q: filters.geo_q.clone().map(GeoConstraint::into_written),
             // clone: the written filter is owned apart from the stored subscription
-            csf: filters.csf.clone().map(Filter::into_written_with_member_spelling).transpose()?,
+            csf: filters.csf.clone().map(Filter::into_written).transpose()?,
             expand_values: filters.expand_values.as_deref().map(written_names),
             json_keys: filters.json_keys.as_deref().map(written_names),
         })

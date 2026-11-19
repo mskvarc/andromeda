@@ -1,10 +1,8 @@
 //! The stored tree an expanded projection term is serialized as.
 
-use crate::projection::{expanded_projection_term::ExpandedProjectionTerm, projection_error::ProjectionError};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError};
-use iri_rs::IriBuf;
+use crate::projection::{expanded_projection_term::ExpandedProjectionTerm, projection_error::ProjectionError, stored_projection_name::StoredProjectionName};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 /// One term of a stored projection list as the tree `{"name": ..., "linked": [...]}`.
 ///
@@ -13,17 +11,21 @@ use std::str::FromStr;
 #[serde(deny_unknown_fields)]
 pub struct StoredProjectionTerm {
     /// The keyword or the expanded IRI this term selects.
-    name: String,
+    name: StoredProjectionName,
     /// The linked-entity sub-projection, empty when the term selects no linked entity.
     linked: Vec<StoredProjectionTerm>,
 }
 
 impl From<ExpandedProjectionTerm> for StoredProjectionTerm {
     fn from(term: ExpandedProjectionTerm) -> StoredProjectionTerm {
-        StoredProjectionTerm {
-            name: term.to_string(),
-            linked: term.linked_terms().iter().cloned().map(StoredProjectionTerm::from).collect(),
-        }
+        let linked = term.linked_terms().iter().cloned().map(StoredProjectionTerm::from).collect();
+        let name = match term {
+            ExpandedProjectionTerm::Id => StoredProjectionName::Id,
+            ExpandedProjectionTerm::Type => StoredProjectionName::Type,
+            ExpandedProjectionTerm::Scope => StoredProjectionName::Scope,
+            ExpandedProjectionTerm::Attribute { iri, .. } => StoredProjectionName::Attribute(iri),
+        };
+        StoredProjectionTerm { name, linked }
     }
 }
 
@@ -31,18 +33,24 @@ impl TryFrom<StoredProjectionTerm> for ExpandedProjectionTerm {
     type Error = ProjectionError;
 
     fn try_from(stored: StoredProjectionTerm) -> Result<ExpandedProjectionTerm, ProjectionError> {
-        if let Some(keyword) = ExpandedProjectionTerm::keyword(&stored.name) {
-            return if stored.linked.is_empty() {
-                Ok(keyword)
+        let keyword_term = |term: ExpandedProjectionTerm, spelling: &str| {
+            if stored.linked.is_empty() {
+                Ok(term)
             } else {
                 Err(ProjectionError::KeywordWithLinkedTerm {
-                    keyword: AttributeName::from_str(&stored.name).map_err(ProjectionError::InvalidAttributeName)?,
+                    keyword: spelling.parse().map_err(ProjectionError::InvalidAttributeName)?,
                 })
-            };
+            }
+        };
+        match stored.name {
+            StoredProjectionName::Id => keyword_term(ExpandedProjectionTerm::Id, keyword::ID_ALIAS),
+            StoredProjectionName::Type => keyword_term(ExpandedProjectionTerm::Type, keyword::TYPE_ALIAS),
+            StoredProjectionName::Scope => keyword_term(ExpandedProjectionTerm::Scope, compact_properties::SCOPE),
+            StoredProjectionName::Attribute(iri) => {
+                let linked = stored.linked.into_iter().map(ExpandedProjectionTerm::try_from).collect::<Result<_, _>>()?;
+                Ok(ExpandedProjectionTerm::Attribute { iri, linked })
+            }
         }
-        let iri = IriBuf::new(stored.name).map_err(|_| ProjectionError::InvalidAttributeName(NgsiLdReferenceError::NotAbsolute))?;
-        let linked = stored.linked.into_iter().map(ExpandedProjectionTerm::try_from).collect::<Result<_, _>>()?;
-        Ok(ExpandedProjectionTerm::Attribute { iri, linked })
     }
 }
 
@@ -56,6 +64,15 @@ mod tests {
         let stored = json!([{"name": "id", "linked": []}, {"name": "https://example.com/owner", "linked": [{"name": "scope", "linked": []}]}]);
         let terms: Vec<ExpandedProjectionTerm> = serde_json::from_value(stored.clone()).expect("a stored tree");
         pretty_assertions::assert_eq!(serde_json::to_value(&terms).expect("writes"), stored);
+    }
+
+    /// The text a stored subscription already holds is read and written back byte for byte.
+    #[test]
+    fn a_stored_term_tree_is_written_back_byte_for_byte() {
+        let stored = r#"[{"name":"id","linked":[]},{"name":"type","linked":[]},{"name":"scope","linked":[]},{"name":"https://example.com/owner","linked":[{"name":"https://example.com/name","linked":[]},{"name":"type","linked":[]}]}]"#;
+        let terms: Vec<ExpandedProjectionTerm> = serde_json::from_str(stored).expect("a stored tree");
+
+        pretty_assertions::assert_eq!(serde_json::to_string(&terms).expect("writes"), stored);
     }
 
     #[test]

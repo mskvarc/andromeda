@@ -3,7 +3,7 @@
 use crate::{
     name_stage::{Expanded, Written},
     term_compactor::TermCompactor,
-    type_selection::{TypeSelection, type_alternatives::TypeAlternatives},
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 
@@ -21,20 +21,13 @@ pub async fn compact_type_selection(
     type_selection: &TypeSelection<Expanded>,
     compactor: &impl TermCompactor,
 ) -> Result<TypeSelection<Written>, NgsiLdReferenceError> {
-    let TypeSelection::Alternatives(alternatives) = type_selection else {
-        return Ok(TypeSelection::Wildcard);
-    };
-    let mut spelled = Vec::new();
-    for conjunction in alternatives.iter() {
-        let mut names = Vec::with_capacity(conjunction.len());
-        for iri in conjunction {
-            names.push(compactor.compact_type(iri).await?);
-        }
-        spelled.push(names);
+    match type_selection {
+        TypeSelection::Wildcard => Ok(TypeSelection::Wildcard),
+        TypeSelection::Alternatives(alternatives) => alternatives
+            .try_map_async(async |iri| compactor.compact_type(iri).await)
+            .await
+            .map(TypeSelection::Alternatives),
     }
-    TypeAlternatives::new(spelled)
-        .map(TypeSelection::Alternatives)
-        .ok_or(NgsiLdReferenceError::Empty)
 }
 
 #[cfg(test)]
@@ -42,13 +35,14 @@ mod tests {
     use crate::{
         name_stage::{Expanded, Written},
         term_compactor::TermCompactor,
-        type_selection::{TypeSelection, compaction::compact_type_selection},
+        type_selection::{TypeSelection, compaction::compact_type_selection, type_alternatives::TypeAlternatives},
     };
     use andromeda_ngsi_ld_lexicon::{
         attribute_iri::AttributeIri,
         attribute_name::AttributeName,
         entity_type_iri::EntityTypeIri,
         entity_type_name::EntityTypeName,
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
         reference::NgsiLdReferenceError,
     };
     use std::future::{Future, ready};
@@ -92,6 +86,16 @@ mod tests {
         .await
         .expect("compacts");
         pretty_assertions::assert_eq!(compacted.to_string(), "(A;B),https://other.example/C");
+    }
+
+    #[tokio::test]
+    async fn a_type_the_compactor_refuses_refuses_the_selection() {
+        let over_long = format!("https://other.example/{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+        let selection = TypeSelection::Alternatives(TypeAlternatives::single(over_long.parse::<EntityTypeIri>().expect("an absolute IRI")));
+
+        let refused = compact_type_selection(&selection, &PrefixCompactor).await;
+
+        assert!(matches!(refused, Err(NgsiLdReferenceError::TooLong(_))), "{refused:?}");
     }
 
     #[tokio::test]

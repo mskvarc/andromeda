@@ -360,7 +360,13 @@ mod tests {
         query_error::QueryError,
         term_expander::{TermExpander, TermExpansionError},
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, entity_type_iri::EntityTypeIri};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_iri::AttributeIri,
+        attribute_name::AttributeName,
+        entity_type_iri::EntityTypeIri,
+        identifier_length::IDENTIFIER_BYTE_LIMIT,
+        reference::NgsiLdReferenceError,
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::{DATASET_ID, OBJECT_TYPE, VALUE_TYPE};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
@@ -785,9 +791,55 @@ mod tests {
         let names = ["parkingTickets".parse().expect("valid attribute name")];
         let declared = expand_json_keys(Some(&names), &CORE_MEMBER_EXPANDER).await.expect("expands");
         assert!(declared.contains(&"https://example.com/parkingTickets".parse().expect("valid attribute name")));
-        assert!(
-            "parkingTickets".parse::<AttributeIri>().is_err(),
+        let only_the_expanded_name = HashSet::from(["https://example.com/parkingTickets".parse::<AttributeIri>().expect("valid attribute name")]);
+        assert_eq!(
+            declared,
+            JsonKeyAttributes::from(only_the_expanded_name),
             "the compact name is no key of the expanded paths"
+        );
+    }
+
+    /// A term that is itself a written name, and that every namespace expansion takes past the identifier bound.
+    fn oversize_term() -> String {
+        "a".repeat(IDENTIFIER_BYTE_LIMIT - 4)
+    }
+
+    /// Clause 4.6.2 bounds every name the broker keys by, and an expansion may lengthen a name, so an expanded name
+    /// past the bound is refused as an invalid attribute name wherever a filter names one.
+    #[tokio::test]
+    async fn an_expanded_name_past_the_identifier_bound_is_refused_wherever_the_filter_names_one() {
+        let long = oversize_term();
+        for (position, q) in [
+            ("attribute", format!("{long}>1")),
+            ("sub-attribute", format!("speed.{long}>1")),
+            ("compound-value member", format!("speed[{long}]==\"x\"")),
+            ("hop relationship", format!("{long}{{Building:category}}==\"x\"")),
+        ] {
+            let refused = parse_and_expand(Some(&q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER).await;
+
+            assert!(
+                matches!(
+                    refused,
+                    Err(QueryError::Filter(FilterError::InvalidAttributeName(NgsiLdReferenceError::TooLong(_))))
+                ),
+                "{position}: {refused:?}"
+            );
+        }
+    }
+
+    /// A hop's guard type is held to the same bound as the Relationship it guards.
+    #[tokio::test]
+    async fn an_expanded_hop_guard_type_past_the_identifier_bound_is_refused() {
+        let q = format!("isParkedIn{{{}:category}}==\"x\"", oversize_term());
+
+        let refused = parse_and_expand(Some(&q), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER).await;
+
+        assert!(
+            matches!(
+                refused,
+                Err(QueryError::Filter(FilterError::InvalidAttributeName(NgsiLdReferenceError::TooLong(_))))
+            ),
+            "{refused:?}"
         );
     }
 

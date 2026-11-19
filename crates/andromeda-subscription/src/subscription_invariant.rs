@@ -1,7 +1,7 @@
 //! The invariants subscription policy relies on, and how each one broke.
 
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SubscriptionIdParseError;
-use andromeda_ngsi_ld_model::written_subscription_terms::WrittenTermsError;
+use andromeda_ngsi_ld_model::{subscription::unreadable_member::UnreadableMember, written_subscription_terms::WrittenTermsError};
 use thiserror::Error;
 
 /// A subscription policy invariant that did not hold.
@@ -30,4 +30,7 @@ pub enum SubscriptionInvariant {
     /// name against the bound a written name keeps.
     #[error("a stored subscription holds a name no written name can spell: {0}")]
     StoredNameNotWritable(#[from] WrittenTermsError),
+    /// A stored member the broker cannot read is not replaced by the update, so writing the subscription back would drop it and widen what it selects.
+    #[error("a stored subscription member the broker cannot read is not replaced by the update: {0}")]
+    UnreadableMemberKept(UnreadableMember),
 }

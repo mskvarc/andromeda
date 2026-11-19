@@ -90,6 +90,26 @@ impl<S: NameStage> TypeAlternatives<S> {
             .map(TypeAlternatives)
     }
 
+    /// The selection with every type replaced by what the asynchronous `leaf` makes of it, which fails at the first type it refuses. The shape is kept, so the result is as non-empty as the selection.
+    ///
+    /// # Errors
+    ///
+    /// The first error `leaf` returns.
+    pub async fn try_map_async<U: NameStage, E>(
+        &self,
+        mut leaf: impl AsyncFnMut(&S::EntityType) -> Result<U::EntityType, E>,
+    ) -> Result<TypeAlternatives<U>, E> {
+        let mut conjunctions = Vec::with_capacity(self.0.len());
+        for conjunction in &self.0 {
+            let mut mapped = Vec::with_capacity(conjunction.len());
+            for entity_type in conjunction {
+                mapped.push(leaf(entity_type).await?);
+            }
+            conjunctions.push(mapped);
+        }
+        Ok(TypeAlternatives(conjunctions))
+    }
+
     /// The alternatives as owned conjunctions.
     #[must_use]
     pub fn into_conjunctions(self) -> Vec<Vec<S::EntityType>> {
@@ -128,7 +148,7 @@ impl<S: NameStage> Display for TypeAlternatives<S> {
 #[cfg(test)]
 mod tests {
     use crate::{name_stage::Written, type_selection::type_alternatives::TypeAlternatives};
-    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReferenceError};
 
     fn name(raw: &str) -> EntityTypeName {
         raw.parse().expect("valid type name")
@@ -139,6 +159,38 @@ mod tests {
         assert!(TypeAlternatives::<Written>::new(Vec::new()).is_none());
         assert!(TypeAlternatives::<Written>::new(vec![vec![name("A")], Vec::new()]).is_none());
         assert!(TypeAlternatives::<Written>::new(vec![vec![name("A")]]).is_some());
+    }
+
+    #[tokio::test]
+    async fn an_asynchronous_map_keeps_the_shape_and_the_order() {
+        let selection = TypeAlternatives::<Written>::new(vec![vec![name("A"), name("B")], vec![name("C")]]).expect("non-empty");
+
+        let mapped = selection
+            .try_map_async::<Written, NgsiLdReferenceError>(async |entity_type| entity_type.as_str().to_lowercase().parse())
+            .await
+            .expect("every type maps");
+
+        pretty_assertions::assert_eq!(mapped.to_string(), "(a;b),c");
+    }
+
+    #[tokio::test]
+    async fn an_asynchronous_map_stops_at_the_first_type_it_refuses() {
+        let selection = TypeAlternatives::<Written>::new(vec![vec![name("A")], vec![name("B"), name("C")]]).expect("non-empty");
+        let mut visited = Vec::new();
+
+        let refused = selection
+            .try_map_async::<Written, &str>(async |entity_type| {
+                visited.push(entity_type.as_str().to_owned());
+                if entity_type.as_str() == "B" {
+                    Err("refused")
+                } else {
+                    Ok(entity_type.clone())
+                }
+            })
+            .await;
+
+        pretty_assertions::assert_eq!(refused, Err("refused"));
+        pretty_assertions::assert_eq!(visited, vec!["A".to_owned(), "B".to_owned()]);
     }
 
     #[test]

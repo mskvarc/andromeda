@@ -163,12 +163,18 @@ mod tests {
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, identifier_length::IDENTIFIER_BYTE_LIMIT, reference::NgsiLdReferenceError};
     use andromeda_ngsi_ld_model::{attribute_iri_csv, request_body::RequestBody, subscription_request::SubscriptionRequest};
-    use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, query_error::QueryError, term_expander::TermExpansionError};
+    use andromeda_ngsi_ld_query::{
+        filter::language_targeting::LanguageTargeting,
+        query_error::QueryError,
+        term_expander::TermExpansionError,
+        type_selection::type_selection_error::TypeSelectionError,
+    };
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
     use serde_json::{Value, json};
 
+    /// The core context's default vocabulary.
     const DEFAULT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
 
     /// An engine that resolves only what is embedded, never the network.
@@ -252,6 +258,27 @@ mod tests {
         pretty_assertions::assert_eq!(
             serde_json::to_value(notification.omit).expect("the tree writes"),
             json!([[{"name": "scope", "linked": []}, {"name": format!("{DEFAULT}colour"), "linked": []}]])
+        );
+    }
+
+    /// Clause 4.6.2 bounds a stored name, and a `@context` may map a type term to an IRI past the bound, so the
+    /// subscription that selects such a type is refused when it is expanded.
+    #[tokio::test]
+    async fn an_entity_type_expanded_past_the_identifier_bound_is_refused() {
+        let long_iri = format!("https://example.com/{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));
+        let context = JsonLiteral::admit(&json!({"Vehicle": long_iri}).to_string()).expect("an admissible literal");
+
+        let refused = expanded_under(json!({"entities": [{"type": "Vehicle"}]}), &ContextSpec::from_body(context)).await;
+
+        assert!(
+            matches!(
+                refused,
+                Err(SubscriptionError::Query(QueryError::TypeSelection(TypeSelectionError::InvalidName {
+                    source: NgsiLdReferenceError::TooLong(_),
+                    ..
+                })))
+            ),
+            "{refused:?}"
         );
     }
 
