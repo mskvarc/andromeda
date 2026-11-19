@@ -7,13 +7,14 @@
 //! (clause 5.2.1) and is refused as the body is read. The body decodes straight from the request text
 //! into the types that own each member's restriction (`NonEmptyText`,
 //! `TimeInterval`, `RegistrationManagementInfo`, `DatasetSelector`,
-//! `ContextSourceAlias`), so a value
+//! `ContextSourceAlias`, `ContextSourceEndpoint`), so a value
 //! outside Table 5.2.9-1 fails the decoding, naming the member, as
 //! `BadRequestData`. What the body carries beyond Table 5.2.9-1 is the
 //! registration's Context Source Properties, held as data (clause 4.9); one
 //! written as the NGSI-LD Null deletes the stored property of its name.
 
 use crate::{
+    context_source_endpoint::ContextSourceEndpoint,
     csr_member::CsrMember,
     error::RegistrationError,
     geometry::RegistrationGeometry,
@@ -78,8 +79,8 @@ pub struct RegistrationBody {
     pub(crate) operation_space: Clearable<RegistrationGeometry>,
     /// `expiresAt`, read as every instant a request carries (clause 4.6.3).
     pub(crate) expires_at: Clearable<NgsiLdDateTime>,
-    /// `endpoint`: cardinality 1 on creation.
-    pub(crate) endpoint: Clearable<DereferenceableUri>,
+    /// `endpoint`: cardinality 1 on creation, and an NGSI-LD API root.
+    pub(crate) endpoint: Clearable<ContextSourceEndpoint>,
     /// `accept`.
     pub(crate) accept: Clearable<MediaTypeBuf>,
     /// `mode`.
@@ -208,7 +209,7 @@ impl RegistrationBody {
             observation_space: present(stored_geometry(observation_space), CsrMember::ObservationSpace)?,
             operation_space: present(stored_geometry(operation_space), CsrMember::OperationSpace)?,
             expires_at: present(expires_at.map(NgsiLdDateTime::get), CsrMember::ExpiresAt)?,
-            endpoint: required(endpoint, CsrMember::Endpoint)?,
+            endpoint: required(endpoint.map(DereferenceableUri::from), CsrMember::Endpoint)?,
             accept: present(accept, CsrMember::Accept)?,
             mode,
             operations,
@@ -272,7 +273,7 @@ impl RegistrationBody {
             observation_space: stored_geometry(observation_space),
             operation_space: stored_geometry(operation_space),
             expires_at: expires_at.map(NgsiLdDateTime::get),
-            endpoint: present(endpoint, CsrMember::Endpoint)?,
+            endpoint: present(endpoint.map(DereferenceableUri::from), CsrMember::Endpoint)?,
             accept,
             mode: present(mode, CsrMember::Mode)?,
             operations,
@@ -289,7 +290,12 @@ impl RegistrationBody {
 #[cfg(test)]
 mod tests {
     use crate::{registration_body::RegistrationBody, store::create_params::CreateCsrParams};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time::rendering::instant_text};
+    use andromeda_ngsi_ld_lexicon::{
+        context_source_pseudonym::ContextSourcePseudonym,
+        dereferenceable_uri::DereferenceableUri,
+        identifier::Identifier,
+        time::rendering::instant_text,
+    };
     use andromeda_ngsi_ld_model::{clearable::Clearable, registration::operation::CsrOperation, request_body::RequestBody};
     use andromeda_ngsi_ld_representation::{
         compact_node::context_reading::ContextReading,
@@ -622,6 +628,32 @@ mod tests {
                 .into_update_fragment()
                 .expect("a token alias");
             pretty_assertions::assert_eq!(fragment.context_source_alias.as_set().map(ContextSourcePseudonym::as_str), Some(alias));
+        }
+    }
+
+    /// `endpoint` is the root of the source's NGSI-LD API, which clause 6.2
+    /// gives the scheme `http` or `https`, so an endpoint of any other scheme
+    /// is refused as the body is read, on create and on update.
+    #[test]
+    fn an_endpoint_that_is_no_http_or_https_uri_is_refused_on_create_and_update() {
+        for endpoint in ["ftp://x/y", "file:///etc/passwd"] {
+            let created = create_of(&with("endpoint", json!(endpoint))).expect_err("no NGSI-LD API root on create");
+            assert!(created.contains("endpoint must be an http or https URI"), "{endpoint}: {created}");
+            let updated = body_of(&json!({"endpoint": endpoint})).expect_err("no NGSI-LD API root on update");
+            assert!(updated.to_string().contains("endpoint must be an http or https URI"), "{endpoint}: {updated}");
+        }
+    }
+
+    #[test]
+    fn an_http_or_https_endpoint_is_created_and_updated_as_written() {
+        for endpoint in ["http://source.example.org:1026", "https://source.example.org/broker1"] {
+            let created = create_of(&with("endpoint", json!(endpoint))).expect("an NGSI-LD API root");
+            pretty_assertions::assert_eq!(created.endpoint.as_str(), endpoint);
+            let fragment = body_of(&json!({"endpoint": endpoint}))
+                .expect("a body")
+                .into_update_fragment()
+                .expect("an NGSI-LD API root");
+            pretty_assertions::assert_eq!(fragment.endpoint.as_ref().map(DereferenceableUri::as_str), Some(endpoint));
         }
     }
 
