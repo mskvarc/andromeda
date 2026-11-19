@@ -1,8 +1,11 @@
-//! The toolchain an image installs by name is the one the workspace pins.
+//! Every official Rust image an image builds from carries the toolchain the
+//! workspace pins.
 //!
-//! An image whose build context does not hold `rust-toolchain.toml` installs the
-//! toolchain its `TOOLCHAIN` build argument names, so that argument spells the
-//! pin a second time. The gate holds the two together, so the pin moves in one
+//! The tag of a Rust base image spells the pin of `rust-toolchain.toml` a second
+//! time. The runner image takes its toolchain from that tag alone, and a broker
+//! image built from another version still builds the right binary, because
+//! rustup installs the pin on top, but downloads a second toolchain on every
+//! build. The gate holds the tags and the pin together, so they move in one
 //! change or not at all.
 
 use crate::source_scan::file_paths;
@@ -15,19 +18,22 @@ const TOOLCHAIN_FILE: &str = "rust-toolchain.toml";
 /// The directories that hold image definitions, relative to the workspace root.
 const IMAGE_DIRECTORIES: [&str; 2] = ["docker", "tools"];
 
-/// The build argument line an image names its toolchain on, up to the value.
-const TOOLCHAIN_ARGUMENT: &str = "ARG TOOLCHAIN=";
+/// The instruction a build stage names its base image on, up to the image.
+const STAGE_INSTRUCTION: &str = "FROM ";
 
-/// Assert that every `Dockerfile` below `docker/` and `tools/` that names a
-/// toolchain in its `TOOLCHAIN` build argument names the channel
-/// `rust-toolchain.toml` pins.
+/// The references of the official Rust image, up to the tag.
+const RUST_IMAGES: [&str; 2] = ["rust:", "docker.io/library/rust:"];
+
+/// Assert that every stage a `Dockerfile` below `docker/` or `tools/` builds
+/// from the official Rust image names the version `rust-toolchain.toml` pins
+/// in its tag.
 ///
 /// # Panics
 ///
-/// Panics when an image names another toolchain, when an image definition or
-/// `rust-toolchain.toml` cannot be read, or when `rust-toolchain.toml` names no
-/// channel.
-pub fn assert_images_install_the_pinned_toolchain(workspace_root: &str) {
+/// Panics when an image builds from a Rust image of another version, when an
+/// image definition or `rust-toolchain.toml` cannot be read, or when
+/// `rust-toolchain.toml` names no channel.
+pub fn assert_images_build_from_the_pinned_toolchain(workspace_root: &str) {
     let root = Path::new(workspace_root);
     let mut violations = Vec::new();
     if let Some(channel) = pinned_channel(root, &mut violations) {
@@ -37,13 +43,11 @@ pub fn assert_images_install_the_pinned_toolchain(workspace_root: &str) {
         {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
             match fs::read_to_string(&path) {
-                Ok(dockerfile) => {
-                    if let Some(installed) = installed_toolchain(&dockerfile)
-                        && installed != channel
-                    {
-                        violations.push(format!("{relative} installs {installed}, but {TOOLCHAIN_FILE} pins {channel}"));
-                    }
-                }
+                Ok(dockerfile) => violations.extend(
+                    base_toolchains(&dockerfile)
+                        .filter(|base| *base != channel)
+                        .map(|base| format!("{relative} builds from rust:{base}, but {TOOLCHAIN_FILE} pins {channel}")),
+                ),
                 Err(error) => violations.push(format!("{relative} could not be read: {error}")),
             }
         }
@@ -84,47 +88,59 @@ fn is_dockerfile(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "Dockerfile")
 }
 
-/// The toolchain an image definition installs by name, when it declares one.
-fn installed_toolchain(dockerfile: &str) -> Option<&str> {
-    dockerfile.lines().find_map(|line| line.trim().strip_prefix(TOOLCHAIN_ARGUMENT)).map(str::trim)
+/// The toolchain of every official Rust image an image definition builds a
+/// stage from: the version its tag names ahead of the variant and the digest,
+/// `1.100.0` of `rust:1.100.0-trixie@sha256:...`. A stage built from another
+/// image or from an earlier stage names none.
+fn base_toolchains(dockerfile: &str) -> impl Iterator<Item = &str> {
+    dockerfile
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(STAGE_INSTRUCTION))
+        .filter_map(|stage| stage.split_whitespace().find(|word| !word.starts_with("--")))
+        .filter_map(|image| RUST_IMAGES.iter().find_map(|prefix| image.strip_prefix(prefix)))
+        .filter_map(|tag| tag.split(['-', '@']).next())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::toolchain_pin::{assert_images_install_the_pinned_toolchain, installed_toolchain, is_dockerfile};
+    use crate::toolchain_pin::{assert_images_build_from_the_pinned_toolchain, base_toolchains, is_dockerfile};
     use pretty_assertions::assert_eq;
     use std::{env, fs, path::Path, process};
 
-    fn scratch_workspace(name: &str, pinned: &str, installed: &str) -> String {
+    /// A workspace pinning `pinned` whose runner image builds from the Rust
+    /// image of version `base`.
+    fn scratch_workspace(name: &str, pinned: &str, base: &str) -> String {
         let root = env::temp_dir().join(format!("andromeda-toolchain-pin-{}-{name}", process::id()));
         let runner = root.join("tools/suite/stacks/runner");
         fs::create_dir_all(&runner).unwrap_or_else(|error| panic!("{error}"));
         fs::write(root.join("rust-toolchain.toml"), format!("[toolchain]\nchannel = \"{pinned}\"\n")).unwrap_or_else(|error| panic!("{error}"));
-        fs::write(runner.join("Dockerfile"), format!("FROM rust:1 AS toolchain\nARG TOOLCHAIN={installed}\n")).unwrap_or_else(|error| panic!("{error}"));
+        fs::write(runner.join("Dockerfile"), format!("FROM rust:{base}-trixie@sha256:0123 AS toolchain\n")).unwrap_or_else(|error| panic!("{error}"));
         root.to_string_lossy().into_owned()
     }
 
     #[test]
-    fn an_image_naming_the_pinned_toolchain_passes() {
-        assert_images_install_the_pinned_toolchain(&scratch_workspace("agree", "nightly-2026-09-25", "nightly-2026-09-25"));
+    fn an_image_built_from_the_pinned_rust_image_passes() {
+        assert_images_build_from_the_pinned_toolchain(&scratch_workspace("agree", "1.100.0", "1.100.0"));
     }
 
     #[test]
-    #[should_panic(expected = "tools/suite/stacks/runner/Dockerfile installs nightly-2026-08-21, but rust-toolchain.toml pins nightly-2026-09-25")]
-    fn an_image_naming_another_toolchain_fails() {
-        assert_images_install_the_pinned_toolchain(&scratch_workspace("disagree", "nightly-2026-09-25", "nightly-2026-08-21"));
+    #[should_panic(expected = "tools/suite/stacks/runner/Dockerfile builds from rust:1.99.1, but rust-toolchain.toml pins 1.100.0")]
+    fn an_image_built_from_another_rust_image_fails() {
+        assert_images_build_from_the_pinned_toolchain(&scratch_workspace("disagree", "1.100.0", "1.99.1"));
     }
 
     #[test]
-    fn the_toolchain_argument_value_is_read_from_its_line() {
-        let dockerfile = "FROM rust:1 AS toolchain\n\nARG TOOLCHAIN=nightly-2026-09-25\nARG NEXTEST_VERSION=0.9.149\n";
-        assert_eq!(installed_toolchain(dockerfile), Some("nightly-2026-09-25"));
+    fn the_base_toolchain_is_read_from_every_rust_stage_only() {
+        let dockerfile = "FROM rust:1.100.0-trixie@sha256:0123 AS chef\n\
+                          FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.1 AS cross\n\
+                          FROM chef AS planner\n\
+                          FROM gcr.io/distroless/cc-debian13:nonroot@sha256:4567 AS runtime\n";
+        assert_eq!(base_toolchains(dockerfile).collect::<Vec<_>>(), ["1.100.0", "1.99.1"]);
     }
 
     #[test]
-    fn an_image_without_a_toolchain_argument_names_no_toolchain() {
-        let dockerfile = "FROM rust:1 AS chef\nCOPY rust-toolchain.toml ./\nRUN rustup show\n";
-        assert_eq!(installed_toolchain(dockerfile), None);
+    fn a_floating_rust_tag_names_its_own_version() {
+        assert_eq!(base_toolchains("FROM rust:1-trixie AS chef\n").collect::<Vec<_>>(), ["1"]);
     }
 
     #[test]

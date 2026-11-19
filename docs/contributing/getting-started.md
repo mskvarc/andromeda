@@ -4,6 +4,8 @@
 
 `rust-toolchain.toml` pins the stable toolchain the workspace builds, lints and tests with, together with `clippy`. Rustup installs it the first time you run `cargo` in the repository. The workspace uses Rust edition 2024.
 
+The broker's and the suite runner's Dockerfiles build from the official `rust` image whose tag names the same version, and the runner takes its toolchain from that image. The `toolchain_pin` architecture gate fails while a tag names another version. Dependabot moves `rust-toolchain.toml` and both tags in one pull request, the `rust-toolchain` group of `.github/dependabot.yaml`.
+
 Formatting runs a pinned nightly rustfmt, because `rustfmt.toml` uses options only a nightly reads. Install it once.
 
 ```sh

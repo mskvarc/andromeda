@@ -1,17 +1,15 @@
 # syntax=docker/dockerfile:1
 
-# The container every tree runs in: the toolchain Andromeda pins and cargo-nextest. A stack builds the `toolchain` stage
-# from this directory; the repository is bind-mounted at /andromeda at run time, so the root rust-toolchain.toml,
-# .cargo/config.toml and rustfmt.toml apply as they do on a developer machine, and the registry volume keeps
-# dependencies between runs. CI builds the `suite` stage from a context holding the trees' inputs, which adds the test
+# The container every tree runs in: the toolchain Andromeda pins, which the Rust base image's tag names, and
+# cargo-nextest. A stack builds the `toolchain` stage from this directory; the repository is bind-mounted at /andromeda
+# at run time, so the root rust-toolchain.toml, .cargo/config.toml and rustfmt.toml apply as they do on a developer
+# machine, and the registry volume keeps dependencies between runs. CI builds the `suite` stage from a context holding the trees' inputs, which adds the test
 # binaries of the suite and of the upgrade rehearsals as one nextest archive, so a run compiles nothing.
-FROM rust:1.99.1-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 AS toolchain
+FROM rust:1.100.0-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS toolchain
 
-ARG TOOLCHAIN=1.100.0
 ARG NEXTEST_VERSION=0.9.149
 
-RUN rustup toolchain install "${TOOLCHAIN}" --profile minimal --component clippy \
-    && rustup default "${TOOLCHAIN}"
+RUN rustup component add clippy
 
 RUN cargo install cargo-nextest --locked --version "${NEXTEST_VERSION}"
 

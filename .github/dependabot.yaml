@@ -2,6 +2,19 @@ version: 2
 
 # Every update pull request runs ci on a hosted runner, so updates are grouped into as few pull requests as possible:
 # cargo weekly, the slower-moving ecosystems monthly.
+
+# The tag of every Rust base image names the toolchain rust-toolchain.toml pins, and the toolchain_pin architecture gate
+# fails while they differ, so a new Rust version reaches the pin and the images of the broker and the suite runner in
+# one pull request. The broker's runtime image travels with them, because a directory belongs to one update entry.
+multi-ecosystem-groups:
+  rust-toolchain:
+    schedule:
+      interval: monthly
+    labels: [build]
+    commit-message:
+      prefix: build
+      include: scope
+
 updates:
   - package-ecosystem: cargo
     directory: /
@@ -18,10 +31,21 @@ updates:
           - minor
           - patch
 
+  - package-ecosystem: rust-toolchain
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: rust-toolchain
+
   - package-ecosystem: docker
     directories:
-      - /docker/images/*
+      - /docker/images/andromeda
       - /tools/andromeda-test-suite/stacks/runner
+    patterns: ["*"]
+    multi-ecosystem-group: rust-toolchain
+
+  - package-ecosystem: docker
+    directories:
+      - /docker/images/postgresql
     schedule:
       interval: monthly
     labels: [build]
