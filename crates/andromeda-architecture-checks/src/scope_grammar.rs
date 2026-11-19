@@ -21,7 +21,7 @@
 //!   `strip_prefix` or similar call on the `/` separator: that source handles
 //!   Scopes, and splitting one is `split_levels`'s job.
 
-use crate::source_scan::{collect_use_paths, item_is_test_only, workspace_sources};
+use crate::source_scan::{collect_use_paths, is_build_script, item_is_test_only, workspace_sources};
 use std::{collections::BTreeSet, path::Path};
 use syn::{
     Expr,
@@ -61,7 +61,7 @@ const UNBOUNDED_LEVEL_TYPES: [&str; 2] = ["ScopeLevel", "ScopeLevelBuf"];
 pub fn scope_grammar_violations(workspace_root: &str) -> Vec<String> {
     let mut violations = BTreeSet::new();
     for source in workspace_sources(Path::new(workspace_root)) {
-        if source.workspace_path.starts_with(SCOPE_OWNER) || source.workspace_path.contains("/tests/") || source.workspace_path.ends_with("build.rs") {
+        if source.workspace_path.starts_with(SCOPE_OWNER) || source.workspace_path.contains("/tests/") || is_build_script(&source.workspace_path) {
             continue;
         }
         let mut visitor = ScopeGrammarVisitor::default();

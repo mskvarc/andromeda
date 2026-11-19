@@ -27,7 +27,7 @@ mod module_imports;
 mod source_reading;
 
 use crate::{
-    source_scan::workspace_sources,
+    source_scan::{is_build_script, workspace_sources},
     untyped_json::{
         module_imports::{ModuleImports, ModulePosition},
         source_reading::untyped_json_findings,
@@ -66,7 +66,7 @@ pub fn untyped_json_sites(workspace_root: &str) -> Vec<UntypedJsonSite> {
         .filter(|source| {
             !source.is_black_box_suite()
                 && !source.workspace_path.contains("/tests/")
-                && !source.workspace_path.ends_with("build.rs")
+                && !is_build_script(&source.workspace_path)
                 && !source.workspace_path.ends_with("tests.rs")
         })
         .collect();

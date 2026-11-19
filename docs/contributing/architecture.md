@@ -76,7 +76,7 @@ The same tests also refuse `pub use` re-exports, the identifiers and paths of re
 
 A module file holds one cohesive concept, which is one type and its impls or a family of closely related small types. When a file starts to host a second concern, that concern moves to its own file straight away.
 
-Not counting `#[cfg(test)]` code, a file past about 400 lines should be split, and a file past 600 lines must be (gate `god_file`).
+Not counting `#[cfg(test)]` code, no production file passes 400 lines (gate `god_file`). The gate leaves out integration tests, `*tests.rs` files and package build scripts, which are files named exactly `build.rs` at the root of a package.
 
 A module's name says what it owns. These names describe nothing and are not allowed (gate `module_naming`).
 

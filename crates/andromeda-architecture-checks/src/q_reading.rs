@@ -18,7 +18,10 @@
 //!
 //! Every site fails the gate.
 
-use crate::{q_reading::visitor::QReadingVisitor, source_scan::workspace_sources};
+use crate::{
+    q_reading::visitor::QReadingVisitor,
+    source_scan::{is_build_script, workspace_sources},
+};
 use std::{collections::BTreeMap, path::Path};
 use syn::{File, visit::Visit};
 
@@ -43,7 +46,7 @@ pub fn q_reading_sites(workspace_root: &str) -> BTreeMap<String, Vec<String>> {
 
 /// Whether a source is production code outside the owner.
 fn is_scanned(path: &str) -> bool {
-    !path.starts_with(OWNER) && !path.contains("/tests/") && !path.ends_with("tests.rs") && !path.ends_with("build.rs")
+    !path.starts_with(OWNER) && !path.contains("/tests/") && !path.ends_with("tests.rs") && !is_build_script(path)
 }
 
 /// The sites of one parsed source, as `path:line: what`.

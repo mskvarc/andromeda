@@ -23,10 +23,7 @@
 //! `&[u8]` anyway, and keeping them out means this crate carries no persistence
 //! dependency at all.
 
-use crate::{
-    ewkb_build::{GeometryBuildError, GeometryBuilder},
-    ewkb_walk::GeometryWalk,
-};
+use crate::{ewkb_build::GeometryBuilder, ewkb_build_error::GeometryBuildError, ewkb_walk::GeometryWalk};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, great_circle_reach::GreatCircleReach};
 use bytes::Bytes;
 use geozero::{GeozeroGeometry, ToWkb, error::GeozeroError, wkb::Ewkb as GeozeroEwkb};
@@ -215,7 +212,10 @@ impl TryFrom<Bytes> for Ewkb {
 
 #[cfg(test)]
 mod tests {
-    use crate::ewkb::{BYTE_ORDER_LITTLE_ENDIAN, EWKB_M_FLAG, EWKB_SRID_FLAG, Ewkb, EwkbError, SRID_WGS84};
+    use crate::{
+        ewkb::{BYTE_ORDER_LITTLE_ENDIAN, EWKB_M_FLAG, EWKB_SRID_FLAG, Ewkb, EwkbError, SRID_WGS84},
+        ewkb_build_error::GeometryBuildError,
+    };
     use andromeda_ngsi_ld_geometry::{
         dimension::GeometryDimension,
         form::GeometryForm,
@@ -223,6 +223,7 @@ mod tests {
         line_string_coordinates::LineStringCoordinates,
         position::Position,
     };
+    use geozero::error::GeozeroError;
     use serde_json::{Value, json};
 
     /// Bit set in the EWKB type word when Z coordinates are present.
@@ -356,12 +357,10 @@ mod tests {
 
         let ewkb = Ewkb::try_from(bytes.as_slice()).expect("the dialect header is canonical");
         let error = Geometry::try_from(&ewkb).expect_err("a collection is not a geometry the broker stores");
-        assert!(
-            error
-                .to_string()
-                .contains("GeometryCollection, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes"),
-            "got {error}"
-        );
+        let EwkbError::Codec(GeozeroError::Geometry(detail)) = error else {
+            panic!("a geozero callback refuses the collection, got {error}");
+        };
+        pretty_assertions::assert_eq!(detail, GeometryBuildError::GeometryCollectionUnsupported.to_string());
     }
 
     #[test]

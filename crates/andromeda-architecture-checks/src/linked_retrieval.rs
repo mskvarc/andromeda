@@ -32,7 +32,7 @@
 
 use crate::{
     linked_retrieval::{rule::ENGINE, visitor::LinkedRetrievalVisitor},
-    source_scan::workspace_sources,
+    source_scan::{is_build_script, workspace_sources},
 };
 use std::{collections::BTreeSet, path::Path};
 use syn::{File, visit::Visit};
@@ -46,7 +46,7 @@ mod visitor;
 pub fn linked_retrieval_violations(workspace_root: &str) -> Vec<String> {
     workspace_sources(Path::new(workspace_root))
         .into_iter()
-        .filter(|source| !source.workspace_path.contains("/tests/") && !source.workspace_path.ends_with("build.rs"))
+        .filter(|source| !source.workspace_path.contains("/tests/") && !is_build_script(&source.workspace_path))
         .flat_map(|source| {
             source_violations(&source.workspace_path, &source.syntax)
                 .into_iter()

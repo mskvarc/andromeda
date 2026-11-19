@@ -13,7 +13,7 @@
 //! defines the constructors. Integration tests, build scripts, `*tests.rs`
 //! files and test-only items are not production paths and are not inspected.
 
-use crate::source_scan::{item_is_test_only, workspace_sources};
+use crate::source_scan::{is_build_script, item_is_test_only, workspace_sources};
 use std::path::Path;
 use syn::{
     Expr,
@@ -63,7 +63,7 @@ pub fn geometry_box_test_sites(workspace_root: &str) -> Vec<GeometryBoxTestSite>
     let mut sites = Vec::new();
     for source in workspace_sources(Path::new(workspace_root)) {
         let path = source.workspace_path.as_str();
-        if path.contains("/tests/") || path.ends_with("build.rs") || path.ends_with("tests.rs") || BOX_TEST_OWNERS.contains(&path) {
+        if path.contains("/tests/") || is_build_script(path) || path.ends_with("tests.rs") || BOX_TEST_OWNERS.contains(&path) {
             continue;
         }
         let mut visitor = GeometryBoxTestVisitor { path, sites: Vec::new() };
