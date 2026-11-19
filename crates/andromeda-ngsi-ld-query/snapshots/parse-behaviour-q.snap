@@ -119,16 +119,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '!' at position 1"
 "a!~=\"x{\""
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    x{
-     ^
-error: unclosed counted repetition
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    x{\n     ^\nerror: unclosed counted repetition"
+  refused Pattern(Syntax(RepetitionCountUnclosed))
+  variant Pattern/Syntax/RepetitionCountUnclosed
+  detail "invalid regular expression: unclosed counted repetition"
 "a!(~=\"x\""
   refused UnexpectedCharacter { character: '!', position: 1 }
   variant UnexpectedCharacter
@@ -2064,16 +2057,9 @@ error: unclosed counted repetition
   variant Expected
   detail "q expression: expected attribute name, found '~' at position 0"
 "a~=\"*\""
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    *
-    ^
-error: repetition operator missing expression
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    *\n    ^\nerror: repetition operator missing expression"
+  refused Pattern(Syntax(RepetitionMissing))
+  variant Pattern/Syntax/RepetitionMissing
+  detail "invalid regular expression: repetition operator missing expression"
 "a~=\""
   refused UnterminatedString
   variant UnterminatedString
@@ -2093,16 +2079,9 @@ error: repetition operator missing expression
   variant Expected
   detail "q expression: expected pattern string, found '(' at position 3"
 "a~=\"(?ix\""
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    (?ix
-        ^
-error: expected flag but got end of regex
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    (?ix\n        ^\nerror: expected flag but got end of regex"
+  refused Pattern(Syntax(FlagUnexpectedEof))
+  variant Pattern/Syntax/FlagUnexpectedEof
+  detail "invalid regular expression: expected flag but got end of regex"
 "a~=\"a**\""
   refused Pattern(RepeatedQuantifier)
   variant Pattern/RepeatedQuantifier
@@ -2116,16 +2095,9 @@ error: expected flag but got end of regex
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 4"
 "a~=\"|**\""
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    |**
-     ^
-error: repetition operator missing expression
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    |**\n     ^\nerror: repetition operator missing expression"
+  refused Pattern(Syntax(RepetitionMissing))
+  variant Pattern/Syntax/RepetitionMissing
+  detail "invalid regular expression: repetition operator missing expression"
 "a~\"a**\""
   refused UnexpectedCharacter { character: '~', position: 1 }
   variant UnexpectedCharacter
@@ -3829,16 +3801,9 @@ error: repetition operator missing expression
   variant Expected
   detail "q expression: expected attribute name, found '-' at position 118"
 "(ex:name.observedAt<=10|(\"https://example.com/q\".x_1[b.city]~=\"\\é\\d\";(r{Building,T1:r{Building:\"https://example.com/q\".\"https://example.com/q\".x_1[*]}}~=\"[0-9]+\"|isParked{observedAt.x_1[b.en]}>1.0|brandName!~=\"[0-9]+\")))"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    \é\d
-    ^^
-error: unrecognized escape sequence
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    \\é\\d\n    ^^\nerror: unrecognized escape sequence"
+  refused Pattern(Syntax(EscapeUnrecognized))
+  variant Pattern/Syntax/EscapeUnrecognized
+  detail "invalid regular expression: unrecognized escape sequence"
 "(r{Building,Vehicle:brandName.brandName.a[*]}==2024-01-01..2024-12-31|a.x_1~=\"^x\"|(link{observedAt}>=0|speed~=\"a.*\"|r{link{r{T1:speed.\"ex:q\".x_1[zip.b]}}}~=\"^x\"))"
   accepted Or([Term(Equality { path: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("Building"), EntityTypeName("Vehicle")], inner: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName"), AttributeName("a")], trailing: Some(AllLanguages) }) }, membership: Within, value: Range { min: Date(2024-01-01), max: Date(2024-12-31) } }), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1")], trailing: None }), pattern: Pattern { source: "^x", compiled: Regex("^x"), portable: PortablePattern("^x"), subject_start: Fixed } }), Or([Term(Ordering { path: Linked { relationship: AttributeName("link"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }) }, operator: GreaterOrEqual, value: Number(JsonNumber(BigDecimal(sign=NoSign, scale=0, digits=[]))) }), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None }), pattern: Pattern { source: "a.*", compiled: Regex("a.*"), portable: PortablePattern("a.*"), subject_start: Open } }), Term(MatchPattern { path: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("link"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("b")], written: [AttributeName("zip"), AttributeName("b")] })) }) } } }, pattern: Pattern { source: "^x", compiled: Regex("^x"), portable: PortablePattern("^x"), subject_start: Fixed } })])])
   written "r{Building,Vehicle:brandName.brandName.a[*]}==2024-01-01..2024-12-31|a.x_1~=\"^x\"|(link{observedAt}>=0|speed~=\"a.*\"|r{link{r{T1:speed.ex:q.x_1[zip.b]}}}~=\"^x\")", read back to the same tree
@@ -5118,16 +5083,9 @@ error: unrecognized escape sequence
   accepted Or([And([Term(Ordering { path: Linked { relationship: AttributeName("link"), guard_types: [EntityTypeName("Building")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }) } }, operator: GreaterOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=1, digits=[25]))) }), Term(Ordering { path: Linked { relationship: AttributeName("link"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("ex:name")], trailing: None }) }, operator: LessOrEqual, value: DateTime(1999-12-31T23:59:59.123456Z) }), Term(Equality { path: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("T1")], inner: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("Building"), EntityTypeName("T1"), EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("ex:q"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }) } }, membership: Outside, value: Range { min: Str("abc"), max: Str("with \"quote\"") } })]), Term(Equality { path: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("Building")], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("observedAt")], trailing: None }) }, membership: Outside, value: Range { min: Str(""), max: Str("semi;colon|pipe") } }), Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(AllLanguages) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } })])
   written "link{Building:isParked{\"https://example.com/q\".observedAt[en.city]}}>=2.5;link{speed.\"https://example.com/q\".ex:name}<=1999-12-31T23:59:59.123456Z;r{T1:r{Building,T1,T1:brandName.ex:q.ex:q[zip.en]}}!=\"abc\"..\"with \\\"quote\\\"\"|r{Building:\"ex:q\".\"https://example.com/q\".observedAt}!=\"\"..\"semi;colon|pipe\"|brandName[*]!~=\"[0-9]+\"", read back to the same tree
 "((link{Building:isParked{\"https://example.com/q\".observedAt[en.city]}}>=2.5;link{speed.\"https://example.com/q\".ex:name}<=1999-12-31T23:59:59.123456Z;r{T1:r{Building,T1,T1:brandName.\"ex:q\".\"ex:q\"[zip.en]}}!=\"abc\"..\"with \\\"quote\\\"\")|r{Building:\"ex:q\".\"https://example.com/q\".observedAt}!=\"\"..\"semi;colon|pipe\"|brandName[*]!~=\"+[0-9]+\")"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    +[0-9]+
-    ^
-error: repetition operator missing expression
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    +[0-9]+\n    ^\nerror: repetition operator missing expression"
+  refused Pattern(Syntax(RepetitionMissing))
+  variant Pattern/Syntax/RepetitionMissing
+  detail "invalid regular expression: repetition operator missing expression"
 "((link{Building:isParked{\"https://example.com/q\".observedAt[en.city]}}>=2.5;link{speed.\"https://example.com/q\".ex:name}<=1999-12-31T23:59:59.123456Z;r{T1:r{Building,T1,T1:brandName.\"ex:q\".\"ex:q\"[zip.en]}}!=\"abc\"..\"with \\\"quote\\\"\")|r{Building:\"ex:q\".\"https://example.com/q\".observedAt}!=\"\"..\"semi;colon|pipe\"|bran<dName[*]!~=\"[0-9]+\")"
   refused BareWord
   variant BareWord
@@ -5770,16 +5728,9 @@ error: repetition operator missing expression
   accepted Or([And([Or([Term(Exists(Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("Building"), EntityTypeName("Vehicle")], inner: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("T1"), EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: Some(AllLanguages) }) } })), Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("observedAt")], trailing: Some(AllLanguages) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } })]), Term(Ordering { path: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("Building")], inner: Linked { relationship: AttributeName("link"), guard_types: [], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1"), AttributeName("ex:name")], trailing: Some(AllLanguages) }) } } }, operator: LessOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=0, digits=[9007199254740993]))) }), Term(Exists(Local(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) })))]), Term(Equality { path: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("x_1")], trailing: None }) }, membership: Within, value: Range { min: Str("a,b"), max: Str("ünï") } })])
   written "(r{Building,Vehicle:r{T1,T1:\"ex:q\".a[*]}}|brandName!~=\"\\\\d\"|a.\"https://example.com/q\".observedAt[*]!~=\"[0-9]+\");isParked{Building:link{r{\"https://example.com/q\".x_1.ex:name[*]}}}<=9007199254740993;x_1.observedAt[en]|isParked{a.brandName.x_1}==\"a,b\"..\"ünï\"", read back to the same tree
 "(((r{Building,Vehicle:r{T1,T1:\"ex:q\".a[*]}}|brandName!~=\"\\\\d\"|a.\"https://example.com/q\".observedAt[*]!~=\"[0-9++\");isParked{Building:link{r{\"https://example.com/q\".x_1.ex:name[*]}}}<=9007199254740993;x_1.observedAt[en])|isParked{a.brandName.x_1}==\"a,b\"..\"ünï\")"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    [0-9++
-    ^
-error: unclosed character class
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    [0-9++\n    ^\nerror: unclosed character class"
+  refused Pattern(Syntax(ClassUnclosed))
+  variant Pattern/Syntax/ClassUnclosed
+  detail "invalid regular expression: unclosed character class"
 "(((r{Building,Vehicle:r{T1,T1:\"ex:q\".a[*]}}|brandName!~=\"\\\\d\"|a.\"https://example.com/q\".observedAt[*]!~=\"[0-9]+\");isParked{Building:link{r{\"https://example.com/q\".x_1.ex:na]e[*]}}}<=9007199254740993;x_1.observedAt[en])|isParked{a.brandName.x_1}==\"a,b\"..\"ünï\")"
   refused Expected { expected: Punctuation(CloseBrace), found: Character(']'), position: 172 }
   variant Expected
@@ -6426,16 +6377,9 @@ error: unclosed character class
   accepted And([Term(NotMatchPattern { path: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("Building"), EntityTypeName("Béilding"), EntityTypeName("Building")], inner: Local(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("a"), AttributeName("speed")], trailing: None }) }, pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } }), Or([Term(NotMatchPattern { path: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("Vehicle")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }) } } }, pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(AllLanguages) }), pattern: Pattern { source: "^x", compiled: Regex("^x"), portable: PortablePattern("^x"), subject_start: Fixed } })])])
   written "isParked{Building,Béilding,Building:x_1.a.speed}!~=\"[0-9]+\";(isParked{Vehicle:isParked{isParked{a}}}!~=\"\\\\d\"|observedAt[*]~=\"^x\")", read back to the same tree
 "(isParked{Building,Building,Building:x_1.a.speed}!~=\"[0-9]+\";(isParked{Vehicle:isParked{isParked{a}}}!~=\"\\\\d\"|observedAt[*]~=\"+x\"))"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    +x
-    ^
-error: repetition operator missing expression
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    +x\n    ^\nerror: repetition operator missing expression"
+  refused Pattern(Syntax(RepetitionMissing))
+  variant Pattern/Syntax/RepetitionMissing
+  detail "invalid regular expression: repetition operator missing expression"
 "(\"ex:q\"<1e3|(speed.a.x_1[*]!~=\"\\\\d\"|r{\"ex:q\"[en.en]}>2024-01-15))"
   accepted Or([Term(Ordering { path: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }), operator: Less, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=-3, digits=[1]))) }), Or([Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a"), AttributeName("x_1")], trailing: Some(AllLanguages) }), pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(Ordering { path: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("en")], written: [AttributeName("en"), AttributeName("en")] })) }) }, operator: Greater, value: Date(2024-01-15) })])])
   written "ex:q<1000|(speed.a.x_1[*]!~=\"\\\\d\"|r{\"ex:q\"[en.en]}>2024-01-15)", read back to the same tree
@@ -7798,16 +7742,9 @@ error: repetition operator missing expression
   accepted Or([Term(MatchPattern { path: Linked { relationship: AttributeName("link"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("Building"), EntityTypeName("Building")], inner: Linked { relationship: AttributeName("link"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("x_1"), AttributeName("ex:name")], trailing: None }) } } }, pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(NotMatchPattern { path: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("Building"), EntityTypeName("T1"), EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(AllLanguages) }) } }, pattern: Pattern { source: "a.*", compiled: Regex("a.*"), portable: PortablePattern("a.*"), subject_start: Open } })])
   written "link{isParked{Building,Building:link{brandName.x_1.ex:name}}}~=\"\\\\d\"|r{isParked{Building,T1,T1:speed[*]}}!~=\"a.*\"", read back to the same tree
 "(link{isParked{Building,Building:link{brandName.x_1.ex:name}}}~=\"\\\\d-|r{isParked{Building,T1,T1:speed[*]}}!~=\"a.*\")"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    \\d-|r{isParked{Building,T1,T1:speed[*]}}!~=
-           ^
-error: repetition quantifier expects a valid decimal
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    \\\\d-|r{isParked{Building,T1,T1:speed[*]}}!~=\n           ^\nerror: repetition quantifier expects a valid decimal"
+  refused Pattern(Syntax(RepetitionCountDecimalEmpty))
+  variant Pattern/Syntax/RepetitionCountDecimalEmpty
+  detail "invalid regular expression: repetition quantifier expects a valid decimal"
 "(link{isParked{B.ilding,Building:link{brandName.x_1.ex:name}}}~=\"\\\\d\"|r{isParked{Building,T1,T1:speed[*]}}!~=\"a.*\")"
   refused Expected { expected: Punctuation(CloseBrace), found: Character(','), position: 23 }
   variant Expected
@@ -8054,16 +7991,9 @@ error: repetition quantifier expects a valid decimal
   accepted And([And([Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:name"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } }), Term(Ordering { path: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("T1"), EntityTypeName("T1")], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }) } }, operator: GreaterOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=0, digits=[9007199254740993]))) }), Term(NotMatchPattern { path: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("ex")], inner: Local(ValuePath { attribute: AttributeName("name"), sub_attributes: [AttributeName("observedAt"), AttributeName("a")], trailing: Some(AllLanguages) }) }, pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } })]), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1")], trailing: Some(AllLanguages) }))), Term(Exists(Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName"), AttributeName("x_1")], trailing: Some(AllLanguages) })))]), Term(Equality { path: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("speed")], trailing: None }), membership: Within, value: Scalar(Uri("urn:x:1")) })])
   written "(a.ex:name.a[en.city]!~=\"[0-9]+\";r{T1,T1:r{\"ex:q\"}}>=9007199254740993;r{ex:name.observedAt.a[*]}!~=\"[0-9]+\");(a.x_1[*]|ex:q.brandName.x_1[*]);brandName.speed==urn:x:1", read back to the same tree
 "((a.ex:name.a[en.city]!~=\"[0-9+\";r{T1,T1:r{\"ex:q\"}}>=9007199254740993;r{ex:name.observedAt.a[*]}!~=\"[0-9]+\");(a.x_1[*]|\"ex:q\".brandName.x_1[*]);brandName.speed==urn:x:1)"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    [0-9+
-    ^
-error: unclosed character class
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    [0-9+\n    ^\nerror: unclosed character class"
+  refused Pattern(Syntax(ClassUnclosed))
+  variant Pattern/Syntax/ClassUnclosed
+  detail "invalid regular expression: unclosed character class"
 "((a.ex:name.a[en.city]!~=\"[0-9]+\";r{T1,T1:r{\"ex:q\"}}>=9007199254740993;r{ex:name.observedAt.a[*]}!*~=\"[0-9]+\");(a.x_1[*]|\"ex:q\".brandName.x_1[*]);brandName.speed==urn:x:1)"
   refused Expected { expected: Punctuation(CloseParen), found: Character('!'), position: 97 }
   variant Expected
@@ -8145,16 +8075,9 @@ error: unclosed character class
   variant Expected
   detail "q expression: expected ), found '(' at position 173"
 "((speed.ex:name==false,false,0|\"https://example.com/q\".x_1<=\"\"|r{\"ex:q\".\"ex:q\"[*]}==2024-01-01..2024-12-31)|link{isParked{x_1.\"https://example.com/q\"}}!=http://example.com/a|(\"https://example.com/q\"~=\"a.*/|link{x_1.observedAt[*]}~=\"\\\\d\"|a.speed[*]))"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    a.*/|link{x_1.observedAt[*]}~=
-              ^
-error: repetition quantifier expects a valid decimal
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    a.*/|link{x_1.observedAt[*]}~=\n              ^\nerror: repetition quantifier expects a valid decimal"
+  refused Pattern(Syntax(RepetitionCountDecimalEmpty))
+  variant Pattern/Syntax/RepetitionCountDecimalEmpty
+  detail "invalid regular expression: repetition quantifier expects a valid decimal"
 "(isParked{\"https://example.com/q\".speed[en]}!=urn:x:1|(\"https://example.com/q\"==2024-01-01..2024-12-31;isParked{link{observedAt.ex:name.speed[*]}}))"
   accepted Or([Term(Equality { path: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }) }, membership: Outside, value: Scalar(Uri("urn:x:1")) }), And([Term(Equality { path: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }), membership: Within, value: Range { min: Date(2024-01-01), max: Date(2024-12-31) } }), Term(Exists(Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("link"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:name"), AttributeName("speed")], trailing: Some(AllLanguages) }) } }))])])
   written "isParked{\"https://example.com/q\".speed[en]}!=urn:x:1|\"https://example.com/q\"==2024-01-01..2024-12-31;isParked{link{observedAt.ex:name.speed[*]}}", read back to the same tree
@@ -8617,16 +8540,9 @@ error: repetition quantifier expects a valid decimal
   accepted Or([Term(Ordering { path: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), operator: LessOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=1, digits=[25]))) }), And([Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(AllLanguages) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } }), Term(MatchPattern { path: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("x_1")], trailing: Some(AllLanguages) }) } } }, pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedAt")], trailing: Some(AllLanguages) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } })]), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }))), Term(Ordering { path: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: None }) } } }, operator: Greater, value: Str("semi;colon|pipe") }), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: Some(AllLanguages) }))), Term(Ordering { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("ex:name")], trailing: None }), operator: GreaterOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=-1, digits=[1]))) })])])])
   written "observedAt[city]<=2.5|a[*]!~=\"[0-9]+\";isParked{isParked{isParked{T1:a.a.x_1[*]}}}~=\"\\\\d\";speed.observedAt[*]~=\"[0-9]+\"|(x_1[zip.en]|r{isParked{isParked{observedAt.x_1.x_1}}}>\"semi;colon|pipe\"|(ex:q.a[*]|speed.ex:name>=10))", read back to the same tree
 "(observedAt[city]<=2.5|(a[*]!~=\"[0-9]+\";isParked{isParked{isParked{T1:a.a.x_1[*]}}}~=\"\\\\d\";speed.observedAt[*]~=\"[a-9]+\")|(x_1[zip.en]|r{isParked{isParked{observedAt.x_1.x_1}}}>\"semi;colon|pipe\"|(\"ex:q\".a[*]|speed.ex:name>=10)))"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    [a-9]+
-     ^^^
-error: invalid character class range, the start must be <= the end
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    [a-9]+\n     ^^^\nerror: invalid character class range, the start must be <= the end"
+  refused Pattern(Syntax(ClassRangeInvalid))
+  variant Pattern/Syntax/ClassRangeInvalid
+  detail "invalid regular expression: invalid character class range, the start must be <= the end"
 "(observedAt[city]<=2.5|(a[*]!~=\"[0-9]+\";isParked{isParked{isParked{T1:a.ax_1[*]}}}~=\"\\\\d\";speed.observedAt[*]~=\"[0-9]+\")|(x_1[zip.en]|r{isParked{isParked{observedAt.x_1.x_1}}}>\"semi;colon|pipe\"|(\"ex:q\".a[*]|speed.ex:name>=10)))"
   accepted Or([Term(Ordering { path: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), operator: LessOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=1, digits=[25]))) }), And([Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(AllLanguages) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } }), Term(MatchPattern { path: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ax_1")], trailing: Some(AllLanguages) }) } } }, pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedAt")], trailing: Some(AllLanguages) }), pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } })]), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }))), Term(Ordering { path: Linked { relationship: AttributeName("r"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: None }) } } }, operator: Greater, value: Str("semi;colon|pipe") }), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: Some(AllLanguages) }))), Term(Ordering { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("ex:name")], trailing: None }), operator: GreaterOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=-1, digits=[1]))) })])])])
   written "observedAt[city]<=2.5|a[*]!~=\"[0-9]+\";isParked{isParked{isParked{T1:a.ax_1[*]}}}~=\"\\\\d\";speed.observedAt[*]~=\"[0-9]+\"|(x_1[zip.en]|r{isParked{isParked{observedAt.x_1.x_1}}}>\"semi;colon|pipe\"|(ex:q.a[*]|speed.ex:name>=10))", read back to the same tree
@@ -9781,16 +9697,9 @@ error: invalid character class range, the start must be <= the end
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "(\"https://example.com/q\".ex:name[*]~=\"[0-9é+\";(speed!~=\"\\\\d\"|isParked{\"ex:q\".\"https://example.com/q\".brandName}|link{r{T1:a}}>\"semi;colon|pipe\");(\"https://example.com/q\".brandName[*];r{brandName}<=9007199254740993;speed.brandName))"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    [0-9é+
-    ^
-error: unclosed character class
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    [0-9é+\n    ^\nerror: unclosed character class"
+  refused Pattern(Syntax(ClassUnclosed))
+  variant Pattern/Syntax/ClassUnclosed
+  detail "invalid regular expression: unclosed character class"
 "((brandName.speed.ex:name[city.zip]|brandName.x_1[city]==2024-01-15,true|ex:name.observedAt!~=\"^x\");(ex:name[city.en]|\"https://example.com/q\".x_1.\"ex:q\"|\"ex:q\"[zip]!=2024-01-01..2024-12-31);speed!~=\"^x\")"
   accepted And([Or([Term(Exists(Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("speed"), AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("zip")], written: [AttributeName("city"), AttributeName("zip")] })) }))), Term(Equality { path: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), membership: Within, value: ValueList([Date(2024-01-15), Bool(true)]) }), Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [AttributeName("observedAt")], trailing: None }), pattern: Pattern { source: "^x", compiled: Regex("^x"), portable: PortablePattern("^x"), subject_start: Fixed } })]), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("en")], written: [AttributeName("city"), AttributeName("en")] })) }))), Term(Exists(Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1"), AttributeName("ex:q")], trailing: None }))), Term(Equality { path: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), membership: Outside, value: Range { min: Date(2024-01-01), max: Date(2024-12-31) } })]), Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None }), pattern: Pattern { source: "^x", compiled: Regex("^x"), portable: PortablePattern("^x"), subject_start: Fixed } })])
   written "(brandName.speed.ex:name[city.zip]|brandName.x_1[city]==2024-01-15,true|ex:name.observedAt!~=\"^x\");(ex:name[city.en]|\"https://example.com/q\".x_1.ex:q|ex:q[zip]!=2024-01-01..2024-12-31);speed!~=\"^x\"", read back to the same tree
@@ -10852,16 +10761,9 @@ error: unclosed character class
   accepted Or([Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), pattern: Pattern { source: "\\\\d", compiled: Regex("\\\\d"), portable: PortablePattern("\\\\d"), subject_start: Open } }), Term(Equality { path: Local(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(AllLanguages) }), membership: Within, value: Range { min: Str(""), max: Str("") } }), Term(MatchPattern { path: Linked { relationship: AttributeName("link"), guard_types: [EntityTypeName("Vehicle"), EntityTypeName("Vehicle"), EntityTypeName("Vehicle")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(AllLanguages) }) } }, pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } })])
   written "brandName.ex:q[city.city]!~=\"\\\\d\"|brandName[*]==\"\"..\"\"|link{Vehicle,Vehicle,Vehicle:isParked{\"https://example.com/q\"[*]}}~=\"[0-9]+\"", read back to the same tree
 "(brandName.\"ex:q\"[city.city]!~=\"\\\\d\"|brandName[*]==\"\"..\"\"|link{Vehicle,Vehicle,Vehicle:isParked{\"https://example.com/q\"[*]}}~=\"[0-9])\")"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    [0-9])
-         ^
-error: unopened group
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    [0-9])\n         ^\nerror: unopened group"
+  refused Pattern(Syntax(GroupUnopened))
+  variant Pattern/Syntax/GroupUnopened
+  detail "invalid regular expression: unopened group"
 "(brandName.\"ex:q\"[city.city]!~=\"\\\\d\"|brandName[*]==\"\"..\"\"|link<{Vehicle,Vehicle,Vehicle:isParked{\"https://example.com/q\"[*]}}~=\"[0-9]+\")"
   refused Expected { expected: Value, found: Character('{'), position: 63 }
   variant Expected
@@ -13165,16 +13067,9 @@ error: unopened group
   accepted And([And([Term(NotMatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observeAt")], trailing: None }), pattern: Pattern { source: "^x", compiled: Regex("^x"), portable: PortablePattern("^x"), subject_start: Fixed } }), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), pattern: Pattern { source: "a.*", compiled: Regex("a.*"), portable: PortablePattern("a.*"), subject_start: Open } }), Term(Ordering { path: Linked { relationship: AttributeName("link"), guard_types: [EntityTypeName("Vehicle"), EntityTypeName("Vehicle")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("en")], written: [AttributeName("en"), AttributeName("en")] })) }) } }, operator: Less, value: DateTime(2024-01-15T12:00:00.500Z) })]), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(AllLanguages) }), pattern: Pattern { source: "a.*", compiled: Regex("a.*"), portable: PortablePattern("a.*"), subject_start: Open } }), Term(Equality { path: Local(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [AttributeName("a")], trailing: None }), membership: Within, value: Scalar(Number(JsonNumber(BigDecimal(sign=Plus, scale=0, digits=[1])))) })])
   written "(a.observeAt!~=\"^x\";a.ex:q.ex:q[b]~=\"a.*\";link{Vehicle,Vehicle:isParked{T1:observedAt.speed[en.en]}}<2024-01-15T12:00:00.500Z);\"https://example.com/q\"[*]~=\"a.*\";ex:name.a==1", read back to the same tree
 "((a.observedAt!~=\"^x\";a.\"ex:q\".\"ex:q\"[b]~=\"a.*;;link{Vehicle,Vehicle:isParked{T1:observedAt.speed[en.en]}}<2024-01-15T12:00:00.5Z);\"https://example.com/q\"[*]~=\"a.*\";ex:name.a==1.0)"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    a.*;;link{Vehicle,Vehicle:isParked{T1:observedAt.speed[en.en]}}<2024-01-15T12:00:00.5Z);
-              ^
-error: repetition quantifier expects a valid decimal
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    a.*;;link{Vehicle,Vehicle:isParked{T1:observedAt.speed[en.en]}}<2024-01-15T12:00:00.5Z);\n              ^\nerror: repetition quantifier expects a valid decimal"
+  refused Pattern(Syntax(RepetitionCountDecimalEmpty))
+  variant Pattern/Syntax/RepetitionCountDecimalEmpty
+  detail "invalid regular expression: repetition quantifier expects a valid decimal"
 "((r{T1,T1,T1:r{observedAt.speed}}|observedAt~=\"a.*\")|(\"ex:q\"|a.brandName.ex:name[city.b]>\"semi;colon|pipe\")|link{ex:name[*]})"
   accepted Or([Or([Term(Exists(Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("T1"), EntityTypeName("T1"), EntityTypeName("T1")], inner: Linked { relationship: AttributeName("r"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("speed")], trailing: None }) } })), Term(MatchPattern { path: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), pattern: Pattern { source: "a.*", compiled: Regex("a.*"), portable: PortablePattern("a.*"), subject_start: Open } })]), Or([Term(Exists(Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }))), Term(Ordering { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("ex:name")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), operator: Greater, value: Str("semi;colon|pipe") })]), Term(Exists(Linked { relationship: AttributeName("link"), guard_types: [EntityTypeName("ex")], inner: Local(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(AllLanguages) }) }))])
   written "(r{T1,T1,T1:r{observedAt.speed}}|observedAt~=\"a.*\")|(ex:q|a.brandName.ex:name[city.b]>\"semi;colon|pipe\")|link{ex:name[*]}", read back to the same tree
@@ -13570,16 +13465,9 @@ error: repetition quantifier expects a valid decimal
   accepted And([Term(Exists(Local(ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [AttributeName("exq")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }))), Term(NotMatchPattern { path: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1"), AttributeName("brandName")], trailing: None }) }, pattern: Pattern { source: "[0-9]+", compiled: Regex("[0-9]+"), portable: PortablePattern("[0-9]+"), subject_start: Open } }), And([Term(Exists(Linked { relationship: AttributeName("link"), guard_types: [EntityTypeName("Vehicle"), EntityTypeName("Vehicle"), EntityTypeName("T1")], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) }) })), Term(Ordering { path: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }), operator: GreaterOrEqual, value: DateTime(2024-01-15T12:00:00.500Z) })])])
   written "ex:name.exq[b];isParked{T1:a.x_1.brandName}!~=\"[0-9]+\";(link{Vehicle,Vehicle,T1:\"ex:q\".ex:q[*]};\"https://example.com/q\">=2024-01-15T12:00:00.500Z)", read back to the same tree
 "(ex:name.\"ex:q\"[b];isParked{T1:a.x_1.brandName}!~=\"[0-\"9]+\";(link{Vehicle,Vehicle,T1:\"ex:q\".\"ex:q\"[*]};\"https://example.com/q\">=2024-01-15T12:00:00.5Z))"
-  refused Pattern(Regex(Syntax(
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-regex parse error:
-    [0-
-    ^
-error: unclosed character class
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-)))
-  variant Pattern/Regex/Syntax
-  detail "invalid regular expression: regex parse error:\n    [0-\n    ^\nerror: unclosed character class"
+  refused Pattern(Syntax(ClassUnclosed))
+  variant Pattern/Syntax/ClassUnclosed
+  detail "invalid regular expression: unclosed character class"
 "((r{T1,T1:r{Vehicle,Vehicle,T1:isParked{\"ex:q\".\"https://example.com/q\".\"ex:q\"[*]}}}==true;isParked{link{isParked{observedAt.x_1.a[b.en]}}}>\"\")|(link{Building,Building:isParked{\"https://example.com/q\"[en.en]}}|isParked{Building,Vehicle,Building:a.\"ex:q\".\"ex:q\"}>=9007199254740993)|a.\"ex:q\".observedAt!=\"ünï\"..\"with \\\"quote\\\"\")"
   accepted Or([And([Term(Equality { path: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("T1"), EntityTypeName("T1")], inner: Linked { relationship: AttributeName("r"), guard_types: [EntityTypeName("Vehicle"), EntityTypeName("Vehicle"), EntityTypeName("T1")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("ex:q")], trailing: Some(AllLanguages) }) } } }, membership: Within, value: Scalar(Bool(true)) }), Term(Ordering { path: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Linked { relationship: AttributeName("link"), guard_types: [], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("x_1"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }) } } }, operator: Greater, value: Str("") })]), Or([Term(Exists(Linked { relationship: AttributeName("link"), guard_types: [EntityTypeName("Building"), EntityTypeName("Building")], inner: Linked { relationship: AttributeName("isParked"), guard_types: [], inner: Local(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("en")], written: [AttributeName("en"), AttributeName("en")] })) }) } })), Term(Ordering { path: Linked { relationship: AttributeName("isParked"), guard_types: [EntityTypeName("Building"), EntityTypeName("Vehicle"), EntityTypeName("Building")], inner: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("ex:q")], trailing: None }) }, operator: GreaterOrEqual, value: Number(JsonNumber(BigDecimal(sign=Plus, scale=0, digits=[9007199254740993]))) })]), Term(Equality { path: Local(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("observedAt")], trailing: None }), membership: Outside, value: Range { min: Str("ünï"), max: Str("with \"quote\"") } })])
   written "r{T1,T1:r{Vehicle,Vehicle,T1:isParked{\"ex:q\".\"https://example.com/q\".ex:q[*]}}}==true;isParked{link{isParked{observedAt.x_1.a[b.en]}}}>\"\"|(link{Building,Building:isParked{\"https://example.com/q\"[en.en]}}|isParked{Building,Vehicle,Building:a.ex:q.ex:q}>=9007199254740993)|a.ex:q.observedAt!=\"ünï\"..\"with \\\"quote\\\"\"", read back to the same tree

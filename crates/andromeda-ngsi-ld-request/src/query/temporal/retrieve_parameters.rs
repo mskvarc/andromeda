@@ -22,13 +22,11 @@ use crate::{
             deserialize_optional_dataset_selectors,
             deserialize_optional_iso8601_duration,
             deserialize_optional_join_level,
+            deserialize_optional_positive_integer,
             deserialize_optional_projection_terms,
             deserialize_optional_uri_csv,
         },
-        temporal::{
-            TemporalQueryParameters,
-            deserialization::{deserialize_option_timeproperty, deserialize_option_timerel, deserialize_optional_aggr_methods},
-        },
+        temporal::{TemporalQueryParameters, deserialization::deserialize_optional_aggr_methods},
     },
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
@@ -49,6 +47,7 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
     projection::written_projection_term::WrittenProjectionTerm,
+    query_flag::deserialize_optional_flag,
     temporal::aggregation_period::{AggregationPeriod, optional},
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -62,7 +61,7 @@ use std::num::NonZeroU32;
 #[serde(deny_unknown_fields)]
 pub struct TemporalRetrieveParameters {
     /// How the window relates to the given instants (clause 4.11 `timerel`).
-    #[serde(default, deserialize_with = "deserialize_option_timerel")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
     #[serde(rename = "timeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
@@ -71,10 +70,10 @@ pub struct TemporalRetrieveParameters {
     #[serde(rename = "endTimeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
-    #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timeproperty: Option<TimeProp>,
     /// How many instances per attribute the response carries (`lastN`).
-    #[serde(rename = "lastN")]
+    #[serde(rename = "lastN", default, deserialize_with = "deserialize_optional_positive_integer")]
     pub last_n: Option<NonZeroU32>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
@@ -109,10 +108,12 @@ pub struct TemporalRetrieveParameters {
     /// Typed temporal representation and system-attribute options (`options`).
     pub options: Option<WrittenValue<TemporalRepresentationOptions>>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
     /// Whether the location of the `EntityMap` used is returned, one being
     /// created when none is in use (clause 5.7.3.3 `entityMap`).
     #[serde(rename = "entityMap")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub entity_map: Option<bool>,
     /// The suggested lifetime of a created `EntityMap` (clause 5.7.3.3
     /// `entityMapLifetime`).

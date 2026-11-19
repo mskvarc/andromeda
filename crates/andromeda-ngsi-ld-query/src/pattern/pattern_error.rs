@@ -2,16 +2,20 @@
 //! refused.
 
 use crate::pattern::non_posix_construct::NonPosixConstruct;
-use regex_syntax::hir;
+use regex_syntax::{ast, hir};
 use thiserror::Error;
 
 /// The rule a regular expression broke, against IEEE 1003.2 or against the
 /// dialect the broker admits.
+///
+/// Every refusal is one line naming the rule: the parser's own errors draw
+/// the pattern with a marker under the fault, over several lines, so only
+/// their kind is kept.
 #[derive(Debug, Error)]
 pub enum PatternError {
-    /// The `regex` crate refused the pattern.
+    /// The pattern is no regular expression at all.
     #[error("invalid regular expression: {0}")]
-    Regex(#[from] regex::Error),
+    Syntax(ast::ErrorKind),
     /// A repetition operator immediately followed another repetition operator, which PostgreSQL's POSIX engine rejects.
     #[error("invalid POSIX regular expression: a repetition operator cannot follow another repetition operator")]
     RepeatedQuantifier,
@@ -23,8 +27,11 @@ pub enum PatternError {
         /// The unsupported construct.
         construct: NonPosixConstruct,
     },
-    /// A pattern the `regex` crate compiled could not be translated into the
-    /// intermediate representation its store restatement is rendered from.
+    /// A parsed pattern names what no pattern can match, such as an unknown
+    /// Unicode class.
     #[error("invalid regular expression: {0}")]
-    Translation(#[from] hir::Error),
+    Translation(hir::ErrorKind),
+    /// A valid pattern compiles past the size the in-memory engine admits.
+    #[error("invalid regular expression: the pattern compiles past the size the broker admits")]
+    TooLarge(#[source] regex::Error),
 }

@@ -23,7 +23,7 @@ pub enum BatchMembers {
     #[strum(serialize = "entities")]
     Entities,
     /// Entity identifiers, for delete (clause 5.6.10).
-    #[strum(serialize = "entity ids")]
+    #[strum(serialize = "entity identifiers")]
     EntityIds,
 }
 
@@ -48,7 +48,7 @@ pub enum BatchBodyRefusal {
         members: BatchMembers,
     },
     /// Clauses 5.6.7.4 to 5.6.10.4: the array is empty.
-    #[error("the request body must be a non-empty JSON array of {members}")]
+    #[error("the array of {members} in the request body is empty")]
     Empty {
         /// What the array was to hold.
         members: BatchMembers,
@@ -177,7 +177,7 @@ mod tests {
                 members: BatchMembers::EntityIds
             }
             .to_string(),
-            "the request body must be a non-empty JSON array of entity ids"
+            "the array of entity identifiers in the request body is empty"
         );
         pretty_assertions::assert_eq!(
             BatchBodyRefusal::NotAnArray {

@@ -155,7 +155,7 @@ fn update_result(local: LocalAttributeWrite<'_>, forwarded: &[ForwardedWriteResu
             (_, None) => push_updated(&mut result, part.attributes.iter()),
             (_, Some(problem)) => result.not_updated.extend(part.attributes.iter().map(|attribute| NotUpdatedDetails {
                 attribute_name: attribute.clone(),                   // clone: the result owns the names it reports
-                reason: problem.detail.clone(),                      // clone: every attribute the failed part covers carries its reason
+                reason: problem.detail.to_string(),                  // clone: every attribute the failed part covers carries its reason
                 registration_id: Some(part.registration_id.clone()), // clone: the result owns the registration it names
             })),
         }

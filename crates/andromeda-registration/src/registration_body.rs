@@ -638,9 +638,12 @@ mod tests {
     fn an_endpoint_that_is_no_http_or_https_uri_is_refused_on_create_and_update() {
         for endpoint in ["ftp://x/y", "file:///etc/passwd"] {
             let created = create_of(&with("endpoint", json!(endpoint))).expect_err("no NGSI-LD API root on create");
-            assert!(created.contains("endpoint must be an http or https URI"), "{endpoint}: {created}");
+            assert!(created.contains("endpoint must be an absolute http or https URI"), "{endpoint}: {created}");
             let updated = body_of(&json!({"endpoint": endpoint})).expect_err("no NGSI-LD API root on update");
-            assert!(updated.to_string().contains("endpoint must be an http or https URI"), "{endpoint}: {updated}");
+            assert!(
+                updated.to_string().contains("endpoint must be an absolute http or https URI"),
+                "{endpoint}: {updated}"
+            );
         }
     }
 

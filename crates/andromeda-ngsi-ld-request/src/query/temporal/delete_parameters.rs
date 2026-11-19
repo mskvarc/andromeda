@@ -13,16 +13,13 @@
 //! silently ignored.
 
 use crate::{
-    query::{
-        deserialization::{
-            OptionalGeoQuery,
-            deserialize_optional_attribute_names,
-            deserialize_optional_dataset_selectors,
-            deserialize_optional_filter,
-            deserialize_optional_pattern,
-            deserialize_optional_uri_csv,
-        },
-        temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel},
+    query::deserialization::{
+        OptionalGeoQuery,
+        deserialize_optional_attribute_names,
+        deserialize_optional_dataset_selectors,
+        deserialize_optional_filter,
+        deserialize_optional_pattern,
+        deserialize_optional_uri_csv,
     },
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
@@ -30,9 +27,11 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
+    defined_token::deserialize_optional_token,
     filter::Filter,
     name_stage::Written,
     pattern::Pattern,
+    query_flag::deserialize_optional_flag,
     scope::scope_query::ScopeQuery,
     type_selection::TypeSelection,
 };
@@ -71,7 +70,7 @@ pub struct TemporalDeleteParameters {
     pub csf: Option<Filter<Written>>,
 
     /// How the window relates to the given instants (clause 4.11 `timerel`).
-    #[serde(default, deserialize_with = "deserialize_option_timerel")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
     #[serde(rename = "timeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
@@ -80,7 +79,7 @@ pub struct TemporalDeleteParameters {
     #[serde(rename = "endTimeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
-    #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timeproperty: Option<TimeProp>,
 
     /// Attributes whose instances are removed (clause 5.6.21 `drop`).
@@ -99,11 +98,13 @@ pub struct TemporalDeleteParameters {
     /// Whether every `datasetId` instance is removed (clause 5.6.13 `deleteAll`).
     /// Contradictory with `datasetId`.
     #[serde(rename = "deleteAll")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub delete_all: Option<bool>,
 
     /// Whether the operation only reports the would-delete count and removes
     /// nothing (`dryRun`).
     #[serde(rename = "dryRun")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub dry_run: Option<bool>,
 }
 

@@ -44,6 +44,7 @@ use andromeda_ngsi_ld_query::{
     name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
+    query_flag::deserialize_optional_flag,
     scope::scope_query::ScopeQuery,
     type_selection::TypeSelection,
 };
@@ -84,6 +85,7 @@ pub struct PurgeEntitiesParameters {
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
     /// Attributes removed from every selected entity (clause 5.6.21 `drop`).
     /// Mutually exclusive with `keep`.
@@ -102,6 +104,7 @@ pub struct PurgeEntitiesParameters {
     /// attributes it targets (`deleteAll`, the `purge_dataset_scope`
     /// extension). Contradictory with `datasetId`.
     #[serde(rename = "deleteAll")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub delete_all: Option<bool>,
 }
 

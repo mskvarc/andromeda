@@ -16,7 +16,7 @@ use crate::{
     batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
-    body_admission::{AdmittedBody, admit_request_body, submitted_context},
+    body_admission::{AdmittedBody, TopLevel, admit_request_body, submitted_context},
     submitted_body::SubmittedBody,
 };
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
@@ -63,6 +63,7 @@ where
         admit_request_body(
             req,
             state,
+            TopLevel::Batch,
             |AdmittedBody {
                  text,
                  context,
@@ -361,12 +362,18 @@ mod tests {
     /// Clause 5.5.4: only a body that is not JSON is `InvalidRequest`.
     #[tokio::test]
     async fn the_body_shape_refusals_carry_the_clause_5_5_4_categories() {
-        pretty_assertions::assert_eq!(refusal_of(json_request("[]")).await.0, NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(
+            refusal_of(json_request("[]")).await,
+            (
+                NgsiLdErrorType::BadRequestData,
+                "the array of entity identifiers in the request body is empty".to_owned()
+            )
+        );
         pretty_assertions::assert_eq!(
             refusal_of(json_request("{}")).await,
             (
                 NgsiLdErrorType::BadRequestData,
-                "the request body must be a JSON array of entity ids".to_owned()
+                "the request body must be a JSON array of entity identifiers".to_owned()
             )
         );
         pretty_assertions::assert_eq!(refusal_of(json_request("[,")).await.0, NgsiLdErrorType::InvalidRequest);

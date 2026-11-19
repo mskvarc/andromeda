@@ -19,8 +19,8 @@ pub(crate) enum BodyAdmissionRefusal {
     /// [`JsonTextRefusal::Syntax`], which is [`BodyAdmissionRefusal::NotJson`].
     #[error(transparent)]
     Inadmissible(JsonTextRefusal),
-    /// Clause 5.5.4: the body is an empty array, which is neither an entity
-    /// nor a batch.
+    /// Clause 5.5.4: the body of an operation that takes one document is an
+    /// empty array, which is no document.
     #[error("request body is an empty array, expected a JSON object")]
     EmptyArray,
     /// Clause 6.3.5: an `application/json` body carries an `@context` member,

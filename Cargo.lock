@@ -747,6 +747,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
@@ -1438,6 +1439,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "derive_more",
  "http",
  "iri-rs",
  "pretty_assertions",

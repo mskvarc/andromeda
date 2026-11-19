@@ -1,9 +1,9 @@
 //! The time property a temporal query filters and orders on (ETSI GS CIM 009 clause 4.8).
 
-use strum::{Display, EnumIter, EnumString, IntoStaticStr};
+use strum::{Display, EnumIter, EnumString, IntoStaticStr, VariantNames};
 
 /// Temporal property to filter on (clause 4.8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Display, EnumIter, EnumString, IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Display, EnumIter, EnumString, IntoStaticStr, VariantNames)]
 #[strum(serialize_all = "camelCase")]
 pub enum TimeProp {
     /// Select by observedAt timestamp (default).

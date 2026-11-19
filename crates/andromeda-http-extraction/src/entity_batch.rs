@@ -614,7 +614,7 @@ mod tests {
             (
                 "[]",
                 NgsiLdErrorType::BadRequestData,
-                Some("the request body must be a non-empty JSON array of entities"),
+                Some("the array of entities in the request body is empty"),
             ),
             ("{}", NgsiLdErrorType::BadRequestData, Some("the request body must be a JSON array of entities")),
         ] {
@@ -651,7 +651,7 @@ mod tests {
             );
             pretty_assertions::assert_eq!(errors.len(), 1, "{content_type}");
             pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:B", "{content_type}");
-            pretty_assertions::assert_eq!(errors[0].error.detail, detail, "{content_type}");
+            pretty_assertions::assert_eq!(errors[0].error.detail.as_str(), detail, "{content_type}");
         }
     }
 

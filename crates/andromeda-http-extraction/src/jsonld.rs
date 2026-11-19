@@ -9,7 +9,7 @@
 //! its body is.
 
 use crate::{
-    body_admission::{AdmittedBody, admit_request_body, submitted_context},
+    body_admission::{AdmittedBody, TopLevel, admit_request_body, submitted_context},
     request_decode_bounds::{RequestDecodeBounds, read_within},
     submitted_body::SubmittedBody,
     undecodable_body::UndecodableBody,
@@ -54,6 +54,7 @@ where
         admit_request_body(
             req,
             state,
+            TopLevel::Document,
             |AdmittedBody {
                  text,
                  context,

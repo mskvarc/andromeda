@@ -258,7 +258,6 @@ mod tests {
         time::{date_time::NgsiLdDateTimeError, lexical::LexicalError, rendering::instant_text, time_of_day::NgsiLdTimeError},
     };
     use andromeda_ngsi_ld_number::JsonNumber;
-    use regex::Error as RegexError;
     use winnow::{
         Parser,
         combinator::fail,
@@ -681,10 +680,10 @@ mod tests {
         // unterminated character class is not one, and the request is rejected
         // rather than turned into a filter that matches nothing.
         let error = "name~=\"[\"".parse::<Filter<Written>>().expect_err("must reject");
-        assert!(matches!(error, FilterError::Pattern(PatternError::Regex(_))), "got {error:?}");
+        assert!(matches!(error, FilterError::Pattern(PatternError::Syntax(_))), "got {error:?}");
 
         let error = "name!~=\"[\"".parse::<Filter<Written>>().expect_err("must reject");
-        assert!(matches!(error, FilterError::Pattern(PatternError::Regex(_))), "got {error:?}");
+        assert!(matches!(error, FilterError::Pattern(PatternError::Syntax(_))), "got {error:?}");
     }
 
     #[test]
@@ -1413,10 +1412,7 @@ mod tests {
         let error = refusal_of(
             r#"((speed.ex:name==false,false,0|"https://example.com/q".x_1<=""|r{"ex:q"."ex:q"[*]}==2024-01-01..2024-12-31)|link{isParked{x_1."https://example.com/q"}}!=http://example.com/a|("https://example.com/q"~="a.*/|link{x_1.observedAt[*]}~="\\d"|a.speed[*]))"#,
         );
-        assert!(
-            matches!(error, FilterError::Pattern(PatternError::Regex(RegexError::Syntax(_)))),
-            "got {error:?}"
-        );
+        assert!(matches!(error, FilterError::Pattern(PatternError::Syntax(_))), "got {error:?}");
     }
 
     /// Input continuing after a complete filter is refused at its first character, before a later stray character.
@@ -1474,10 +1470,7 @@ mod tests {
     #[test]
     fn a_pattern_that_is_no_regular_expression_is_refused_before_a_later_unterminated_quotation_mark() {
         let error = refusal_of(r#"(link{isParked{Building,Building:link{brandName.x_1.ex:name}}}~="\\d-|r{isParked{Building,T1,T1:speed[*]}}!~="a.*")"#);
-        assert!(
-            matches!(error, FilterError::Pattern(PatternError::Regex(RegexError::Syntax(_)))),
-            "got {error:?}"
-        );
+        assert!(matches!(error, FilterError::Pattern(PatternError::Syntax(_))), "got {error:?}");
     }
 
     /// Input continuing after a complete filter is refused at its first character, before a quotation mark that is never closed.

@@ -593,7 +593,7 @@ async fn a_request_declaring_no_length_is_the_bare_411_of_clause_6_3_4() {
 }
 
 #[tokio::test]
-async fn a_typed_body_that_does_not_decode_is_bad_request_data_naming_the_member_and_the_positioned_reader_message() {
+async fn a_typed_body_that_does_not_decode_is_bad_request_data_naming_the_member_without_the_reader_position() {
     #[derive(Debug, Deserialize)]
     struct Named {
         name: String,
@@ -606,7 +606,7 @@ async fn a_typed_body_that_does_not_decode_is_bad_request_data_naming_the_member
             pretty_assertions::assert_eq!(response.problem().error_type(), NgsiLdErrorType::BadRequestData);
             pretty_assertions::assert_eq!(
                 response.problem().detail(),
-                "the request body member 'name' does not decode: invalid type: integer `5`, expected a string at line 1 column 9"
+                "the request body member 'name' does not decode: invalid type: integer `5`, expected a string"
             );
         }
         Ok(extracted) => panic!("accepted the name {}", extracted.value.name),

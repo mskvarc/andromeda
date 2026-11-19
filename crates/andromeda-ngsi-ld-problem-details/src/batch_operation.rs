@@ -2,6 +2,7 @@
 //! (clause 5.2.16).
 
 use crate::{
+    detail_text::DetailText,
     error_type::NgsiLdErrorType,
     problem_detail::{ProblemClassification, WireProblemClassification},
     problem_document_error::ProblemDocumentError,
@@ -65,7 +66,7 @@ impl BatchEntityError {
             registration_id: None,
             error: BatchProblemDetail {
                 error_type: BatchErrorKind::Known(classification),
-                detail: detail.to_string(),
+                detail: DetailText::from(detail),
             },
         }
     }
@@ -102,8 +103,8 @@ pub enum BatchErrorKind {
 pub struct BatchProblemDetail {
     /// The problem's type: a known NGSI-LD category, or any other RFC 7807 URI.
     pub error_type: BatchErrorKind,
-    /// The human-readable explanation.
-    pub detail: String,
+    /// The human-readable explanation, on one line.
+    pub detail: DetailText,
 }
 
 /// The members of a problem document that names no `type`.
@@ -175,8 +176,8 @@ const FIELDS: &[&str] = &["type", "title", "status", "detail"];
 /// `title` when it has one, else nothing. RFC 7807 clause 3.1 makes both
 /// members optional, and a peer broker that omits `detail` must still have its
 /// error merged into the batch rather than failing the whole response.
-fn detail_or_title(detail: Option<String>, title: Option<String>) -> String {
-    detail.or(title).unwrap_or_default()
+fn detail_or_title(detail: Option<String>, title: Option<String>) -> DetailText {
+    DetailText::from(detail.or(title).unwrap_or_default())
 }
 
 /// Reads a problem detail back into its category and message.
@@ -241,6 +242,7 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
 mod tests {
     use crate::{
         batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
+        detail_text::DetailText,
         error_type::NgsiLdErrorType,
         problem_detail::ProblemClassification,
     };
@@ -343,7 +345,7 @@ mod tests {
     fn a_problem_detail_derives_its_rfc_7807_members_from_its_category() {
         let rendered = serde_json::to_value(BatchProblemDetail {
             error_type: BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::BadRequestData)),
-            detail: "Invalid payload".to_string(),
+            detail: DetailText::from("Invalid payload"),
         })
         .expect("serialises");
 
@@ -359,7 +361,7 @@ mod tests {
         for category in NgsiLdErrorType::iter() {
             let original = BatchProblemDetail {
                 error_type: BatchErrorKind::Known(ProblemClassification::Category(category)),
-                detail: "test".to_string(),
+                detail: DetailText::from("test"),
             };
             let rendered = serde_json::to_string(&original).expect("serialises");
             pretty_assertions::assert_eq!(serde_json::from_str::<BatchProblemDetail>(&rendered).expect("deserialises"), original);
@@ -407,7 +409,7 @@ mod tests {
         .to_string();
         let parsed = serde_json::from_str::<BatchProblemDetail>(&rendered).expect("a foreign problem detail deserialises");
         pretty_assertions::assert_eq!(parsed.error_type, BatchErrorKind::Other(iri_ref("https://scorpio.example/errors/Custom")));
-        pretty_assertions::assert_eq!(parsed.detail, "brewing");
+        pretty_assertions::assert_eq!(parsed.detail.as_str(), "brewing");
     }
 
     #[test]
@@ -420,10 +422,10 @@ mod tests {
     #[test]
     fn a_peer_answer_naming_no_type_still_carries_its_detail() {
         let parsed = BatchProblemDetail::from_answer(json!({"detail": "no access"}).to_string().as_bytes()).expect("a problem document");
-        pretty_assertions::assert_eq!(parsed.detail, "no access");
+        pretty_assertions::assert_eq!(parsed.detail.as_str(), "no access");
         pretty_assertions::assert_eq!(parsed.error_type, BatchErrorKind::Other(iri_ref("about:blank")));
         let titled = BatchProblemDetail::from_answer(json!({"title": "Forbidden"}).to_string().as_bytes()).expect("a problem document");
-        pretty_assertions::assert_eq!(titled.detail, "Forbidden");
+        pretty_assertions::assert_eq!(titled.detail.as_str(), "Forbidden");
         assert!(BatchProblemDetail::from_answer(b"not json").is_none());
         assert!(BatchProblemDetail::from_answer(br#"{"success":[],"errors":[]}"#).is_none());
         let typed = BatchProblemDetail::from_answer(
@@ -445,10 +447,10 @@ mod tests {
         let titled =
             serde_json::from_str::<BatchProblemDetail>(&json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict", "title": "exists"}).to_string())
                 .expect("a title-only problem detail deserialises");
-        pretty_assertions::assert_eq!(titled.detail, "exists");
+        pretty_assertions::assert_eq!(titled.detail.as_str(), "exists");
         let bare = serde_json::from_str::<BatchProblemDetail>(&json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict"}).to_string())
             .expect("a type-only problem detail deserialises");
-        pretty_assertions::assert_eq!(bare.detail, "");
+        pretty_assertions::assert_eq!(bare.detail.as_str(), "");
         pretty_assertions::assert_eq!(
             bare.error_type,
             BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::Conflict))

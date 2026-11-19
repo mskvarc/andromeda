@@ -1,6 +1,6 @@
 //! Framework-independent single-error problem details from clause 5.5.3.
 
-use crate::{error_type::NgsiLdErrorType, problem_document_error::ProblemDocumentError, status_member::StatusMember};
+use crate::{detail_text::DetailText, error_type::NgsiLdErrorType, problem_document_error::ProblemDocumentError, status_member::StatusMember};
 use http::{StatusCode, Uri};
 use iri_rs::{Iri, IriRefBuf, iri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
@@ -128,8 +128,8 @@ impl ProblemClassification {
 pub struct ProblemDetail {
     /// Typed source of the category and HTTP status.
     classification: ProblemClassification,
-    /// Client-visible human-readable explanation.
-    detail: String,
+    /// Client-visible human-readable explanation, on one line.
+    detail: DetailText,
     /// Whether the document carries the `status` its classification binds.
     status_member: StatusMember,
     /// Optional request target supplied by the inbound HTTP boundary.
@@ -146,7 +146,7 @@ impl ProblemDetail {
     pub fn new(error_type: NgsiLdErrorType, detail: impl Into<String>) -> ProblemDetail {
         ProblemDetail {
             classification: ProblemClassification::Category(error_type),
-            detail: detail.into(),
+            detail: DetailText::from(detail.into()),
             status_member: StatusMember::Stated,
             instance: None,
         }
@@ -156,7 +156,7 @@ impl ProblemDetail {
     pub fn from_classification(classification: ProblemClassification, detail: impl Into<String>) -> ProblemDetail {
         ProblemDetail {
             classification,
-            detail: detail.into(),
+            detail: DetailText::from(detail.into()),
             status_member: StatusMember::Stated,
             instance: None,
         }
@@ -347,7 +347,7 @@ impl<'de> Deserialize<'de> for ProblemDetail {
         };
         Ok(ProblemDetail {
             classification,
-            detail: wire.detail,
+            detail: DetailText::from(wire.detail),
             status_member,
             instance,
         })
@@ -364,6 +364,25 @@ mod tests {
     use http::{StatusCode, Uri};
     use serde_json::json;
     use strum::IntoEnumIterator;
+
+    /// No detail holds a line break, whatever text it was made from: one the
+    /// broker words, a library's message or a peer's document.
+    #[test]
+    fn every_detail_is_one_line() {
+        let multi_line = "regex parse error:\n    (\n    ^\nerror: unclosed group";
+        let one_line = "regex parse error: ( ^ error: unclosed group";
+        pretty_assertions::assert_eq!(ProblemDetail::new(NgsiLdErrorType::BadRequestData, multi_line).detail(), one_line);
+        pretty_assertions::assert_eq!(
+            ProblemDetail::from_classification(ProblemClassification::GatewayTimeout, multi_line).detail(),
+            one_line
+        );
+        let read = serde_json::from_value::<ProblemDetail>(json!({
+            "type": "https://uri.etsi.org/ngsi-ld/errors/BadRequestData",
+            "detail": multi_line,
+        }))
+        .expect("a problem document");
+        pretty_assertions::assert_eq!(read.detail(), one_line);
+    }
 
     #[test]
     fn ordinary_categories_serialize_with_derived_type_title_and_status() -> Result<(), serde_json::Error> {

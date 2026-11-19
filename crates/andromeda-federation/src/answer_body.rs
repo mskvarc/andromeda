@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn a_text_body_naming_only_a_detail_is_the_problem_the_source_reported() {
         let body = AnswerBody::Text(Arc::from(br#"{"detail":"no access"}"#.as_slice()));
-        pretty_assertions::assert_eq!(body.problem().map(|problem| problem.detail), Some("no access".to_owned()));
+        pretty_assertions::assert_eq!(body.problem().map(|problem| problem.detail.to_string()), Some("no access".to_owned()));
         assert!(AnswerBody::Absent.problem().is_none());
     }
 }

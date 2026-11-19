@@ -86,15 +86,21 @@ impl FromStr for Pattern {
     ///
     /// # Errors
     ///
-    /// Returns [`PatternError::NonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`PatternError::Regex`] when the `regex` crate rejects the pattern, [`PatternError::RepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, and [`PatternError::Translation`] when the pattern cannot be translated for rendering.
+    /// Returns [`PatternError::Syntax`] when the pattern is no regular expression, [`PatternError::NonPosixConstruct`] when [`restate_bracket_expressions`] or [`check_posix_dialect`] finds a construct outside the admitted dialect, [`PatternError::RepeatedQuantifier`] when [`check_posix_dialect`] finds a repetition of a repetition, [`PatternError::Translation`] when the pattern names what no pattern can match, and [`PatternError::TooLarge`] when the `regex` crate cannot compile it within its size limit.
     fn from_str(pattern: &str) -> Result<Pattern, PatternError> {
         let restated = restate_bracket_expressions(pattern)?;
-        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store.
-        let compiled = RegexBuilder::new(&restated).dot_matches_new_line(true).build()?;
-        let ast = Parser::new().parse(&restated).map_err(|_| PatternError::RepeatedQuantifier)?;
+        let ast = Parser::new().parse(&restated).map_err(|error| PatternError::Syntax(error.kind().clone()))?;
         check_posix_dialect(&ast)?;
-        // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
-        let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(&restated, &ast)?;
+        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store. The translation is configured as `compiled` is built, so the restatement renders the reading the in-memory engine runs.
+        let hir = TranslatorBuilder::new()
+            .dot_matches_new_line(true)
+            .build()
+            .translate(&restated, &ast)
+            .map_err(|error| PatternError::Translation(error.kind().clone()))?;
+        let compiled = RegexBuilder::new(&restated)
+            .dot_matches_new_line(true)
+            .build()
+            .map_err(PatternError::TooLarge)?;
         let portable = PortablePattern::render(&hir)?;
         let subject_start = SubjectStart::of(&hir);
         Ok(Pattern {
@@ -136,7 +142,21 @@ mod tests {
     #[test]
     fn an_invalid_regex_pattern_is_rejected_when_the_filter_is_parsed() {
         let error = "[".parse::<Pattern>().expect_err("must reject");
-        assert!(matches!(error, PatternError::Regex(_)), "got {error:?}");
+        assert!(matches!(error, PatternError::Syntax(_)), "got {error:?}");
+    }
+
+    /// The refusal names the rule broken on one line; the parser's drawing of
+    /// the pattern with a marker under the fault is no part of it.
+    #[test]
+    fn a_pattern_that_is_no_regular_expression_is_refused_on_one_line() {
+        for (written, detail) in [
+            ("(a", "invalid regular expression: unclosed group"),
+            ("[", "invalid regular expression: unclosed character class"),
+            ("a)", "invalid regular expression: unopened group"),
+        ] {
+            let error = written.parse::<Pattern>().expect_err(written);
+            assert_eq!(error.to_string(), detail, "{written}");
+        }
     }
 
     #[test]

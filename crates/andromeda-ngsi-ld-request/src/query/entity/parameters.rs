@@ -34,6 +34,7 @@ use andromeda_ngsi_ld_query::{
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
+    query_flag::deserialize_optional_flag,
     scope::scope_query::ScopeQuery,
     type_selection::TypeSelection,
 };
@@ -92,6 +93,7 @@ pub struct EntityQueryParameters {
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(rename = "local")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
@@ -135,6 +137,7 @@ pub struct EntityQueryParameters {
     pub contained_by: Option<Vec<Identifier>>,
     /// Whether the query creates an entity map for stable pagination (`entityMap`).
     #[serde(rename = "entityMap")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub entity_map: Option<bool>,
     /// How long a created entity map lives, as an ISO 8601 duration (`entityMapLifetime`).
     #[serde(rename = "entityMapLifetime")]
@@ -142,6 +145,7 @@ pub struct EntityQueryParameters {
     pub entity_map_lifetime: Option<Iso8601Duration>,
     /// Whether attributes split across Context Sources are merged after forwarding (`splitEntities`).
     #[serde(rename = "splitEntities")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub split_entities: Option<bool>,
     /// The `GeoProperty` a `GeoJSON` response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]

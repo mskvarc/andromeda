@@ -8,7 +8,7 @@
 //! 5.3.1-1). Every other body precondition applies, and the receiver decodes
 //! the text straight into the notification it is.
 
-use crate::body_admission::{AdmittedBody, admit_request_body};
+use crate::body_admission::{AdmittedBody, TopLevel, admit_request_body};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
 use axum::{
@@ -33,7 +33,10 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Clause 6.3.4 admits `application/merge-patch+json` for PATCH alone, so
         // the admission refuses it on a Notification's POST.
-        admit_request_body(req, state, |AdmittedBody { text, context, .. }| Ok(NotificationBody { text, context })).await
+        admit_request_body(req, state, TopLevel::Document, |AdmittedBody { text, context, .. }| {
+            Ok(NotificationBody { text, context })
+        })
+        .await
     }
 }
 

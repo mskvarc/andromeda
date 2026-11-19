@@ -7,6 +7,7 @@ use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::Remote
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_problem_details::{
     batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
+    detail_text::DetailText,
     error_type::NgsiLdErrorType,
     problem_detail::ProblemClassification,
 };
@@ -85,7 +86,7 @@ pub fn forwarded_write_problem(registration_id: &Identifier, outcome: &Forwarded
     };
     Some(BatchProblemDetail {
         error_type: BatchErrorKind::Known(classification),
-        detail: failure.to_string(),
+        detail: DetailText::from(failure.to_string()),
     })
 }
 
@@ -143,7 +144,7 @@ mod tests {
             batch.error.error_type,
             BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))
         );
-        pretty_assertions::assert_eq!(batch.error.detail, single.detail());
+        pretty_assertions::assert_eq!(batch.error.detail.as_str(), single.detail());
     }
 
     #[test]
@@ -177,7 +178,7 @@ mod tests {
             error.error.error_type,
             BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::AlreadyExists))
         );
-        pretty_assertions::assert_eq!(error.error.detail, "exists");
+        pretty_assertions::assert_eq!(error.error.detail.as_str(), "exists");
     }
 
     #[test]
@@ -244,7 +245,7 @@ mod tests {
         });
         pretty_assertions::assert_eq!(result.success[0].as_str(), "urn:ngsi-ld:Entity:1");
         pretty_assertions::assert_eq!(result.errors[0].entity_id.as_str(), "urn:ngsi-ld:Entity:2");
-        pretty_assertions::assert_eq!(result.errors[0].error.detail, "invalid");
+        pretty_assertions::assert_eq!(result.errors[0].error.detail.as_str(), "invalid");
         Ok(())
     }
 }

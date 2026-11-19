@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_query::{
         exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
         written_projection_term::WrittenProjectionTerm,
     },
+    query_flag::deserialize_optional_flag,
     type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_representation::{
@@ -51,6 +52,7 @@ pub struct AppendParams {
     #[serde(rename = "type")]
     pub entity_type: Option<TypeSelection<Written>>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 
@@ -83,6 +85,7 @@ pub struct AttributeWriteParams {
     #[serde(rename = "type")]
     pub entity_type: Option<TypeSelection<Written>>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 
@@ -110,6 +113,7 @@ pub struct MergeParams {
     #[serde(rename = "type")]
     pub entity_type: Option<TypeSelection<Written>>,
     /// Whether the operation is confined to this broker (clause 5.5.13).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
 }
 
@@ -178,6 +182,7 @@ pub struct GetEntityParams {
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub local: Option<bool>,
     /// How linked entities reach the response (clause 4.5.23 `join`).
     #[serde(default, deserialize_with = "deserialize_optional_token")]
@@ -193,6 +198,7 @@ pub struct GetEntityParams {
     /// Whether the retrieval returns the location of the `EntityMap` it used,
     /// creating one when none is in use (Table 6.5.3.1-1 `entityMap`).
     #[serde(rename = "entityMap")]
+    #[serde(default, deserialize_with = "deserialize_optional_flag")]
     pub entity_map: Option<bool>,
     /// How long a created entity map lives, as an ISO 8601 duration
     /// (Table 6.5.3.1-1 `entityMapLifetime`).

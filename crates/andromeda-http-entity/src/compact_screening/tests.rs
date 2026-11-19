@@ -45,7 +45,7 @@ enum Outcome {
 
 /// The decode refusal of the node at `path`, for `fault`.
 fn refused_at(path: &str, fault: &str) -> Outcome {
-    Outcome::Refused(format!("the node at {path} is refused: the attribute {fault}"))
+    Outcome::Refused(format!("the value at {path} is refused: the attribute {fault}"))
 }
 
 /// The decode refusal of the node at `path` carrying the seal `member`.
@@ -59,7 +59,7 @@ fn sealed_at(path: &str, member: &str) -> Outcome {
 /// The decode refusal of the member at `path`, named by no attribute name.
 fn attribute_name_refused_at(path: &str) -> Outcome {
     Outcome::Refused(format!(
-        "the node at {path} is refused: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+        "the value at {path} is refused: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
     ))
 }
 
@@ -343,7 +343,7 @@ fn a_single_attribute_fragment_is_read_as_the_node_itself() {
     );
     assert_eq!(
         attribute_outcome("speed", &json!({"type": "Propertyy", "value": 1})),
-        Outcome::Refused(format!("the node at / is refused: the attribute {NOT_AN_ATTRIBUTE_TYPE}"))
+        Outcome::Refused(format!("the value at / is refused: the attribute {NOT_AN_ATTRIBUTE_TYPE}"))
     );
 }
 
@@ -657,10 +657,7 @@ fn the_keys_of_a_language_map_are_read_as_language_tags() {
     let payload = entity(json!({"label": {"type": "LanguageProperty", "languageMap": {"": "x", "@foo": "y"}}}));
     assert_eq!(
         outcome(&payload),
-        Outcome::Refused(
-            "the node at /label/languageMap is refused: invalid 'languageMap' member: invalid BCP47 language tag: invalid langtag:  at line 1 column 3"
-                .to_owned()
-        )
+        Outcome::Refused("the value at /label/languageMap is refused: invalid 'languageMap' member: invalid BCP47 language tag: invalid langtag: ".to_owned())
     );
 }
 

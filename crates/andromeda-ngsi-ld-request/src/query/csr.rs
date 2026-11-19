@@ -26,6 +26,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset_selector::DatasetSelector,
+    defined_token::deserialize_optional_token,
     filter::Filter,
     name_stage::Written,
     pattern::Pattern,
@@ -93,7 +94,7 @@ pub struct CsrQueryParameters {
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// How the window relates to the given instants (clause 4.11 `timerel`).
-    #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timerel")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
     #[serde(rename = "timeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
@@ -102,7 +103,7 @@ pub struct CsrQueryParameters {
     #[serde(rename = "endTimeAt", default, deserialize_with = "instant_serde::optional::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
-    #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timeproperty")]
+    #[serde(default, deserialize_with = "deserialize_optional_token")]
     pub timeproperty: Option<TimeProp>,
     /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
     /// `cursor`), decided by the broker's pagination policy.
