@@ -229,7 +229,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         } = merge_contributions(local.versions, forwarded, request_projection.list(), &uri)?;
         let versions = match deferred {
             Some(deferred) => service
-                .retain_matching(&target, entities, deferred, &context, targeting)
+                .retain_matching(&target, entities, &deferred, &context, targeting)
                 .await
                 .with_entity_instance(&uri)?,
             None => entities,

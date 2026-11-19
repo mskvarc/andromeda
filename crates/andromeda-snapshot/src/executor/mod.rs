@@ -3,7 +3,9 @@
 mod attempts;
 /// Where a snapshot capture reads the context it freezes.
 pub mod capture_sources;
-/// What a captured stored state keeps of what it holds.
+/// The states one page of a snapshot entity capture leaves in the Snapshot's branch.
+mod captured_page;
+/// What a captured state keeps of what it holds.
 mod captured_state;
 mod drain;
 /// Capturing the whole result of one snapshot entity query.
@@ -11,13 +13,17 @@ mod entity_capture;
 mod execution;
 /// Why a Snapshot query or its preparation is recorded as failed.
 mod execution_failure;
-/// Turning the entities a capture merged with its sources into states.
+/// Merging a capture's entities with what its sources answered, and writing the merged ones.
 mod forwarded_capture;
 /// Reading the instances of a captured temporal answer to the end of its window.
 mod instance_walk;
 /// How many instances of each attribute stream a temporal capture holds under the query's `lastN`.
 mod last_n_tally;
 mod lease_renewal;
+/// Reading one local page of a snapshot entity capture.
+mod local_page;
+/// How reading or selecting one page of a snapshot entity capture ended.
+mod page_outcome;
 /// What the Context Sources answered an entity query, until the capture takes it.
 mod pending_sources;
 /// How one Snapshot query's capture ended, beside what it left in the staging branch.
