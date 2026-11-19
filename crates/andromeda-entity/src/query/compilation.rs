@@ -7,8 +7,8 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedT
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
+    entity_constraint_expansion::expand_entity_constraints,
     entity_selection::{ConsideredEntities, EntitySelection},
-    entity_selector_expansion::expand_entity_selectors,
     filter::{
         compilation::{FilterOptIns, compile_q_filter},
         compiled_filter::CompiledFilter,
@@ -101,7 +101,7 @@ impl EntityQueryService {
         language_targeting: LanguageTargeting,
     ) -> Result<CompiledEntityQuery, EntityError> {
         let expander = ContextualExpander::new(self.engine(), prepared_context);
-        let selectors = expand_entity_selectors(&params.selectors(), &expander).await?;
+        let selectors = expand_entity_constraints(&params.selectors(), &expander).await?;
         // Table 6.4.3.2-1 restricts `attrs` to "an Attribute (Property or
         // Relationship) name". A query answers in an Entity representation, where
         // clause 4.18 leaves the Scope non-reified, so `scope` names nothing the

@@ -14,8 +14,8 @@ use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
     geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
     type_selection::TypeSelection,
 };
@@ -85,7 +85,7 @@ pub(super) fn near_origin(id: &str) -> Arc<CompiledEntityQuery> {
 /// [`near_origin`] asked of `ids`, or of every vehicle when there are none.
 pub(super) fn near_origin_among(ids: Vec<Identifier>) -> Arc<CompiledEntityQuery> {
     let selection = EntitySelection {
-        selectors: vec![ExpandedEntitySelector {
+        selectors: vec![EntityConstraint {
             ids,
             id_pattern: None,
             type_selection: Some(TypeSelection::single(IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI").into())),

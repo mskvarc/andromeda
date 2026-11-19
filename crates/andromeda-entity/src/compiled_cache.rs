@@ -113,7 +113,7 @@ impl CompiledQueryKey {
         push_field(&mut parameters, Some(&params.entity_selectors.len().to_string()));
         for selector in &params.entity_selectors {
             let id_pattern = selector.id_pattern.as_ref().map(ToString::to_string);
-            push_uri_list(&mut parameters, selector.ids.as_deref());
+            push_uri_list(&mut parameters, selector.named_ids());
             push_field(&mut parameters, id_pattern.as_deref());
             push_field(&mut parameters, selector.type_selection.as_ref().map(ToString::to_string).as_deref());
         }

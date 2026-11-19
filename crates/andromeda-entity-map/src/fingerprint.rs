@@ -146,8 +146,9 @@ mod tests {
         query::body::Query,
     };
     use andromeda_ngsi_ld_query::{
+        entity_constraint::EntityConstraint,
+        entity_constraint_expansion::expand_entity_constraints,
         entity_selection::EntitySelection,
-        entity_selector_expansion::expand_entity_selectors,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::Written,
@@ -161,7 +162,6 @@ mod tests {
             window::{TemporalWindow, TimeInterval},
         },
         type_selection::expansion::expand_type_selection,
-        written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_request::{
@@ -183,14 +183,14 @@ mod tests {
 
     /// The selection a query compiles to under `expander`: its selectors, `attrs`, `q` and `scopeQ`.
     async fn compiled(
-        selectors: &[WrittenEntitySelector],
+        selectors: &[EntityConstraint<Written>],
         attrs: Option<&[AttributeName]>,
         q: Option<&Filter<Written>>,
         scope_q: Option<&ScopeQuery>,
         expander: &NamespaceExpander,
     ) -> EntitySelection {
         EntitySelection::builder()
-            .selectors(expand_entity_selectors(selectors, expander).await.expect("selectors compile"))
+            .selectors(expand_entity_constraints(selectors, expander).await.expect("selectors compile"))
             .attrs(
                 expand_attrs_admitted(attrs.unwrap_or_default(), AttrsAdmission::AttributeNamesOnly, expander)
                     .await

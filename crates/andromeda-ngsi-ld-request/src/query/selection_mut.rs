@@ -1,7 +1,7 @@
 //! The members of an admitted query that select entities, open to narrowing.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
+use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written};
 
 /// A mutable view of the identifier list and the clause 5.2.33 selectors of an
 /// admitted query.
@@ -15,5 +15,5 @@ pub struct SelectionMut<'a> {
     /// The flat `id` list, or the single selector's summary.
     pub id: &'a mut Option<Vec<Identifier>>,
     /// The clause 5.2.33 selectors of a POST query, empty for a GET.
-    pub entity_selectors: &'a mut Vec<WrittenEntitySelector>,
+    pub entity_selectors: &'a mut Vec<EntityConstraint<Written>>,
 }

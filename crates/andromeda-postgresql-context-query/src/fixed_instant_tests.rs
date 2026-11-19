@@ -11,8 +11,8 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_d
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
     filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
     geo::compiled_geo_query::CompiledGeoQuery,
     name_stage::{Expanded, Written},
@@ -70,8 +70,8 @@ fn names() -> QueryNames {
     }
 }
 
-fn of_type(name: &str) -> ExpandedEntitySelector {
-    ExpandedEntitySelector::builder()
+fn of_type(name: &str) -> EntityConstraint<Expanded> {
+    EntityConstraint::builder()
         .type_selection(Some(TypeSelection::single(
             IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI").into(),
         )))
@@ -198,7 +198,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
             "carrier",
             query(
                 EntitySelection::builder()
-                    .selectors(vec![ExpandedEntitySelector::builder().build()])
+                    .selectors(vec![EntityConstraint::builder().build()])
                     .attrs(vec![IriBuf::new(HEAD_SIGN.to_owned()).expect("valid IRI")])
                     .build(),
             ),
@@ -223,7 +223,7 @@ fn every_page_shape() -> Vec<(&'static str, CompiledEntityQuery, PageWindow, Cou
             query(
                 EntitySelection::builder()
                     .selectors(vec![
-                        ExpandedEntitySelector::builder()
+                        EntityConstraint::builder()
                             .type_selection(of_type("StopTime").type_selection)
                             .id_pattern(Some(".*_1196287$".parse::<Pattern>().expect("valid pattern")))
                             .build(),

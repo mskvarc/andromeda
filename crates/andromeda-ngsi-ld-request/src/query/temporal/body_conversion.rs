@@ -5,11 +5,13 @@ use crate::{
     pagination::parameters::PageParameters,
     query::{deserialization::OptionalGeoQuery, temporal::TemporalQueryParameters},
 };
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
+    entity_constraint::EntityConstraint,
+    name_stage::Written,
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
-    written_entity_selector::WrittenEntitySelector,
 };
 
 impl TryFrom<Query> for TemporalQueryParameters {
@@ -26,18 +28,13 @@ impl TryFrom<Query> for TemporalQueryParameters {
             Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration, aggregation.aggr_group_by),
             None => (temporal.aggr_methods, temporal.aggr_period_duration, None),
         };
-        let entity_selectors: Vec<WrittenEntitySelector> = query
-            .entities
-            .unwrap_or_default()
-            .into_iter()
-            .map(|selector| WrittenEntitySelector {
-                ids: selector.id,
-                id_pattern: selector.id_pattern,
-                type_selection: Some(selector.type_),
-            })
-            .collect();
+        let entity_selectors: Vec<EntityConstraint<Written>> = query.entities.unwrap_or_default().into_iter().map(EntityConstraint::from).collect();
         let (id, entity_type, id_pattern) = match entity_selectors.as_slice() {
-            [selector] => (selector.ids.clone(), selector.type_selection.clone(), selector.id_pattern.clone()),
+            [selector] => (
+                selector.named_ids().map(<[Identifier]>::to_vec),
+                selector.type_selection.clone(),
+                selector.id_pattern.clone(),
+            ),
             [] | [_, _, ..] => (None, None, None),
         };
 

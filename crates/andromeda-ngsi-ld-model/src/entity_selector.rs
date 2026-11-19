@@ -4,7 +4,13 @@
 
 use crate::{attribute::one_or_many::OneOrMany, query::non_empty_member::NonEmptyMemberError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
+use andromeda_ngsi_ld_query::{
+    entity_constraint::EntityConstraint,
+    identifier_axis::IdentifierAxis,
+    name_stage::Written,
+    pattern::Pattern,
+    type_selection::TypeSelection,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 
 /// One entity selector (ETSI GS CIM 009 clause 5.2.33).
@@ -53,6 +59,18 @@ impl EntitySelector {
     #[must_use]
     pub fn selects<S: AsRef<str>>(&self, types: &[S], id: &Identifier) -> bool {
         self.type_.matches(types) && self.identifier_axis().admits(id)
+    }
+}
+
+/// The constraint a query holds for the selector it was sent: an absent `id`
+/// is no identifier constraint, and the required `type` is the selection.
+impl From<EntitySelector> for EntityConstraint<Written> {
+    fn from(selector: EntitySelector) -> EntityConstraint<Written> {
+        EntityConstraint {
+            ids: selector.id.unwrap_or_default(),
+            id_pattern: selector.id_pattern,
+            type_selection: Some(selector.type_),
+        }
     }
 }
 
@@ -114,7 +132,7 @@ where
 mod tests {
     use crate::entity_selector::{EntitySelector, selectors_select};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::type_selection::TypeSelection;
+    use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written, type_selection::TypeSelection};
     use serde_json::json;
 
     fn selector(wire: serde_json::Value) -> EntitySelector {
@@ -197,6 +215,24 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<EntitySelector>(wire.clone()).is_err(), "{wire}");
         }
+    }
+
+    /// A selector naming no `id` constrains no identifier, and one naming
+    /// identifiers keeps them with its pattern and its required type.
+    #[test]
+    fn a_selector_converts_to_the_constraint_it_names() {
+        let bare = EntityConstraint::<Written>::from(selector(json!({"type": "Vehicle"})));
+        pretty_assertions::assert_eq!(bare.ids, Vec::<Identifier>::new());
+        assert!(bare.id_pattern.is_none());
+        assert!(bare.type_selection.is_some());
+
+        let named = EntityConstraint::<Written>::from(selector(json!({
+            "type": "Vehicle",
+            "id": ["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"],
+            "idPattern": "^urn:ngsi-ld:Vehicle:"
+        })));
+        pretty_assertions::assert_eq!(named.ids, vec![id("urn:ngsi-ld:Vehicle:2"), id("urn:ngsi-ld:Vehicle:1")]);
+        assert!(named.id_pattern.is_some());
     }
 
     /// Whether the selectors written as `wire` select the entity

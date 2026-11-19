@@ -5,8 +5,8 @@ use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_d
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
     geo::compiled_geo_query::CompiledGeoQuery,
     name_stage::Expanded,
     page_window::PageWindow,
@@ -108,15 +108,15 @@ pub(super) fn vehicle() -> TypeSelection<Expanded> {
 }
 
 /// A query with every filter absent but the entity selectors `selectors`.
-pub(super) fn typed(selectors: Vec<ExpandedEntitySelector>) -> CompiledTemporalQuery {
+pub(super) fn typed(selectors: Vec<EntityConstraint<Expanded>>) -> CompiledTemporalQuery {
     let mut compiled = minimal_compiled();
     compiled.entities.selectors = selectors;
     compiled
 }
 
 /// A selector of the `Vehicle` type alone.
-pub(super) fn vehicle_selector() -> ExpandedEntitySelector {
-    ExpandedEntitySelector::builder().type_selection(Some(vehicle())).build()
+pub(super) fn vehicle_selector() -> EntityConstraint<Expanded> {
+    EntityConstraint::builder().type_selection(Some(vehicle())).build()
 }
 
 /// The attribute names the `attrs`, `q` and window tests resolve: `speed` at
@@ -177,7 +177,7 @@ pub(super) fn sensor_names() -> QueryNames {
 /// 2030-01-01T00:00:00Z` on `observedAt`, every other filter absent.
 pub(super) fn sensors() -> CompiledTemporalQuery {
     let mut compiled = typed(vec![
-        ExpandedEntitySelector::builder()
+        EntityConstraint::builder()
             .type_selection(Some(TypeSelection::single(iri("https://uri.etsi.org/ngsi-ld/default-context/Sensor").into())))
             .build(),
     ]);
@@ -197,7 +197,7 @@ pub(super) fn opened(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQue
 pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {
     let mut compiled = sensors();
     compiled.entities.selectors = vec![
-        ExpandedEntitySelector::builder()
+        EntityConstraint::builder()
             .type_selection(ty.map(|ty| TypeSelection::single(iri(&format!("https://uri.etsi.org/ngsi-ld/default-context/{ty}")).into())))
             .id_pattern(Some(raw.parse::<Pattern>().expect("valid pattern")))
             .build(),

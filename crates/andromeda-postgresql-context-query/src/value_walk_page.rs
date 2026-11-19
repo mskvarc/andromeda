@@ -260,8 +260,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
         name_stage::Written,
         namespace_expander::EXAMPLE_NAMESPACE,
@@ -306,7 +306,7 @@ mod tests {
     fn vehicles_by(terms: Vec<CompiledOrderingTerm>) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
         query.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(
                     IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI").into(),
                 )))
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn an_unfiltered_selection_reads_the_carriers_beside_the_entities() {
         let mut query = vehicles_by(vec![term(SPEED, OrderingDirection::Asc)]);
-        query.selection.selectors = vec![ExpandedEntitySelector::builder().build()];
+        query.selection.selectors = vec![EntityConstraint::builder().build()];
         assert_statement_snapshot!(
             "value-walk-page-an-unfiltered-selection-reads-the-carriers-beside-the-entities",
             statement(&query, &PageWindow::offset(100, 0))

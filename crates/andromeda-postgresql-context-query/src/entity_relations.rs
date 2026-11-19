@@ -333,8 +333,8 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
+        entity_constraint::EntityConstraint,
         entity_selection::{ConsideredEntities, EntitySelection},
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, value_path::ValuePath},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::Written,
@@ -386,7 +386,7 @@ mod tests {
     fn typed_query() -> CompiledEntityQuery {
         let mut query = empty_query();
         query.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(
                     IriBuf::new("https://example.com/T".to_string()).expect("valid IRI").into(),
                 )))
@@ -487,7 +487,7 @@ mod tests {
         assert!(matches!(relations(&patterned).source, RowSource::TypeMembers { .. }));
 
         let mut wildcard = empty_query();
-        wildcard.selection.selectors = vec![ExpandedEntitySelector::builder().type_selection(Some(TypeSelection::Wildcard)).build()];
+        wildcard.selection.selectors = vec![EntityConstraint::builder().type_selection(Some(TypeSelection::Wildcard)).build()];
         assert_eq!(relations(&wildcard).source, RowSource::Entities);
 
         let mut nothing = typed_query();
@@ -504,7 +504,7 @@ mod tests {
         one.selection.geo = Some(within_point());
         let mut several = typed_query();
         several.selection.selectors.push(
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(
                     IriBuf::new("https://example.com/U".to_string()).expect("valid IRI").into(),
                 )))
@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn a_selector_on_identifiers_alone_needs_no_search_row() {
         let mut query = empty_query();
-        query.selection.selectors = vec![ExpandedEntitySelector::builder().ids(vec!["urn:a".parse().expect("valid URI")]).build()];
+        query.selection.selectors = vec![EntityConstraint::builder().ids(vec!["urn:a".parse().expect("valid URI")]).build()];
         assert_eq!(relations(&query).search, Demand::NotJoined);
     }
 

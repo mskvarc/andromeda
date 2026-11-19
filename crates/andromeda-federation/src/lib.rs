@@ -46,6 +46,8 @@ pub mod entity_result;
 /// Dropping source entities a write to this broker would refuse (clause 6.3.17).
 /// Federation policy failures.
 pub mod error;
+/// A query's entity selectors with their type selections expanded.
+mod expanded_constraints;
 /// The filters a query places on registrations, expanded under its context.
 pub mod expanded_registration_filters;
 /// The invariants federation relies on.
@@ -170,8 +172,6 @@ pub mod request;
 pub mod result_budget;
 /// What a source answers a forwarded Retrieve Entity with.
 mod retrieval_answer;
-/// A query's entity selectors with their type selections expanded.
-mod selector_expansion;
 /// Clause 6.3.17 single-source failure classification.
 pub mod single_source_failure;
 /// The warnings of a source's answer that is not read in full.

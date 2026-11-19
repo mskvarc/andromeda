@@ -1,4 +1,4 @@
-//! Compiling a query's entity selectors (clause 5.2.33) against the context.
+//! Compiling a query's entity constraints (clause 5.2.33) against the context.
 //!
 //! Shared by the entity and temporal query paths and the registration
 //! preselect, so none of them compiles a selection differently: a POST
@@ -7,36 +7,39 @@
 //! single selector named.
 
 use crate::{
-    expanded_entity_selector::ExpandedEntitySelector,
+    entity_constraint::EntityConstraint,
+    name_stage::{Expanded, Written},
     query_error::QueryError,
     term_expander::TermExpander,
     type_selection::expansion::expand_type_selection,
-    written_entity_selector::WrittenEntitySelector,
 };
 
-/// Compile a query's effective entity selectors through `expander`.
+/// Compile a query's effective entity constraints through `expander`.
 ///
-/// `selectors` is the union the query asks for (see
-/// [`WrittenEntitySelector::effective`]): a POST `entities[]` body contributes
-/// one per array entry, each compiled independently so their union is not
+/// `constraints` is the union the query asks for (see
+/// [`EntityConstraint::effective`]): a POST `entities[]` body contributes one
+/// per array entry, each compiled independently so their union is not
 /// flattened into a cross product, and a GET request contributes its one
 /// implicit selector.
 ///
 /// # Errors
 ///
-/// Reports [`QueryError`] when a selector's type selection has a term that
+/// Reports [`QueryError`] when a constraint's type selection has a term that
 /// cannot be expanded through `expander`.
-pub async fn expand_entity_selectors(selectors: &[WrittenEntitySelector], expander: &impl TermExpander) -> Result<Vec<ExpandedEntitySelector>, QueryError> {
-    let mut compiled = Vec::with_capacity(selectors.len());
-    for selector in selectors {
-        let type_selection = match selector.type_selection.as_ref() {
+pub async fn expand_entity_constraints(
+    constraints: &[EntityConstraint<Written>],
+    expander: &impl TermExpander,
+) -> Result<Vec<EntityConstraint<Expanded>>, QueryError> {
+    let mut compiled = Vec::with_capacity(constraints.len());
+    for constraint in constraints {
+        let type_selection = match constraint.type_selection.as_ref() {
             Some(type_selection) => Some(expand_type_selection(type_selection, expander).await?),
             None => None,
         };
         compiled.push(
-            ExpandedEntitySelector::builder()
-                .ids(selector.ids.clone().unwrap_or_default())
-                .id_pattern(selector.id_pattern.clone())
+            EntityConstraint::builder()
+                .ids(constraint.ids.clone())
+                .id_pattern(constraint.id_pattern.clone())
                 .type_selection(type_selection)
                 .build(),
         );
@@ -47,12 +50,12 @@ pub async fn expand_entity_selectors(selectors: &[WrittenEntitySelector], expand
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity_selector_expansion::expand_entity_selectors,
+        entity_constraint::EntityConstraint,
+        entity_constraint_expansion::expand_entity_constraints,
         name_stage::{Expanded, Written},
         namespace_expander::NamespaceExpander,
         pattern::Pattern,
         type_selection::TypeSelection,
-        written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::iri;
@@ -72,26 +75,26 @@ mod tests {
     /// pattern and type, so no pairing across selectors is compiled.
     #[tokio::test]
     async fn each_selector_compiles_on_its_own() {
-        let selectors = [
-            WrittenEntitySelector {
-                ids: Some(vec![identifier("urn:ngsi-ld:A:1")]),
+        let constraints = [
+            EntityConstraint::<Written> {
+                ids: vec![identifier("urn:ngsi-ld:A:1")],
                 type_selection: Some("A".parse::<TypeSelection<Written>>().expect("a valid type")),
-                ..WrittenEntitySelector::default()
+                ..EntityConstraint::default()
             },
-            WrittenEntitySelector {
+            EntityConstraint::<Written> {
                 id_pattern: Some("^urn:ngsi-ld:B:.*".parse::<Pattern>().expect("a valid pattern")),
                 type_selection: Some("B|C".parse::<TypeSelection<Written>>().expect("a valid type")),
-                ..WrittenEntitySelector::default()
+                ..EntityConstraint::default()
             },
         ];
-        let compiled = expand_entity_selectors(&selectors, &EXPANDER).await.expect("the selectors compile");
+        let compiled = expand_entity_constraints(&constraints, &EXPANDER).await.expect("the selectors compile");
 
         pretty_assertions::assert_eq!(compiled.len(), 2);
         pretty_assertions::assert_eq!(compiled[0].ids, vec![identifier("urn:ngsi-ld:A:1")]);
         pretty_assertions::assert_eq!(compiled[0].id_pattern, None);
         pretty_assertions::assert_eq!(compiled[0].type_selection, Some(type_iri("A")));
         pretty_assertions::assert_eq!(compiled[1].ids, Vec::<Identifier>::new());
-        pretty_assertions::assert_eq!(compiled[1].id_pattern, selectors[1].id_pattern);
+        pretty_assertions::assert_eq!(compiled[1].id_pattern, constraints[1].id_pattern);
         pretty_assertions::assert_eq!(compiled[1].type_selection, TypeSelection::any_of([type_iri("B"), type_iri("C")]));
     }
 
@@ -99,7 +102,7 @@ mod tests {
     /// without one constrains no type.
     #[tokio::test]
     async fn a_selector_without_a_type_constrains_none() {
-        let compiled = expand_entity_selectors(&[WrittenEntitySelector::default()], &EXPANDER)
+        let compiled = expand_entity_constraints(&[EntityConstraint::default()], &EXPANDER)
             .await
             .expect("the selector compiles");
         pretty_assertions::assert_eq!(compiled.len(), 1);

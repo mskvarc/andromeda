@@ -1,9 +1,10 @@
 //! Which entities a query matches.
 
 use crate::{
-    expanded_entity_selector::ExpandedEntitySelector,
+    entity_constraint::EntityConstraint,
     filter::compiled_filter::CompiledFilter,
     geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
+    name_stage::Expanded,
     projection::projected_members::ProjectedMembers,
     scope::scope_query::ScopeQuery,
     standing_instant::StandingInstant,
@@ -16,7 +17,7 @@ use typed_builder::TypedBuilder;
 /// or filter runs (clause 5.5.14).
 ///
 /// A list of identifiers cannot express this on its own: an empty
-/// [`ExpandedEntitySelector::ids`] reads as "no identifier constraint", so it can only
+/// [`EntityConstraint::ids`] reads as "no identifier constraint", so it can only
 /// stand for a request that named no identifier, never for one that named an
 /// empty set of them. Clause 5.5.14 makes the second case routine: "An
 /// `EntityMap` fixes the Entities to be considered for subsequent requests based
@@ -56,7 +57,7 @@ impl ConsideredEntities {
 ///
 /// Everything here narrows the result set; nothing here affects how a matching entity is rendered, or which of its attribute instances come back. That separation is what lets a consumer that only needs the identifiers read this alone, without seeing the time window.
 ///
-/// The identifier, pattern and type axes are grouped into [`ExpandedEntitySelector`]s
+/// The identifier, pattern and type axes are grouped into [`EntityConstraint`]s
 /// and combined as a union (clause 5.2.33): an entity matches when it satisfies
 /// any selector. The remaining members (`attrs`, `q`, `geo`, `scopeQ`,
 /// `considered` and the projected members) are global, and hold for every
@@ -74,7 +75,7 @@ pub struct EntitySelection {
     /// Empty, or a single unconstrained selector, places no id/pattern/type
     /// constraint. A GET query holds one selector; a POST `entities[]` body
     /// holds one per array entry.
-    pub selectors: Vec<ExpandedEntitySelector>,
+    pub selectors: Vec<EntityConstraint<Expanded>>,
     /// Expanded attribute IRIs the entity must carry. Empty means no attribute
     /// filter.
     pub attrs: Vec<IriBuf>,
@@ -121,7 +122,7 @@ impl EntitySelection {
     /// renderings both read this, so their readings of a union cannot
     /// disagree.
     pub fn selectors_constrain(&self) -> bool {
-        !self.selectors.is_empty() && self.selectors.iter().all(ExpandedEntitySelector::constrains)
+        !self.selectors.is_empty() && self.selectors.iter().all(EntityConstraint::constrains)
     }
 
     /// Drop every identifier constraint, leaving the pattern, type and value
@@ -168,8 +169,8 @@ impl EntitySelection {
 #[cfg(test)]
 mod tests {
     use crate::{
+        entity_constraint::EntityConstraint,
         entity_selection::{ConsideredEntities, EntitySelection},
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::{Expanded, Written},
@@ -227,7 +228,7 @@ mod tests {
         let pattern = "^urn:".parse::<Pattern>().expect("valid pattern");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
-                ExpandedEntitySelector::builder()
+                EntityConstraint::builder()
                     .ids(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")])
                     .id_pattern(Some(pattern))
                     .build(),
@@ -248,7 +249,7 @@ mod tests {
         let speed: IriBuf = "https://example.com/speed".parse().expect("valid IRI");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
-                ExpandedEntitySelector::builder()
+                EntityConstraint::builder()
                     .ids(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")])
                     .id_pattern(Some("^urn:".parse::<Pattern>().expect("valid pattern")))
                     .build(),
@@ -285,7 +286,7 @@ mod tests {
         let speed: IriBuf = "https://example.com/speed".parse().expect("valid IRI");
         let mut selection = EntitySelection::builder()
             .selectors(vec![
-                ExpandedEntitySelector::builder()
+                EntityConstraint::builder()
                     .id_pattern(Some("^urn:".parse::<Pattern>().expect("valid pattern")))
                     .build(),
             ])

@@ -5,8 +5,9 @@ use crate::{
     pagination::parameters::PageParameters,
     query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters},
 };
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, written_entity_selector::WrittenEntitySelector};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_constraint::EntityConstraint, name_stage::Written};
 
 impl TryFrom<Query> for EntityQueryParameters {
     type Error = ParameterError;
@@ -16,18 +17,13 @@ impl TryFrom<Query> for EntityQueryParameters {
             return Err(ParameterError::EntityQueryTemporalMembers);
         }
 
-        let entity_selectors: Vec<WrittenEntitySelector> = query
-            .entities
-            .unwrap_or_default()
-            .into_iter()
-            .map(|selector| WrittenEntitySelector {
-                ids: selector.id,
-                id_pattern: selector.id_pattern,
-                type_selection: Some(selector.type_),
-            })
-            .collect();
+        let entity_selectors: Vec<EntityConstraint<Written>> = query.entities.unwrap_or_default().into_iter().map(EntityConstraint::from).collect();
         let (id, entity_type, id_pattern) = match entity_selectors.as_slice() {
-            [selector] => (selector.ids.clone(), selector.type_selection.clone(), selector.id_pattern.clone()),
+            [selector] => (
+                selector.named_ids().map(<[Identifier]>::to_vec),
+                selector.type_selection.clone(),
+                selector.id_pattern.clone(),
+            ),
             [] | [_, _, ..] => (None, None, None),
         };
 

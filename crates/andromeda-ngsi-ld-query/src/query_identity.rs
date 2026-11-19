@@ -9,8 +9,8 @@
 //! two spellings one query.
 
 use crate::{
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
     filter::{compiled_filter::CompiledFilter, reading::filter_reading::FilterReading},
     geo::compiled_geo_query::CompiledGeoQuery,
     name_stage::Expanded,
@@ -184,7 +184,7 @@ type SelectorKey<'a> = (Vec<&'a str>, Option<&'a Pattern>, Vec<TypeIdentity<'a>>
 
 impl<'a> SelectorIdentity<'a> {
     /// The identity of `selector`.
-    fn of(selector: &'a ExpandedEntitySelector) -> SelectorIdentity<'a> {
+    fn of(selector: &'a EntityConstraint<Expanded>) -> SelectorIdentity<'a> {
         let mut ids: Vec<&Identifier> = selector.ids.iter().collect();
         ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
         ids.dedup();
@@ -301,8 +301,8 @@ impl<'a> QueryIdentity<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
         geo::compiled_geo_query::CompiledGeoQuery,
         name_stage::{Expanded, Written},
@@ -342,15 +342,15 @@ mod tests {
         TypeSelection::any_of([type_of(first), type_of(second)]).expect("two selections")
     }
 
-    fn selector(ids: &[u32], pattern: Option<&str>, type_selection: Option<TypeSelection<Expanded>>) -> ExpandedEntitySelector {
-        ExpandedEntitySelector::builder()
+    fn selector(ids: &[u32], pattern: Option<&str>, type_selection: Option<TypeSelection<Expanded>>) -> EntityConstraint<Expanded> {
+        EntityConstraint::builder()
             .ids(ids.iter().copied().map(id).collect())
             .id_pattern(pattern.map(|source| source.parse::<Pattern>().expect("a valid pattern")))
             .type_selection(type_selection)
             .build()
     }
 
-    fn selecting(selectors: Vec<ExpandedEntitySelector>) -> EntitySelection {
+    fn selecting(selectors: Vec<EntityConstraint<Expanded>>) -> EntitySelection {
         EntitySelection::builder().selectors(selectors).build()
     }
 

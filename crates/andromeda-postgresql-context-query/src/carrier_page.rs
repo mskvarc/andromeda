@@ -134,8 +134,8 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
+        entity_constraint::EntityConstraint,
         entity_selection::EntitySelection,
-        expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         name_stage::Written,
         namespace_expander::EXAMPLE_NAMESPACE,
@@ -169,7 +169,7 @@ mod tests {
 
     fn by_attrs(attrs: &[&str]) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.selectors = vec![ExpandedEntitySelector::builder().build()];
+        query.selection.selectors = vec![EntityConstraint::builder().build()];
         query.selection.attrs = attrs.iter().map(|attr| iri(&format!("https://example.com/{attr}"))).collect();
         query
     }
@@ -260,7 +260,7 @@ mod tests {
     fn an_attrs_selection_beside_a_type_keeps_the_type_walk() {
         let mut query = by_attrs(&["headSign"]);
         query.selection.selectors = vec![
-            ExpandedEntitySelector::builder()
+            EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("https://example.com/Trip").into())))
                 .build(),
         ];

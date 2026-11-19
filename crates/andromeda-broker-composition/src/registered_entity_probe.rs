@@ -17,8 +17,9 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
+    entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    expanded_entity_selector::ExpandedEntitySelector,
+    name_stage::Expanded,
     page_window::PageWindow,
     type_selection::expansion::expand_type_selection,
 };
@@ -54,11 +55,11 @@ impl EntityStoreRegistrationProbe {
     /// 5.5.7), so the selector's type leaves are absolute IRIs; expanding them
     /// against the core context leaves them unchanged and yields the typed
     /// expression the store evaluates.
-    async fn compile_selector(&self, selector: &EntityInfo) -> Result<ExpandedEntitySelector, RegistrationError> {
+    async fn compile_selector(&self, selector: &EntityInfo) -> Result<EntityConstraint<Expanded>, RegistrationError> {
         let prepared = self.engine.prepare_term_context(&ContextSpec::core_only());
         let written = selector.type_.as_type_selection().ok_or(RegistrationInvariant::EntityInfoWithoutType)?;
         let type_expr = expand_type_selection(&written, &ContextualExpander::new(&self.engine, &prepared)).await?;
-        Ok(ExpandedEntitySelector::builder()
+        Ok(EntityConstraint::builder()
             .ids(selector.id.iter().cloned().collect())
             .id_pattern(selector.id_pattern.clone())
             .type_selection(Some(type_expr))
@@ -68,7 +69,7 @@ impl EntityStoreRegistrationProbe {
     /// Whether the store holds an entity one of `selectors` admits (every
     /// entity when there is none) that has at least one of `attributes`
     /// (every entity when there is none).
-    async fn presence(&self, selectors: Vec<ExpandedEntitySelector>, attributes: &[AttributeName]) -> Result<EntityPresence, RegistrationError> {
+    async fn presence(&self, selectors: Vec<EntityConstraint<Expanded>>, attributes: &[AttributeName]) -> Result<EntityPresence, RegistrationError> {
         let attrs = attributes
             .iter()
             .map(|name| IriBuf::new(name.to_string()))
@@ -134,7 +135,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
             if attributes.is_empty() {
                 return Ok(EntityPresence::Absent);
             }
-            let selector = ExpandedEntitySelector::builder()
+            let selector = EntityConstraint::builder()
                 .ids(vec![entity_id.clone()])
                 .id_pattern(None)
                 .type_selection(None)

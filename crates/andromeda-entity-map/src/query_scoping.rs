@@ -16,7 +16,7 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
+use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written};
 
 /// Intersect a request's identifiers with the entities a live map lists,
 /// preserving the order the request wrote them in.
@@ -45,21 +45,21 @@ pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Identifier]>) -> 
 /// list. A selector left with no identifier admits nothing and so contributes
 /// nothing to the union; a union emptied that way leaves the request
 /// considering no entity at all, which only the flat list can express.
-pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, selectors: &mut Vec<WrittenEntitySelector>) {
+pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, selectors: &mut Vec<EntityConstraint<Written>>) {
     if selectors.is_empty() {
         *id = Some(scope_query_ids(map, id.as_deref()));
         return;
     }
     selectors.retain_mut(|selector| {
-        let scoped = scope_query_ids(map, selector.ids.as_deref());
+        let scoped = scope_query_ids(map, selector.named_ids());
         let admits_an_entity = !scoped.is_empty();
-        selector.ids = Some(scoped);
+        selector.ids = scoped;
         admits_an_entity
     });
     *id = match selectors.as_slice() {
         // The flat list summarises a single selector, exactly as the clause
         // 5.2.23 body conversion writes it.
-        [selector] => selector.ids.clone(), // clone: the summary owns its copy of the selector's identifiers
+        [selector] => selector.named_ids().map(<[Identifier]>::to_vec), // clone: the summary owns its copy of the selector's identifiers
         // Several selectors have no single flat summary, and the union decides.
         [_, _, ..] => None,
         // Every selector was emptied, so the union admits nothing.
@@ -72,7 +72,7 @@ mod tests {
     use crate::query_scoping::{hold_selection_to_map, scope_query_ids};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
-    use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
+    use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written};
     use chrono::{TimeDelta, Utc};
 
     /// An entity identifier, as the request boundary would have validated it.
@@ -90,19 +90,16 @@ mod tests {
     }
 
     /// One clause 5.2.33 selector over the given identifiers.
-    fn selector(entity_ids: &[&str]) -> WrittenEntitySelector {
-        WrittenEntitySelector {
-            ids: Some(entity_ids.iter().map(|id| identifier(id)).collect()),
-            ..WrittenEntitySelector::default()
+    fn selector(entity_ids: &[&str]) -> EntityConstraint<Written> {
+        EntityConstraint {
+            ids: entity_ids.iter().map(|id| identifier(id)).collect(),
+            ..EntityConstraint::default()
         }
     }
 
     /// The identifiers a selector was narrowed to, as wire text.
-    fn selector_ids(selectors: &[WrittenEntitySelector]) -> Vec<Vec<&str>> {
-        selectors
-            .iter()
-            .map(|selector| selector.ids.as_deref().unwrap_or_default().iter().map(Identifier::as_str).collect())
-            .collect()
+    fn selector_ids(selectors: &[EntityConstraint<Written>]) -> Vec<Vec<&str>> {
+        selectors.iter().map(|selector| selector.ids.iter().map(Identifier::as_str).collect()).collect()
     }
 
     /// The identifiers a flat list was narrowed to, as wire text.
@@ -169,7 +166,7 @@ mod tests {
     fn a_body_selector_naming_no_identifier_is_held_to_the_whole_map() {
         let map = map_over(&["urn:ngsi-ld:Vehicle:a", "urn:ngsi-ld:Vehicle:b"]);
         let mut id = None;
-        let mut selectors = vec![WrittenEntitySelector::default()];
+        let mut selectors = vec![EntityConstraint::default()];
 
         hold_selection_to_map(&map, &mut id, &mut selectors);
 
@@ -222,7 +219,7 @@ mod tests {
         pretty_assertions::assert_eq!(string_id, Some(Vec::new()));
 
         let mut body_id = None;
-        let mut body_selectors = vec![WrittenEntitySelector::default()];
+        let mut body_selectors = vec![EntityConstraint::default()];
         hold_selection_to_map(&map, &mut body_id, &mut body_selectors);
         assert!(body_selectors.is_empty(), "an emptied map admits no selector");
         pretty_assertions::assert_eq!(body_id, Some(Vec::new()));

@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset_selector::DatasetSelector,
     defined_token::deserialize_optional_token,
+    entity_constraint::EntityConstraint,
     filter::Filter,
     name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
@@ -35,7 +36,6 @@ use andromeda_ngsi_ld_query::{
     projection::written_projection_term::WrittenProjectionTerm,
     scope::scope_query::ScopeQuery,
     type_selection::TypeSelection,
-    written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
@@ -70,7 +70,7 @@ pub struct EntityQueryParameters {
     /// string parameter, so it is skipped by serde and populated by the POST
     /// body conversions.
     #[serde(skip)]
-    pub entity_selectors: Vec<WrittenEntitySelector>,
+    pub entity_selectors: Vec<EntityConstraint<Written>>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
@@ -186,8 +186,8 @@ query_parameter_set!(
 impl EntityQueryParameters {
     /// The entity selectors the query is the union of (clause 5.2.33).
     #[must_use]
-    pub fn selectors(&self) -> Cow<'_, [WrittenEntitySelector]> {
-        WrittenEntitySelector::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
+    pub fn selectors(&self) -> Cow<'_, [EntityConstraint<Written>]> {
+        EntityConstraint::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
     }
 }
 
@@ -690,12 +690,12 @@ mod tests {
         .expect("valid canonical query");
         let params = EntityQueryParameters::try_from(request).expect("applicable entity query");
         pretty_assertions::assert_eq!(params.entity_selectors.len(), 2);
-        pretty_assertions::assert_eq!(params.entity_selectors[0].ids.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:A"));
+        pretty_assertions::assert_eq!(params.entity_selectors[0].named_ids().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:A"));
         pretty_assertions::assert_eq!(
             params.entity_selectors[0].type_selection.as_ref().map(ToString::to_string).as_deref(),
             Some("T1")
         );
-        pretty_assertions::assert_eq!(params.entity_selectors[1].ids.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:B"));
+        pretty_assertions::assert_eq!(params.entity_selectors[1].named_ids().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:B"));
         pretty_assertions::assert_eq!(
             params.entity_selectors[1].type_selection.as_ref().map(ToString::to_string).as_deref(),
             Some("T2")

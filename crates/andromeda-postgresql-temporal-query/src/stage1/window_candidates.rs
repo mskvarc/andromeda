@@ -107,7 +107,7 @@ mod tests {
     use crate::stage1::query_fixture::{candidates_of, ids, instant, iri, recorded_stage1, sensors, stage1_on};
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
-        expanded_entity_selector::ExpandedEntitySelector,
+        entity_constraint::EntityConstraint,
         page_window::PageWindow,
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
     };
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn a_selector_naming_identifiers_keeps_the_plain_walk() {
         let mut compiled = modified_after();
-        compiled.entities.selectors = vec![ExpandedEntitySelector::builder().ids(ids(&["urn:ngsi-ld:Sensor:000001"])).build()];
+        compiled.entities.selectors = vec![EntityConstraint::builder().ids(ids(&["urn:ngsi-ld:Sensor:000001"])).build()];
         let stage1 = recorded_stage1(&compiled);
         assert_eq!(stage1.planning, StatementPlanning::Cached);
         let statement = stage1.select;
