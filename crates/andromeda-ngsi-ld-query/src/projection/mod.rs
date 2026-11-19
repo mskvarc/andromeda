@@ -21,6 +21,7 @@ pub mod expanded_projection_term;
 pub mod expansion;
 pub mod matching;
 mod parser;
+pub mod pick_synonym;
 pub mod projected_members;
 pub mod projection_error;
 pub mod purge;

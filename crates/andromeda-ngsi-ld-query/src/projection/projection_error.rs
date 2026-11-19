@@ -1,6 +1,6 @@
 //! Why a `pick`, `omit` or `attrs` projection is refused (clause 4.21).
 
-use crate::projection::expanded_projection_term::ExpandedProjectionTerm;
+use crate::projection::{expanded_projection_term::ExpandedProjectionTerm, pick_synonym::PickSynonym};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReferenceError};
 use thiserror::Error;
 
@@ -41,10 +41,12 @@ pub enum ProjectionError {
         /// The member both lists name: a clause 4.21 keyword, or an Attribute by its expanded name.
         member: ExpandedProjectionTerm,
     },
-    /// The deprecated `attrs` parameter named an Entity member its operation does not admit. The refusal is decided on the expanded name, so a context alias of the Scope is refused as the Scope itself.
-    #[error("'{term}' is an Entity member and is not allowed in attrs")]
+    /// The deprecated synonym for `pick` named an Entity member its operation does not admit. The refusal is decided on the expanded name, so a context alias of the Scope is refused as the Scope itself.
+    #[error("'{term}' is an Entity member and is not allowed in {synonym}")]
     ReservedAttrsMember {
         /// The name as the request spelled it.
         term: AttributeName,
+        /// The member the request wrote the name in.
+        synonym: PickSynonym,
     },
 }
