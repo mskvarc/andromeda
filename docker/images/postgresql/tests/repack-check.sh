@@ -172,7 +172,7 @@ wait_for() {
 start_postgres() {
 	docker run -d --name "$1" --network "$network" -e POSTGRES_PASSWORD=check "$image" > /dev/null
 	for _ in $(seq 1 120); do
-		if docker exec "$1" pg_isready -q -h 127.0.0.1 2> /dev/null; then
+		if [ "$(docker inspect -f '{{.State.Health.Status}}' "$1" 2> /dev/null)" = healthy ]; then
 			return
 		fi
 		sleep 0.5

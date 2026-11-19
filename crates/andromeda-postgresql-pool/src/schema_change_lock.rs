@@ -57,11 +57,27 @@ pub fn schema_change_connect_options(url: &str) -> Result<PgConnectOptions, sqlx
     ]))
 }
 
+/// The connection options of a session that holds a transaction advisory lock
+/// while other sessions make the schema change it serializes.
+///
+/// As [`schema_change_connect_options`], and the server never ends the
+/// session for idling in its transaction: the transaction sits idle for as
+/// long as the change runs on the other sessions, which the database's
+/// `idle_in_transaction_session_timeout` does not bound.
+///
+/// # Errors
+///
+/// Returns [`sqlx::Error::Configuration`] when `url` is not a PostgreSQL
+/// connection URL.
+pub fn schema_change_lock_holder_options(url: &str) -> Result<PgConnectOptions, sqlx::Error> {
+    Ok(schema_change_connect_options(url)?.options([("idle_in_transaction_session_timeout", "0")]))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         fake_database_error::FakeDatabaseError,
-        schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
+        schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options, schema_change_lock_holder_options},
     };
     use andromeda_retry::schedule::BackoffSchedule;
     use pretty_assertions::assert_eq;
@@ -85,5 +101,25 @@ mod tests {
         let options = schema_change_connect_options("postgres://broker@localhost:5432/tenant").expect("a PostgreSQL URL");
         assert_eq!(options.get_options(), Some("-c lock_timeout=2000ms -c statement_timeout=0"));
         assert_eq!(options.get_database(), Some("tenant"));
+    }
+
+    #[test]
+    fn a_schema_change_lock_holder_is_never_ended_for_idling_in_its_transaction() {
+        let options = schema_change_lock_holder_options("postgres://broker@localhost:5432/tenant").expect("a PostgreSQL URL");
+        assert_eq!(
+            options.get_options(),
+            Some("-c lock_timeout=2000ms -c statement_timeout=0 -c idle_in_transaction_session_timeout=0")
+        );
+        assert_eq!(options.get_database(), Some("tenant"));
+    }
+
+    #[test]
+    fn a_schema_change_lock_holder_overrides_an_idle_timeout_its_url_sets() {
+        let options = schema_change_lock_holder_options("postgres://broker@localhost:5432/tenant?options=-c%20idle_in_transaction_session_timeout%3D1000")
+            .expect("a PostgreSQL URL");
+        assert_eq!(
+            options.get_options(),
+            Some("-c idle_in_transaction_session_timeout=1000 -c lock_timeout=2000ms -c statement_timeout=0 -c idle_in_transaction_session_timeout=0")
+        );
     }
 }

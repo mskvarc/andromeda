@@ -7,10 +7,7 @@
 
 use crate::{
     error::ContextStoreError,
-    schema_contract::{
-        error::SchemaContractError,
-        server_requirements::{ExtensionPresence, ExtensionVersion},
-    },
+    schema_contract::server_requirements::{ExtensionPresence, ExtensionVersion},
     tracked_extension::TrackedExtension,
 };
 use andromeda_postgresql_seaquery::{
@@ -58,12 +55,11 @@ pub(crate) fn select_standing(select: &mut SelectStatement, extension: TrackedEx
 
 /// One extension's standing from a row [`select_standing`] projected.
 pub(crate) fn read_standing(row: &PgRow, extension: TrackedExtension) -> Result<ExtensionStanding, ContextStoreError> {
-    let installed = ExtensionPresence::try_from(row.try_get::<Option<String>, _>(extension.installed_column())?).map_err(SchemaContractError::from)?;
+    let installed = ExtensionPresence::reported(extension, row.try_get::<Option<String>, _>(extension.installed_column())?)?;
     let shipped = row
         .try_get::<Option<String>, _>(extension.shipped_column())?
-        .map(|raw| ExtensionVersion::try_from(raw.as_str()))
-        .transpose()
-        .map_err(SchemaContractError::from)?;
+        .map(|reported| ExtensionVersion::reported(extension, &reported))
+        .transpose()?;
     Ok(ExtensionStanding { extension, installed, shipped })
 }
 

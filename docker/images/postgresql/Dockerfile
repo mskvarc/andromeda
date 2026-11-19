@@ -28,9 +28,12 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # The release's versions. The broker updates each tenant database's extensions
-# to these versions when it opens the tenant. TimescaleDB 2.32.0 supports
-# PostgreSQL up to 18.6, so the base image moves past 18.6 only after a later
-# TimescaleDB. The maintenance controller drives pg_repack's SQL interface
+# to these versions when it opens the tenant. The TimescaleDB package also
+# carries the libraries of earlier releases, which a tenant database an earlier
+# image created loads until that update, so the image keeps the library of
+# every version a supported broker release's image shipped, and the settings
+# check fails one without them. TimescaleDB 2.32.0 supports PostgreSQL up to
+# 18.6, so the base image moves past 18.6 only after a later TimescaleDB. The maintenance controller drives pg_repack's SQL interface
 # itself and only on the release line it was written for, so pg_repack is
 # pinned like the others. timescaledb-tune, in timescaledb-tools, rewrites the
 # server's settings on every start and the entrypoint derives more from them,

@@ -99,6 +99,8 @@ pub mod structured_value;
 pub mod system_catalog;
 pub mod temporary_table;
 #[cfg(feature = "test-support")]
+pub mod test_extension;
+#[cfg(feature = "test-support")]
 pub mod test_role;
 pub mod timescale;
 pub mod timescale_job;

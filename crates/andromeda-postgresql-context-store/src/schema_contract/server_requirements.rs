@@ -1,6 +1,9 @@
 //! The server and extension versions the tenant schema depends on.
 
-use crate::schema_contract::{error::SchemaContractError, server_encoding::ServerEncoding, versioned_extension::VersionedExtension};
+use crate::{
+    schema_contract::{error::SchemaContractError, server_encoding::ServerEncoding, versioned_extension::VersionedExtension},
+    tracked_extension::TrackedExtension,
+};
 use andromeda_postgresql_seaquery::{
     introspection::{current_setting, extension_version, server_version_num},
     setting::Setting,
@@ -150,6 +153,34 @@ impl TryFrom<Option<String>> for ExtensionPresence {
     }
 }
 
+impl ExtensionPresence {
+    /// Read the `pg_extension.extversion` lookup of `extension`, which is
+    /// `NULL` exactly when the extension is not installed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaContractError::ExtensionVersionValue`], naming the
+    /// extension, when the version cannot be read.
+    pub fn reported(extension: TrackedExtension, extversion: Option<String>) -> Result<ExtensionPresence, SchemaContractError> {
+        extversion
+            .map(|reported| ExtensionVersion::reported(extension, &reported))
+            .transpose()
+            .map(|version| version.map_or(ExtensionPresence::Absent, ExtensionPresence::Installed))
+    }
+}
+
+impl ExtensionVersion {
+    /// Read a version the extension catalogue reports for `extension`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaContractError::ExtensionVersionValue`], naming the
+    /// extension, when it is no version.
+    pub fn reported(extension: TrackedExtension, reported: &str) -> Result<ExtensionVersion, SchemaContractError> {
+        ExtensionVersion::try_from(reported).map_err(|source| SchemaContractError::ExtensionVersionValue { extension, source })
+    }
+}
+
 /// What refuses a value the extension-version domain cannot hold.
 #[derive(Debug, thiserror::Error)]
 pub enum ExtensionVersionError {
@@ -189,12 +220,18 @@ where
     check_server(&row)?;
     check_extension(
         REQUIRED_POSTGIS_VERSION,
-        ExtensionPresence::try_from(row.try_get::<Option<String>, _>(VersionedExtension::PostGis.installed_column())?)?,
+        ExtensionPresence::reported(
+            TrackedExtension::Updated(VersionedExtension::PostGis),
+            row.try_get::<Option<String>, _>(VersionedExtension::PostGis.installed_column())?,
+        )?,
         |required, found| SchemaContractError::PostGisBelowMinimum { required, found },
     )?;
     check_extension(
         REQUIRED_TIMESCALEDB_VERSION,
-        ExtensionPresence::try_from(row.try_get::<Option<String>, _>(VersionedExtension::TimescaleDb.installed_column())?)?,
+        ExtensionPresence::reported(
+            TrackedExtension::Updated(VersionedExtension::TimescaleDb),
+            row.try_get::<Option<String>, _>(VersionedExtension::TimescaleDb.installed_column())?,
+        )?,
         |required, found| SchemaContractError::TimescaleDbBelowMinimum { required, found },
     )
 }
@@ -278,22 +315,26 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::schema_contract::{
-        error::SchemaContractError,
-        server_encoding::ServerEncoding,
-        server_requirements::{
-            ExtensionPresence,
-            ExtensionVersion,
-            ExtensionVersionError,
-            PostgresVersion,
-            REQUIRED_POSTGIS_VERSION,
-            REQUIRED_POSTGRES_VERSION,
-            REQUIRED_TIMESCALEDB_VERSION,
-            check_extension,
-            check_postgres,
-            check_server_encoding,
-            server_requirements_statement,
+    use crate::{
+        schema_contract::{
+            error::SchemaContractError,
+            server_encoding::ServerEncoding,
+            server_requirements::{
+                ExtensionPresence,
+                ExtensionVersion,
+                ExtensionVersionError,
+                PostgresVersion,
+                REQUIRED_POSTGIS_VERSION,
+                REQUIRED_POSTGRES_VERSION,
+                REQUIRED_TIMESCALEDB_VERSION,
+                check_extension,
+                check_postgres,
+                check_server_encoding,
+                server_requirements_statement,
+            },
+            versioned_extension::VersionedExtension,
         },
+        tracked_extension::TrackedExtension,
     };
     use andromeda_postgresql_schema::tenancy::EXTENSION_VERSION_BYTE_LIMIT;
     use sea_query::PostgresQueryBuilder;
@@ -464,6 +505,33 @@ mod tests {
                 matches!(ExtensionVersion::try_from(raw), Err(ExtensionVersionError::MissingMinor)),
                 "{raw:?} must be refused"
             );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_reported_version_is_refused_naming_its_extension() {
+        let extension = TrackedExtension::Updated(VersionedExtension::PostGis);
+        match ExtensionPresence::reported(extension, Some("ANY".to_owned())) {
+            Err(refusal @ SchemaContractError::ExtensionVersionValue { .. }) => pretty_assertions::assert_eq!(
+                refusal.to_string(),
+                "tenant schema contract: the postgis version the catalogue reports cannot be read: an extension version has no minor component"
+            ),
+            other => panic!("expected a refusal naming postgis, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_reported_version_and_a_missing_one_read_as_installed_and_absent() {
+        let extension = TrackedExtension::Updated(VersionedExtension::TimescaleDb);
+        match (
+            ExtensionPresence::reported(extension, Some("2.32.0".to_owned())),
+            ExtensionPresence::reported(extension, None),
+        ) {
+            (Ok(installed), Ok(absent)) => pretty_assertions::assert_eq!(
+                (installed, absent),
+                (ExtensionPresence::Installed(ExtensionVersion::new(2, 32, 0)), ExtensionPresence::Absent)
+            ),
+            other => panic!("both are readable: {other:?}"),
         }
     }
 

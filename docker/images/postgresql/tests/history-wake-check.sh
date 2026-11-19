@@ -15,7 +15,10 @@
 #   reconciliation probe records no wake and the chunk stays in place. Its data
 #   directory is then started on IMAGE, as an operator moving to the TSL
 #   edition does: the broker enables the columnstore it finds there, and the
-#   wake loop converts the aged chunk.
+#   wake loop converts the aged chunk. Then it leaves the TSL edition again:
+#   with the broker stopped, every converted chunk is converted back to the
+#   rowstore on IMAGE, and the data directory started on APACHE_IMAGE serves
+#   the whole history and takes new instances.
 #
 # Both sweeps run every hour, so neither can act on the aged rows from the
 # load the setup request caused; the work a case waits for is done by the load
@@ -33,7 +36,7 @@ tenant=hwc
 failures=0
 
 cleanup() {
-	docker rm -f -v "$broker" "$database" "$database-apache" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$database" "$database-apache" "$database-tsl" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 }
 trap cleanup EXIT
@@ -86,7 +89,7 @@ start_database() {
 	shift
 	docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$@" "$image" > /dev/null
 	for _ in $(seq 1 120); do
-		if docker exec "$database" pg_isready -q -h 127.0.0.1 2> /dev/null; then
+		if [ "$(docker inspect -f '{{.State.Health.Status}}' "$database" 2> /dev/null)" = healthy ]; then
 			break
 		fi
 		sleep 0.5
@@ -185,6 +188,26 @@ if [ -n "$apache_image" ]; then
 	start_broker disabled
 	wait_for "edition switch: the wake loop loads the tenant and the aged chunk is converted" true 300 "$db" "$aged_chunks"
 	check_log "edition switch"
+
+	docker rm -f "$broker" > /dev/null
+	for name in $(sql andromeda "SELECT datname FROM pg_database WHERE datallowconn AND datname LIKE 'andromeda%'"); do
+		sql "$name" "SELECT count(decompress_chunk(format('%I.%I', chunk_schema, chunk_name)::regclass)) FROM timescaledb_information.chunks WHERE is_compressed" > /dev/null
+	done
+	expect "leaving tsl: the aged chunk is back in the rowstore" false "$(sql "$db" "$aged_chunks")"
+	docker stop "$database" > /dev/null
+	docker rename "$database" "$database-tsl"
+	start_database "$apache_image" --volumes-from "$database-tsl"
+	start_broker disabled
+	history="$(mktemp)"
+	expect "leaving tsl: the history reads back" 200 \
+		"$(curl -sS -o "$history" -w '%{http_code}' -H "NGSILD-Tenant: $tenant" "$base/temporal/entities/urn:ngsi-ld:Probe:1?timerel=after&timeAt=2020-01-01T00:00:00Z")"
+	expect "leaving tsl: every instance reads back" 9 "$(grep -o '"observedAt"' "$history" | wc -l | tr -d ' ')"
+	rm -f "$history"
+	expect "leaving tsl: a new instance is appended" 204 \
+		"$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
+			--data '{"temperature":{"type":"Property","value":5,"observedAt":"2026-11-19T10:00:00Z"}}' \
+			"$base/temporal/entities/urn:ngsi-ld:Probe:1/attrs")"
+	check_log "leaving tsl"
 fi
 
 if [ "$failures" -gt 0 ]; then
