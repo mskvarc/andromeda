@@ -51,7 +51,7 @@ fn compiled_selector(selector: &StoredSelector) -> Result<ExpandedEntitySelector
     Ok(ExpandedEntitySelector::builder()
         .ids(selector.id.clone().unwrap_or_default())
         .id_pattern(selector.id_pattern.clone())
-        .type_selection(Some(selector.type_.to_expanded()?))
+        .type_selection(Some(selector.type_.clone().into_expanded()?))
         .build())
 }
 
@@ -64,9 +64,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
+        name_stage::Expanded,
         projection::projected_members::ProjectedMembers,
         standing_instant::StandingInstant,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
@@ -80,7 +81,7 @@ mod tests {
 
     /// The selectors of the query, as the identifiers and the type each
     /// names.
-    fn selected(query: &CompiledEntityQuery) -> Vec<(Vec<Identifier>, Option<ExpandedTypeSelection>)> {
+    fn selected(query: &CompiledEntityQuery) -> Vec<(Vec<Identifier>, Option<TypeSelection<Expanded>>)> {
         query
             .selection
             .selectors
@@ -89,8 +90,8 @@ mod tests {
             .collect()
     }
 
-    fn vehicle_type() -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(IriBuf::new(VEHICLE.to_owned()).expect("valid IRI"))
+    fn vehicle_type() -> TypeSelection<Expanded> {
+        TypeSelection::single(IriBuf::new(VEHICLE.to_owned()).expect("valid IRI").into())
     }
 
     /// Clause 5.2.33: the selectors are a union, each read as written, so an

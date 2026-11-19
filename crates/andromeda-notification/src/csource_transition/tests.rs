@@ -105,7 +105,8 @@ fn covered_type(registration: Option<&ContextSourceRegistration>) -> Option<Stri
             .first()
             .and_then(|info| info.entities.as_ref())
             .and_then(|entities| entities.first())
-            .map(|entity| entity.type_.as_type_selection().to_string())
+            .and_then(|entity| entity.type_.as_type_selection())
+            .map(|selection| selection.to_string())
     })
 }
 

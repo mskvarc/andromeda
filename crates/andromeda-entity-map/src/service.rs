@@ -268,7 +268,7 @@ mod tests {
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         name_stage::Written,
         namespace_expander::EXAMPLE_NAMESPACE,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_ngsi_ld_request::{
         follow_up_inputs::{ContextReference, FollowUpInputs},
@@ -378,7 +378,7 @@ mod tests {
     fn selection(entity_type: &str, ids: &[&str], q: Option<&str>) -> EntitySelection {
         let selector = ExpandedEntitySelector::builder()
             .ids(ids.iter().copied().map(identifier).collect())
-            .type_selection(Some(ExpandedTypeSelection::Type(
+            .type_selection(Some(TypeSelection::single(
                 format!("https://example.com/{entity_type}").parse().expect("a valid IRI"),
             )))
             .build();

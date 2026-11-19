@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     query_error::QueryError,
     scope::scope_query::ScopeQuery,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
@@ -115,7 +115,7 @@ impl<'q> Gathered<'q> {
                     })
                     .collect::<Result<_, _>>()?;
             }
-            ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<WrittenTypeSelection>().map_err(QueryError::from)?),
+            ForwardedParameter::Type => self.selection.entity_type = Some(value.parse::<TypeSelection<Written>>().map_err(QueryError::from)?),
             ForwardedParameter::IdPattern => self.selection.id_pattern = Some(value.parse::<Pattern>().map_err(QueryError::from)?),
             ForwardedParameter::Limit | ForwardedParameter::Offset | ForwardedParameter::Options => self.uri.push((parameter, value)),
             ForwardedParameter::Attrs => self.attrs = Some(attribute_names(value)?),
@@ -198,7 +198,7 @@ struct Selection {
     /// The identifiers, none when the query names none.
     ids: Vec<Identifier>,
     /// The type selection, `None` when the query names no type.
-    entity_type: Option<WrittenTypeSelection>,
+    entity_type: Option<TypeSelection<Written>>,
     /// The id pattern.
     id_pattern: Option<Pattern>,
 }
@@ -219,7 +219,7 @@ impl Selection {
         let pattern_selector = EntitySelector {
             id: None,
             id_pattern: self.id_pattern,
-            type_: self.entity_type.unwrap_or(WrittenTypeSelection::Wildcard),
+            type_: self.entity_type.unwrap_or(TypeSelection::Wildcard),
         };
         if self.ids.is_empty() {
             return Some(vec![pattern_selector]);

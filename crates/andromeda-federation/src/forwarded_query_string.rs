@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_query::{
     name_stage::Written,
     projection::written_projection_list::WrittenProjectionList,
     query_error::QueryError,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
 };
 use url::form_urlencoded;
 
@@ -64,7 +64,7 @@ impl ForwardedNames<'_> {
     async fn reworded_parameter(&self, parameter: ForwardedParameter, value: &str, json_keys: &[AttributeName]) -> Result<String, FederationError> {
         match parameter.names() {
             ParameterNames::TypeSelection => {
-                let expression: WrittenTypeSelection = value.parse().map_err(QueryError::from)?;
+                let expression: TypeSelection<Written> = value.parse().map_err(QueryError::from)?;
                 Ok(self.type_selection(&expression).await?.to_string())
             }
             ParameterNames::AttributeList => {

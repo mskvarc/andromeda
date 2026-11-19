@@ -4,7 +4,7 @@
 
 use crate::{attribute::one_or_many::OneOrMany, query::non_empty_member::NonEmptyMemberError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 
 /// One entity selector (ETSI GS CIM 009 clause 5.2.33).
@@ -36,7 +36,7 @@ pub struct EntitySelector {
     /// alternate, as in `(Building|Tower)`. Matching is by whole type name:
     /// `Building` does not match an entity typed `MyBuilding`.
     #[serde(rename = "type")]
-    pub type_: WrittenTypeSelection,
+    pub type_: TypeSelection<Written>,
 }
 
 impl EntitySelector {
@@ -114,7 +114,7 @@ where
 mod tests {
     use crate::entity_selector::{EntitySelector, selectors_select};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::type_selection::written_type_selection::WrittenTypeSelection;
+    use andromeda_ngsi_ld_query::type_selection::TypeSelection;
     use serde_json::json;
 
     fn selector(wire: serde_json::Value) -> EntitySelector {
@@ -129,8 +129,8 @@ mod tests {
     /// string; the array form belongs to `EntityInfo` (Table 5.2.8-1) alone.
     #[test]
     fn an_entity_selector_type_is_a_selection_string() {
-        assert!(matches!(selector(json!({"type": "Vehicle"})).type_, WrittenTypeSelection::Type(_)));
-        assert!(matches!(&selector(json!({"type": "Vehicle|Car"})).type_, WrittenTypeSelection::Or(alternatives) if alternatives.len() == 2));
+        assert!(selector(json!({"type": "Vehicle"})).type_.as_single_type().is_some());
+        assert!(matches!(&selector(json!({"type": "Vehicle|Car"})).type_, TypeSelection::Alternatives(alternatives) if alternatives.iter().count() == 2));
         assert!(serde_json::from_value::<EntitySelector>(json!({"type": ["Vehicle", "Car"]})).is_err());
         assert!(serde_json::from_value::<EntitySelector>(json!({"type": 5})).is_err());
     }

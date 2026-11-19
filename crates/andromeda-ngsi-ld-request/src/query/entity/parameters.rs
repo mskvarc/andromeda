@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     projection::written_projection_term::WrittenProjectionTerm,
     scope::scope_query::ScopeQuery,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
     written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
@@ -55,7 +55,7 @@ pub struct EntityQueryParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<WrittenTypeSelection>,
+    pub entity_type: Option<TypeSelection<Written>>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]

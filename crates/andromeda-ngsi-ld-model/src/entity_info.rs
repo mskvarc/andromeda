@@ -2,7 +2,7 @@
 
 use crate::attribute::one_or_many::OneOrMany;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
+use andromeda_ngsi_ld_query::{name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
 use serde::{Deserialize, Serialize};
 use std::slice;
 use thiserror::Error;
@@ -33,12 +33,11 @@ impl EntityTypeSelection {
     }
 
     /// The selection as a clause 4.17 expression: the one name, or the
-    /// alternation of the several.
-    pub fn as_type_selection(&self) -> WrittenTypeSelection {
-        match self {
-            EntityTypeSelection::Single(name) => WrittenTypeSelection::Type(name.clone()),
-            EntityTypeSelection::Several(names) => WrittenTypeSelection::Or(names.iter().cloned().map(WrittenTypeSelection::Type).collect()),
-        }
+    /// alternation of the several. `None` for an empty array, which the wire
+    /// form refuses.
+    #[must_use]
+    pub fn as_type_selection(&self) -> Option<TypeSelection<Written>> {
+        TypeSelection::of_alternatives(self.names().iter().map(|name| vec![name.clone()]).collect())
     }
 }
 
@@ -125,9 +124,13 @@ mod tests {
     fn a_selection_names_every_type_and_reads_as_their_alternation() {
         let several: EntityTypeSelection = serde_json::from_value(json!(["Vehicle", "Car"])).expect("parses");
         pretty_assertions::assert_eq!(several.names().len(), 2);
-        pretty_assertions::assert_eq!(several.as_type_selection().to_string(), "Vehicle,Car");
+        pretty_assertions::assert_eq!(
+            several.as_type_selection().map(|selection| selection.to_string()),
+            Some("Vehicle,Car".to_owned())
+        );
         let single: EntityTypeSelection = serde_json::from_value(json!("Vehicle")).expect("parses");
-        pretty_assertions::assert_eq!(single.as_type_selection().to_string(), "Vehicle");
+        pretty_assertions::assert_eq!(single.as_type_selection().map(|selection| selection.to_string()), Some("Vehicle".to_owned()));
+        pretty_assertions::assert_eq!(EntityTypeSelection::Several(Vec::new()).as_type_selection(), None);
     }
 
     #[test]

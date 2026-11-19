@@ -34,7 +34,7 @@ use crate::{
     type_predicate::condition as type_condition,
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
+use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
 use andromeda_postgresql_schema::{
     current::{Entities, EntityTypeMembers},
     type_membership::MembershipSide,
@@ -153,7 +153,7 @@ pub fn entity_rows(branch: &HistoryBranch, alias: impl IntoIden) -> TableRef {
 pub fn type_member_rows(
     branch: &HistoryBranch,
     alias: impl IntoIden,
-    exprs: &[&ExpandedTypeSelection],
+    exprs: &[&TypeSelection<Expanded>],
     types: &ResolvedNames<EntityTypeName>,
     walked: &WalkedKeys,
 ) -> Option<TableRef> {
@@ -237,11 +237,10 @@ mod tests {
         HistoryBranch,
         entity_rows::{WalkedKeys, entity_rows, holds_visible_evolution, type_member_rows},
     };
-    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
+    use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, entity_type_name::EntityTypeName};
+    use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
-    use iri_rs::IriBuf;
     use sea_query::{Alias, Asterisk, IntoIden, Query, SelectStatement};
 
     fn rendered(source: sea_query::TableRef) -> SelectStatement {
@@ -302,8 +301,8 @@ mod tests {
         assert_statement_snapshot!("entity-rows-a-snapshot-reads-its-catalogue-alone", statement);
     }
 
-    fn vehicle() -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI"))
+    fn vehicle() -> TypeSelection<Expanded> {
+        TypeSelection::single("https://example.com/Vehicle".parse::<EntityTypeIri>().expect("valid IRI"))
     }
 
     fn vehicle_is_known() -> ResolvedNames<EntityTypeName> {
@@ -313,7 +312,7 @@ mod tests {
         )])
     }
 
-    fn walked(branch: &HistoryBranch, expr: &ExpandedTypeSelection) -> SelectStatement {
+    fn walked(branch: &HistoryBranch, expr: &TypeSelection<Expanded>) -> SelectStatement {
         rendered(type_member_rows(branch, Alias::new("e"), &[expr], &vehicle_is_known(), &WalkedKeys::Every).expect("the type has a range"))
     }
 
@@ -364,7 +363,7 @@ mod tests {
             type_member_rows(
                 &HistoryBranch::live(),
                 Alias::new("e"),
-                &[&ExpandedTypeSelection::Wildcard],
+                &[&TypeSelection::Wildcard],
                 &vehicle_is_known(),
                 &WalkedKeys::Every
             )

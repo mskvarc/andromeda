@@ -48,9 +48,10 @@ pub async fn expand_entity_selectors(selectors: &[WrittenEntitySelector], expand
 mod tests {
     use crate::{
         entity_selector_expansion::expand_entity_selectors,
+        name_stage::{Expanded, Written},
         namespace_expander::NamespaceExpander,
         pattern::Pattern,
-        type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection},
+        type_selection::TypeSelection,
         written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -63,8 +64,8 @@ mod tests {
         text.parse().expect("a valid identifier")
     }
 
-    fn type_iri(name: &str) -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(EXPANDER.type_iri(name).expect("a type resolves against the namespace"))
+    fn type_iri(name: &str) -> TypeSelection<Expanded> {
+        TypeSelection::single(EXPANDER.type_iri(name).expect("a type resolves against the namespace").into())
     }
 
     /// Clause 5.2.33: each selector of a union keeps its own identifiers,
@@ -74,12 +75,12 @@ mod tests {
         let selectors = [
             WrittenEntitySelector {
                 ids: Some(vec![identifier("urn:ngsi-ld:A:1")]),
-                type_selection: Some("A".parse::<WrittenTypeSelection>().expect("a valid type")),
+                type_selection: Some("A".parse::<TypeSelection<Written>>().expect("a valid type")),
                 ..WrittenEntitySelector::default()
             },
             WrittenEntitySelector {
                 id_pattern: Some("^urn:ngsi-ld:B:.*".parse::<Pattern>().expect("a valid pattern")),
-                type_selection: Some("B|C".parse::<WrittenTypeSelection>().expect("a valid type")),
+                type_selection: Some("B|C".parse::<TypeSelection<Written>>().expect("a valid type")),
                 ..WrittenEntitySelector::default()
             },
         ];
@@ -91,7 +92,7 @@ mod tests {
         pretty_assertions::assert_eq!(compiled[0].type_selection, Some(type_iri("A")));
         pretty_assertions::assert_eq!(compiled[1].ids, Vec::<Identifier>::new());
         pretty_assertions::assert_eq!(compiled[1].id_pattern, selectors[1].id_pattern);
-        pretty_assertions::assert_eq!(compiled[1].type_selection, Some(ExpandedTypeSelection::Or(vec![type_iri("B"), type_iri("C")])));
+        pretty_assertions::assert_eq!(compiled[1].type_selection, TypeSelection::any_of([type_iri("B"), type_iri("C")]));
     }
 
     /// Clause 6.4.3.2 leaves `type` optional on a GET query, so a selector

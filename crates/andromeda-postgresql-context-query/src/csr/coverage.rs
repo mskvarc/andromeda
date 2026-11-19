@@ -66,7 +66,7 @@ impl<'request> Coverage<'request> {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::expanded_type_selection::ExpandedTypeSelection};
+    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::TypeSelection};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use iri_rs::IriBuf;
     use sea_query::{Query, SelectStatement};
@@ -96,8 +96,8 @@ mod tests {
 
     #[test]
     fn any_of_joins_one_row_existence_check_per_specification() {
-        let alpha = ExpandedTypeSelection::Type(iri("https://example.com/Alpha"));
-        let beta = ExpandedTypeSelection::Type(iri("https://example.com/Beta"));
+        let alpha = TypeSelection::single(iri("https://example.com/Alpha").into());
+        let beta = TypeSelection::single(iri("https://example.com/Beta").into());
         let specifications = [
             ExpandedEntitySpecification {
                 entity_type: Some(&alpha),
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn any_of_is_unconstrained_when_one_specification_asks_nothing_or_none_is_given() {
-        let alpha = ExpandedTypeSelection::Type(iri("https://example.com/Alpha"));
+        let alpha = TypeSelection::single(iri("https://example.com/Alpha").into());
         let specifications = [
             ExpandedEntitySpecification {
                 entity_type: Some(&alpha),
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn type_coverage_admits_a_row_without_entities_and_a_row_declaring_the_type() {
-        let vehicle = ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"));
+        let vehicle = TypeSelection::single(iri("https://example.com/Vehicle").into());
         let select = entities(ExpandedEntitySpecification {
             entity_type: Some(&vehicle),
             ..ExpandedEntitySpecification::default()
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn pattern_coverage_matches_the_registered_id_and_admits_a_row_without_one() {
         let pattern = "urn:ngsi-ld:Vehicle:1.*".parse::<Pattern>().expect("valid pattern");
-        let vehicle = ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"));
+        let vehicle = TypeSelection::single(iri("https://example.com/Vehicle").into());
         let select = entities(ExpandedEntitySpecification {
             entity_type: Some(&vehicle),
             id_pattern: Some(&pattern),
@@ -188,7 +188,7 @@ mod tests {
     /// against the same `EntityInfo` and its item.
     #[test]
     fn every_axis_asked_is_decided_on_one_information_row() {
-        let vehicle = ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"));
+        let vehicle = TypeSelection::single(iri("https://example.com/Vehicle").into());
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
         let attributes = ["https://example.com/speed".parse::<AttributeName>().expect("valid attribute name")];
         let select = render(&Coverage {

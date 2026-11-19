@@ -17,12 +17,15 @@ use crate::{
 };
 use andromeda_ngsi_ld_entity::operation::selection::{DatasetSelection, OverwritePolicy};
 use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::EntityPatch};
-use andromeda_ngsi_ld_query::type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection};
+use andromeda_ngsi_ld_query::{
+    name_stage::{Expanded, Written},
+    type_selection::TypeSelection,
+};
 use serde_json::{Value, json};
 
 /// The selector `raw` expands to under the core context.
-async fn expanded(service: &EntityService, raw: &str) -> ExpandedTypeSelection {
-    let raw: WrittenTypeSelection = raw.parse().expect("a clause 4.17 selector");
+async fn expanded(service: &EntityService, raw: &str) -> TypeSelection<Expanded> {
+    let raw: TypeSelection<Written> = raw.parse().expect("a clause 4.17 selector");
     service
         .expand_write_selector(Some(&raw), &core_context())
         .await

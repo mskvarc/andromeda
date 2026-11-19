@@ -6,7 +6,7 @@
 //! (clause 5.10.2) and every distributed operation (clause 4.3.6) specify the
 //! entities they concern in these three members.
 
-use crate::{pattern::Pattern, type_selection::expanded_type_selection::ExpandedTypeSelection};
+use crate::{name_stage::Expanded, pattern::Pattern, type_selection::TypeSelection};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// The entities a request specifies for registration matching (clause 5.12):
@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ExpandedEntitySpecification<'spec> {
     /// The expanded clause 4.17 type selector, if any.
-    pub entity_type: Option<&'spec ExpandedTypeSelection>,
+    pub entity_type: Option<&'spec TypeSelection<Expanded>>,
     /// The entity identifiers asked for; empty when none were.
     pub ids: &'spec [Identifier],
     /// The identifier pattern asked for, if any.

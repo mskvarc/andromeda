@@ -272,7 +272,7 @@ mod tests {
             ordering_geometry::OrderingGeometry,
         },
         page_window::PageWindow,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -307,8 +307,8 @@ mod tests {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
         query.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(
-                    IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI"),
+                .type_selection(Some(TypeSelection::single(
+                    IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI").into(),
                 )))
                 .build(),
         ];

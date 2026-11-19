@@ -24,8 +24,8 @@ use crate::{
     entity_selector::EntitySelector,
     registration::info::RegistrationInfo,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, type_selection::written_type_selection::WrittenTypeSelection};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, name_stage::Written, type_selection::TypeSelection};
 use std::slice;
 
 /// The entity selectors of a subscription reduced to what the `information`
@@ -48,7 +48,7 @@ pub fn reduced_selectors(selectors: Option<&[EntitySelector]>, information: &[Re
             every = EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: WrittenTypeSelection::Wildcard,
+                type_: TypeSelection::Wildcard,
             };
             slice::from_ref(&every)
         }
@@ -110,27 +110,16 @@ fn narrowed_selector(selector: &EntitySelector, info: &EntityInfo) -> Option<Ent
 /// reading clause 5.12 gives a type selector against an `EntityInfo`. The
 /// wildcard becomes the registered types themselves, so no type outside the
 /// registration reaches the source (clause 4.3.6.1).
-fn narrowed_type(selected: &WrittenTypeSelection, registered: &EntityTypeSelection) -> Option<WrittenTypeSelection> {
-    let mut kept = Vec::new();
-    collect_covered(selected, registered, &mut kept);
-    WrittenTypeSelection::any_of(kept)
-}
-
-/// Push onto `kept` each alternative of `selected` the `registered` types
-/// satisfy, the wildcard standing for every registered type.
-fn collect_covered(selected: &WrittenTypeSelection, registered: &EntityTypeSelection, kept: &mut Vec<WrittenTypeSelection>) {
+fn narrowed_type(selected: &TypeSelection<Written>, registered: &EntityTypeSelection) -> Option<TypeSelection<Written>> {
+    let mut kept: Vec<Vec<EntityTypeName>> = Vec::new();
     match selected {
-        WrittenTypeSelection::Or(alternatives) => alternatives.iter().for_each(|alternative| collect_covered(alternative, registered, kept)),
-        WrittenTypeSelection::Wildcard => registered
-            .names()
+        TypeSelection::Wildcard => registered.names().iter().for_each(|name| push_once(&mut kept, vec![name.clone()])),
+        TypeSelection::Alternatives(alternatives) => alternatives
             .iter()
-            .for_each(|name| push_once(kept, WrittenTypeSelection::Type(name.clone()))),
-        WrittenTypeSelection::Type(_) | WrittenTypeSelection::And(_) => {
-            if selected.matches(registered.names()) {
-                push_once(kept, selected.clone());
-            }
-        }
+            .filter(|conjunction| conjunction.iter().all(|required| registered.names().contains(required)))
+            .for_each(|conjunction| push_once(&mut kept, conjunction.to_vec())),
     }
+    TypeSelection::of_alternatives(kept)
 }
 
 /// Append `item` unless `items` already holds an equal one.

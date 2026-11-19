@@ -18,6 +18,10 @@ pub enum RegistrationInvariant {
     /// type name.
     #[error("an expanded entity type is not a type name: {0}")]
     ExpandedTypeName(#[source] TypeSelectionError),
+    /// A registered `EntityInfo` names no entity type, which its wire form
+    /// refuses.
+    #[error("a registered entity selector names no type")]
+    EntityInfoWithoutType,
     /// The entity store could not answer a proxied-registration admission check.
     #[error("the entity store could not answer a registration admission check")]
     EntityProbe,

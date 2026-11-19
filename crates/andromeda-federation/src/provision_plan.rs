@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::term_expansion::ContextualExpander;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_iri::EntityTypeIri, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
     registration_matching::{
@@ -28,14 +28,14 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
+    name_stage::{Expanded, Written},
     query_error::QueryError,
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_selection, written_type_selection::WrittenTypeSelection},
+    type_selection::{TypeSelection, expansion::expand_type_selection},
 };
 use andromeda_telemetry::{
     federation_ops::{self, FederationOperation},
     operation::OperationTimer,
 };
-use iri_rs::IriBuf;
 use std::slice::from_ref;
 
 /// The registrations one provision operation is forwarded to.
@@ -116,10 +116,10 @@ impl FederationService {
         // store pre-filter is a coarse superset the match below decides: one
         // bare selected type, or the one type a local entity carries, narrows
         // it, and anything else takes the whole id-covering superset.
-        let (entity_types, type_selector, coarse_type): (Vec<EntityTypeName>, Option<WrittenTypeSelection>, Option<ExpandedTypeSelection>) =
+        let (entity_types, type_selector, coarse_type): (Vec<EntityTypeName>, Option<TypeSelection<Written>>, Option<TypeSelection<Expanded>>) =
             if let Some(raw) = request.entity_type_selector {
                 let expanded = expand_type_selection(raw, &ContextualExpander::new(&self.engine, resolver.prepared())).await?;
-                let coarse = matches!(expanded, ExpandedTypeSelection::Type(_)).then(|| expanded.clone()); // clone: the store's specification holds a selector of its own
+                let coarse = expanded.as_single_type().is_some().then(|| expanded.clone()); // clone: the store's specification holds a selector of its own
                 let selector = expanded.into_written().map_err(QueryError::from)?;
                 (selector.named_types(), Some(selector), coarse)
             } else {
@@ -128,7 +128,7 @@ impl FederationService {
                 // A stored type name is an IRI; one that were not leaves the
                 // superset unnarrowed, which the precise match still decides.
                 let coarse = match types.as_slice() {
-                    [single] => IriBuf::new(single.to_string()).ok().map(ExpandedTypeSelection::Type),
+                    [single] => single.as_str().parse::<EntityTypeIri>().ok().map(TypeSelection::single),
                     _ => None,
                 };
                 (types, None, coarse)

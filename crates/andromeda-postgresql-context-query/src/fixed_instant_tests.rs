@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
     standing_instant::StandingInstant,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
@@ -72,8 +72,8 @@ fn names() -> QueryNames {
 
 fn of_type(name: &str) -> ExpandedEntitySelector {
     ExpandedEntitySelector::builder()
-        .type_selection(Some(ExpandedTypeSelection::Type(
-            IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"),
+        .type_selection(Some(TypeSelection::single(
+            IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI").into(),
         )))
         .build()
 }

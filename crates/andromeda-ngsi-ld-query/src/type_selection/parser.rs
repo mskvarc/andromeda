@@ -13,18 +13,19 @@
 //! outside the language and refused.
 
 use crate::{
+    name_stage::Written,
     query_text::{
         disjunctive_form::{delimits_item, disjunctive_form},
         grammar_fault::GrammarFault,
         whitespace::Whitespace,
     },
-    type_selection::{type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection},
+    type_selection::{TypeSelection, type_selection_error::TypeSelectionError},
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use std::ops::Range;
 use winnow::{Parser, stream::LocatingSlice, token::take_while};
 
-/// Parses the text of a type selection into a [`WrittenTypeSelection`].
+/// Parses the text of a type selection into a [`TypeSelection`].
 ///
 /// # Errors
 ///
@@ -34,32 +35,15 @@ use winnow::{Parser, stream::LocatingSlice, token::take_while};
 /// [`TypeSelectionError::UnexpectedCharacter`] for a character the clause 4.17 grammar
 /// does not admit at its position, and [`TypeSelectionError::InvalidName`]
 /// when a type-name production yields no valid clause 4.6.2 name.
-pub(super) fn parse(input: &str) -> Result<WrittenTypeSelection, TypeSelectionError> {
+pub(super) fn parse(input: &str) -> Result<TypeSelection<Written>, TypeSelectionError> {
     let trimmed = Whitespace::Unicode.trim(input);
     if trimmed.is_empty() {
         return Err(TypeSelectionError::Empty);
     }
     if trimmed == "*" {
-        return Ok(WrittenTypeSelection::Wildcard);
+        return Ok(TypeSelection::Wildcard);
     }
-    disjunctive_form(trimmed, type_name).map(disjunction)
-}
-
-/// The selection of the alternatives of a form: the only alternative itself, or their disjunction.
-fn disjunction(alternatives: Vec<Vec<EntityTypeName>>) -> WrittenTypeSelection {
-    let alternatives = alternatives.into_iter().map(conjunction).collect::<Vec<_>>();
-    match <[WrittenTypeSelection; 1]>::try_from(alternatives) {
-        Ok([only]) => only,
-        Err(several) => WrittenTypeSelection::Or(several),
-    }
-}
-
-/// The selection of the names of one alternative: the only name itself, or their conjunction.
-fn conjunction(names: Vec<EntityTypeName>) -> WrittenTypeSelection {
-    match <[EntityTypeName; 1]>::try_from(names) {
-        Ok([only]) => WrittenTypeSelection::Type(only),
-        Err(several) => WrittenTypeSelection::And(several.into_iter().map(WrittenTypeSelection::Type).collect()),
-    }
+    disjunctive_form(trimmed, type_name).and_then(|alternatives| TypeSelection::of_alternatives(alternatives).ok_or(TypeSelectionError::Empty))
 }
 
 /// Reads one `EntityType`: a clause 4.6.2 name or a URI.
@@ -80,48 +64,49 @@ fn is_type_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::type_selection::{parser::parse, type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection};
+    use crate::{
+        name_stage::Written,
+        type_selection::{TypeSelection, parser::parse, type_selection_error::TypeSelectionError},
+    };
 
-    fn t(name: &str) -> WrittenTypeSelection {
-        WrittenTypeSelection::Type(name.parse().expect("valid type name"))
+    fn alternatives(shape: &[&[&str]]) -> TypeSelection<Written> {
+        let names = |conjunction: &[&str]| conjunction.iter().map(|name| name.parse().expect("valid type name")).collect();
+        TypeSelection::of_alternatives(shape.iter().map(|conjunction| names(conjunction)).collect()).expect("a non-empty shape")
     }
 
     #[test]
     fn parse_single_type() {
         let type_selection = parse("Vehicle").unwrap();
-        pretty_assertions::assert_eq!(type_selection, t("Vehicle"));
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["Vehicle"]]));
     }
 
     #[test]
     fn parse_or_with_pipe() {
         let type_selection = parse("Building|House").unwrap();
-        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["Building"], &["House"]]));
     }
 
     #[test]
     fn parse_or_with_comma() {
         let type_selection = parse("Building,House").unwrap();
-        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("Building"), t("House"),]));
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["Building"], &["House"]]));
     }
 
     #[test]
     fn parse_parenthesised_conjunction() {
         let type_selection = parse("(Home;Vehicle)").unwrap();
-        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]));
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["Home", "Vehicle"]]));
     }
 
     #[test]
     fn parse_mixed_and_or_with_grouping() {
         let type_selection = parse("(Home;Vehicle)|Motorhome").unwrap();
-        pretty_assertions::assert_eq!(
-            type_selection,
-            WrittenTypeSelection::Or(vec![WrittenTypeSelection::And(vec![t("Home"), t("Vehicle"),]), t("Motorhome"),])
-        );
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["Home", "Vehicle"], &["Motorhome"]]));
     }
 
     #[test]
     fn a_parenthesised_single_name_is_that_name() {
-        pretty_assertions::assert_eq!(parse("(Home)").unwrap(), t("Home"));
+        pretty_assertions::assert_eq!(parse("(Home)").unwrap(), alternatives(&[&["Home"]]));
     }
 
     #[test]
@@ -143,7 +128,7 @@ mod tests {
     #[test]
     fn parse_uri_type_name() {
         let type_selection = parse("https://example.com/Vehicle").unwrap();
-        pretty_assertions::assert_eq!(type_selection, t("https://example.com/Vehicle"));
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["https://example.com/Vehicle"]]));
     }
 
     #[test]
@@ -182,15 +167,12 @@ mod tests {
     #[test]
     fn multiple_or_terms() {
         let type_selection = parse("A|B|C").unwrap();
-        pretty_assertions::assert_eq!(type_selection, WrittenTypeSelection::Or(vec![t("A"), t("B"), t("C"),]));
+        pretty_assertions::assert_eq!(type_selection, alternatives(&[&["A"], &["B"], &["C"]]));
     }
 
     #[test]
     fn unicode_whitespace_separates_every_slot_and_a_position_counts_bytes() {
-        pretty_assertions::assert_eq!(
-            parse("A\u{2003}|\u{3000}(B ;\u{A0}C)").unwrap(),
-            WrittenTypeSelection::Or(vec![t("A"), WrittenTypeSelection::And(vec![t("B"), t("C")])])
-        );
+        pretty_assertions::assert_eq!(parse("A\u{2003}|\u{3000}(B ;\u{A0}C)").unwrap(), alternatives(&[&["A"], &["B", "C"]]));
         // U+3000 takes three bytes, so the `|` that leaves the group open stands at byte 5.
         assert!(matches!(parse("(A\u{3000}|B)"), Err(TypeSelectionError::UnbalancedParenthesis { position: 5 })));
     }

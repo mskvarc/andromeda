@@ -179,7 +179,7 @@ mod tests {
         pattern::Pattern,
         scope::scope_query::ScopeQuery,
         temporal::window::TimeInterval,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn build_with_entity_type() {
         let mut q = empty_query();
-        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(TypeSelection::single(iri("https://example.com/Vehicle").into()));
         assert_statement_snapshot!("statement-build-with-entity-type", build(&q).select);
     }
 
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn entity_and_attribute_axes_are_decided_on_the_same_information_row() {
         let mut q = empty_query();
-        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(TypeSelection::single(iri("https://example.com/Vehicle").into()));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         assert_statement_snapshot!("statement-entity-and-attribute-axes-are-decided-on-the-same-information-row", build(&q).select);
@@ -393,10 +393,7 @@ mod tests {
     #[test]
     fn no_registration_statement_walks_json() {
         let mut q = empty_query();
-        q.entity_type = Some(ExpandedTypeSelection::And(vec![
-            ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
-            ExpandedTypeSelection::Type(iri("https://example.com/Boat")),
-        ]));
+        q.entity_type = TypeSelection::of_alternatives(vec![vec![iri("https://example.com/Vehicle").into(), iri("https://example.com/Boat").into()]]);
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
@@ -420,7 +417,7 @@ mod tests {
     #[test]
     fn every_selective_axis_carries_its_indexed_test() {
         let mut q = empty_query();
-        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(TypeSelection::single(iri("https://example.com/Vehicle").into()));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         assert_statement_snapshot!("statement-every-selective-axis-carries-its-indexed-test", build(&q).select);
@@ -623,7 +620,7 @@ mod tests {
     #[test]
     fn build_with_multiple_filters() {
         let mut q = empty_query();
-        q.entity_type = Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")));
+        q.entity_type = Some(TypeSelection::single(iri("https://example.com/Vehicle").into()));
         q.ids = ids(&["urn:a"]);
         q.attrs = vec![iri("https://example.com/speed")];
         assert_statement_snapshot!("statement-build-with-multiple-filters", build(&q).select);

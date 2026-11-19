@@ -28,7 +28,7 @@
 //!   no key and matches only rows declaring no name.
 
 use crate::csr::information_row::ri_col;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
 use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_query::operator::{PatternIndexes, pattern as pattern_predicate};
 use andromeda_postgresql_schema::{csr::RegistrationInformation, name_dictionary::AttributeNames};
@@ -37,7 +37,6 @@ use andromeda_postgresql_seaquery::{
     pg_array::{array_of_subquery, is_any_of, text_array},
     pg_operator::PgBinaryOperator,
 };
-use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, Iden, Query, SimpleExpr};
 use std::fmt;
 
@@ -73,8 +72,8 @@ fn declares_no_name() -> Condition {
 /// its item has no `entities`. The values cross the bind boundary as one
 /// `text[]`.
 #[must_use]
-pub fn entity_type_candidate(entity_types: &[IriBuf]) -> SimpleExpr {
-    let named: Vec<&str> = entity_types.iter().map(IriBuf::as_str).chain([ANY_TYPE]).collect();
+pub fn entity_type_candidate(entity_types: &[EntityTypeIri]) -> SimpleExpr {
+    let named: Vec<&str> = entity_types.iter().map(EntityTypeIri::as_str).chain([ANY_TYPE]).collect();
     entity_types_or_wildcard().array_overlaps(text_array(&named))
 }
 
@@ -147,7 +146,7 @@ mod tests {
             entity_types_or_wildcard,
         },
     };
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
     use andromeda_ngsi_ld_query::pattern::Pattern;
     use andromeda_postgresql_schema::csr::RegistrationInformation;
     use andromeda_postgresql_seaquery::{
@@ -155,14 +154,13 @@ mod tests {
         collation::{PostgresCollation, collate},
         literal::int_literal,
     };
-    use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
     /// The migration that declares the indexes the tests here must hit.
     const MIGRATION: &str = include_str!("../../../../migrations/tenant/0011_registration_information.sql");
 
-    fn iri(value: &str) -> IriBuf {
-        IriBuf::new(value.to_string()).expect("valid IRI")
+    fn iri(value: &str) -> EntityTypeIri {
+        value.parse().expect("valid IRI")
     }
 
     fn uri(value: &str) -> Identifier {

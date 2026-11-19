@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
     projection::{expanded_projection::ExpandedProjection, expanded_projection_term::ExpandedProjectionTerm, returned_attributes::ReturnedAttributes},
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
@@ -307,7 +307,7 @@ async fn a_pick_naming_nothing_the_entity_has_is_not_found() {
 /// not the target.
 #[tokio::test]
 async fn an_entity_outside_the_type_selector_is_not_found() {
-    let building = WrittenTypeSelection::Type("Building".parse().expect("a valid type name"));
+    let building = TypeSelection::single("Building".parse().expect("a valid type name"));
     let outside = RetrievalNarrowing {
         entity_type: Some(&building),
         ..narrowing(&[], SysAttrsInclusion::Strip, None)
@@ -315,7 +315,7 @@ async fn an_entity_outside_the_type_selector_is_not_found() {
     let error = retrieve(&outside).await.expect_err("not found");
     assert!(matches!(error, EntityError::NotFound { .. }), "{error}");
 
-    let vehicle = WrittenTypeSelection::Type("Vehicle".parse().expect("a valid type name"));
+    let vehicle = TypeSelection::single("Vehicle".parse().expect("a valid type name"));
     let inside = RetrievalNarrowing {
         entity_type: Some(&vehicle),
         ..narrowing(&[], SysAttrsInclusion::Strip, None)

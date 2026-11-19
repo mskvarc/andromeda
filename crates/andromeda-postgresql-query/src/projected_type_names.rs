@@ -7,11 +7,7 @@
 //! collected here so the read path resolves them in one lookup.
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_query::{
-    entity_selection::EntitySelection,
-    filter::reading::filter_reading::FilterReading,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
-};
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::reading::filter_reading::FilterReading};
 
 /// Collect the type names a query tests by dictionary key.
 ///
@@ -25,26 +21,13 @@ pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> 
     let mut names = Vec::new();
     for selector in &selection.selectors {
         if let Some(type_expr) = &selector.type_selection {
-            collect_selection(type_expr, &mut names);
+            names.extend(type_expr.named_types().iter().filter_map(|iri| iri.as_str().parse::<EntityTypeName>().ok()));
         }
     }
     if let Some(q) = &selection.q {
         collect_guards(q.reading(), &mut names);
     }
     names
-}
-
-/// Every type IRI a type selection mentions.
-fn collect_selection(expr: &ExpandedTypeSelection, out: &mut Vec<EntityTypeName>) {
-    match expr {
-        ExpandedTypeSelection::Wildcard => {}
-        ExpandedTypeSelection::Type(iri) => out.extend(iri.as_str().parse::<EntityTypeName>().ok()),
-        ExpandedTypeSelection::And(children) | ExpandedTypeSelection::Or(children) => {
-            for child in children {
-                collect_selection(child, out);
-            }
-        }
-    }
 }
 
 /// Every type guard the linked-entity traversals of a `q` filter's reading
@@ -67,13 +50,12 @@ mod tests {
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
-        name_stage::Written,
+        name_stage::{Expanded, Written},
         namespace_expander::EXAMPLE_NAMESPACE,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
-    use iri_rs::IriBuf;
 
-    fn selection_with(type_expr: Option<ExpandedTypeSelection>, q: Option<&str>) -> EntitySelection {
+    fn selection_with(type_expr: Option<TypeSelection<Expanded>>, q: Option<&str>) -> EntitySelection {
         let mut selection = EntitySelection::default();
         selection.selectors.push(ExpandedEntitySelector {
             type_selection: type_expr,
@@ -98,16 +80,18 @@ mod tests {
 
     #[test]
     fn every_type_of_a_boolean_type_selection_is_collected() {
-        let expr = ExpandedTypeSelection::Or(vec![
-            ExpandedTypeSelection::And(vec![
-                ExpandedTypeSelection::Type(IriBuf::new("https://example.com/Home".to_string()).expect("iri")),
-                ExpandedTypeSelection::Type(IriBuf::new("https://example.com/Vehicle".to_string()).expect("iri")),
-            ]),
-            ExpandedTypeSelection::Wildcard,
-        ]);
+        let expr = "(https://example.com/Home;https://example.com/Vehicle),https://example.com/Motorhome"
+            .parse::<TypeSelection<Written>>()
+            .expect("a type selection")
+            .into_expanded()
+            .expect("absolute IRIs");
         pretty_assertions::assert_eq!(
             texts(&projected_type_names(&selection_with(Some(expr), None))),
-            vec!["https://example.com/Home".to_string(), "https://example.com/Vehicle".to_string()]
+            vec![
+                "https://example.com/Home".to_string(),
+                "https://example.com/Motorhome".to_string(),
+                "https://example.com/Vehicle".to_string()
+            ]
         );
     }
 

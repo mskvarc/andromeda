@@ -22,9 +22,10 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
     filter::language_targeting::LanguageTargeting,
+    name_stage::{Expanded, Written},
     page_window::PageWindow,
     projection::{expanded_projection::ExpandedProjection, returned_attributes::ReturnedAttributes},
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_selection, written_type_selection::WrittenTypeSelection},
+    type_selection::{TypeSelection, expansion::expand_type_selection},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
@@ -44,7 +45,7 @@ use std::sync::Arc;
 pub struct RetrievalNarrowing<'a> {
     /// The clause 4.17 selector the entity's types must satisfy, absent when
     /// the request named no `type` (Table 6.5.3.1-1).
-    pub entity_type: Option<&'a WrittenTypeSelection>,
+    pub entity_type: Option<&'a TypeSelection<Written>>,
     /// The attributes the response is narrowed to; empty selects all.
     pub attrs: &'a [AttributeName],
     /// Whether the clause 4.8 system timestamps are included.
@@ -128,7 +129,7 @@ impl EntityQueryService {
     ///
     /// Returns [`EntityError`] when a type name cannot be expanded through the
     /// context.
-    pub async fn expand_type_selector(&self, selector: &WrittenTypeSelection, context: &ContextSpec) -> Result<ExpandedTypeSelection, EntityError> {
+    pub async fn expand_type_selector(&self, selector: &TypeSelection<Written>, context: &ContextSpec) -> Result<TypeSelection<Expanded>, EntityError> {
         let prepared = self.engine().prepare_term_context(context);
         Ok(expand_type_selection(selector, &ContextualExpander::new(self.engine(), &prepared)).await?)
     }

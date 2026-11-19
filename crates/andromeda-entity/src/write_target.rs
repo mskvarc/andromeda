@@ -11,10 +11,9 @@ use crate::{EntityService, error::EntityError};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::type_selection::{
-    expanded_type_selection::ExpandedTypeSelection,
-    expansion::expand_type_selection,
-    written_type_selection::WrittenTypeSelection,
+use andromeda_ngsi_ld_query::{
+    name_stage::{Expanded, Written},
+    type_selection::{TypeSelection, expansion::expand_type_selection},
 };
 
 /// The entity a write targets: its identifier and, where the request specified
@@ -25,13 +24,13 @@ pub struct WriteTarget<'a> {
     pub id: &'a Identifier,
     /// The selector the targeted entity's types must satisfy, when the request
     /// carried a `type` parameter.
-    pub entity_type: Option<&'a ExpandedTypeSelection>,
+    pub entity_type: Option<&'a TypeSelection<Expanded>>,
 }
 
 impl<'a> WriteTarget<'a> {
     /// The entity `id`, of any type when `entity_type` is `None`.
     #[must_use]
-    pub const fn new(id: &'a Identifier, entity_type: Option<&'a ExpandedTypeSelection>) -> WriteTarget<'a> {
+    pub const fn new(id: &'a Identifier, entity_type: Option<&'a TypeSelection<Expanded>>) -> WriteTarget<'a> {
         WriteTarget { id, entity_type }
     }
 
@@ -65,9 +64,9 @@ impl EntityService {
     /// expanded against `context`.
     pub async fn expand_write_selector(
         &self,
-        selector: Option<&WrittenTypeSelection>,
+        selector: Option<&TypeSelection<Written>>,
         context: &ContextSpec,
-    ) -> Result<Option<ExpandedTypeSelection>, EntityError> {
+    ) -> Result<Option<TypeSelection<Expanded>>, EntityError> {
         match selector {
             Some(raw) => {
                 let prepared = self.engine.prepare_term_context(context);
@@ -82,9 +81,8 @@ impl EntityService {
 mod tests {
     use crate::{error::EntityError, write_target::WriteTarget};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
+    use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
     use serde_json::json;
 
     fn vehicle() -> EntityState {
@@ -96,8 +94,13 @@ mod tests {
         EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state")
     }
 
-    fn named(name: &str) -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.org/{name}")).expect("valid IRI"))
+    fn named(name: &str) -> TypeSelection<Expanded> {
+        alternatives(&[&[name]])
+    }
+
+    fn alternatives(shape: &[&[&str]]) -> TypeSelection<Expanded> {
+        let iri = |name: &str| format!("https://example.org/{name}").parse::<EntityTypeIri>().expect("valid IRI");
+        TypeSelection::of_alternatives(shape.iter().map(|conjunction| conjunction.iter().map(|name| iri(name)).collect()).collect()).expect("a non-empty shape")
     }
 
     fn id() -> Identifier {
@@ -118,7 +121,7 @@ mod tests {
         let building = named("Building");
         let error = WriteTarget::new(&id, Some(&building)).admits(&vehicle()).expect_err("outside the selector");
         assert!(matches!(error, EntityError::NotFound { .. }), "{error:?}");
-        let selector = ExpandedTypeSelection::Or(vec![named("Building"), named("Vehicle")]);
+        let selector = alternatives(&[&["Building"], &["Vehicle"]]);
         WriteTarget::new(&id, Some(&selector)).admits(&vehicle()).expect("inside the selector");
     }
 
@@ -130,13 +133,13 @@ mod tests {
         let vehicle_asset = typed(&["https://example.org/Vehicle", "https://example.org/Asset"]);
         for selector in [
             named("Vehicle"),
-            ExpandedTypeSelection::Or(vec![named("Building"), named("Asset")]),
-            ExpandedTypeSelection::And(vec![named("Vehicle"), named("Asset")]),
-            ExpandedTypeSelection::Wildcard,
+            alternatives(&[&["Building"], &["Asset"]]),
+            alternatives(&[&["Vehicle", "Asset"]]),
+            TypeSelection::Wildcard,
         ] {
             WriteTarget::new(&id, Some(&selector)).admits(&vehicle_asset).expect("inside the selector");
         }
-        let conjunction = ExpandedTypeSelection::And(vec![named("Vehicle"), named("Asset")]);
+        let conjunction = alternatives(&[&["Vehicle", "Asset"]]);
         let error = WriteTarget::new(&id, Some(&conjunction))
             .admits(&vehicle())
             .expect_err("one type of the conjunction is missing");

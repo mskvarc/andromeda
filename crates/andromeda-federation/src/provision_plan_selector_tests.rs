@@ -14,7 +14,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::type_selection::written_type_selection::WrittenTypeSelection;
+use andromeda_ngsi_ld_query::{name_stage::Written, type_selection::TypeSelection};
 use serde_json::json;
 
 const ENTITY_ID: &str = "urn:ngsi-ld:Vehicle:1";
@@ -41,7 +41,7 @@ fn vehicle_registration() -> ContextSourceRegistration {
 /// Whether a registration covers a Delete Entity of the fixture entity named
 /// with `selector` (or with no selector at all).
 async fn covers_the_write(service: &FederationService, selector: Option<&str>) -> bool {
-    let selector: Option<WrittenTypeSelection> = selector.map(|raw| raw.parse().expect("a clause 4.17 selector"));
+    let selector: Option<TypeSelection<Written>> = selector.map(|raw| raw.parse().expect("a clause 4.17 selector"));
     let entity_id: Identifier = ENTITY_ID.parse().expect("valid identifier");
     let context = ContextSpec::none();
     let request = ForwardProvisionRequest {

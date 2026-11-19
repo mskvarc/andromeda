@@ -1,14 +1,15 @@
 //! Expansion of compact entity type names to IRIs (clause 4.17).
 
 use crate::{
+    name_stage::{Expanded, Written},
     query_error::QueryError,
     term_expander::TermExpander,
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection},
+    type_selection::{TypeSelection, type_alternatives::TypeAlternatives, type_selection_error::TypeSelectionError},
 };
-use std::{future::Future, pin::Pin};
+use andromeda_ngsi_ld_lexicon::entity_type_iri::EntityTypeIri;
 
-/// Recursively expand a written type selection, replacing compact type names
-/// with their fully expanded IRIs.
+/// Expand a written type selection, replacing every compact type name with its
+/// fully expanded IRI.
 ///
 /// # Errors
 ///
@@ -16,61 +17,49 @@ use std::{future::Future, pin::Pin};
 /// through the active `@context`, carrying
 /// [`TermExpansionError::NotAnIri`](crate::term_expander::TermExpansionError::NotAnIri)
 /// when it expands to something that is not an absolute IRI.
-pub async fn expand_type_selection(type_selection: &WrittenTypeSelection, expander: &impl TermExpander) -> Result<ExpandedTypeSelection, QueryError> {
-    match type_selection {
-        WrittenTypeSelection::Wildcard => Ok(ExpandedTypeSelection::Wildcard),
-        WrittenTypeSelection::Type(name) => Ok(ExpandedTypeSelection::Type(expander.expand_type(name.as_str()).await?)),
-        WrittenTypeSelection::And(children) => Ok(ExpandedTypeSelection::And(expand_children(children, expander).await?)),
-        WrittenTypeSelection::Or(children) => Ok(ExpandedTypeSelection::Or(expand_children(children, expander).await?)),
-    }
-}
-
-/// Expand every child of a boolean node.
-fn expand_children<'a, E: TermExpander>(
-    children: &'a [WrittenTypeSelection],
-    expander: &'a E,
-) -> Pin<Box<dyn Future<Output = Result<Vec<ExpandedTypeSelection>, QueryError>> + Send + 'a>> {
-    // Box-pinned: the grammar nests, and an `async fn` cannot name its own
-    // future type to recurse through.
-    Box::pin(async move {
-        let mut expanded_children = Vec::with_capacity(children.len());
-        for child in children {
-            expanded_children.push(expand_type_selection(child, expander).await?);
+pub async fn expand_type_selection(type_selection: &TypeSelection<Written>, expander: &impl TermExpander) -> Result<TypeSelection<Expanded>, QueryError> {
+    let TypeSelection::Alternatives(alternatives) = type_selection else {
+        return Ok(TypeSelection::Wildcard);
+    };
+    let mut resolved = Vec::new();
+    for conjunction in alternatives.iter() {
+        let mut types = Vec::with_capacity(conjunction.len());
+        for name in conjunction {
+            types.push(EntityTypeIri::from(expander.expand_type(name.as_str()).await?));
         }
-        Ok(expanded_children)
-    })
+        resolved.push(types);
+    }
+    TypeAlternatives::new(resolved)
+        .map(TypeSelection::Alternatives)
+        .ok_or(QueryError::TypeSelection(TypeSelectionError::Empty))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::namespace_expander::EXAMPLE_NAMESPACE_TYPED;
-    use iri_rs::IriBuf;
+    use crate::{
+        name_stage::{Expanded, Written},
+        namespace_expander::EXAMPLE_NAMESPACE_TYPED,
+        type_selection::{TypeSelection, expansion::expand_type_selection},
+    };
     use pretty_assertions::assert_eq;
-
-    fn iri(value: &str) -> IriBuf {
-        IriBuf::new(value.to_string()).expect("valid IRI")
-    }
 
     #[tokio::test]
     async fn a_nested_type_selection_expands_at_every_leaf() {
-        let type_selection = WrittenTypeSelection::Or(vec![
-            WrittenTypeSelection::And(vec![
-                WrittenTypeSelection::Type("Home".parse().expect("valid type name")),
-                WrittenTypeSelection::Type("Vehicle".parse().expect("valid type name")),
-            ]),
-            WrittenTypeSelection::Type("Motorhome".parse().expect("valid type name")),
-        ]);
+        let type_selection: TypeSelection<Written> = "(Home;Vehicle),Motorhome".parse().expect("valid type expression");
         let expanded = expand_type_selection(&type_selection, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
-        assert_eq!(
-            expanded,
-            ExpandedTypeSelection::Or(vec![
-                ExpandedTypeSelection::And(vec![
-                    ExpandedTypeSelection::Type(iri("https://example.com/types/Home")),
-                    ExpandedTypeSelection::Type(iri("https://example.com/types/Vehicle")),
-                ]),
-                ExpandedTypeSelection::Type(iri("https://example.com/types/Motorhome")),
-            ])
-        );
+        let expected: TypeSelection<Expanded> = "(https://example.com/types/Home;https://example.com/types/Vehicle),https://example.com/types/Motorhome"
+            .parse::<TypeSelection<Written>>()
+            .expect("valid type expression")
+            .into_expanded()
+            .expect("absolute IRIs");
+        assert_eq!(expanded, expected);
+    }
+
+    #[tokio::test]
+    async fn the_wildcard_expands_to_the_wildcard() {
+        let expanded = expand_type_selection(&TypeSelection::Wildcard, &EXAMPLE_NAMESPACE_TYPED)
+            .await
+            .expect("expands");
+        assert_eq!(expanded, TypeSelection::Wildcard);
     }
 }

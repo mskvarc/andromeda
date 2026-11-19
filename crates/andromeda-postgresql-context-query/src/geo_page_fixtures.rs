@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_query::{
     name_stage::Written,
     namespace_expander::EXAMPLE_NAMESPACE,
     page_window::PageWindow,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::query_names::QueryNames;
@@ -55,7 +55,7 @@ pub(crate) fn sensors() -> CompiledEntityQuery {
     let selection = EntitySelection::builder()
         .selectors(vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("Sensor"))))
+                .type_selection(Some(TypeSelection::single(iri("Sensor").into())))
                 .build(),
         ])
         .build();
