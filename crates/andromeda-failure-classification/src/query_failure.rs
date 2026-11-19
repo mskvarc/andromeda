@@ -223,7 +223,7 @@ mod tests {
         scope::scope_query_error::ScopeQueryError,
         temporal::{aggregation_period::AggregationPeriod, time_interval_error::TimeIntervalError},
         term_expander::TermExpansionError,
-        type_selection::{type_selection_error::TypeSelectionError, written_type_selection::WrittenTypeSelection},
+        type_selection::{TypeSelection, type_selection_error::TypeSelectionError},
     };
     use std::num::NonZeroUsize;
 
@@ -275,7 +275,7 @@ mod tests {
         failures.extend(
             ["", "(Home", "Home)", "Home;Vehicle", "Home||Vehicle"]
                 .into_iter()
-                .map(|selection| QueryError::from(selection.parse::<WrittenTypeSelection>().expect_err("outside the clause 4.17 grammar"))),
+                .map(|selection| QueryError::from(selection.parse::<TypeSelection<Written>>().expect_err("outside the clause 4.17 grammar"))),
         );
         failures.extend(
             ["a{b", "a,,b"]

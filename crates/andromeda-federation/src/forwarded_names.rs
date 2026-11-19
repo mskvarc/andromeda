@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
     name_stage::Written,
     projection::written_projection_term::WrittenProjectionTerm,
     query_error::QueryError,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
 };
 use std::{future::Future, pin::Pin, str::FromStr};
 
@@ -140,35 +140,27 @@ impl<'a> ForwardedNames<'a> {
     /// # Errors
     ///
     /// As [`ForwardedNames::attr`].
-    pub(crate) async fn type_selection(&self, expression: &WrittenTypeSelection) -> Result<WrittenTypeSelection, FederationError> {
+    pub(crate) async fn type_selection(&self, expression: &TypeSelection<Written>) -> Result<TypeSelection<Written>, FederationError> {
         match self.rewording {
             Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => self.reworded_type_selection(expression).await,
         }
     }
 
-    /// Reword every leaf of a type selection.
-    fn reworded_type_selection<'b>(
-        &'b self,
-        expression: &'b WrittenTypeSelection,
-    ) -> Pin<Box<dyn Future<Output = Result<WrittenTypeSelection, FederationError>> + Send + 'b>> {
-        Box::pin(async move {
-            match expression {
-                WrittenTypeSelection::Wildcard => Ok(WrittenTypeSelection::Wildcard),
-                WrittenTypeSelection::Type(name) => Ok(WrittenTypeSelection::Type(self.entity_type(name).await?)),
-                WrittenTypeSelection::And(children) => Ok(WrittenTypeSelection::And(self.reworded_children(children).await?)),
-                WrittenTypeSelection::Or(children) => Ok(WrittenTypeSelection::Or(self.reworded_children(children).await?)),
+    /// Reword every type of a type selection, in order.
+    async fn reworded_type_selection(&self, expression: &TypeSelection<Written>) -> Result<TypeSelection<Written>, FederationError> {
+        let TypeSelection::Alternatives(alternatives) = expression else {
+            return Ok(TypeSelection::Wildcard);
+        };
+        let mut reworded = Vec::new();
+        for conjunction in alternatives.iter() {
+            let mut names = Vec::with_capacity(conjunction.len());
+            for name in conjunction {
+                names.push(self.entity_type(name).await?);
             }
-        })
-    }
-
-    /// Reword the children of one boolean type group, in order.
-    async fn reworded_children(&self, children: &[WrittenTypeSelection]) -> Result<Vec<WrittenTypeSelection>, FederationError> {
-        let mut reworded = Vec::with_capacity(children.len());
-        for child in children {
-            reworded.push(self.reworded_type_selection(child).await?);
+            reworded.push(names);
         }
-        Ok(reworded)
+        TypeSelection::of_alternatives(reworded).ok_or_else(|| FederationInvariant::ForwardedName(NgsiLdReferenceError::Empty).into())
     }
 
     /// A client's clause 4.9 query with every attribute, sub-attribute,
@@ -282,7 +274,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_ngsi_ld_query::{filter::Filter, name_stage::Written, type_selection::written_type_selection::WrittenTypeSelection};
+    use andromeda_ngsi_ld_query::{filter::Filter, name_stage::Written, type_selection::TypeSelection};
     use serde_json::json;
     use url::form_urlencoded;
 
@@ -339,8 +331,8 @@ mod tests {
         pretty_assertions::assert_eq!(names.attr(&attr("brand")).await.expect("rewords").as_str(), "https://example.org/brand");
         let vehicle: EntityTypeName = "Vehicle".parse().expect("a type name");
         pretty_assertions::assert_eq!(names.entity_type(&vehicle).await.expect("rewords").as_str(), "Car");
-        let expression: WrittenTypeSelection = "Vehicle,Other".parse().expect("a type selection");
-        pretty_assertions::assert_eq!(names.type_selection(&expression).await.expect("rewords").to_string(), "Car,Other");
+        let expression: TypeSelection<Written> = "Vehicle,(Vehicle;Other)".parse().expect("a type selection");
+        pretty_assertions::assert_eq!(names.type_selection(&expression).await.expect("rewords").to_string(), "Car,(Car;Other)");
         let query = "speed>10;brand==\"x\"".parse::<Filter<Written>>().expect("a query");
         pretty_assertions::assert_eq!(
             names.q(&query, None).await.expect("rewords").to_string(),

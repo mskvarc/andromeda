@@ -58,15 +58,12 @@ mod tests {
     use crate::{fixed_registration_store::offline_service, selector_expansion::ExpandedSelectors};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_query::{
-        type_selection::{expanded_type_selection::ExpandedTypeSelection, written_type_selection::WrittenTypeSelection},
-        written_entity_selector::WrittenEntitySelector,
-    };
+    use andromeda_ngsi_ld_query::{name_stage::Written, type_selection::TypeSelection, written_entity_selector::WrittenEntitySelector};
     use serde_json::json;
 
     fn selector(type_: &str) -> WrittenEntitySelector {
         WrittenEntitySelector {
-            type_selection: Some(type_.parse::<WrittenTypeSelection>().expect("a valid type expression")),
+            type_selection: Some(type_.parse::<TypeSelection<Written>>().expect("a valid type expression")),
             ..WrittenEntitySelector::default()
         }
     }
@@ -125,6 +122,6 @@ mod tests {
         let expanded = ExpandedSelectors::expand(service.engine(), &prepared, &selectors)
             .await
             .expect("the selectors expand");
-        assert!(matches!(expanded.specifications()[0].entity_type, Some(ExpandedTypeSelection::Wildcard)));
+        assert!(matches!(expanded.specifications()[0].entity_type, Some(TypeSelection::Wildcard)));
     }
 }

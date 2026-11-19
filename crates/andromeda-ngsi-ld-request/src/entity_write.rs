@@ -4,7 +4,7 @@ use crate::{
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
 };
-use andromeda_ngsi_ld_query::type_selection::written_type_selection::WrittenTypeSelection;
+use andromeda_ngsi_ld_query::{name_stage::Written, type_selection::TypeSelection};
 use serde::Deserialize;
 
 /// Query parameters for `DELETE /entities/{id}` (Delete Entity, Table
@@ -17,7 +17,7 @@ use serde::Deserialize;
 pub struct EntityWriteParams {
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
-    pub entity_type: Option<WrittenTypeSelection>,
+    pub entity_type: Option<TypeSelection<Written>>,
     /// Whether the operation is confined to this broker (clause 5.5.13).
     pub local: Option<bool>,
 }
@@ -31,7 +31,7 @@ query_parameter_set!(EntityWriteParams { Type, Local });
 pub struct UpdateAttributesParams {
     /// The clause 4.17 selector the target entity's types must satisfy.
     #[serde(rename = "type")]
-    pub entity_type: Option<WrittenTypeSelection>,
+    pub entity_type: Option<TypeSelection<Written>>,
     /// Whether the operation is confined to this broker (clause 6.3.18 `local`).
     pub local: Option<bool>,
 }

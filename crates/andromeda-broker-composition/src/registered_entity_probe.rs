@@ -56,7 +56,8 @@ impl EntityStoreRegistrationProbe {
     /// expression the store evaluates.
     async fn compile_selector(&self, selector: &EntityInfo) -> Result<ExpandedEntitySelector, RegistrationError> {
         let prepared = self.engine.prepare_term_context(&ContextSpec::core_only());
-        let type_expr = expand_type_selection(&selector.type_.as_type_selection(), &ContextualExpander::new(&self.engine, &prepared)).await?;
+        let written = selector.type_.as_type_selection().ok_or(RegistrationInvariant::EntityInfoWithoutType)?;
+        let type_expr = expand_type_selection(&written, &ContextualExpander::new(&self.engine, &prepared)).await?;
         Ok(ExpandedEntitySelector::builder()
             .ids(selector.id.iter().cloned().collect())
             .id_pattern(selector.id_pattern.clone())

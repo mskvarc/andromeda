@@ -141,7 +141,7 @@ mod tests {
         namespace_expander::EXAMPLE_NAMESPACE,
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -261,7 +261,7 @@ mod tests {
         let mut query = by_attrs(&["headSign"]);
         query.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Trip"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/Trip").into())))
                 .build(),
         ];
         assert_statement_snapshot!(

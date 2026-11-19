@@ -3,10 +3,11 @@
 use crate::{
     filter::reading::filter_reading::FilterReading,
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::Expanded,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
     temporal::window::TimeInterval,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time_prop::TimeProp};
 use iri_rs::IriBuf;
@@ -28,7 +29,7 @@ pub struct CompiledCsrQuery {
     pub ids: Vec<Identifier>,
     /// The expanded clause 4.17 type selector matched against registered
     /// entity types (clause 5.12).
-    pub entity_type: Option<ExpandedTypeSelection>,
+    pub entity_type: Option<TypeSelection<Expanded>>,
     /// Optional entity identifier pattern matched against registered entity
     /// identifiers and patterns (clause 5.12).
     pub id_pattern: Option<Pattern>,

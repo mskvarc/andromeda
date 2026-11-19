@@ -116,8 +116,9 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         expanded_entity_selector::ExpandedEntitySelector,
+        name_stage::Expanded,
         pattern::Pattern,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -125,8 +126,8 @@ mod tests {
     use iri_rs::IriBuf;
     use sea_query::{Alias, Condition, Expr, Query, SelectStatement};
 
-    fn ty(name: &str) -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))
+    fn ty(name: &str) -> TypeSelection<Expanded> {
+        TypeSelection::single(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI").into())
     }
 
     fn types() -> ResolvedNames<EntityTypeName> {

@@ -33,12 +33,13 @@ use andromeda_ngsi_ld_query::{
         referenced_attributes::referenced_attributes,
     },
     geo::compilation as geo_compile,
+    name_stage::Written,
     page_reach::PageReach,
     page_window::PageWindow,
     projection::expansion::expand_attrs,
     query_error::QueryError,
     temporal::window::TimeInterval,
-    type_selection::{expanded_type_selection::ExpandedTypeSelection, expansion::expand_type_selection, written_type_selection::WrittenTypeSelection},
+    type_selection::{TypeSelection, expansion::expand_type_selection},
 };
 use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
 use iri_rs::IriBuf;
@@ -107,7 +108,7 @@ impl RegistrationService {
         let type_selector = compiled
             .entity_type
             .clone()
-            .map(ExpandedTypeSelection::into_written)
+            .map(TypeSelection::into_written)
             .transpose()
             .map_err(RegistrationInvariant::ExpandedTypeName)?;
         let mut matched = Vec::with_capacity(scanned.len());
@@ -217,7 +218,7 @@ impl RegistrationService {
 fn registration_matching_the_query(
     registration: ContextSourceRegistration,
     compiled: &CompiledCsrQuery,
-    type_selector: Option<&WrittenTypeSelection>,
+    type_selector: Option<&TypeSelection<Written>>,
 ) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
     let entity = EntitySpecification {
         types: type_selector.map_or(TypeConstraint::Any, TypeConstraint::Selector),

@@ -136,7 +136,7 @@ mod tests {
         ordering::{compiled_ordering_term::CompiledOrderingTerm, expanded_ordering_target::ExpandedOrderingTarget, ordering_direction::OrderingDirection},
         page_window::PageWindow,
         pattern::Pattern,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -160,7 +160,7 @@ mod tests {
 
     fn selector(ty: Option<&str>, pattern: &str) -> ExpandedEntitySelector {
         ExpandedEntitySelector::builder()
-            .type_selection(ty.map(|ty| ExpandedTypeSelection::Type(IriBuf::new(format!("https://example.com/{ty}")).expect("valid IRI"))))
+            .type_selection(ty.map(|ty| TypeSelection::single(IriBuf::new(format!("https://example.com/{ty}")).expect("valid IRI").into())))
             .id_pattern(Some(pattern.parse::<Pattern>().expect("valid pattern")))
             .build()
     }

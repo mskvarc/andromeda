@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     expanded_entity_selector::ExpandedEntitySelector,
     geo::{compiled_geo_query::CompiledGeoQuery, default_location_narrowing::DefaultLocationNarrowing},
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
@@ -88,7 +88,7 @@ pub(super) fn near_origin_among(ids: Vec<Identifier>) -> Arc<CompiledEntityQuery
         selectors: vec![ExpandedEntitySelector {
             ids,
             id_pattern: None,
-            type_selection: Some(ExpandedTypeSelection::Type(IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI"))),
+            type_selection: Some(TypeSelection::single(IriBuf::new(VEHICLE_TYPE.to_owned()).expect("a well-formed IRI").into())),
         }],
         geo: Some(CompiledGeoQuery {
             georel: GeoRel::Near {

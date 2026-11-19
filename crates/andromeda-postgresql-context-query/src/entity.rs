@@ -399,7 +399,7 @@ mod tests {
         query_error::QueryError,
         read_order::ReadOrder,
         scope::scope_query::ScopeQuery,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{error::RenderError, query_names::QueryNames};
@@ -743,7 +743,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -757,7 +757,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/NeverWritten"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/NeverWritten").into())))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -770,7 +770,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
         let count = build_counted(&q, &known_types()).count.expect("count requested");
@@ -785,7 +785,7 @@ mod tests {
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:a"]))
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -800,10 +800,10 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Or(vec![
-                    ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
-                    ExpandedTypeSelection::Type(iri("https://example.com/Home")),
-                ])))
+                .type_selection(TypeSelection::of_alternatives(vec![
+                    vec![iri("https://example.com/Vehicle").into()],
+                    vec![iri("https://example.com/Home").into()],
+                ]))
                 .build(),
         ];
         q.selection.geo = Some(CompiledGeoQuery {
@@ -826,13 +826,10 @@ mod tests {
         // (Home AND Vehicle) OR Motorhome
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Or(vec![
-                    ExpandedTypeSelection::And(vec![
-                        ExpandedTypeSelection::Type(iri("https://example.com/Home")),
-                        ExpandedTypeSelection::Type(iri("https://example.com/Vehicle")),
-                    ]),
-                    ExpandedTypeSelection::Type(iri("https://example.com/Motorhome")),
-                ])))
+                .type_selection(TypeSelection::of_alternatives(vec![
+                    vec![iri("https://example.com/Home").into(), iri("https://example.com/Vehicle").into()],
+                    vec![iri("https://example.com/Motorhome").into()],
+                ]))
                 .build(),
         ];
         let built = build(&q, &known_types());
@@ -844,7 +841,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/Vehicle"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
                 .build(),
         ];
         let built = build_counted(&q, &known_types());
@@ -862,11 +859,11 @@ mod tests {
         q.selection.selectors = vec![
             ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:ngsi-ld:Entity:A"]))
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/T1"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/T1").into())))
                 .build(),
             ExpandedEntitySelector::builder()
                 .ids(ids(&["urn:ngsi-ld:Entity:B"]))
-                .type_selection(Some(ExpandedTypeSelection::Type(iri("https://example.com/T2"))))
+                .type_selection(Some(TypeSelection::single(iri("https://example.com/T2").into())))
                 .build(),
         ];
         let built = build(&q, &known_types());

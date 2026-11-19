@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_model::{
     registration::info::RegistrationInfo,
     registration_matching::entity_specification::{EntitySpecification, TypeConstraint},
 };
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
+use andromeda_ngsi_ld_query::{name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
 use std::slice;
 
 /// The entity selection one block contributes to a forwarded request: the
@@ -24,7 +24,7 @@ pub(super) struct BlockSelection {
     /// The pattern to write as `idPattern`.
     pub(super) id_pattern: Option<String>,
     /// The type selector to write as `type`, spelled in the forwarding context.
-    pub(super) entity_type: Option<WrittenTypeSelection>,
+    pub(super) entity_type: Option<TypeSelection<Written>>,
 }
 
 impl BlockSelection {
@@ -48,7 +48,7 @@ impl BlockSelection {
         block: &RegistrationInfo,
         ids: Option<&[Identifier]>,
         id_pattern: Option<&Pattern>,
-        entity_type: Option<&WrittenTypeSelection>,
+        entity_type: Option<&TypeSelection<Written>>,
         names: &ForwardedNames<'_>,
     ) -> Result<Option<BlockSelection>, FederationError> {
         let mut selection = BlockSelection::default();
@@ -185,11 +185,12 @@ async fn covered_attrs(client_attrs: &[AttributeName], declared: &[&AttributeNam
 /// The part of the client's type selector the block covers, spelled in the
 /// forwarding context, or `None` when it covers none of it.
 ///
-/// Only a flat alternation of names can be narrowed; the wildcard and a
+/// Only a flat alternation of names can be narrowed; the wildcard and a lone
 /// conjunction are forwarded whole, because removing a member would change what
-/// they select rather than restrict it. Each leaf is expanded to its IRI and
-/// kept when a block selector admits that IRI, matching the registration
-/// selection exactly.
+/// they select rather than restrict it, and an alternation holding a
+/// conjunction is covered by none of the block's flat leaves. Each leaf is
+/// expanded to its IRI and kept when a block selector admits that IRI,
+/// matching the registration selection exactly.
 ///
 /// # Errors
 ///
@@ -197,29 +198,29 @@ async fn covered_attrs(client_attrs: &[AttributeName], declared: &[&AttributeNam
 /// against the request context, and [`FederationError::Internal`] when a type
 /// does not spell as a name in the forwarding context.
 pub(super) async fn covered_type(
-    entity_type: &WrittenTypeSelection,
+    entity_type: &TypeSelection<Written>,
     block: &RegistrationInfo,
     names: &ForwardedNames<'_>,
-) -> Result<Option<WrittenTypeSelection>, FederationError> {
+) -> Result<Option<TypeSelection<Written>>, FederationError> {
     if block.entities.is_none() {
         return Ok(Some(names.type_selection(entity_type).await?));
     }
-    let leaves = match entity_type {
-        WrittenTypeSelection::Type(name) => vec![name],
-        WrittenTypeSelection::Or(children) => {
-            let mut leaves = Vec::with_capacity(children.len());
-            for child in children {
-                match child {
-                    WrittenTypeSelection::Type(name) => leaves.push(name),
-                    // A nested boolean group cannot be narrowed member by member,
-                    // and an alternation only makes sense as a flat one, so a
-                    // block covering none of its flat leaves covers nothing here.
-                    WrittenTypeSelection::Wildcard | WrittenTypeSelection::And(_) | WrittenTypeSelection::Or(_) => return Ok(None),
-                }
-            }
-            leaves
-        }
-        WrittenTypeSelection::Wildcard | WrittenTypeSelection::And(_) => return Ok(Some(names.type_selection(entity_type).await?)),
+    let TypeSelection::Alternatives(alternatives) = entity_type else {
+        return Ok(Some(names.type_selection(entity_type).await?));
+    };
+    let conjunctions: Vec<&[EntityTypeName]> = alternatives.iter().collect();
+    if matches!(conjunctions.as_slice(), [lone] if lone.len() > 1) {
+        return Ok(Some(names.type_selection(entity_type).await?));
+    }
+    let Some(leaves) = conjunctions
+        .iter()
+        .map(|conjunction| match conjunction {
+            [only] => Some(only),
+            [] | [_, _, ..] => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(None);
     };
     let mut covered = Vec::new();
     for name in leaves {
@@ -234,10 +235,10 @@ pub(super) async fn covered_type(
             id_pattern: None,
         };
         if specification.matches_entity_axis(block) {
-            covered.push(WrittenTypeSelection::Type(names.entity_type(name).await?));
+            covered.push(TypeSelection::single(names.entity_type(name).await?));
         }
     }
-    Ok(WrittenTypeSelection::any_of(covered))
+    Ok(TypeSelection::any_of(covered))
 }
 
 /// The block's explicitly named identifiers, or, when it names none, the
@@ -265,7 +266,7 @@ fn block_identifiers(block: &RegistrationInfo) -> (Vec<Identifier>, Option<Strin
 ///
 /// Returns [`FederationError::Internal`] when a type does not spell as a name
 /// in the forwarding context.
-fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<Option<WrittenTypeSelection>, FederationError> {
+fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<Option<TypeSelection<Written>>, FederationError> {
     let Some(selectors) = block.entities.as_deref() else {
         return Ok(None);
     };
@@ -278,7 +279,7 @@ fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<O
             }
         }
     }
-    Ok(WrittenTypeSelection::any_of(spelled.into_iter().map(WrittenTypeSelection::Type).collect()))
+    Ok(TypeSelection::any_of(spelled.into_iter().map(TypeSelection::single)))
 }
 
 #[cfg(test)]

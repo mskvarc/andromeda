@@ -70,7 +70,7 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
+    use andromeda_ngsi_ld_query::{name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
     use serde_json::json;
     use std::{ptr, slice};
 
@@ -99,7 +99,7 @@ mod tests {
         value.parse().expect("valid attribute name")
     }
 
-    fn type_selector(raw: &str) -> WrittenTypeSelection {
+    fn type_selector(raw: &str) -> TypeSelection<Written> {
         raw.parse().expect("valid type selector")
     }
 

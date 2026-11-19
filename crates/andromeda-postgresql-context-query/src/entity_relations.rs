@@ -343,7 +343,7 @@ mod tests {
         pattern::Pattern,
         scope::scope_query::ScopeQuery,
         standing_instant::StandingInstant,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_schema::current::Entities;
@@ -387,8 +387,8 @@ mod tests {
         let mut query = empty_query();
         query.selection.selectors = vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(
-                    IriBuf::new("https://example.com/T".to_string()).expect("valid IRI"),
+                .type_selection(Some(TypeSelection::single(
+                    IriBuf::new("https://example.com/T".to_string()).expect("valid IRI").into(),
                 )))
                 .build(),
         ];
@@ -487,7 +487,7 @@ mod tests {
         assert!(matches!(relations(&patterned).source, RowSource::TypeMembers { .. }));
 
         let mut wildcard = empty_query();
-        wildcard.selection.selectors = vec![ExpandedEntitySelector::builder().type_selection(Some(ExpandedTypeSelection::Wildcard)).build()];
+        wildcard.selection.selectors = vec![ExpandedEntitySelector::builder().type_selection(Some(TypeSelection::Wildcard)).build()];
         assert_eq!(relations(&wildcard).source, RowSource::Entities);
 
         let mut nothing = typed_query();
@@ -505,8 +505,8 @@ mod tests {
         let mut several = typed_query();
         several.selection.selectors.push(
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Type(
-                    IriBuf::new("https://example.com/U".to_string()).expect("valid IRI"),
+                .type_selection(Some(TypeSelection::single(
+                    IriBuf::new("https://example.com/U".to_string()).expect("valid IRI").into(),
                 )))
                 .build(),
         );

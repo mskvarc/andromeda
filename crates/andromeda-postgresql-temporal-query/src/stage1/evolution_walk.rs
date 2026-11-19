@@ -6,8 +6,9 @@
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     entity_selection::ConsideredEntities,
+    name_stage::Expanded,
     temporal::compiled::CompiledTemporalQuery,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_postgresql_query::{
     history_source::{
@@ -165,7 +166,7 @@ fn walk(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryN
     let type_walkable = !selectors.is_empty()
         && selectors.iter().all(|selector| selector.ids.is_empty())
         && (selectors.len() == 1 || selectors.iter().all(|selector| selector.id_pattern.is_none()));
-    let exprs: Option<Vec<&ExpandedTypeSelection>> = type_walkable
+    let exprs: Option<Vec<&TypeSelection<Expanded>>> = type_walkable
         .then(|| {
             selectors
                 .iter()
@@ -250,7 +251,7 @@ mod tests {
         page_window::PageWindow,
         pattern::Pattern,
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -271,7 +272,7 @@ mod tests {
     /// Evolution once, in identifier order.
     #[test]
     fn a_type_disjunction_walks_the_merged_ranges_in_identifier_order() {
-        let bus = ExpandedTypeSelection::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Bus"));
+        let bus = TypeSelection::single(iri("https://uri.etsi.org/ngsi-ld/default-context/Bus").into());
         let mut names = vehicle_is_known();
         names.types = ResolvedNames::from_pairs([
             (
@@ -285,7 +286,7 @@ mod tests {
         ]);
         let compiled = typed(vec![
             ExpandedEntitySelector::builder()
-                .type_selection(Some(ExpandedTypeSelection::Or(vec![vehicle(), bus])))
+                .type_selection(TypeSelection::any_of([vehicle(), bus]))
                 .build(),
         ]);
         let statement = built(&compiled, &names);

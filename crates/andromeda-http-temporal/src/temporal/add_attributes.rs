@@ -29,7 +29,7 @@ use crate::{
 };
 use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
-use andromeda_ngsi_ld_query::type_selection::written_type_selection::WrittenTypeSelection;
+use andromeda_ngsi_ld_query::type_selection::TypeSelection;
 
 /// Add Attributes to Temporal Evolution of an Entity (clause 5.6.12): 204 when
 /// every part succeeded, 207 with the clause 5.2.16 result when only some did.
@@ -64,7 +64,7 @@ pub(crate) async fn add_attrs(
         .type_
         .as_ref()
         .and_then(|types| types.iter().next())
-        .map(|name| WrittenTypeSelection::Type(name.clone()));
+        .map(|name| TypeSelection::single(name.clone()));
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::TemporalEntities,
         entity_id: &id,

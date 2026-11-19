@@ -159,7 +159,7 @@ mod tests {
             representation::Representation,
             window::{TemporalWindow, TimeInterval},
         },
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
@@ -205,7 +205,7 @@ mod tests {
                 EntitySelection::builder()
                     .selectors(vec![
                         ExpandedEntitySelector::builder()
-                            .type_selection(Some(ExpandedTypeSelection::Type(IriBuf::new(SENSOR.to_owned()).expect("valid IRI"))))
+                            .type_selection(Some(TypeSelection::single(IriBuf::new(SENSOR.to_owned()).expect("valid IRI").into())))
                             .build(),
                     ])
                     .build(),

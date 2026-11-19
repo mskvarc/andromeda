@@ -35,7 +35,7 @@ use andromeda_http_extraction::{
     resource_location::{ResourceCollection, ResourceLocator},
 };
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
-use andromeda_ngsi_ld_query::type_selection::written_type_selection::WrittenTypeSelection;
+use andromeda_ngsi_ld_query::type_selection::TypeSelection;
 use andromeda_temporal::temporal_validation_reason::TemporalValidationReason;
 
 /// The response a local create-or-update answers with: 201 with the new
@@ -91,7 +91,7 @@ pub(crate) async fn create_or_update(
         .type_
         .as_ref()
         .and_then(|types| types.iter().next())
-        .map(|name| WrittenTypeSelection::Type(name.clone()));
+        .map(|name| TypeSelection::single(name.clone()));
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::TemporalEntities,
         entity_id: &entity_id,

@@ -305,7 +305,7 @@ async fn a_selection_asks_the_store_with_every_name_of_a_type_disjunction() {
         pretty_assertions::assert_eq!(asked.len(), 1, "{selecting:?} asked the store {asked:?}");
         pretty_assertions::assert_eq!(asked[0].len(), 1, "{selecting:?} asked the store {asked:?}");
         let specification = &asked[0][0];
-        assert!(specification.contains("Or("), "{selecting:?}: {specification}");
+        assert!(specification.contains(")], [EntityTypeIri("), "{selecting:?}: {specification}");
         assert!(
             specification.contains("https://uri.etsi.org/ngsi-ld/default-context/Vehicle")
                 && specification.contains("https://uri.etsi.org/ngsi-ld/default-context/Boat"),
@@ -321,7 +321,10 @@ async fn a_selection_asks_the_store_with_a_type_conjunction_whole() {
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
         let Contacted { asked, .. } = contacted(selecting, "type=%28Home%3BVehicle%29", single().await).await;
         let specification = asked.concat().concat();
-        assert!(specification.contains("And("), "{selecting:?}: {specification}");
+        assert!(
+            specification.contains("\"), EntityTypeIri(") && !specification.contains("], ["),
+            "{selecting:?}: {specification}"
+        );
         assert!(
             specification.contains("https://uri.etsi.org/ngsi-ld/default-context/Home")
                 && specification.contains("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"),

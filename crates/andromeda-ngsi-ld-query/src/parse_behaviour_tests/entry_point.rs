@@ -9,6 +9,7 @@ use crate::{
         target_language::TargetLanguage,
         value_path::ValuePath,
     },
+    name_stage::Written,
     ordering::{icu_collation::IcuCollation, written_ordering_term::WrittenOrderingTerm},
     parse_behaviour_tests::{
         dataset_selector_inputs::DATASET_SELECTOR_INPUTS,
@@ -43,7 +44,7 @@ use crate::{
         aggregation_period::AggregationPeriod,
         grouping::{aggregation_grouping::AggregationGrouping, group_key::GroupKey},
     },
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
 };
 use proptest::{
     prelude::BoxedStrategy,
@@ -115,7 +116,7 @@ impl EntryPoint {
     pub(super) fn outcome(self, text: &str) -> Outcome {
         match self {
             EntryPoint::Filter => read_and_write_back(text, Filter::from_str, Filter::to_string),
-            EntryPoint::TypeSelection => read_and_write_back(text, WrittenTypeSelection::from_str, WrittenTypeSelection::to_string),
+            EntryPoint::TypeSelection => read_and_write_back(text, TypeSelection::<Written>::from_str, TypeSelection::<Written>::to_string),
             EntryPoint::ScopeQuery => read_and_write_back(text, ScopeQuery::from_str, ScopeQuery::to_string),
             EntryPoint::ScopePattern => read_and_write_back(text, ScopePattern::from_str, ScopePattern::to_string),
             EntryPoint::ScopeLabel => read(text, ScopeLabel::from_str),

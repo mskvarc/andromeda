@@ -196,7 +196,7 @@ mod tests {
         namespace_expander::EXAMPLE_NAMESPACE,
         page_window::PageWindow,
         scope::scope_query::ScopeQuery,
-        type_selection::expanded_type_selection::ExpandedTypeSelection,
+        type_selection::TypeSelection,
     };
     use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
@@ -238,7 +238,7 @@ mod tests {
             .iter()
             .map(|ty| {
                 ExpandedEntitySelector::builder()
-                    .type_selection(Some(ExpandedTypeSelection::Type(iri(ty))))
+                    .type_selection(Some(TypeSelection::single(iri(ty).into())))
                     .build()
             })
             .collect();

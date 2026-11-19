@@ -1,7 +1,7 @@
 //! How both indexes are partitioned.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
+use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::{IriBuf, iri};
 
@@ -46,35 +46,38 @@ impl SpatialKey {
 
 /// The concrete type IRIs a clause 4.17 type selection reaches.
 ///
-/// Returns `None` for an expression containing an `And`: an intersection over
-/// multi-typed entities is not what the partitioning models, and answering
-/// from the tree anyway would silently narrow the result. The caller falls
-/// back to the store in that case.
+/// Returns `None` for the wildcard and for a selection with a conjunction of
+/// several types: an intersection over multi-typed entities is not what the
+/// partitioning models, and answering from the tree anyway would silently
+/// narrow the result. The caller falls back to the store in that case.
 #[must_use]
-pub fn flatten_or_type_iris(expr: &ExpandedTypeSelection) -> Option<Vec<IriBuf>> {
-    match expr {
-        ExpandedTypeSelection::Wildcard | ExpandedTypeSelection::And(_) => None,
-        ExpandedTypeSelection::Type(iri) => Some(vec![iri.clone()]),
-        ExpandedTypeSelection::Or(children) => {
-            let mut out = Vec::with_capacity(children.len());
-            for child in children {
-                out.extend(flatten_or_type_iris(child)?);
-            }
-            Some(out)
-        }
-    }
+pub fn flatten_or_type_iris(expr: &TypeSelection<Expanded>) -> Option<Vec<IriBuf>> {
+    let TypeSelection::Alternatives(alternatives) = expr else {
+        return None;
+    };
+    alternatives
+        .iter()
+        .map(|conjunction| match conjunction {
+            [only] => Some(only.as_iri().clone()),
+            [] | [_, _, ..] => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::key::{SpatialKey, flatten_or_type_iris};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_iri::EntityTypeIri};
+    use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use iri_rs::IriBuf;
 
-    fn type_selection(raw: &str) -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(IriBuf::new(raw.to_owned()).expect("a well-formed IRI"))
+    fn type_selection(raw: &str) -> TypeSelection<Expanded> {
+        TypeSelection::single(raw.parse::<EntityTypeIri>().expect("a well-formed IRI"))
+    }
+
+    fn alternatives(shape: &[&[&str]]) -> TypeSelection<Expanded> {
+        let conjunction = |types: &[&str]| types.iter().map(|raw| raw.parse::<EntityTypeIri>().expect("a well-formed IRI")).collect();
+        TypeSelection::of_alternatives(shape.iter().map(|types| conjunction(types)).collect()).expect("a non-empty shape")
     }
 
     #[test]
@@ -96,27 +99,25 @@ mod tests {
 
     #[test]
     fn an_alternation_flattens_to_every_branch() {
-        let expr = ExpandedTypeSelection::Or(vec![
-            type_selection("https://example.org/Vehicle"),
-            type_selection("https://example.org/Building"),
-        ]);
+        let expr = alternatives(&[&["https://example.org/Vehicle"], &["https://example.org/Building"]]);
         let flattened = flatten_or_type_iris(&expr).expect("flattens");
         pretty_assertions::assert_eq!(flattened.len(), 2);
     }
 
     #[test]
     fn an_intersection_refuses_to_flatten_rather_than_narrowing_the_answer() {
-        let expr = ExpandedTypeSelection::And(vec![
-            type_selection("https://example.org/Vehicle"),
-            type_selection("https://example.org/Building"),
-        ]);
+        let expr = alternatives(&[&["https://example.org/Vehicle", "https://example.org/Building"]]);
         assert!(flatten_or_type_iris(&expr).is_none());
     }
 
     #[test]
-    fn an_intersection_nested_inside_an_alternation_refuses_too() {
-        let nested = ExpandedTypeSelection::And(vec![type_selection("https://example.org/A"), type_selection("https://example.org/B")]);
-        let expr = ExpandedTypeSelection::Or(vec![type_selection("https://example.org/Vehicle"), nested]);
+    fn an_intersection_beside_an_alternative_refuses_too() {
+        let expr = alternatives(&[&["https://example.org/Vehicle"], &["https://example.org/A", "https://example.org/B"]]);
         assert!(flatten_or_type_iris(&expr).is_none());
+    }
+
+    #[test]
+    fn the_wildcard_refuses_to_flatten() {
+        assert!(flatten_or_type_iris(&TypeSelection::Wildcard).is_none());
     }
 }

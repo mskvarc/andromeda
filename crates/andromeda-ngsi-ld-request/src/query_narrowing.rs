@@ -41,7 +41,7 @@ use andromeda_ngsi_ld_query::{
     filter::{Filter, referenced_attributes::referenced_attributes},
     geo::written_geo_query::WrittenGeoQuery,
     name_stage::Written,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
     written_entity_selector::WrittenEntitySelector,
 };
 use strum::{Display, IntoEnumIterator};
@@ -79,7 +79,7 @@ pub struct NarrowingInputs<'a> {
     /// Input (a): the clause 4.17 selector of Entity Types, as a flat
     /// parameter.
     #[builder(default = Default::default())]
-    entity_type: Option<&'a WrittenTypeSelection>,
+    entity_type: Option<&'a TypeSelection<Written>>,
     /// Input (a) as a POST body writes it: one clause 5.2.11 selector per
     /// entry, each carrying its own type selector (clause 5.2.23).
     #[builder(default = Default::default())]
@@ -120,7 +120,7 @@ impl ExecutionScope {
     /// the flat `type` and the `type` of each clause 5.2.33 selector of a POST
     /// body alike.
     #[must_use]
-    pub fn of(local: Option<bool>, entity_type: Option<&WrittenTypeSelection>, selectors: &[WrittenEntitySelector]) -> ExecutionScope {
+    pub fn of(local: Option<bool>, entity_type: Option<&TypeSelection<Written>>, selectors: &[WrittenEntitySelector]) -> ExecutionScope {
         if selects_every_type(entity_type, selectors) {
             ExecutionScope::Local
         } else {
@@ -148,7 +148,7 @@ impl ExecutionScope {
 /// Returns [`ParameterError::WildcardTypeWithLocalFalse`] for that pair.
 pub fn require_wildcard_locality(
     local: Option<bool>,
-    entity_type: Option<&WrittenTypeSelection>,
+    entity_type: Option<&TypeSelection<Written>>,
     selectors: &[WrittenEntitySelector],
 ) -> Result<(), ParameterError> {
     match local {
@@ -159,11 +159,11 @@ pub fn require_wildcard_locality(
 
 /// Whether the flat `type` or the `type` of any clause 5.2.33 selector is the
 /// clause 4.17 `*` that selects every Entity Type.
-fn selects_every_type(entity_type: Option<&WrittenTypeSelection>, selectors: &[WrittenEntitySelector]) -> bool {
+fn selects_every_type(entity_type: Option<&TypeSelection<Written>>, selectors: &[WrittenEntitySelector]) -> bool {
     entity_type
         .into_iter()
         .chain(selectors.iter().filter_map(|selector| selector.type_selection.as_ref()))
-        .any(|selection| matches!(selection, WrittenTypeSelection::Wildcard))
+        .any(|selection| matches!(selection, TypeSelection::Wildcard))
 }
 
 /// Which of the clause's inputs one operation enumerates.
@@ -250,18 +250,13 @@ mod tests {
         query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::{
-        filter::Filter,
-        geo::written_geo_query::WrittenGeoQuery,
-        name_stage::Written,
-        type_selection::written_type_selection::WrittenTypeSelection,
-    };
+    use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, name_stage::Written, type_selection::TypeSelection};
 
     fn attrs(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a valid Attribute name")).collect()
     }
 
-    fn entity_type() -> WrittenTypeSelection {
+    fn entity_type() -> TypeSelection<Written> {
         "Vehicle".parse().expect("a valid type selector")
     }
 

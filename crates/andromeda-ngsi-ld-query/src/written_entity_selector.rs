@@ -1,7 +1,7 @@
 //! An entity selector as a query writes it, before its type selection is
 //! expanded (clause 5.2.33).
 
-use crate::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection};
+use crate::{name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::borrow::Cow;
 
@@ -19,7 +19,7 @@ pub struct WrittenEntitySelector {
     /// A regular expression the selector's identifiers must match (`idPattern`).
     pub id_pattern: Option<Pattern>,
     /// The selector's type selection (clause 4.17 `type`).
-    pub type_selection: Option<WrittenTypeSelection>,
+    pub type_selection: Option<TypeSelection<Written>>,
 }
 
 impl WrittenEntitySelector {
@@ -35,7 +35,7 @@ impl WrittenEntitySelector {
         structured: &'a [Self],
         ids: Option<&[Identifier]>,
         id_pattern: Option<&Pattern>,
-        type_selection: Option<&WrittenTypeSelection>,
+        type_selection: Option<&TypeSelection<Written>>,
     ) -> Cow<'a, [Self]> {
         if structured.is_empty() {
             Cow::Owned(vec![Self {
@@ -51,7 +51,7 @@ impl WrittenEntitySelector {
 
 #[cfg(test)]
 mod tests {
-    use crate::{pattern::Pattern, type_selection::written_type_selection::WrittenTypeSelection, written_entity_selector::WrittenEntitySelector};
+    use crate::{name_stage::Written, pattern::Pattern, type_selection::TypeSelection, written_entity_selector::WrittenEntitySelector};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use std::{borrow::Cow, str::FromStr};
 
@@ -75,7 +75,7 @@ mod tests {
     fn flat_fields_become_one_implicit_selector() {
         let ids = vec![identifier("urn:ngsi-ld:A"), identifier("urn:ngsi-ld:B")];
         let pattern = Pattern::from_str("^urn:ngsi-ld:.*").expect("valid pattern");
-        let type_ = WrittenTypeSelection::from_str("T").expect("valid type");
+        let type_ = TypeSelection::<Written>::from_str("T").expect("valid type");
         let effective = WrittenEntitySelector::effective(&[], Some(&ids), Some(&pattern), Some(&type_));
         pretty_assertions::assert_eq!(
             effective.as_ref(),

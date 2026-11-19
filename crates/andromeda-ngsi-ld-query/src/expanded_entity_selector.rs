@@ -1,6 +1,6 @@
 //! One entity selector of a query (clause 5.2.33), its type selection expanded.
 
-use crate::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::expanded_type_selection::ExpandedTypeSelection};
+use crate::{identifier_axis::IdentifierAxis, name_stage::Expanded, pattern::Pattern, type_selection::TypeSelection};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use typed_builder::TypedBuilder;
 
@@ -23,7 +23,7 @@ pub struct ExpandedEntitySelector {
     /// Type selection over entity type IRIs (clause 4.17 `type`).
     ///
     /// `None` when this selector places no type constraint.
-    pub type_selection: Option<ExpandedTypeSelection>,
+    pub type_selection: Option<TypeSelection<Expanded>>,
 }
 
 impl ExpandedEntitySelector {

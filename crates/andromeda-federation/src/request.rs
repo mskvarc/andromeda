@@ -17,7 +17,8 @@ use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::reading::filter_reading::FilterReading,
     geo::compiled_geo_query::CompiledGeoQuery,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    name_stage::Written,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
@@ -174,7 +175,7 @@ pub struct ForwardProvisionRequest<'a> {
     /// with, matched against each registration by clause 5.12. A request that
     /// carries a single type names it as a one-type selector; without one, the
     /// local entity's own types stand in.
-    pub entity_type_selector: Option<&'a WrittenTypeSelection>,
+    pub entity_type_selector: Option<&'a TypeSelection<Written>>,
     /// Attribute name used to filter registration information entries.
     pub attribute_name: Option<&'a AttributeName>,
     /// The one `datasetId` whose Attribute instance the operation targets,

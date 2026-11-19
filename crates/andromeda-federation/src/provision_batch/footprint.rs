@@ -10,12 +10,8 @@
 //! unconstrained.
 
 use crate::provision_batch::{BatchEntity, narrowing::entity_types};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{
-    csr::expanded_entity_specification::ExpandedEntitySpecification,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
-};
-use iri_rs::IriBuf;
+use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
+use andromeda_ngsi_ld_query::{csr::expanded_entity_specification::ExpandedEntitySpecification, name_stage::Expanded, type_selection::TypeSelection};
 use std::collections::BTreeSet;
 
 /// Every identifier and every type of a batch's entities.
@@ -24,7 +20,7 @@ pub(super) struct BatchFootprint {
     ids: Vec<Identifier>,
     /// Every type an entity carries, as one disjunction; `None` when an
     /// entity's types are not known, which leaves the types unconstrained.
-    types: Option<ExpandedTypeSelection>,
+    types: Option<TypeSelection<Expanded>>,
 }
 
 impl BatchFootprint {
@@ -48,7 +44,7 @@ impl BatchFootprint {
 
 /// Every type the entities carry, as one disjunction, or `None` when an entity
 /// carries none that is known or one that is no IRI.
-fn type_union(entities: &[BatchEntity<'_>]) -> Option<ExpandedTypeSelection> {
+fn type_union(entities: &[BatchEntity<'_>]) -> Option<TypeSelection<Expanded>> {
     let mut named = BTreeSet::new();
     for entity in entities {
         let types = entity_types(entity);
@@ -59,12 +55,9 @@ fn type_union(entities: &[BatchEntity<'_>]) -> Option<ExpandedTypeSelection> {
     }
     let alternatives = named
         .into_iter()
-        .map(|name| IriBuf::new(name.to_string()).ok().map(ExpandedTypeSelection::Type))
+        .map(|name| name.as_str().parse::<EntityTypeIri>().ok().map(|iri| vec![iri]))
         .collect::<Option<Vec<_>>>()?;
-    Some(match <[ExpandedTypeSelection; 1]>::try_from(alternatives) {
-        Ok([single]) => single,
-        Err(several) => ExpandedTypeSelection::Or(several),
-    })
+    TypeSelection::of_alternatives(alternatives)
 }
 
 #[cfg(test)]
@@ -75,15 +68,14 @@ mod tests {
         registration_fixture::{document, uri},
     };
     use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec};
-    use andromeda_ngsi_ld_query::type_selection::expanded_type_selection::ExpandedTypeSelection;
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
     use pretty_assertions::assert_eq;
 
     const VEHICLE: &str = "https://example.org/Vehicle";
     const BOAT: &str = "https://example.org/Boat";
 
-    fn named(entity_type: &str) -> ExpandedTypeSelection {
-        ExpandedTypeSelection::Type(IriBuf::new(entity_type.to_owned()).expect("a valid IRI"))
+    fn named(entity_type: &str) -> TypeSelection<Expanded> {
+        TypeSelection::single(entity_type.parse().expect("a valid IRI"))
     }
 
     #[test]
@@ -107,7 +99,7 @@ mod tests {
         let footprint = BatchFootprint::of(&entities);
         let specification = footprint.specification();
         assert_eq!(specification.ids, ids.as_slice());
-        assert_eq!(specification.entity_type, Some(&ExpandedTypeSelection::Or(vec![named(BOAT), named(VEHICLE)])));
+        assert_eq!(specification.entity_type, TypeSelection::any_of([named(BOAT), named(VEHICLE)]).as_ref());
         assert!(specification.id_pattern.is_none());
     }
 

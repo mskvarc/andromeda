@@ -8,6 +8,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     expanded_entity_selector::ExpandedEntitySelector,
     geo::compiled_geo_query::CompiledGeoQuery,
+    name_stage::Expanded,
     page_window::PageWindow,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
@@ -17,7 +18,7 @@ use andromeda_ngsi_ld_query::{
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
     },
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_postgresql_query::{
@@ -102,8 +103,8 @@ pub(super) fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) 
 }
 
 /// The `Vehicle` type the selector tests name.
-pub(super) fn vehicle() -> ExpandedTypeSelection {
-    ExpandedTypeSelection::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))
+pub(super) fn vehicle() -> TypeSelection<Expanded> {
+    TypeSelection::single(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle").into())
 }
 
 /// A query with every filter absent but the entity selectors `selectors`.
@@ -177,7 +178,7 @@ pub(super) fn sensor_names() -> QueryNames {
 pub(super) fn sensors() -> CompiledTemporalQuery {
     let mut compiled = typed(vec![
         ExpandedEntitySelector::builder()
-            .type_selection(Some(ExpandedTypeSelection::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Sensor"))))
+            .type_selection(Some(TypeSelection::single(iri("https://uri.etsi.org/ngsi-ld/default-context/Sensor").into())))
             .build(),
     ]);
     compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
@@ -197,7 +198,7 @@ pub(super) fn id_pattern(ty: Option<&str>, raw: &str) -> CompiledTemporalQuery {
     let mut compiled = sensors();
     compiled.entities.selectors = vec![
         ExpandedEntitySelector::builder()
-            .type_selection(ty.map(|ty| ExpandedTypeSelection::Type(iri(&format!("https://uri.etsi.org/ngsi-ld/default-context/{ty}")))))
+            .type_selection(ty.map(|ty| TypeSelection::single(iri(&format!("https://uri.etsi.org/ngsi-ld/default-context/{ty}")).into())))
             .id_pattern(Some(raw.parse::<Pattern>().expect("valid pattern")))
             .build(),
     ];

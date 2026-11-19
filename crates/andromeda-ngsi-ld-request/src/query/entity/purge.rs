@@ -45,7 +45,7 @@ use andromeda_ngsi_ld_query::{
     ordering::ordering_parameters::OrderingParameters,
     pattern::Pattern,
     scope::scope_query::ScopeQuery,
-    type_selection::written_type_selection::WrittenTypeSelection,
+    type_selection::TypeSelection,
 };
 use serde::Deserialize;
 
@@ -59,7 +59,7 @@ pub struct PurgeEntitiesParameters {
     pub id: Option<Vec<Identifier>>,
     /// Entity types to select, as a type-selection expression (clause 4.17 `type`).
     #[serde(rename = "type")]
-    pub entity_type: Option<WrittenTypeSelection>,
+    pub entity_type: Option<TypeSelection<Written>>,
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     #[serde(default, deserialize_with = "deserialize_optional_pattern")]

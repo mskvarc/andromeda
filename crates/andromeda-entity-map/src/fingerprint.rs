@@ -31,9 +31,10 @@ use andromeda_ngsi_ld_model::entity_map_fingerprint::{MapRequestKind, QueryFinge
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     filter::reading::filter_reading::FilterReading,
+    name_stage::Expanded,
     query_identity::{IdentifierScope, QueryIdentity},
     temporal::compiled::CompiledTemporalQuery,
-    type_selection::expanded_type_selection::ExpandedTypeSelection,
+    type_selection::TypeSelection,
 };
 use andromeda_ngsi_ld_request::follow_up_inputs::FollowUpInputs;
 use iri_rs::IriBuf;
@@ -56,7 +57,7 @@ pub enum FingerprintedRequest<'a> {
     /// Retrieve Entity.
     RetrieveEntity {
         /// The expanded clause 5.7.1.3 type selector, when the request names one.
-        entity_type: Option<&'a ExpandedTypeSelection>,
+        entity_type: Option<&'a TypeSelection<Expanded>>,
         /// The expanded attribute list.
         attrs: &'a [IriBuf],
         /// Every other input of the request.
