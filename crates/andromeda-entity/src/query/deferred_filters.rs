@@ -10,8 +10,7 @@
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
-use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
+use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_query::{
     entity_filters::EntityFilters,
     filter::{
@@ -29,7 +28,8 @@ use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
 use chrono::Utc;
 
 impl EntityQueryService {
-    /// Keep the merged `entities` the `deferred` filters admit.
+    /// Keep the merged `entities` the `deferred` filters admit, in the order
+    /// they come, each decided on the state it holds.
     ///
     /// Clause 5.7.2.4: with `splitEntities` no single source held enough of an
     /// entity to decide `q`, the geoquery or `scopeQ`, so those are evaluated
@@ -45,20 +45,20 @@ impl EntityQueryService {
     /// Returns [`EntityError::Query`] when `q` or the geoquery cannot be
     /// compiled against `context`, and the store's [`EntityError`] when the
     /// entities a hop of `q` links to cannot be read.
-    pub async fn retain_matching(
+    pub async fn retain_matching<T: AsRef<EntityState> + Send + Sync>(
         &self,
         target: &ContextTarget,
-        entities: Vec<ReceivedState>,
-        deferred: DeferredSplitFilters,
+        entities: Vec<T>,
+        deferred: &DeferredSplitFilters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
-    ) -> Result<Vec<ReceivedState>, EntityError> {
+    ) -> Result<Vec<T>, EntityError> {
         // One preparation serves the deferred `q` and the geoquery alike.
         let prepared_context = self.engine().prepare_term_context(context);
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
         let q = match &deferred.q {
             Some(admitted) => Some(CompiledFilter::new(
-                compile_deferred_q(admitted, &deferred, &expander).await?,
+                compile_deferred_q(admitted, deferred, &expander).await?,
                 language_targeting.matching(),
             )),
             None => None,
@@ -70,27 +70,27 @@ impl EntityQueryService {
             scope: deferred.scope_q.as_ref(),
         };
 
-        let documents: Vec<(ReceivedState, EntityDocument)> = entities
+        let documents: Vec<(T, EntityDocument)> = entities
             .into_iter()
-            .map(|version| {
-                let document = EntityDocument::from(&version.state);
-                (version, document)
+            .map(|entity| {
+                let document = EntityDocument::from(entity.as_ref());
+                (entity, document)
             })
             .collect();
         let linked = self.linked_states_of(target, &documents, filters.q.map(CompiledFilter::filter)).await?;
         Ok(documents
             .into_iter()
             .filter(|(_, document)| entity_filters_admit(filters, document, &linked))
-            .map(|(version, _)| version)
+            .map(|(entity, _)| entity)
             .collect())
     }
 
     /// The entities the `rel{…}` hops of `q` cross into from the merged
     /// `documents`, none when `q` takes no hop.
-    async fn linked_states_of(
+    async fn linked_states_of<T: Sync>(
         &self,
         target: &ContextTarget,
-        documents: &[(ReceivedState, EntityDocument)],
+        documents: &[(T, EntityDocument)],
         q: Option<&Filter<Expanded>>,
     ) -> Result<LinkedStates, EntityError> {
         match q.filter(|expr| expr.contains_linked_hop()) {
@@ -165,7 +165,7 @@ mod tests {
             .retain_matching(
                 &ContextTarget::Live,
                 vec![vehicle("urn:ngsi-ld:Vehicle:fast", 80), vehicle("urn:ngsi-ld:Vehicle:slow", 40)],
-                deferred,
+                &deferred,
                 &ContextSpec::core_only(),
                 LanguageTargeting::Specification,
             )
