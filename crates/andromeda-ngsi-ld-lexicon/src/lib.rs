@@ -17,6 +17,7 @@
 mod validated_name;
 
 pub mod aggr_method;
+pub mod attribute_iri;
 pub mod attribute_name;
 pub mod attribute_null_encoding;
 pub mod attribute_type;
@@ -27,6 +28,7 @@ pub mod context_source_pseudonym;
 pub mod datatype;
 pub mod dereferenceable_uri;
 pub mod duration;
+pub mod entity_type_iri;
 pub mod entity_type_name;
 pub mod http_token;
 pub mod identifier;
