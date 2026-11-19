@@ -18,7 +18,7 @@ use crate::{
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::identifier_spelling::IdentifierSpelling;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
-use async_lock::{Mutex, MutexGuardArc, RwLockReadGuardArc};
+use async_lock::{Mutex, MutexGuardArc};
 use std::sync::Arc;
 
 /// A bounded step's read, taken in under the watermark state it holds.
@@ -67,8 +67,6 @@ pub(super) struct BacklogApplication {
     pub(super) round: u64,
     /// The watermark state the read is recorded in.
     pub(super) state: Arc<Mutex<WatermarkState>>,
-    /// Keeps a rebuild from installing until the read is in.
-    pub(super) access: RwLockReadGuardArc<()>,
 }
 
 impl BlockingTask for BacklogApplication {
@@ -79,11 +77,9 @@ impl BlockingTask for BacklogApplication {
             read,
             round,
             state,
-            access,
         } = *self;
         take_in(&index, &placement, read.locations);
         state.lock_blocking().caught_up(read.horizon, round);
-        drop(access);
         Ok(())
     }
 }

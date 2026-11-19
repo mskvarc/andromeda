@@ -1,7 +1,7 @@
 //! What the back-index records of an object: where each of its entries sits.
 
 use crate::key::SpatialKey;
-use std::{iter::Chain, mem, option, sync::Arc, vec};
+use std::{iter::Chain, mem, option, slice, sync::Arc, vec};
 
 /// Where one entry of an object sits: enough to find it in its tree again.
 #[derive(Debug, PartialEq)]
@@ -76,6 +76,14 @@ impl Placements {
         match self {
             Placements::One(_) => false,
             Placements::Several(placements) => placements.is_empty(),
+        }
+    }
+
+    /// Every placement, in order.
+    pub(super) fn iter(&self) -> slice::Iter<'_, Placement> {
+        match self {
+            Placements::One(placement) => slice::from_ref(placement).iter(),
+            Placements::Several(placements) => placements.iter(),
         }
     }
 
@@ -185,6 +193,16 @@ mod tests {
             vec![placement("A", 1.0), placement("B", 2.0)]
         );
         assert_eq!(Placements::default().into_iter().count(), 0);
+    }
+
+    #[test]
+    fn the_placements_are_lent_in_order() {
+        assert_eq!(Placements::One(placement("A", 1.0)).iter().collect::<Vec<_>>(), vec![&placement("A", 1.0)]);
+        assert_eq!(
+            several(vec![placement("A", 1.0), placement("B", 2.0)]).iter().collect::<Vec<_>>(),
+            vec![&placement("A", 1.0), &placement("B", 2.0)]
+        );
+        assert_eq!(Placements::default().iter().count(), 0);
     }
 
     #[test]

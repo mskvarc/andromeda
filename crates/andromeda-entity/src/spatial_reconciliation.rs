@@ -132,20 +132,15 @@ pub async fn read_location_snapshot(
 /// Rebuild every `location` partition of one tenant's index from `snapshot`,
 /// and seed the scope so the index may narrow queries against it.
 ///
-/// `held` is kept until the install has finished, whether or not the caller
-/// still waits for it, so a lock it guards cannot be taken while the install
-/// still runs.
-///
 /// # Errors
 ///
 /// Reports [`EntityError::Internal`] when the blocking worker does not
 /// complete the install.
-pub async fn install_location_snapshot<Held: Send + 'static>(
+pub async fn install_location_snapshot(
     index: &Arc<SpatialEntityIndex>,
     placement: &LocationPlacement,
     snapshot: LocationSnapshot,
     executor: &dyn BlockingExecutor,
-    held: Held,
 ) -> Result<RebuildOutcome, EntityError> {
     let LocationSnapshot {
         generation,
@@ -161,7 +156,6 @@ pub async fn install_location_snapshot<Held: Send + 'static>(
         placement: placement.clone(), // clone: the blocking worker owns everything it reads
         entries: partitions.entries,
         generation,
-        held,
     };
     executor.execute(vec![Box::new(install)], NonZeroUsize::MIN).await?;
     Ok(outcome)
@@ -181,11 +175,11 @@ pub async fn rebuild_location_index(
     executor: &dyn BlockingExecutor,
 ) -> Result<RebuildOutcome, EntityError> {
     let snapshot = read_location_snapshot(index, source, placement).await?;
-    install_location_snapshot(index, placement, snapshot, executor, ()).await
+    install_location_snapshot(index, placement, snapshot, executor).await
 }
 
 /// One rebuild's install, run on a blocking worker.
-struct Install<Held> {
+struct Install {
     /// The index rebuilt.
     index: Arc<SpatialEntityIndex>,
     /// The tenant and the geoproperty whose partitions are rebuilt.
@@ -194,24 +188,20 @@ struct Install<Held> {
     entries: HashMap<SpatialKey, Vec<SpatialEntry>>,
     /// The index generation captured before the read.
     generation: u64,
-    /// Whatever the caller keeps held until the install has finished.
-    held: Held,
 }
 
-impl<Held: Send + 'static> BlockingTask for Install<Held> {
+impl BlockingTask for Install {
     fn run(self: Box<Self>) -> Result<(), EntityError> {
         let Install {
             index,
             placement,
             entries,
             generation,
-            held,
         } = *self;
         let started = Instant::now();
         let partition_count = entries.len();
         let total_entries: usize = entries.values().map(Vec::len).sum();
         index.rebuild(placement.tenant(), placement.geoproperty(), entries, generation);
-        drop(held);
         info!(target: "spatial.rebuild", partition_count, total_entries, elapsed_ms = started.elapsed().as_millis(), "spatial index rebuilt the default location geoproperty");
         Ok(())
     }

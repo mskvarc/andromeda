@@ -18,10 +18,11 @@
 //! the background catch-up as they commit, so a load is taken in while it runs
 //! and a query after it finds little to read.
 //!
-//! A rebuild reads the store holding nothing, and only its install keeps
-//! queries off the index. Every write applied to the index after the rebuild's
-//! generation was captured keeps its state over the rebuild's read, so a
-//! rebuild never moves the horizon once the index is seeded. A catch-up that
+//! A rebuild holds nothing while it reads the store or installs its read, so
+//! queries and catch-ups carry on throughout. Every write applied to the index
+//! after the rebuild's generation was captured keeps its state over the
+//! rebuild's read, so a rebuild never moves the horizon once the index is
+//! seeded. A catch-up that
 //! read the store before the rebuild did and applied its read after the
 //! capture leaves an entity at an older state than the rebuild's read, and that
 //! entity's later change is above the catch-up's horizon, so the next catch-up
@@ -54,7 +55,7 @@ use crate::{
     },
 };
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
-use async_lock::{Mutex, MutexGuardArc, RwLock};
+use async_lock::{Mutex, MutexGuardArc};
 use std::{
     num::NonZeroUsize,
     sync::{
@@ -106,10 +107,6 @@ pub struct SpatialWatermark {
     /// Where the index stands. Held across a bounded step, and by nothing that
     /// can take longer.
     state: Arc<Mutex<WatermarkState>>,
-    /// Shared by every reader and every writer of the index but a rebuild's
-    /// install, which holds it exclusively, since it locks whole partitions for
-    /// as long as it bulk-loads them.
-    access: Arc<RwLock<()>>,
 }
 
 impl SpatialWatermark {
@@ -130,7 +127,6 @@ impl SpatialWatermark {
             trigger: CatchUpTrigger::new(signal),
             arrivals: AtomicU64::new(0),
             state: Arc::new(Mutex::new(WatermarkState::default())),
-            access: Arc::new(RwLock::new(())),
         }
     }
 
@@ -139,9 +135,9 @@ impl SpatialWatermark {
     /// answer the query in full.
     ///
     /// Takes in at most [`QUERY_CATCH_UP_BOUND`] changed entities first. It
-    /// never waits for a rebuild's install or for the background catch-up, and
-    /// returns `None` at once while either holds the index or while more
-    /// entities changed than the bound.
+    /// never waits for a rebuild or for the background catch-up, and returns
+    /// `None` at once while the background catch-up takes a backlog in or while
+    /// more entities changed than the bound.
     ///
     /// # Errors
     ///
@@ -149,9 +145,6 @@ impl SpatialWatermark {
     /// index is then left where it was, and must not narrow the query.
     pub async fn narrow<R>(&self, read: impl FnOnce(&SpatialEntityIndex) -> R) -> Result<Option<R>, EntityError> {
         let ticket = self.arrivals.fetch_add(1, Ordering::SeqCst) + 1;
-        let Some(_access) = self.access.try_read() else {
-            return Ok(None);
-        };
         let state = self.state.lock_arc().await;
         if state.served_through >= ticket {
             drop(state);
@@ -189,7 +182,6 @@ impl SpatialWatermark {
     /// Reports [`EntityError::Persistence`] when the store cannot be read. An
     /// index behind stays behind.
     pub async fn catch_up(&self) -> Result<CatchUpPass, EntityError> {
-        let access = self.access.read_arc().await;
         let state = self.state.lock_arc().await;
         let horizon = match state.standing.clone() {
             Standing::Unseeded => return Ok(CatchUpPass::Settled),
@@ -214,7 +206,6 @@ impl SpatialWatermark {
             read,
             round,
             state: Arc::clone(&self.state),
-            access,
         };
         self.executor.execute(vec![Box::new(application)], NonZeroUsize::MIN).await?;
         Ok(CatchUpPass::MoreMayRemain)
@@ -222,9 +213,7 @@ impl SpatialWatermark {
 
     /// Rebuild the index from the store, and seed it on its first rebuild.
     ///
-    /// The read holds nothing. The install waits for every query and catch-up
-    /// in flight, and queries arriving meanwhile are answered by the store in
-    /// full.
+    /// Neither the read nor the install holds a query or a catch-up back.
     ///
     /// # Errors
     ///
@@ -234,8 +223,7 @@ impl SpatialWatermark {
     pub async fn rebuild(&self) -> Result<RebuildOutcome, EntityError> {
         let round = self.arrivals.load(Ordering::SeqCst);
         let snapshot = read_location_snapshot(&self.index, self.source.as_ref(), &self.placement).await?;
-        let access = self.access.write_arc().await;
-        let outcome = install_location_snapshot(&self.index, &self.placement, snapshot, self.executor.as_ref(), access).await?;
+        let outcome = install_location_snapshot(&self.index, &self.placement, snapshot, self.executor.as_ref()).await?;
         // clone: the outcome reports the horizon the state records
         self.state.lock().await.seeded(outcome.horizon.clone(), round);
         Ok(outcome)

@@ -74,11 +74,11 @@ pub struct SpatialIndexConfig {
     /// loaded and runs while the tenant serves requests. Until it completes,
     /// the store evaluates every geo query. Later rebuilds drop the
     /// entries of entities deleted since, and under `commit-synchronous` they
-    /// are also what brings in a replica's writes. Under `watermark` a geo
-    /// query never waits for a rebuild, and the store answers the queries that
-    /// arrive while it installs what it read.
+    /// are also what brings in a replica's writes. A rebuild loads each
+    /// partition beside the one in use, so geo queries and index updates carry
+    /// on while it runs and wait only while a partition is swapped in.
     #[schemars(
-        description = "How often each tenant's index is rebuilt from the database. The first rebuild starts within seconds of the tenant being loaded and runs while the tenant serves requests. Until it completes, the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. Under `\"watermark\"` a geo query never waits for a rebuild, and the database answers the ones that arrive while it installs what it read."
+        description = "How often each tenant's index is rebuilt from the database. The first rebuild starts within seconds of the tenant being loaded and runs while the tenant serves requests. Until it completes, the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes. A rebuild loads each partition beside the one in use, so geo queries and writes carry on while it runs and wait only while a partition is swapped in."
     )]
     pub rebuild_interval: HumanDuration,
 }
