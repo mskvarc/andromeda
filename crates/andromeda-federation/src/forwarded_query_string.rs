@@ -12,7 +12,7 @@ use crate::{
     forwarded_parameter::{ForwardedParameter, ParameterNames},
     forwarding_context::Rewording,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::Filter,
     name_stage::Written,
@@ -75,7 +75,7 @@ impl ForwardedNames<'_> {
                 Ok(names.join(","))
             }
             ParameterNames::Attribute => {
-                let parsed: NgsiLdReference = value
+                let parsed: AttributeName = value
                     .parse()
                     .map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
                 Ok(self.geoproperty(&parsed).await?.to_string())

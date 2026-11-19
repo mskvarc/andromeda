@@ -51,7 +51,7 @@ pub(super) fn narrow_input<'a>(
     for entity in entities {
         let types = entity_types(entity);
         let specification = EntitySpecification::of_entity(types, entity.id);
-        let covers = RegistrationMatchSpecification {
+        let covers = RegistrationMatchSpecification::<AttributeName> {
             entities: slice::from_ref(&specification),
             attributes: &[],
         }

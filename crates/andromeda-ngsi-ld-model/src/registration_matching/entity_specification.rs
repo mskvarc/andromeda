@@ -7,7 +7,12 @@ use crate::{
     registration::info::RegistrationInfo,
 };
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
+use andromeda_ngsi_ld_query::{
+    identifier_axis::IdentifierAxis,
+    name_stage::{Expanded, Written},
+    pattern::Pattern,
+    type_selection::TypeSelection,
+};
 use std::slice;
 
 /// What an entity specification requires of the types a registration names.
@@ -18,6 +23,8 @@ pub enum TypeConstraint<'spec> {
     Any,
     /// The clause 4.17 selector the registered types must satisfy.
     Selector(&'spec TypeSelection<Written>),
+    /// The clause 4.17 selector of a stored subscription, its types expanded.
+    ExpandedSelector(&'spec TypeSelection<Expanded>),
     /// The types of one entity: the registered types must name at least one of
     /// them, which is the clause 4.17 alternation of the list.
     OneOf(&'spec [EntityTypeName]),
@@ -29,6 +36,7 @@ impl TypeConstraint<'_> {
         match self {
             TypeConstraint::Any => true,
             TypeConstraint::Selector(selector) => selector.matches(registered.names()),
+            TypeConstraint::ExpandedSelector(selector) => selector.matches(registered.names()),
             TypeConstraint::OneOf(types) => types.iter().any(|entity_type| registered.names().contains(entity_type)),
         }
     }
@@ -53,9 +61,9 @@ pub struct EntitySpecification<'spec> {
 impl<'spec> EntitySpecification<'spec> {
     /// The specification a subscription's `EntitySelector` (clause 5.2.33) is.
     #[must_use]
-    pub fn from_selector(selector: &'spec EntitySelector) -> EntitySpecification<'spec> {
+    pub fn from_selector(selector: &'spec EntitySelector<Expanded>) -> EntitySpecification<'spec> {
         EntitySpecification {
-            types: TypeConstraint::Selector(&selector.type_),
+            types: TypeConstraint::ExpandedSelector(&selector.type_),
             ids: selector.id.as_deref().unwrap_or_default(),
             id_pattern: selector.id_pattern.as_ref(),
         }
@@ -131,7 +139,11 @@ mod tests {
         registration_matching::entity_specification::{EntitySpecification, TypeConstraint},
     };
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-    use andromeda_ngsi_ld_query::{name_stage::Written, pattern::Pattern, type_selection::TypeSelection};
+    use andromeda_ngsi_ld_query::{
+        name_stage::{Expanded, Written},
+        pattern::Pattern,
+        type_selection::TypeSelection,
+    };
     use serde_json::json;
 
     fn uri(value: &str) -> Identifier {
@@ -301,10 +313,11 @@ mod tests {
 
     #[test]
     fn a_subscription_selector_becomes_one_specification() {
-        let selector: EntitySelector = serde_json::from_value(json!({"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:1"})).expect("parses");
+        let selector: EntitySelector<Expanded> =
+            serde_json::from_value(json!({"type": "https://example.org/Vehicle", "id": "urn:ngsi-ld:Vehicle:1"})).expect("parses");
         let specification = EntitySpecification::from_selector(&selector);
         pretty_assertions::assert_eq!(specification.ids.len(), 1);
         assert!(specification.id_pattern.is_none());
-        assert!(matches!(specification.types, TypeConstraint::Selector(_)));
+        assert!(matches!(specification.types, TypeConstraint::ExpandedSelector(_)));
     }
 }

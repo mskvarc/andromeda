@@ -8,13 +8,10 @@
 //! the same query engine, and only the Entities its filters keep are read at
 //! all. The evaluation in memory decides them again, at the same instant.
 
-use andromeda_ngsi_ld_model::entity_selector::EntitySelector as StoredSelector;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_constraint::EntityConstraint,
     entity_selection::EntitySelection,
-    name_stage::Expanded,
-    query_error::QueryError,
     standing_instant::StandingInstant,
 };
 use andromeda_subscription::{compiled::CompiledSubscription, entity_filter_set::EntityFilterSet};
@@ -24,32 +21,21 @@ use chrono::{DateTime, Utc};
 /// its selectors as a union (clause 5.2.33) under its `q`, `geoQ` and
 /// `scopeQ`, every Entity when it names none of them, and `None` when a
 /// stored `geoQ` that no longer compiles admits no Entity.
-///
-/// # Errors
-///
-/// Returns [`QueryError::TermExpansion`] when a stored selector's type is no
-/// expanded IRI.
-pub(crate) fn interval_query(sub: &CompiledSubscription, at: DateTime<Utc>) -> Result<Option<CompiledEntityQuery>, QueryError> {
+pub(crate) fn interval_query(sub: &CompiledSubscription, at: DateTime<Utc>) -> Option<CompiledEntityQuery> {
     let filters = match sub.entity_filters() {
-        EntityFilterSet::AdmitsNothing => return Ok(None),
+        EntityFilterSet::AdmitsNothing => return None,
         EntityFilterSet::Evaluate(filters) => filters,
     };
     // clone: the query owns its filters, and the subscription keeps its own for the evaluation in memory
     let selection = EntitySelection::builder()
-        .selectors(sub.selectors.iter().map(compiled_selector).collect::<Result<_, _>>()?)
+        // clone: the query owns its selectors, and the subscription lends its own
+        .selectors(sub.selectors.iter().cloned().map(EntityConstraint::from).collect())
         .q(filters.q.cloned())
         .geo(filters.geo.cloned())
         .scope_q(filters.scope.cloned())
         .standing(StandingInstant::At(at))
         .build();
-    Ok(Some(CompiledEntityQuery::builder().selection(selection).build()))
-}
-
-/// A stored selector as a query compiles it, its type the expanded IRIs the
-/// subscription stored.
-fn compiled_selector(selector: &StoredSelector) -> Result<EntityConstraint<Expanded>, QueryError> {
-    // clone: the query owns its selectors, and the subscription lends its own
-    Ok(EntityConstraint::from(selector.clone()).into_expanded()?)
+    Some(CompiledEntityQuery::builder().selection(selection).build())
 }
 
 #[cfg(test)]
@@ -71,9 +57,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn query_of(members: &Value) -> CompiledEntityQuery {
-        interval_query(&periodic(members), tick())
-            .expect("the stored types are IRIs")
-            .expect("the subscription admits entities")
+        interval_query(&periodic(members), tick()).expect("the subscription admits entities")
     }
 
     /// The selectors of the query, as the identifiers and the type each
@@ -113,7 +97,7 @@ mod tests {
             "entities": [{"type": VEHICLE}],
             "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": "[1, "}
         }));
-        assert!(interval_query(&unusable, tick()).expect("the stored types are IRIs").is_none());
+        assert!(interval_query(&unusable, tick()).is_none());
     }
 
     /// Clause 5.8.6: "If none of query, geoquery and Scope query are defined,

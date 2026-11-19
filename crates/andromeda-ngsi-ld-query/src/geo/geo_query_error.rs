@@ -2,7 +2,7 @@
 //! is missing or malformed, or its reference geometry passes the broker's
 //! limits.
 
-use crate::geo::{reference_budget::ReferenceBudgetError, written_geo_query::RequiredMember};
+use crate::geo::{reference_budget::ReferenceBudgetError, required_member::RequiredMember};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use thiserror::Error;

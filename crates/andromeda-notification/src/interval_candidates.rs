@@ -4,7 +4,7 @@
 
 use crate::{error::NotificationError, interval_query::interval_query};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::{error::EntityError, port::stored_entry::StoredEntry, query::EntityQueryService};
+use andromeda_entity::{port::stored_entry::StoredEntry, query::EntityQueryService};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_query::page_window::{PageStart, PageWindow};
 use andromeda_subscription::compiled::CompiledSubscription;
@@ -40,10 +40,9 @@ impl IntervalCandidates<'_> {
     ///
     /// # Errors
     ///
-    /// Returns the store's failure to read a page, and the failure to read a
-    /// stored selector's type as the IRIs it was stored as.
+    /// Returns the store's failure to read a page.
     pub(crate) async fn matching(&self, sub: &CompiledSubscription, at: DateTime<Utc>) -> Result<Vec<EntityState>, NotificationError> {
-        let Some(query) = interval_query(sub, at).map_err(EntityError::from)? else {
+        let Some(query) = interval_query(sub, at) else {
             return Ok(Vec::new());
         };
         let query = Arc::new(query);

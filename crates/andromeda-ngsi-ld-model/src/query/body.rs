@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, 
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
+    geo::geo_constraint::GeoConstraint,
     name_stage::Written,
     ordering::ordering_parameters::OrderingParameters,
     projection::written_projection_term::WrittenProjectionTerm,
@@ -34,13 +34,13 @@ pub struct Query {
     pub type_: QueryType,
     /// Entity selector union.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
-    pub entities: Option<Vec<EntitySelector>>,
+    pub entities: Option<Vec<EntitySelector<Written>>>,
     /// Clause-4.9 entity filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub q: Option<Filter<Written>>,
     /// Clause-4.10 geo-spatial filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub geo_q: Option<WrittenGeoQuery>,
+    pub geo_q: Option<GeoConstraint<Written>>,
     /// Clause-4.19 scope filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<ScopeQuery>,

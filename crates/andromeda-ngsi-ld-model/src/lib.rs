@@ -8,6 +8,7 @@
 //! these types rather than on each other's.
 
 pub mod attribute;
+pub mod attribute_iri_csv;
 pub mod attribute_list;
 pub mod attribute_name_csv;
 pub mod attribute_strip;
@@ -32,6 +33,7 @@ pub mod entity_selector;
 pub mod entity_system_times;
 pub mod entity_type;
 pub mod entity_type_list;
+pub mod expanded_notification_terms;
 pub mod http_header_field;
 pub mod ignored_member;
 pub mod jsonld_context;
@@ -56,13 +58,16 @@ pub mod snapshot_clone;
 pub mod snapshot_filter;
 pub mod snapshot_input;
 pub mod snapshot_patch;
+pub mod stored_members;
 pub mod subscription;
 pub mod subscription_member;
+pub mod subscription_presentation;
 pub mod subscription_request;
 pub mod temporal;
 pub mod tenant;
 pub mod time_interval;
 pub mod update_result;
+pub mod written_subscription_terms;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

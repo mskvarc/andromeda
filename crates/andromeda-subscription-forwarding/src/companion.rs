@@ -26,6 +26,7 @@ use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     subscription::{Subscription, SubscriptionType},
     subscription_request::SubscriptionRequest,
+    written_subscription_terms::WrittenSubscriptionTerms,
 };
 use andromeda_subscription::{
     compilation::compile_csource_subscription,
@@ -55,30 +56,40 @@ use tracing::debug;
 /// Each mirrored member the subscription does not hold
 /// is the NGSI-LD Null, so an update leaves the companion holding what the
 /// subscription holds and nothing it deleted.
-fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -> SubscriptionRequest {
-    SubscriptionRequest {
-        entities: Clearable::replacing(subscription.selection.entities.clone()),
-        watched_attributes: Clearable::replacing(subscription.selection.watched_attributes.clone()),
-        csf: Clearable::replacing(subscription.filters.csf.clone()),
+///
+/// # Errors
+///
+/// Returns [`SubscriptionError::Internal`] when a stored name has no written
+/// spelling, which the store never holds.
+fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -> Result<SubscriptionRequest, SubscriptionError> {
+    let terms = WrittenSubscriptionTerms::try_from(subscription).map_err(SubscriptionInvariant::from)?;
+    Ok(SubscriptionRequest {
+        entities: Clearable::replacing(terms.entities),
+        watched_attributes: Clearable::replacing(terms.watched_attributes),
+        csf: Clearable::replacing(terms.csf),
         dataset_id: Clearable::replacing(subscription.filters.dataset_id.clone()),
         notification: Some(NotificationRequest {
-            attributes: subscription.notification.attributes.clone(),
+            attributes: terms.attributes,
             endpoint: Some(receiver.notification_endpoint()),
             ..NotificationRequest::default()
         }),
         ..SubscriptionRequest::default()
-    }
+    })
 }
 
 /// The create body of the companion mirroring `subscription` under the
 /// identifier `id`: the companion fragment without its deletions, which a
 /// create refuses (clause 5.2.1), with the identifier and the type.
-fn companion_creation(subscription: &Subscription, receiver: &ReceiverEndpoint, id: Identifier) -> SubscriptionRequest {
-    SubscriptionRequest {
+///
+/// # Errors
+///
+/// As [`companion_request`].
+fn companion_creation(subscription: &Subscription, receiver: &ReceiverEndpoint, id: Identifier) -> Result<SubscriptionRequest, SubscriptionError> {
+    Ok(SubscriptionRequest {
         id: Some(id),
         type_: Some(SubscriptionType),
-        ..companion_request(subscription, receiver).without_deletions()
-    }
+        ..companion_request(subscription, receiver)?.without_deletions()
+    })
 }
 
 /// Registrations read per round trip while the copies of a new subscription
@@ -100,7 +111,7 @@ impl SubscriptionForwardingService {
         subscription: &Subscription,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Identifier, SubscriptionForwardingError> {
-        let request = companion_creation(subscription, &self.receiver, mint_subscription_id()?);
+        let request = companion_creation(subscription, &self.receiver, mint_subscription_id()?)?;
         // The companion is a local resource; its own creation passes through no
         // context source, so it carries no `Via` chain of its own.
         let companion = self
@@ -223,7 +234,7 @@ impl SubscriptionForwardingService {
             .update(
                 &self.live_target,
                 &companion,
-                companion_request(subscription, &self.receiver),
+                companion_request(subscription, &self.receiver)?,
                 &AdmittedContext::core_only(),
             )
             .await;
@@ -540,7 +551,8 @@ mod tests {
             "datasetId": ["urn:ngsi-ld:Dataset:a", "@none"],
             "notification": {"attributes": ["https://example.org/speed"], "endpoint": {"uri": "http://subscriber/notify"}}
         }));
-        let request = companion_creation(&subscription, &receiver(), "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI"));
+        let request = companion_creation(&subscription, &receiver(), "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI"))
+            .expect("the companion is writable");
         pretty_assertions::assert_eq!(
             serde_json::to_value(&request).expect("the request writes"),
             json!({
@@ -560,7 +572,8 @@ mod tests {
             &local_subscription(&json!({"entities": [{"type": "https://example.org/Vehicle"}]})),
             &receiver(),
             "urn:ngsi-ld:Subscription:forwarded-2".parse().expect("valid URI"),
-        );
+        )
+        .expect("the companion is writable");
         assert!(unfiltered.deleted_members().next().is_none(), "{unfiltered:?}");
     }
 
@@ -571,14 +584,14 @@ mod tests {
     #[test]
     fn the_companion_update_deletes_what_the_subscription_no_longer_holds() {
         let subscription = local_subscription(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
-        let fragment = serde_json::to_value(companion_request(&subscription, &receiver())).expect("the fragment writes");
+        let fragment = serde_json::to_value(companion_request(&subscription, &receiver()).expect("the companion is writable")).expect("the fragment writes");
         pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": "https://example.org/Vehicle"}]));
         pretty_assertions::assert_eq!(fragment["watchedAttributes"], json!(["urn:ngsi-ld:null"]));
         pretty_assertions::assert_eq!(fragment["csf"], json!("urn:ngsi-ld:null"));
         pretty_assertions::assert_eq!(fragment["datasetId"], json!(["urn:ngsi-ld:null"]));
         let filtered =
             local_subscription(&json!({"watchedAttributes": ["https://example.org/speed"], "csf": GOLD_TIER, "datasetId": ["urn:ngsi-ld:Dataset:a"]}));
-        let fragment = serde_json::to_value(companion_request(&filtered, &receiver())).expect("the fragment writes");
+        let fragment = serde_json::to_value(companion_request(&filtered, &receiver()).expect("the companion is writable")).expect("the fragment writes");
         pretty_assertions::assert_eq!(fragment["entities"], json!(["urn:ngsi-ld:null"]));
         pretty_assertions::assert_eq!(fragment["csf"], json!(GOLD_TIER));
         pretty_assertions::assert_eq!(fragment["datasetId"], json!(["urn:ngsi-ld:Dataset:a"]));

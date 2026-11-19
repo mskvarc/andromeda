@@ -10,7 +10,7 @@
 //! projection resolves the keys back in that order.
 
 use crate::store_fault::persistence_error;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields, subscription_invariant::SubscriptionInvariant};
@@ -40,9 +40,9 @@ pub(super) async fn intern_attribute_lists(
     fields: &SubscriptionFields<'_>,
 ) -> Result<InternedAttributeLists, SubscriptionError> {
     let lists = [fields.watched_attributes, fields.expand_values, fields.json_keys];
-    // clone: the dictionary port takes one owned batch, and the three lists are
+    // clone: the dictionary port takes one owned batch of names, and the three lists are
     // separate borrowed slices of the caller's fields
-    let names: Vec<AttributeName> = lists.iter().flatten().flat_map(|list| list.iter().cloned()).collect();
+    let names: Vec<AttributeName> = lists.iter().flatten().flat_map(|list| list.iter().cloned().map(AttributeName::from)).collect();
     if names.is_empty() {
         return Ok(InternedAttributeLists::default());
     }
@@ -58,12 +58,12 @@ pub(super) async fn intern_attribute_lists(
 }
 
 /// One list as keys, in its own order.
-fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, AttributeNameKey>) -> Result<Option<Vec<i32>>, SubscriptionError> {
+fn keys_of(list: Option<&[AttributeIri]>, keys: &HashMap<AttributeName, AttributeNameKey>) -> Result<Option<Vec<i32>>, SubscriptionError> {
     list.map(|names| {
         names
             .iter()
             .map(|name| {
-                keys.get(name)
+                keys.get(name.as_str())
                     .map(|key| key.get())
                     .ok_or_else(|| SubscriptionError::from(SubscriptionInvariant::AttributeNotInterned))
             })
@@ -75,7 +75,7 @@ fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, Attribu
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::interned_attributes::keys_of;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName};
     use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -84,13 +84,17 @@ mod tests {
         raw.parse().expect("a valid attribute name")
     }
 
+    fn iri(raw: &str) -> AttributeIri {
+        raw.parse().expect("a valid attribute IRI")
+    }
+
     #[test]
     fn a_list_keeps_the_order_it_was_written_in() {
         let keys = HashMap::from([
             (name("https://example.org/b"), AttributeNameKey::from(2)),
             (name("https://example.org/a"), AttributeNameKey::from(7)),
         ]);
-        let list = [name("https://example.org/b"), name("https://example.org/a")];
+        let list = [iri("https://example.org/b"), iri("https://example.org/a")];
         assert_eq!(keys_of(Some(&list), &keys).expect("every name is interned"), Some(vec![2, 7]));
     }
 
@@ -101,7 +105,7 @@ mod tests {
 
     #[test]
     fn a_name_the_dictionary_did_not_return_is_an_invariant_failure() {
-        let list = [name("https://example.org/missing")];
+        let list = [iri("https://example.org/missing")];
         assert!(keys_of(Some(&list), &HashMap::new()).is_err());
     }
 }

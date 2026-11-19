@@ -4,7 +4,7 @@
 //! Table 5.2.13-1 gives `georel`, `geometry` and `coordinates` cardinality 1
 //! and `geoproperty` 0..1, defaulting to `location`; clause 4.10 needs all
 //! three "to fully specify an NGSI-LD Geoquery". The request model reads the
-//! `geoQ` as a [`WrittenGeoQuery`], which refuses one that names fewer than the
+//! `geoQ` as a [`GeoConstraint`], which refuses one that names fewer than the
 //! three or whose members are no relation, geometry type or geometry, so what
 //! this module judges is what that reading cannot: whether the reference
 //! geometry is within the limits the broker processes (clause 6.3.2: a written
@@ -23,14 +23,17 @@
 
 use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, query_coordinates::WrittenCoordinates};
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
-use andromeda_ngsi_ld_query::geo::{
-    admission::GeoQueryAdmission,
-    compiled_geo_query::CompiledGeoQuery,
-    geo_query_error::GeoQueryError,
-    reference_budget::ReferenceBudgetError,
-    reference_geometry::ReferenceGeometry,
-    written_geo_query::WrittenGeoQuery,
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
+use andromeda_ngsi_ld_query::{
+    geo::{
+        admission::GeoQueryAdmission,
+        compiled_geo_query::CompiledGeoQuery,
+        geo_constraint::GeoConstraint,
+        geo_query_error::GeoQueryError,
+        reference_budget::ReferenceBudgetError,
+        reference_geometry::ReferenceGeometry,
+    },
+    name_stage::{Expanded, Written},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use thiserror::Error;
@@ -68,13 +71,6 @@ pub enum GeoQError {
         #[source]
         source: GeometryError,
     },
-    /// The `geoproperty` was not an attribute name.
-    #[error("geoQ geoproperty: {source}")]
-    Geoproperty {
-        /// The grammar violation.
-        #[source]
-        source: NgsiLdReferenceError,
-    },
 }
 
 /// Read a `geoQ` into the request-side [`CompiledGeoQuery`] clause 4.10 evaluates.
@@ -84,7 +80,7 @@ pub enum GeoQError {
 /// Returns the first [`GeoQError`] the `geoQ` meets: coordinates a string
 /// encodes that are no JSON or no geometry, or a `geoproperty` that is no
 /// attribute name.
-pub fn compile_geo_q(geo_q: &WrittenGeoQuery) -> Result<CompiledGeoQuery, GeoQError> {
+pub fn compile_geo_q(geo_q: &GeoConstraint<Expanded>) -> Result<CompiledGeoQuery, GeoQError> {
     let geometry = match &geo_q.reference {
         // clone: the compiled query owns its geometry apart from the stored subscription
         ReferenceGeometry::Read(geometry) => geometry.clone(),
@@ -93,12 +89,11 @@ pub fn compile_geo_q(geo_q: &WrittenGeoQuery) -> Result<CompiledGeoQuery, GeoQEr
             .read_as(*geometry_type)
             .map_err(|source| GeoQError::ReferenceGeometry { source })?,
     };
+    // clone: the compiled query owns its geoproperty apart from the stored subscription
     let geoproperty = geo_q
         .geoproperty
-        .as_ref()
-        .map_or(expanded_properties::LOCATION.as_str(), AsRef::<str>::as_ref)
-        .parse()
-        .map_err(|source| GeoQError::Geoproperty { source })?;
+        .clone()
+        .unwrap_or_else(|| AttributeIri::from_static(expanded_properties::LOCATION));
     Ok(CompiledGeoQuery {
         georel: geo_q.georel.clone(), // clone: the compiled query owns its relation apart from the stored subscription
         geometry,
@@ -122,7 +117,7 @@ pub fn compile_geo_q(geo_q: &WrittenGeoQuery) -> Result<CompiledGeoQuery, GeoQEr
 /// the limits, and [`SubscriptionError::Validation`] carrying the
 /// [`GeoQError`] for a distance band the broker refuses or coordinates that
 /// are no geometry.
-pub fn admit_geo_q(geo_q: &WrittenGeoQuery, admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
+pub fn admit_geo_q(geo_q: &GeoConstraint<Written>, admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
     admission
         .near_band
         .admit(&geo_q.georel)
@@ -156,7 +151,7 @@ impl SubscriptionGeoFilter {
     /// compiles is logged, naming the subscription, and becomes
     /// [`SubscriptionGeoFilter::Unusable`].
     #[must_use]
-    pub fn from_stored(geo_q: Option<&WrittenGeoQuery>, subscription: &str) -> SubscriptionGeoFilter {
+    pub fn from_stored(geo_q: Option<&GeoConstraint<Expanded>>, subscription: &str) -> SubscriptionGeoFilter {
         match geo_q.map(compile_geo_q) {
             None => SubscriptionGeoFilter::Unrestricted,
             Some(Ok(query)) => SubscriptionGeoFilter::Restricts(query),
@@ -186,7 +181,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand, written_geo_query::WrittenGeoQuery};
+    use andromeda_ngsi_ld_query::{
+        geo::{admission::GeoQueryAdmission, geo_constraint::GeoConstraint, near_distance_band::NearDistanceBand},
+        name_stage::{Expanded, Written},
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
@@ -233,12 +231,17 @@ mod tests {
     }
 
     /// The `geoQ` a request writes, read as the request model reads it.
-    fn geo_q(wire: Value) -> WrittenGeoQuery {
+    fn geo_q(wire: Value) -> GeoConstraint<Written> {
         serde_json::from_value(wire).expect("a readable geoQ")
     }
 
+    /// The `geoQ` as the store holds it.
+    fn stored_geo_q(wire: Value) -> GeoConstraint<Expanded> {
+        serde_json::from_value(wire).expect("a readable stored geoQ")
+    }
+
     /// A `geoQ` whose reference geometry is a `LineString` with `coordinates`.
-    fn with_line(coordinates: &Value) -> WrittenGeoQuery {
+    fn with_line(coordinates: &Value) -> GeoConstraint<Written> {
         geo_q(json!({"georel": "intersects", "geometry": "LineString", "coordinates": coordinates}))
     }
 
@@ -307,13 +310,14 @@ mod tests {
 
     #[test]
     fn a_complete_geo_q_compiles_with_location_as_the_default_geoproperty() {
-        let compiled = compile_geo_q(&geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": [13.4, 52.5]}))).expect("a complete geoQ compiles");
+        let compiled =
+            compile_geo_q(&stored_geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": [13.4, 52.5]}))).expect("a complete geoQ compiles");
         pretty_assertions::assert_eq!(compiled.geoproperty.as_str(), expanded_properties::LOCATION.as_str());
     }
 
     #[test]
     fn coordinates_encoded_as_a_string_compile_like_an_array() {
-        assert!(compile_geo_q(&geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": "[13.4, 52.5]"}))).is_ok());
+        assert!(compile_geo_q(&stored_geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": "[13.4, 52.5]"}))).is_ok());
     }
 
     /// Table 5.2.13-1: each of the three members has cardinality 1, so a `geoQ`
@@ -325,20 +329,21 @@ mod tests {
             (json!({"georel": "near;maxDistance==2000", "coordinates": [0, 0]}), "geometry"),
             (json!({"georel": "within", "geometry": "Point"}), "coordinates"),
         ] {
-            let error = serde_json::from_value::<WrittenGeoQuery>(wire.clone()).expect_err("an incomplete geoQ is no CompiledGeoQuery");
+            let error = serde_json::from_value::<GeoConstraint<Written>>(wire.clone()).expect_err("an incomplete geoQ is no CompiledGeoQuery");
             assert!(error.to_string().contains(missing), "{wire}: got {error}");
         }
     }
 
     #[test]
     fn a_georel_outside_clause_4_10_is_refused_when_the_geo_q_is_read() {
-        assert!(serde_json::from_value::<WrittenGeoQuery>(json!({"georel": "nearby", "geometry": "Point", "coordinates": [0, 0]})).is_err());
+        assert!(serde_json::from_value::<GeoConstraint<Written>>(json!({"georel": "nearby", "geometry": "Point", "coordinates": [0, 0]})).is_err());
     }
 
     #[test]
     fn a_reference_position_off_the_axes_is_refused_with_its_detail() {
-        let error = serde_json::from_value::<WrittenGeoQuery>(json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}))
-            .expect_err("latitude 100");
+        let error =
+            serde_json::from_value::<GeoConstraint<Written>>(json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-1, 100]}))
+                .expect_err("latitude 100");
         assert!(error.to_string().contains("latitude 100 is outside [-90, 90]"), "{error}");
     }
 
@@ -353,7 +358,7 @@ mod tests {
     /// absent one, so it is told apart from the subscription without a `geoQ`.
     #[test]
     fn a_stored_geo_q_that_no_longer_compiles_is_unusable() {
-        let stored = geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": "[1, "}));
+        let stored = stored_geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": "[1, "}));
         let filter = SubscriptionGeoFilter::from_stored(Some(&stored), SUBSCRIPTION);
         assert!(matches!(filter, SubscriptionGeoFilter::Unusable), "got {filter:?}");
         assert!(filter.restriction().is_none());
@@ -361,7 +366,7 @@ mod tests {
 
     #[test]
     fn a_compiled_geo_q_restricts_by_its_geoquery() {
-        let stored = geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": [1, 2]}));
+        let stored = stored_geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": [1, 2]}));
         let filter = SubscriptionGeoFilter::from_stored(Some(&stored), SUBSCRIPTION);
         assert!(matches!(filter, SubscriptionGeoFilter::Restricts(_)), "got {filter:?}");
         assert!(filter.restriction().is_some());

@@ -5,7 +5,7 @@
 //! index size.
 
 use crate::selector_routing::SelectorRouting;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_iri::EntityTypeIri, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 
 /// Every bucket one indexed subscription was placed in.
@@ -18,7 +18,7 @@ pub struct Membership {
     pub triggers: Vec<NotificationTrigger>,
     /// Watched-attribute buckets the subscription occupies; empty when it
     /// watches every attribute or none.
-    pub watched_attributes: Vec<AttributeName>,
+    pub watched_attributes: Vec<AttributeIri>,
     /// Whether the subscription is in the watch-all bucket, meaning it carries
     /// no `watchedAttributes` restriction.
     pub watch_all: bool,
@@ -26,7 +26,7 @@ pub struct Membership {
 
 impl Membership {
     /// The type buckets the subscription occupies, each once.
-    pub fn type_buckets(&self) -> impl Iterator<Item = &EntityTypeName> {
+    pub fn type_buckets(&self) -> impl Iterator<Item = &EntityTypeIri> {
         self.selectors.by_type.iter().map(|(name, _)| name)
     }
 

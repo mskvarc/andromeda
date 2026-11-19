@@ -20,7 +20,7 @@ use crate::{
     superseded_selection::SupersededSelections,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, entity_type_iri::EntityTypeIri, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_telemetry::subscription::CandidateFunnel;
 use chrono::Utc;
@@ -40,7 +40,7 @@ pub struct CandidateIndex {
     /// The key of each subscription in force, by identifier.
     keys_by_id: HashMap<Identifier, SubscriptionKey>,
     /// Selectors naming a concrete entity type, by that type.
-    by_type: HashMap<EntityTypeName, FxHashSet<SelectorRef>>,
+    by_type: HashMap<EntityTypeIri, FxHashSet<SelectorRef>>,
     /// Selectors naming an entity id, by that id.
     by_entity_id: HashMap<Identifier, FxHashSet<SelectorRef>>,
     /// Subscriptions without selectors, or with one no type or id bucket can
@@ -49,7 +49,7 @@ pub struct CandidateIndex {
     /// Subscriptions listening to each trigger, indexed by trigger slot.
     by_trigger: [FxHashSet<SubscriptionKey>; NotificationTrigger::COUNT],
     /// Subscriptions with `watchedAttributes`, by each attribute they watch.
-    by_watched_attribute: HashMap<AttributeName, FxHashSet<SubscriptionKey>>,
+    by_watched_attribute: HashMap<AttributeIri, FxHashSet<SubscriptionKey>>,
     /// Subscriptions without `watchedAttributes`, which watch every attribute.
     watch_all: FxHashSet<SubscriptionKey>,
     /// The buckets each subscription occupies, so removal walks only those.
@@ -277,7 +277,7 @@ impl CandidateIndex {
     fn route_selectors(&self, event: &ChangeEvent) -> FxHashSet<SubscriptionKey> {
         let mut routed: FxHashSet<SubscriptionKey> = self.wildcard.iter().copied().collect();
         let id_hits = self.by_entity_id.get(&event.entity_id);
-        for selector in event.entity_types.iter().filter_map(|type_name| self.by_type.get(type_name)).flatten() {
+        for selector in event.entity_types.iter().filter_map(|type_name| self.by_type.get(type_name.as_str())).flatten() {
             match selector.shape {
                 SelectorShape::TypeOnly => {
                     routed.insert(selector.subscription);
@@ -310,7 +310,7 @@ impl CandidateIndex {
             .change
             .attributes()
             .into_iter()
-            .filter_map(|name| self.by_watched_attribute.get(name))
+            .filter_map(|name| self.by_watched_attribute.get(name.as_str()))
             .collect()
     }
 }

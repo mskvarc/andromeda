@@ -25,7 +25,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
@@ -109,7 +109,7 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Identifier]) -> Ve
         .iter()
         .filter(|id| {
             let entity = EntitySpecification::of_entity(&[], id);
-            RegistrationMatchSpecification {
+            RegistrationMatchSpecification::<AttributeName> {
                 entities: slice::from_ref(&entity),
                 attributes: &[],
             }

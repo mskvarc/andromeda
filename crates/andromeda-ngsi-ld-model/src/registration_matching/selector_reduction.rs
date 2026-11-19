@@ -37,7 +37,7 @@ use std::slice;
 /// selector matches any block. A subscription naming no selector selects every
 /// entity, so it reduces to the entities the blocks register.
 #[must_use]
-pub fn reduced_selectors(selectors: Option<&[EntitySelector]>, information: &[RegistrationInfo]) -> Option<Vec<EntitySelector>> {
+pub fn reduced_selectors(selectors: Option<&[EntitySelector<Written>]>, information: &[RegistrationInfo]) -> Option<Vec<EntitySelector<Written>>> {
     let every;
     let selectors = match selectors {
         Some(selectors) if !selectors.is_empty() => selectors,
@@ -72,7 +72,7 @@ pub fn reduced_selectors(selectors: Option<&[EntitySelector]>, information: &[Re
 
 /// `selector` narrowed to the entities `info` registers, or `None` when it
 /// matches none of them (clause 5.12).
-fn narrowed_selector(selector: &EntitySelector, info: &EntityInfo) -> Option<EntitySelector> {
+fn narrowed_selector(selector: &EntitySelector<Written>, info: &EntityInfo) -> Option<EntitySelector<Written>> {
     let type_ = narrowed_type(&selector.type_, &info.type_)?;
     let (id, id_pattern) = match (selector.identifier_axis(), IdentifierAxis::of(info.id.as_slice(), info.id_pattern.as_ref())) {
         // A registration constraining no identifier leaves the selector's own
@@ -139,6 +139,7 @@ mod tests {
             selector_reduction::{narrowed_selector, reduced_selectors},
         },
     };
+    use andromeda_ngsi_ld_query::name_stage::{Expanded, Written};
     use serde_json::{Value, json};
 
     const VEHICLE: &str = "https://example.org/Vehicle";
@@ -146,11 +147,15 @@ mod tests {
     const ELECTRIC: &str = "https://example.org/Electric";
     const SEVEN: &str = "urn:ngsi-ld:Vehicle:7";
 
-    fn selector(wire: Value) -> EntitySelector {
+    fn selector(wire: Value) -> EntitySelector<Written> {
         serde_json::from_value(wire).expect("a readable selector")
     }
 
-    fn selectors(wire: Value) -> Vec<EntitySelector> {
+    fn expanded(selector: &EntitySelector<Written>) -> EntitySelector<Expanded> {
+        selector.with_type(selector.type_.clone().into_expanded().expect("every type is an IRI"))
+    }
+
+    fn selectors(wire: Value) -> Vec<EntitySelector<Written>> {
         serde_json::from_value(wire).expect("readable selectors")
     }
 
@@ -371,7 +376,7 @@ mod tests {
             for selector in &selectors {
                 pretty_assertions::assert_eq!(
                     narrowed_selector(selector, info).is_some(),
-                    EntitySpecification::from_selector(selector).matches_entity_axis(&block),
+                    EntitySpecification::from_selector(&expanded(selector)).matches_entity_axis(&block),
                     "{selector:?} against {entry}"
                 );
             }

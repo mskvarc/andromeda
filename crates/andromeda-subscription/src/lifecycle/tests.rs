@@ -992,7 +992,11 @@ async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, I
         .list_for_response(&ContextTarget::Live, window, &ContextSpec::none())
         .await
         .expect("the store lists");
-    let ids = listing.subscriptions.iter().map(|subscription| subscription.id.as_str().to_owned()).collect();
+    let ids = listing
+        .subscriptions
+        .iter()
+        .map(|presented| presented.subscription.id.as_str().to_owned())
+        .collect();
     (ids, listing.total, listing.boundary)
 }
 

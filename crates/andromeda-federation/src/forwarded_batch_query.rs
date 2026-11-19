@@ -18,12 +18,12 @@ use crate::{
     forwarded_query::ForwardedQuery,
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_selector::EntitySelector, query::body::Query};
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
+    geo::geo_constraint::GeoConstraint,
     name_stage::Written,
     pattern::Pattern,
     query_error::QueryError,
@@ -124,7 +124,7 @@ impl<'q> Gathered<'q> {
             ForwardedParameter::Georel => self.geo.georel = Some(value),
             ForwardedParameter::Geometry => self.geo.geometry = Some(value),
             ForwardedParameter::Coordinates => self.geo.coordinates = Some(value),
-            ForwardedParameter::Geoproperty => self.geo.geoproperty = Some(forwarded_name::<NgsiLdReference>(value)?),
+            ForwardedParameter::Geoproperty => self.geo.geoproperty = Some(forwarded_name::<AttributeName>(value)?),
             ForwardedParameter::ScopeQ => self.scope_q = Some(value.parse::<ScopeQuery>().map_err(QueryError::from)?),
             ForwardedParameter::Csf => self.csf = Some(value.parse::<Filter<Written>>().map_err(QueryError::from)?),
             ForwardedParameter::DatasetId => {
@@ -215,7 +215,7 @@ impl Selection {
     /// decides which identifiers are posted rather than the pattern being sent
     /// beside them. A query naming no type selects every type (clause 4.17
     /// wildcard), since a selector's type is mandatory (Table 5.2.33-1).
-    fn into_selectors(self) -> Option<Vec<EntitySelector>> {
+    fn into_selectors(self) -> Option<Vec<EntitySelector<Written>>> {
         let pattern_selector = EntitySelector {
             id: None,
             id_pattern: self.id_pattern,
@@ -224,7 +224,7 @@ impl Selection {
         if self.ids.is_empty() {
             return Some(vec![pattern_selector]);
         }
-        let admitted: Vec<EntitySelector> = self
+        let admitted: Vec<EntitySelector<Written>> = self
             .ids
             .into_iter()
             .filter(|id| pattern_selector.identifier_axis().admits(id))
@@ -248,7 +248,7 @@ struct GeoMembers<'q> {
     /// The `coordinates` JSON text.
     coordinates: Option<&'q str>,
     /// The `GeoProperty` the geo-query reads.
-    geoproperty: Option<NgsiLdReference>,
+    geoproperty: Option<AttributeName>,
 }
 
 impl GeoMembers<'_> {
@@ -261,11 +261,11 @@ impl GeoMembers<'_> {
     /// Returns [`FederationError::Internal`] when only some of `georel`,
     /// `geometry` and `coordinates` are written, or when they do not read
     /// back as a geo-query.
-    fn into_geo_query(self) -> Result<Option<WrittenGeoQuery>, FederationError> {
+    fn into_geo_query(self) -> Result<Option<GeoConstraint<Written>>, FederationError> {
         match (self.georel, self.geometry, self.coordinates) {
             (Some(georel), Some(geometry), Some(coordinates)) => {
                 let geo_query =
-                    WrittenGeoQuery::from_parameters(georel, geometry, coordinates, self.geoproperty).map_err(FederationInvariant::ForwardedGeoQuery)?;
+                    GeoConstraint::from_parameters(georel, geometry, coordinates, self.geoproperty).map_err(FederationInvariant::ForwardedGeoQuery)?;
                 Ok(Some(geo_query))
             }
             (None, None, None) => Ok(None),

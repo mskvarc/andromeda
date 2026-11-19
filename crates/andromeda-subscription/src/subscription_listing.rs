@@ -2,7 +2,7 @@
 //! and 5.11.4).
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_model::subscription_presentation::SubscriptionPresentation;
 use andromeda_ngsi_ld_query::page_reach::PageReach;
 
 /// A page of subscriptions, ready for a collection response.
@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_query::page_reach::PageReach;
 pub struct SubscriptionListing {
     /// The subscriptions the page carries, spelled for the reader and in
     /// ascending identifier order.
-    pub subscriptions: Vec<Subscription>,
+    pub subscriptions: Vec<SubscriptionPresentation>,
     /// The total number of subscriptions of this kind (clause 6.3.13), reported
     /// when the request asked for a count.
     pub total: i64,

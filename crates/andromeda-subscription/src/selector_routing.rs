@@ -7,7 +7,7 @@
 
 use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::subscription_key::SubscriptionKey;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
 
 /// Which index buckets a selector was placed in, and therefore which hits an
 /// event must produce for the selector to route its subscription.
@@ -41,7 +41,7 @@ pub struct SelectorRouting {
     /// single name and which names no exact id.
     pub wildcard: bool,
     /// Type-bucket placements.
-    pub by_type: Vec<(EntityTypeName, SelectorRef)>,
+    pub by_type: Vec<(EntityTypeIri, SelectorRef)>,
     /// Id-bucket placements.
     pub by_entity_id: Vec<(Identifier, SelectorRef)>,
 }
@@ -105,7 +105,7 @@ mod tests {
         entity_selector::EntitySelector,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::projection::expanded_projection::ExpandedProjection;
+    use andromeda_ngsi_ld_query::{name_stage::Expanded, projection::expanded_projection::ExpandedProjection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -116,7 +116,7 @@ mod tests {
         panic!("invalid test fixture: {}", error.to_string())
     }
 
-    fn selector(type_expression: &str, ids: &[&str], id_pattern: Option<&str>) -> Result<EntitySelector, SubscriptionError> {
+    fn selector(type_expression: &str, ids: &[&str], id_pattern: Option<&str>) -> Result<EntitySelector<Expanded>, SubscriptionError> {
         let ids = ids
             .iter()
             .map(|id| id.parse())
@@ -129,7 +129,7 @@ mod tests {
         })
     }
 
-    fn subscription(selectors: Vec<EntitySelector>) -> Result<CompiledSubscription, SubscriptionError> {
+    fn subscription(selectors: Vec<EntitySelector<Expanded>>) -> Result<CompiledSubscription, SubscriptionError> {
         Ok(CompiledSubscription {
             id: "urn:ngsi-ld:Subscription:routing".parse().map_err(|error| internal(&error))?,
             key: SubscriptionKey::try_from(9).map_err(|error| internal(&error))?,
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn a_single_type_with_an_exact_id_is_placed_in_both_buckets_with_the_conjunctive_shape() -> Result<(), SubscriptionError> {
-        let routing = SelectorRouting::of(&subscription(vec![selector("Building", &["urn:ngsi-ld:E:1"], None)?])?);
+        let routing = SelectorRouting::of(&subscription(vec![selector("https://example.com/Building", &["urn:ngsi-ld:E:1"], None)?])?);
         assert!(!routing.wildcard);
         assert_eq!(routing.by_type.len(), 1);
         assert_eq!(routing.by_entity_id.len(), 1);
@@ -194,8 +194,12 @@ mod tests {
     #[test]
     fn a_selector_listing_several_ids_is_placed_in_the_bucket_of_each() -> Result<(), SubscriptionError> {
         let routing = SelectorRouting::of(&subscription(vec![
-            selector("Building", &["urn:ngsi-ld:E:1", "urn:ngsi-ld:E:2"], None)?,
-            selector("Building|Vehicle", &["urn:ngsi-ld:E:3", "urn:ngsi-ld:E:4"], None)?,
+            selector("https://example.com/Building", &["urn:ngsi-ld:E:1", "urn:ngsi-ld:E:2"], None)?,
+            selector(
+                "https://example.com/Building|https://example.com/Vehicle",
+                &["urn:ngsi-ld:E:3", "urn:ngsi-ld:E:4"],
+                None,
+            )?,
         ])?);
         assert!(!routing.wildcard);
         assert_eq!(routing.by_type.len(), 1);
@@ -219,9 +223,9 @@ mod tests {
     #[test]
     fn an_id_pattern_does_not_index_and_a_boolean_type_falls_back_per_selector() -> Result<(), SubscriptionError> {
         let routing = SelectorRouting::of(&subscription(vec![
-            selector("Building", &[], Some("urn:ngsi-ld:E:.*"))?,
-            selector("Building|Vehicle", &["urn:ngsi-ld:E:2"], None)?,
-            selector("Building|Vehicle", &[], Some(".*"))?,
+            selector("https://example.com/Building", &[], Some("urn:ngsi-ld:E:.*"))?,
+            selector("https://example.com/Building|https://example.com/Vehicle", &["urn:ngsi-ld:E:2"], None)?,
+            selector("https://example.com/Building|https://example.com/Vehicle", &[], Some(".*"))?,
         ])?);
         assert!(routing.wildcard, "the boolean type without an id must route every event");
         assert_eq!(routing.by_type.len(), 1);

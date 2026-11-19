@@ -1,21 +1,26 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
 pub mod standing;
+pub mod subscription_filters;
+pub mod subscription_selection;
+pub mod unreadable_member;
 
 use crate::{
-    attribute_name_csv,
     delivery_seconds,
-    entity_selector::EntitySelector,
     ignored_member,
     key_value_pair::KeyValuePair,
-    notification::NotificationTrigger,
     notification_media_type::NotificationMediaType,
-    query::temporal_query::TemporalQuery,
-    subscription::standing::SubscriptionStanding,
+    stored_members,
+    subscription::{
+        standing::SubscriptionStanding,
+        subscription_filters::SubscriptionFilters,
+        subscription_selection::SubscriptionSelection,
+        unreadable_member::UnreadableMember,
+    },
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
+    attribute_iri::AttributeIri,
     constant_string,
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
@@ -23,14 +28,7 @@ use andromeda_ngsi_ld_lexicon::{
     spec_version::SpecVersion,
     time::instant_serde,
 };
-use andromeda_ngsi_ld_query::{
-    dataset_selector::DatasetSelector,
-    filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
-    name_stage::Written,
-    projection::written_projection_list::WrittenProjectionList,
-    scope::scope_query::ScopeQuery,
-};
+use andromeda_ngsi_ld_query::projection::expanded_projection_list::ExpandedProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -124,7 +122,8 @@ pub struct Endpoint {
 pub struct NotificationParams {
     /// Attributes to include in notifications; absent means all.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub attributes: Option<Vec<AttributeName>>,
+    #[serde(default, deserialize_with = "stored_members::deserialize_skipping_unreadable")]
+    pub attributes: Option<Vec<AttributeIri>>,
     /// Representation format for notification payloads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<ResponseFormat>,
@@ -140,14 +139,22 @@ pub struct NotificationParams {
     /// list per projection-language string the subscriber wrote.
     ///
     /// Held, and stored, with every attribute name expanded (clause 5.5.7) as
-    /// the term tree [`WrittenProjectionList`] serializes to; the clause 4.21 text a
+    /// the term tree [`ExpandedProjectionList`] serializes to; the clause 4.21 text a
     /// client exchanges is written and read by the subscription service.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pick: Option<Vec<WrittenProjectionList>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "stored_members::deserialize_skipping_unreadable"
+    )]
+    pub pick: Option<Vec<ExpandedProjectionList>>,
     /// The clause 4.21 projection removing the members it names, held as
     /// `pick` is.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub omit: Option<Vec<WrittenProjectionList>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "stored_members::deserialize_skipping_unreadable"
+    )]
+    pub omit: Option<Vec<ExpandedProjectionList>>,
     /// Join mode for linked entity retrieval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,
@@ -205,76 +212,6 @@ impl NotificationParams {
     pub fn effective_join_level(&self) -> NonZeroU32 {
         self.join_level.unwrap_or(NonZeroU32::MIN)
     }
-}
-
-/// The entities and attributes whose changes a subscription reacts to
-/// (ETSI GS CIM 009 clause 5.2.12, `entities` / `watchedAttributes` /
-/// `notificationTrigger`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
-#[serde(rename_all = "camelCase")]
-#[builder(field_defaults(default = Default::default()))]
-pub struct SubscriptionSelection {
-    /// Entity selectors defining which entities trigger notifications.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entities: Option<Vec<EntitySelector>>,
-    /// Attribute names to watch for changes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub watched_attributes: Option<Vec<AttributeName>>,
-    /// Conditions that trigger a notification (clause 5.2.12).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notification_trigger: Option<Vec<NotificationTrigger>>,
-}
-
-/// The query expressions that narrow a subscription's matches further
-/// (ETSI GS CIM 009 clauses 4.9, 4.10, 4.19 and 5.2.21).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
-#[serde(rename_all = "camelCase")]
-#[builder(field_defaults(default = Default::default()))]
-pub struct SubscriptionFilters {
-    /// NGSI-LD query expression to filter matching entities (clause 4.9).
-    ///
-    /// Parsed at deserialization, so a malformed filter is a rejected
-    /// subscription rather than one that silently matches nothing from its
-    /// first notification onward.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<Filter<Written>>,
-    /// Geo-spatial query expression (clause 5.2.13).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub geo_q: Option<WrittenGeoQuery>,
-    /// Scope query expression (clause 4.19).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope_q: Option<ScopeQuery>,
-    /// Context source filter (clause 4.9), which is a `q` filter
-    /// over a registration's own properties.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub csf: Option<Filter<Written>>,
-    /// The `datasetId`s of the Attribute instances each notification carries,
-    /// `@none` naming the default instance (Table 5.2.12-1, clause 4.5.5).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// Temporal query expression (clause 5.2.21).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temporal_q: Option<TemporalQuery>,
-    /// Attributes whose `q` values are expanded through the subscription's
-    /// `@context` by JSON-LD type coercion before the filter is evaluated
-    /// (Table 5.2.12-1 `expandValues`).
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "attribute_name_csv::deserialize",
-        serialize_with = "attribute_name_csv::serialize"
-    )]
-    pub expand_values: Option<Vec<AttributeName>>,
-    /// Attributes whose values are uninterpretable as JSON-LD, so only the
-    /// object keys addressed by the `q` filter are expanded through the
-    /// `@context` (Table 5.2.12-1 `jsonKeys`).
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "attribute_name_csv::deserialize",
-        serialize_with = "attribute_name_csv::serialize"
-    )]
-    pub json_keys: Option<Vec<AttributeName>>,
 }
 
 /// How and how often a matching change is turned into a notification
@@ -342,6 +279,10 @@ pub struct SubscriptionLifecycle {
 
 /// NGSI-LD Subscription (ETSI GS CIM 009 clause 5.2.12).
 ///
+/// The resource as the broker stores it: every name a matcher reads is expanded
+/// (clause 5.5.7). A client reads it through
+/// [`SubscriptionPresentation`](crate::subscription_presentation::SubscriptionPresentation).
+///
 /// A Subscription defines the conditions under which notifications are sent
 /// and the delivery parameters for those notifications. The members are grouped
 /// by what changes them: [`SubscriptionSelection`] follows the entity-selection
@@ -383,11 +324,17 @@ pub struct Subscription {
     /// Whether the subscription is running, and since when.
     #[serde(flatten)]
     pub lifecycle: SubscriptionLifecycle,
+    /// The members the store could not read in the expanded stage. The subscription
+    /// selects nothing while any is listed, and a client never sees the list.
+    #[serde(skip)]
+    #[builder(default = Default::default())]
+    pub unreadable: Vec<UnreadableMember>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notification::NotificationTrigger;
     use chrono::TimeZone;
     use std::str::FromStr;
 
@@ -462,20 +409,20 @@ mod tests {
             "type": "Subscription",
             "subscriptionName": "speeding",
             "description": "vehicles over the limit",
-            "entities": [{"type": "Vehicle", "idPattern": "urn:ngsi-ld:Vehicle:.*"}],
-            "watchedAttributes": ["speed"],
+            "entities": [{"type": "https://example.com/Vehicle", "idPattern": "urn:ngsi-ld:Vehicle:.*"}],
+            "watchedAttributes": ["https://example.com/speed"],
             "notificationTrigger": ["entityUpdated"],
             "timeInterval": 30,
-            "q": "speed>50",
+            "q": "\"https://example.com/speed\">50",
             "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [13.4, 52.5]},
             "scopeQ": "/Madrid",
-            "csf": "type==\"ContextSourceRegistration\"",
+            "csf": "\"https://example.com/tier\"==\"gold\"",
             "datasetId": ["urn:ngsi-ld:Dataset:1", "@none"],
-            "expandValues": "speed",
-            "jsonKeys": "payload",
+            "expandValues": "https://example.com/speed",
+            "jsonKeys": "https://example.com/payload",
             "isActive": true,
             "notification": {
-                "attributes": ["speed"],
+                "attributes": ["https://example.com/speed"],
                 "format": "normalized",
                 "endpoint": {"uri": "https://receiver.example.com/notify", "accept": "application/ld+json", "cooldown": 500, "timeout": 3000},
                 "timesSent": 4,
@@ -686,24 +633,27 @@ mod tests {
     /// holding a comma separated list of attribute names, not an array.
     #[test]
     fn subscription_filters_read_expand_values_and_json_keys_as_comma_separated_names() {
-        let filters: SubscriptionFilters = serde_json::from_value(serde_json::json!({"expandValues": "speed,colour", "jsonKeys": "payload"})).expect("parses");
+        let filters: SubscriptionFilters = serde_json::from_value(
+            serde_json::json!({"expandValues": "https://example.com/speed,https://example.com/colour", "jsonKeys": "https://example.com/payload"}),
+        )
+        .expect("parses");
         pretty_assertions::assert_eq!(
             filters
                 .expand_values
                 .as_deref()
-                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-            Some(vec!["speed", "colour"])
+                .map(|names| names.iter().map(AttributeIri::as_str).collect::<Vec<_>>()),
+            Some(vec!["https://example.com/speed", "https://example.com/colour"])
         );
         pretty_assertions::assert_eq!(
             filters
                 .json_keys
                 .as_deref()
-                .map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-            Some(vec!["payload"])
+                .map(|names| names.iter().map(AttributeIri::as_str).collect::<Vec<_>>()),
+            Some(vec!["https://example.com/payload"])
         );
         pretty_assertions::assert_eq!(
             serde_json::to_value(&filters).expect("serialises"),
-            serde_json::json!({"expandValues": "speed,colour", "jsonKeys": "payload"})
+            serde_json::json!({"expandValues": "https://example.com/speed,https://example.com/colour", "jsonKeys": "https://example.com/payload"})
         );
     }
 

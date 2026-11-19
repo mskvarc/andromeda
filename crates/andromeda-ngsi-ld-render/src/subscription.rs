@@ -12,31 +12,27 @@
 //! takes from that very data type. The two resources are therefore written by
 //! one rule.
 //!
-//! The view borrows the resource, so the Subscription is written straight from
-//! its typed form with no document built beside it. It differs from the
-//! resource's own serialization in two members: the `notification` writes its
-//! `pick` and `omit` as the clause 4.21 strings a client sent, where the
-//! subscription keeps each as the term tree of its expanded names, and the
-//! lifecycle members honour `sysAttrs`.
+//! The view borrows the presentation, so the Subscription is written straight
+//! from its typed form with no document built beside it. The members that hold
+//! names are written from the names in the reader's terms, `pick` and `omit` as
+//! the clause 4.21 strings a client sent, and the lifecycle members honour
+//! `sysAttrs`.
 
+use crate::subscription::{filters_view::FiltersView, selection_view::SelectionView};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde};
-use andromeda_ngsi_ld_model::subscription::{
-    Endpoint,
-    NotificationParams,
-    NotificationStatus,
-    Subscription,
-    SubscriptionDelivery,
-    SubscriptionFilters,
-    SubscriptionLifecycle,
-    SubscriptionSelection,
-    SubscriptionStatus,
-    SubscriptionType,
+use andromeda_ngsi_ld_model::{
+    subscription::{Endpoint, NotificationParams, NotificationStatus, SubscriptionDelivery, SubscriptionLifecycle, SubscriptionStatus, SubscriptionType},
+    subscription_presentation::SubscriptionPresentation,
+    written_subscription_terms::WrittenSubscriptionTerms,
 };
 use andromeda_ngsi_ld_query::projection::written_projection_list::WrittenProjectionList;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer};
 use std::num::{NonZeroU32, NonZeroU64};
+
+mod filters_view;
+mod selection_view;
 
 /// The projection lists of one `pick` or `omit` member, written as the clause
 /// 4.21 strings they were sent as.
@@ -103,15 +99,15 @@ struct NotificationView<'a> {
 
 impl<'a> NotificationView<'a> {
     /// The notification parameters as a client reads them.
-    fn of(notification: &'a NotificationParams) -> NotificationView<'a> {
+    fn of(notification: &'a NotificationParams, terms: &'a WrittenSubscriptionTerms) -> NotificationView<'a> {
         NotificationView {
-            attributes: notification.attributes.as_deref(),
+            attributes: terms.attributes.as_deref(),
             format: notification.format,
             endpoint: &notification.endpoint,
             sys_attrs: notification.sys_attrs,
             show_changes: notification.show_changes,
-            pick: notification.pick.as_deref().map(ProjectionStrings),
-            omit: notification.omit.as_deref().map(ProjectionStrings),
+            pick: terms.pick.as_deref().map(ProjectionStrings),
+            omit: terms.omit.as_deref().map(ProjectionStrings),
             join: notification.join,
             join_level: notification.join_level,
             last_notification: notification.last_notification,
@@ -187,10 +183,10 @@ pub struct SubscriptionView<'a> {
     description: Option<&'a str>,
     /// What the subscription watches.
     #[serde(flatten)]
-    selection: &'a SubscriptionSelection,
+    selection: SelectionView<'a>,
     /// What narrows the matches further.
     #[serde(flatten)]
-    filters: &'a SubscriptionFilters,
+    filters: FiltersView<'a>,
     /// Notification delivery configuration.
     notification: NotificationView<'a>,
     /// How and how often notifications are produced.
@@ -204,15 +200,30 @@ pub struct SubscriptionView<'a> {
 impl<'a> SubscriptionView<'a> {
     /// The view of `subscription` under `sys_attrs`.
     #[must_use]
-    pub fn of(subscription: &'a Subscription, sys_attrs: SysAttrsInclusion) -> SubscriptionView<'a> {
+    pub fn of(presentation: &'a SubscriptionPresentation, sys_attrs: SysAttrsInclusion) -> SubscriptionView<'a> {
+        let subscription = &presentation.subscription;
+        let terms = &presentation.terms;
         SubscriptionView {
             id: &subscription.id,
             type_: subscription.type_,
             subscription_name: subscription.subscription_name.as_deref(),
             description: subscription.description.as_deref(),
-            selection: &subscription.selection,
-            filters: &subscription.filters,
-            notification: NotificationView::of(&subscription.notification),
+            selection: SelectionView {
+                entities: terms.entities.as_deref(),
+                watched_attributes: terms.watched_attributes.as_deref(),
+                notification_trigger: subscription.selection.notification_trigger.as_deref(),
+            },
+            filters: FiltersView {
+                q: terms.q.as_ref(),
+                geo_q: terms.geo_q.as_ref(),
+                scope_q: subscription.filters.scope_q.as_ref(),
+                csf: terms.csf.as_ref(),
+                dataset_id: subscription.filters.dataset_id.as_deref(),
+                temporal_q: subscription.filters.temporal_q.as_ref(),
+                expand_values: &terms.expand_values,
+                json_keys: &terms.json_keys,
+            },
+            notification: NotificationView::of(&subscription.notification, terms),
             delivery: &subscription.delivery,
             lifecycle: LifecycleView::of(&subscription.lifecycle, sys_attrs),
         }
@@ -222,12 +233,28 @@ impl<'a> SubscriptionView<'a> {
 #[cfg(test)]
 mod tests {
     use crate::subscription::SubscriptionView;
-    use andromeda_ngsi_ld_model::subscription::Subscription;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_model::{
+        subscription::Subscription,
+        subscription_presentation::SubscriptionPresentation,
+        written_subscription_terms::WrittenSubscriptionTerms,
+    };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use serde_json::{Value, json};
+    use serde::de::DeserializeOwned;
+    use serde_json::{Map, Value, json};
 
-    /// A Subscription whose members are `members`, over the minimum one holds.
-    fn subscription(members: Value) -> Subscription {
+    /// The member `key` of `members`, taken out and read as a `T`.
+    fn taken<T: DeserializeOwned>(members: &mut Map<String, Value>, key: &str) -> Option<T> {
+        members.remove(key).map(|member| serde_json::from_value(member).expect("a readable member"))
+    }
+
+    /// The attribute names the comma-separated member `key` lists.
+    fn listed(members: &mut Map<String, Value>, key: &str) -> Option<Vec<AttributeName>> {
+        taken::<String>(members, key).map(|text| text.split(',').map(|name| name.parse().expect("a valid attribute name")).collect())
+    }
+
+    /// A Subscription whose members are `members`, over the minimum one holds, its names in the terms of the reader.
+    fn subscription(members: Value) -> SubscriptionPresentation {
         let mut wire = json!({
             "id": "urn:ngsi-ld:Subscription:1",
             "type": "Subscription",
@@ -239,7 +266,23 @@ mod tests {
         if let (Some(target), Value::Object(extra)) = (wire.as_object_mut(), members) {
             target.extend(extra);
         }
-        serde_json::from_value(wire).expect("a valid subscription")
+        let mut terms = WrittenSubscriptionTerms::default();
+        if let Some(members) = wire.as_object_mut() {
+            terms.entities = taken(members, "entities");
+            terms.watched_attributes = taken(members, "watchedAttributes");
+            terms.q = taken::<String>(members, "q").map(|text| text.parse().expect("a valid q"));
+            terms.csf = taken::<String>(members, "csf").map(|text| text.parse().expect("a valid csf"));
+            terms.geo_q = taken(members, "geoQ");
+            terms.expand_values = listed(members, "expandValues");
+            terms.json_keys = listed(members, "jsonKeys");
+            if let Some(Value::Object(notification)) = members.get_mut("notification") {
+                terms.attributes = taken(notification, "attributes");
+                terms.pick = taken(notification, "pick");
+                terms.omit = taken(notification, "omit");
+            }
+        }
+        let subscription: Subscription = serde_json::from_value(wire).expect("a valid subscription");
+        SubscriptionPresentation { subscription, terms }
     }
 
     /// `members` as a client reads the Subscription under `sys_attrs`.
@@ -338,11 +381,21 @@ mod tests {
             "lang": "en",
             "expiresAt": "2030-12-31T23:59:59Z"
         });
-        let mut resource = serde_json::to_value(subscription(members.clone())).expect("the resource writes");
-        // The resource writes `isActive` whatever it is; the view hides the default.
-        if let Some(members) = resource.as_object_mut() {
-            members.remove("isActive");
-        }
+        let resource = json!({
+            "id": "urn:ngsi-ld:Subscription:1",
+            "type": "Subscription",
+            "subscriptionName": "speeding",
+            "entities": [{"type": "Vehicle"}],
+            "watchedAttributes": ["speed"],
+            "q": "speed>50",
+            "notification": {"endpoint": {"uri": "https://example.org"}},
+            "timeInterval": 30,
+            "lang": "en",
+            "status": "active",
+            "expiresAt": "2030-12-31T23:59:59Z",
+            "createdAt": "2025-01-01T00:00:00Z",
+            "modifiedAt": "2025-01-01T00:00:00Z"
+        });
         pretty_assertions::assert_eq!(rendered(members, SysAttrsInclusion::Include), resource);
     }
 }

@@ -51,7 +51,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
+    geo::geo_constraint::GeoConstraint,
     name_stage::Written,
     scope::scope_query::ScopeQuery,
 };
@@ -87,7 +87,7 @@ pub struct SubscriptionRequest {
         deserialize_with = "clearable_array::deserialize",
         serialize_with = "clearable_array::serialize"
     )]
-    pub entities: Clearable<Vec<EntitySelector>>,
+    pub entities: Clearable<Vec<EntitySelector<Written>>>,
     /// Attribute names to watch for changes.
     #[serde(
         default,
@@ -112,7 +112,7 @@ pub struct SubscriptionRequest {
     pub q: Clearable<Filter<Written>>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
-    pub geo_q: Clearable<WrittenGeoQuery>,
+    pub geo_q: Clearable<GeoConstraint<Written>>,
     /// Scope query expression (clause 4.19).
     #[serde(default, skip_serializing_if = "Clearable::is_absent")]
     pub scope_q: Clearable<ScopeQuery>,

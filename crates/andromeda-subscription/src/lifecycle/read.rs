@@ -12,7 +12,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_model::{subscription::Subscription, subscription_presentation::SubscriptionPresentation};
 use andromeda_ngsi_ld_query::page_window::PageWindow;
 
 impl<V> SubscriptionService<V>
@@ -46,9 +46,14 @@ where
     /// subscription under `id`, [`SubscriptionError::Persistence`] when the
     /// store cannot be read, and [`SubscriptionError::JsonLd`] when `context`
     /// cannot be resolved or the resource cannot be compacted against it.
-    pub async fn get_for_response(&self, target: &ContextTarget, id: &Identifier, context: &ContextSpec) -> Result<Subscription, SubscriptionError> {
+    pub async fn get_for_response(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        context: &ContextSpec,
+    ) -> Result<SubscriptionPresentation, SubscriptionError> {
         let subscription = self.get(target, id).await?;
-        Ok(self.presented(subscription, &self.name_compaction(context).await?).await)
+        self.presented(subscription, &self.name_compaction(context).await?).await
     }
 
     /// List the page `window` selects of the subscriptions, spelled for the
@@ -81,7 +86,7 @@ where
         let names = self.name_compaction(context).await?;
         let mut presented = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
-            presented.push(self.presented(subscription, &names).await);
+            presented.push(self.presented(subscription, &names).await?);
         }
         Ok(SubscriptionListing {
             subscriptions: presented,
@@ -93,10 +98,10 @@ where
 
     /// A subscription in the reader's terms, with what this kind serves that
     /// the store does not hold.
-    async fn presented(&self, subscription: Subscription, names: &NameCompaction) -> Subscription {
-        let mut presented = compact_for_response(subscription, names).await;
-        self.variant.present(&mut presented);
-        presented
+    async fn presented(&self, subscription: Subscription, names: &NameCompaction) -> Result<SubscriptionPresentation, SubscriptionError> {
+        let mut presented = compact_for_response(subscription, names).await?;
+        self.variant.present(&mut presented.subscription);
+        Ok(presented)
     }
 
     /// The names of one response, compacted against the reader's `context`.

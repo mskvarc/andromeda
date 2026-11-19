@@ -1,6 +1,7 @@
 //! The invariants subscription policy relies on, and how each one broke.
 
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SubscriptionIdParseError;
+use andromeda_ngsi_ld_model::written_subscription_terms::WrittenTermsError;
 use thiserror::Error;
 
 /// A subscription policy invariant that did not hold.
@@ -25,4 +26,8 @@ pub enum SubscriptionInvariant {
     /// compile.
     #[error("the q of a subscription request was not admitted exactly once before it was compiled")]
     QNotAdmitted,
+    /// A stored name has no written spelling, though the store checks every
+    /// name against the bound a written name keeps.
+    #[error("a stored subscription holds a name no written name can spell: {0}")]
+    StoredNameNotWritable(#[from] WrittenTermsError),
 }

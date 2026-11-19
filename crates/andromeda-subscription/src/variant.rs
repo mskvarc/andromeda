@@ -8,7 +8,7 @@
 //! which change event the store broadcast carries. Naming those four is what
 //! lets `crate::lifecycle` be written once.
 
-use crate::{change::UpsertKind, error::SubscriptionError, expanded_filters::ExpandedFilters};
+use crate::{change::UpsertKind, error::SubscriptionError, expanded_terms::ExpandedTerms};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -34,19 +34,20 @@ pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.
     type Change: Clone + Send + 'static;
 
-    /// Expand the request's terms in place under `context` (clause 5.5.7),
-    /// its `q` compiled from `admitted_q`, the admission validation gave it,
-    /// and give the expanded filters the request leaves as written.
+    /// Expand the request's terms under `context` (clause 5.5.7), its `q`
+    /// compiled from `admitted_q`, the admission validation gave it, and give
+    /// them as the stage a subscription is stored in. The request stays as
+    /// written.
     ///
     /// Initialising `jsonldContext` is not part of it: that is a clause 5.8.1.4
     /// creation step, and an update leaves the stored member as it is unless
     /// the fragment names one (clauses 5.8.2.4 and 5.5.8).
     fn expand_terms<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        request: &'life1 mut SubscriptionRequest,
+        request: &'life1 SubscriptionRequest,
         context: &'life2 ContextSpec,
         admitted_q: Option<&'life3 AdmittedFilter>,
-    ) -> BoxFuture<'async_trait, Result<ExpandedFilters, SubscriptionError>>
+    ) -> BoxFuture<'async_trait, Result<ExpandedTerms, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

@@ -11,7 +11,7 @@ use crate::{
     forwarded_query::ForwardedQuery,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, name_stage::Written};
+use andromeda_ngsi_ld_query::{filter::Filter, geo::geo_constraint::GeoConstraint, name_stage::Written};
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use std::num::NonZeroU32;
 
@@ -89,7 +89,7 @@ impl ForwardedQuery {
     /// when the `GeoProperty` does not spell in the forwarding context, and
     /// [`FederationError::Internal`] when the admitted geometry cannot be
     /// written back to its wire form.
-    pub(super) async fn push_geo(&mut self, geo: Option<&WrittenGeoQuery>, names: &ForwardedNames<'_>) -> Result<(), FederationError> {
+    pub(super) async fn push_geo(&mut self, geo: Option<&GeoConstraint<Written>>, names: &ForwardedNames<'_>) -> Result<(), FederationError> {
         let Some(geo) = geo else {
             return Ok(());
         };

@@ -1,16 +1,12 @@
 //! Typed subscription persistence values: what a create body or an update
 //! fragment becomes once it is merged with what is stored.
 
-use crate::{
-    error::SubscriptionError,
-    expanded_filters::{ExpandedFilters, StoredFilters},
-    store::SubscriptionFields,
-    subscription_validation_reason::SubscriptionValidationReason,
-};
+use crate::{error::SubscriptionError, expanded_terms::ExpandedTerms, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
+    expanded_notification_terms::ExpandedNotificationTerms,
     notification::NotificationTrigger,
     notification_request::NotificationRequest,
     query::temporal_query::TemporalQuery,
@@ -20,7 +16,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
+    geo::geo_constraint::GeoConstraint,
     name_stage::Expanded,
     scope::scope_query::ScopeQuery,
 };
@@ -38,9 +34,9 @@ pub(crate) struct SubscriptionWriteValues {
     /// Optional free-text description.
     pub description: Option<String>,
     /// Validated entity selectors.
-    pub entities: Option<Vec<EntitySelector>>,
+    pub entities: Option<Vec<EntitySelector<Expanded>>>,
     /// Validated watched attributes.
-    pub watched_attributes: Option<Vec<AttributeName>>,
+    pub watched_attributes: Option<Vec<AttributeIri>>,
     /// Validated notification triggers.
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
     /// Periodic notification interval in seconds.
@@ -48,7 +44,7 @@ pub(crate) struct SubscriptionWriteValues {
     /// Parsed NGSI-LD query expression.
     pub q: Option<Filter<Expanded>>,
     /// Geo-spatial query.
-    pub geo_q: Option<WrittenGeoQuery>,
+    pub geo_q: Option<GeoConstraint<Expanded>>,
     /// Parsed scope query expression.
     pub scope_q: Option<ScopeQuery>,
     /// Parsed context-source filter.
@@ -67,10 +63,10 @@ pub(crate) struct SubscriptionWriteValues {
     pub temporal_q: Option<TemporalQuery>,
     /// Attributes whose `q` operands were coerced through the `@context`
     /// (Table 5.2.12-1 `expandValues`).
-    pub expand_values: Option<Vec<AttributeName>>,
+    pub expand_values: Option<Vec<AttributeIri>>,
     /// Attributes whose `q` object keys were expanded while their values were
     /// left uninterpreted (Table 5.2.12-1 `jsonKeys`).
-    pub json_keys: Option<Vec<AttributeName>>,
+    pub json_keys: Option<Vec<AttributeIri>>,
     /// The clause 4.15 language filter notifications are reduced by.
     pub lang: Option<LanguageFilter>,
     /// Validated JSON-LD context URL.
@@ -91,9 +87,12 @@ pub(crate) struct SubscriptionWriteValues {
 ///
 /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
 /// notification names no endpoint.
-fn notification_params(notification: Option<NotificationRequest>) -> Result<Option<NotificationParams>, SubscriptionError> {
+fn notification_params(
+    notification: Option<NotificationRequest>,
+    expanded: ExpandedNotificationTerms,
+) -> Result<Option<NotificationParams>, SubscriptionError> {
     notification
-        .map(NotificationParams::try_from)
+        .map(|notification| notification.into_params(expanded))
         .transpose()
         .map_err(|_| SubscriptionError::Validation(SubscriptionValidationReason::EndpointRequired))
 }
@@ -112,24 +111,24 @@ impl SubscriptionWriteValues {
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
     /// notification names no endpoint.
-    pub(crate) fn from_create(request: SubscriptionRequest, expanded: ExpandedFilters) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    pub(crate) fn from_create(request: SubscriptionRequest, expanded: ExpandedTerms) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let SubscriptionRequest {
             id: _,
             type_: _,
             subscription_name,
             description,
-            entities,
-            watched_attributes,
+            entities: _,
+            watched_attributes: _,
             notification_trigger,
             time_interval,
             q: _,
-            geo_q,
+            geo_q: _,
             scope_q,
             csf: _,
             dataset_id,
             temporal_q,
-            expand_values,
-            json_keys,
+            expand_values: _,
+            json_keys: _,
             notification,
             throttling,
             expires_at,
@@ -146,22 +145,22 @@ impl SubscriptionWriteValues {
         Ok(SubscriptionWriteValues {
             subscription_name: subscription_name.into_created(),
             description: description.into_created(),
-            entities: entities.into_created(),
-            watched_attributes: watched_attributes.into_created(),
+            entities: expanded.entities.into_created(),
+            watched_attributes: expanded.watched_attributes.into_created(),
             notification_trigger: notification_trigger.into_created(),
             time_interval: time_interval.into_created(),
             q: expanded.q.into_created(),
-            geo_q: geo_q.into_created(),
+            geo_q: expanded.geo_q.into_created(),
             scope_q: scope_q.into_created(),
             csf: expanded.csf.into_created(),
             dataset_id: dataset_id.into_created(),
             is_active: is_active.into_created().unwrap_or(true),
-            notification: notification_params(notification)?,
+            notification: notification_params(notification, expanded.notification)?,
             expires_at: expires_at.into_created(),
             throttling: throttling.into_created(),
             temporal_q: temporal_q.into_created(),
-            expand_values: expand_values.into_created(),
-            json_keys: json_keys.into_created(),
+            expand_values: expanded.expand_values.into_created(),
+            json_keys: expanded.json_keys.into_created(),
             lang: lang.into_created(),
             jsonld_context: jsonld_context.into_created(),
             local_only: local_only.into_created().unwrap_or(false),
@@ -180,12 +179,7 @@ impl SubscriptionWriteValues {
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
     /// fragment's notification names no endpoint.
-    pub(crate) fn merged(
-        request: SubscriptionRequest,
-        expanded: ExpandedFilters,
-        stored: StoredFilters,
-        existing: Subscription,
-    ) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    pub(crate) fn merged(request: SubscriptionRequest, expanded: ExpandedTerms, existing: Subscription) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let Subscription {
             subscription_name,
             description,
@@ -201,18 +195,18 @@ impl SubscriptionWriteValues {
             type_: _,
             subscription_name: requested_name,
             description: requested_description,
-            entities,
-            watched_attributes,
+            entities: _,
+            watched_attributes: _,
             notification_trigger,
             time_interval,
             q: _,
-            geo_q,
+            geo_q: _,
             scope_q,
             csf: _,
             dataset_id,
             temporal_q,
-            expand_values,
-            json_keys,
+            expand_values: _,
+            json_keys: _,
             notification: requested_notification,
             throttling,
             expires_at,
@@ -230,22 +224,22 @@ impl SubscriptionWriteValues {
         Ok(SubscriptionWriteValues {
             subscription_name: requested_name.applied_over(subscription_name),
             description: requested_description.applied_over(description),
-            entities: entities.applied_over(selection.entities),
-            watched_attributes: watched_attributes.applied_over(selection.watched_attributes),
+            entities: expanded.entities.applied_over(selection.entities),
+            watched_attributes: expanded.watched_attributes.applied_over(selection.watched_attributes),
             notification_trigger: notification_trigger.applied_over(selection.notification_trigger),
             time_interval: time_interval.applied_over(delivery.time_interval),
-            q: expanded.q.applied_over(stored.q),
-            geo_q: geo_q.applied_over(filters.geo_q),
+            q: expanded.q.applied_over(filters.q),
+            geo_q: expanded.geo_q.applied_over(filters.geo_q),
             scope_q: scope_q.applied_over(filters.scope_q),
-            csf: expanded.csf.applied_over(stored.csf),
+            csf: expanded.csf.applied_over(filters.csf),
             dataset_id: dataset_id.applied_over(filters.dataset_id),
             is_active: is_active.applied_over(lifecycle.is_active).unwrap_or(true),
-            notification: notification_params(requested_notification)?.or(Some(notification)),
+            notification: notification_params(requested_notification, expanded.notification)?.or(Some(notification)),
             expires_at: expires_at.applied_over(lifecycle.standing.expires_at),
             throttling: throttling.applied_over(delivery.throttling),
             temporal_q: temporal_q.applied_over(filters.temporal_q),
-            expand_values: expand_values.applied_over(filters.expand_values),
-            json_keys: json_keys.applied_over(filters.json_keys),
+            expand_values: expanded.expand_values.applied_over(filters.expand_values),
+            json_keys: expanded.json_keys.applied_over(filters.json_keys),
             lang: lang.applied_over(delivery.lang),
             jsonld_context: jsonld_context.applied_over(delivery.jsonld_context),
             local_only: local_only.applied_over(delivery.local_only).unwrap_or(false),
@@ -288,12 +282,12 @@ impl SubscriptionWriteValues {
 mod tests {
     use crate::{
         error::SubscriptionError,
-        expanded_filters::{ExpandedFilters, StoredFilters},
+        expanded_terms::ExpandedTerms,
         fields::SubscriptionWriteValues,
         merged_validation::validate_merged_subscription,
         subscription_validation_reason::SubscriptionValidationReason,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription::Subscription, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_query::dataset_selector::DatasetSelector;
     use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
@@ -311,7 +305,7 @@ mod tests {
             members.insert("notification".to_owned(), json!({"endpoint": {"uri": "https://receiver.example.com/notify"}}));
         }
         let request = request(&wire);
-        let expanded = ExpandedFilters::under_example_namespace(&request);
+        let expanded = ExpandedTerms::under_example_namespace(&request);
         SubscriptionWriteValues::from_create(request, expanded)
     }
 
@@ -357,8 +351,8 @@ mod tests {
             "type": "Subscription",
             "entities": [{"type": "https://example.com/Vehicle"}],
             "q": "\"https://example.com/speed\">1",
-            "expandValues": "status",
-            "jsonKeys": "status",
+            "expandValues": "https://example.com/status",
+            "jsonKeys": "https://example.com/status",
             "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1, 2]},
             "temporalQ": {"timeAt": "2024-01-01T00:00:00Z", "timerel": "after"},
             "notification": {"endpoint": {"uri": "http://receiver.example.com/notify"}},
@@ -375,8 +369,8 @@ mod tests {
     }
 
     /// One merged opt-in list, as wire text.
-    fn spelled(names: Option<&[AttributeName]>) -> Vec<&str> {
-        names.unwrap_or_default().iter().map(AttributeName::as_str).collect()
+    fn spelled(names: Option<&[AttributeIri]>) -> Vec<&str> {
+        names.unwrap_or_default().iter().map(AttributeIri::as_str).collect()
     }
 
     /// Clause 5.8.3 updates a Subscription with "a fragment of the
@@ -385,8 +379,8 @@ mod tests {
     fn an_update_that_names_no_opt_in_leaves_the_stored_lists_alone() -> Result<(), SubscriptionError> {
         let merged = merged(&json!({}))?;
 
-        pretty_assertions::assert_eq!(spelled(merged.expand_values.as_deref()), vec!["status"]);
-        pretty_assertions::assert_eq!(spelled(merged.json_keys.as_deref()), vec!["status"]);
+        pretty_assertions::assert_eq!(spelled(merged.expand_values.as_deref()), vec!["https://example.com/status"]);
+        pretty_assertions::assert_eq!(spelled(merged.json_keys.as_deref()), vec!["https://example.com/status"]);
         assert!(merged.geo_q.is_some() && merged.temporal_q.is_some());
         Ok(())
     }
@@ -400,7 +394,7 @@ mod tests {
 
         assert!(merged.expand_values.is_none(), "the NGSI-LD Null removes the member");
         assert!(merged.geo_q.is_none() && merged.temporal_q.is_none());
-        pretty_assertions::assert_eq!(spelled(merged.json_keys.as_deref()), vec!["status"]);
+        pretty_assertions::assert_eq!(spelled(merged.json_keys.as_deref()), vec!["https://example.com/status"]);
         Ok(())
     }
 
@@ -416,9 +410,8 @@ mod tests {
     /// The values `fragment` describes once merged over `existing`.
     fn merged_over(existing: Subscription, fragment: &Value) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let request = request(fragment);
-        let expanded = ExpandedFilters::under_example_namespace(&request);
-        let stored = StoredFilters::of(&existing.filters)?;
-        SubscriptionWriteValues::merged(request, expanded, stored, existing)
+        let expanded = ExpandedTerms::under_example_namespace(&request);
+        SubscriptionWriteValues::merged(request, expanded, existing)
     }
 
     /// Clause 5.5.8, which clause 5.8.2.4 applies: "for each member of the
@@ -595,7 +588,10 @@ mod tests {
     fn a_named_list_replaces_the_stored_one() -> Result<(), SubscriptionError> {
         let merged = merged(&json!({"jsonKeys": "payload,extra"}))?;
 
-        pretty_assertions::assert_eq!(spelled(merged.json_keys.as_deref()), vec!["payload", "extra"]);
+        pretty_assertions::assert_eq!(
+            spelled(merged.json_keys.as_deref()),
+            vec!["https://example.com/payload", "https://example.com/extra"]
+        );
         Ok(())
     }
 
@@ -678,7 +674,7 @@ mod tests {
     #[test]
     fn a_creation_whose_notification_names_no_endpoint_is_refused() {
         let request = request(&json!({"notification": {"format": "normalized"}}));
-        let refused = SubscriptionWriteValues::from_create(request, ExpandedFilters::default());
+        let refused = SubscriptionWriteValues::from_create(request, ExpandedTerms::default());
 
         assert!(matches!(refused, Err(SubscriptionError::Validation(_))), "{refused:?}");
     }

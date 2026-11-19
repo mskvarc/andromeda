@@ -7,18 +7,18 @@
 
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     entity_selector::EntitySelector,
     notification::NotificationTrigger,
     query::temporal_query::TemporalQuery,
-    subscription::{NotificationParams, SubscriptionStatus},
+    subscription::{NotificationParams, SubscriptionStatus, unreadable_member::UnreadableMember},
 };
 use andromeda_ngsi_ld_query::{
     dataset_selector::DatasetSelector,
     filter::Filter,
-    geo::written_geo_query::WrittenGeoQuery,
-    name_stage::Written,
+    geo::geo_constraint::GeoConstraint,
+    name_stage::Expanded,
     scope::scope_query::ScopeQuery,
 };
 use chrono::{DateTime, Utc};
@@ -38,25 +38,27 @@ pub struct SubscriptionRow {
     /// Optional free-text description.
     pub description: Option<String>,
     /// Entity selector JSON (nullable in DB).
-    pub entities: Option<Vec<EntitySelector>>,
+    pub entities: Option<Vec<EntitySelector<Expanded>>>,
     /// Watched attribute IRIs.
-    pub watched_attributes: Option<Vec<AttributeName>>,
+    pub watched_attributes: Option<Vec<AttributeIri>>,
     /// Validated notification triggers.
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
     /// Periodic notification interval seconds.
     pub time_interval: Option<f64>,
     /// NGSI-LD `q` filter.
-    pub q: Option<Filter<Written>>,
+    pub q: Option<Filter<Expanded>>,
     /// Geo query (nullable).
-    pub geo_q: Option<WrittenGeoQuery>,
+    pub geo_q: Option<GeoConstraint<Expanded>>,
     /// Scope query expression.
     pub scope_q: Option<ScopeQuery>,
     /// Context source filter.
-    pub csf: Option<Filter<Written>>,
+    pub csf: Option<Filter<Expanded>>,
     /// Expanded attribute names whose `q` operands were coerced (clause 5.2.12 `expandValues`).
-    pub expand_values: Option<Vec<AttributeName>>,
+    pub expand_values: Option<Vec<AttributeIri>>,
     /// Expanded attribute names whose `q` object keys were expanded (clause 5.2.12 `jsonKeys`).
-    pub json_keys: Option<Vec<AttributeName>>,
+    pub json_keys: Option<Vec<AttributeIri>>,
+    /// The members the row holds that could not be read in the expanded stage.
+    pub unreadable: Vec<UnreadableMember>,
     /// `datasetId` selectors; `None` when absent.
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Notification endpoint configuration JSON.

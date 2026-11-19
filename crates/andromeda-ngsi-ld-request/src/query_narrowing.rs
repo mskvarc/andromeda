@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimePr
 use andromeda_ngsi_ld_query::{
     entity_constraint::EntityConstraint,
     filter::{Filter, referenced_attributes::referenced_attributes},
-    geo::written_geo_query::WrittenGeoQuery,
+    geo::geo_constraint::GeoConstraint,
     name_stage::Written,
     type_selection::TypeSelection,
 };
@@ -98,7 +98,7 @@ pub struct NarrowingInputs<'a> {
     q: Option<&'a Filter<Written>>,
     /// Input (d): the clause 4.10 NGSI-LD `GeoQuery`.
     #[builder(default = Default::default())]
-    geo: Option<&'a WrittenGeoQuery>,
+    geo: Option<&'a GeoConstraint<Written>>,
     /// Input (e): whether execution is limited to the local scope.
     #[builder(default = ExecutionScope::Distributed)]
     local_scope: ExecutionScope,
@@ -250,7 +250,7 @@ mod tests {
         query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::{filter::Filter, geo::written_geo_query::WrittenGeoQuery, name_stage::Written, type_selection::TypeSelection};
+    use andromeda_ngsi_ld_query::{filter::Filter, geo::geo_constraint::GeoConstraint, name_stage::Written, type_selection::TypeSelection};
 
     fn attrs(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a valid Attribute name")).collect()
@@ -264,7 +264,7 @@ mod tests {
         q.parse().expect("a valid q")
     }
 
-    fn geo() -> WrittenGeoQuery {
+    fn geo() -> GeoConstraint<Written> {
         serde_urlencoded::from_str::<OptionalGeoQuery>("georel=near%3BmaxDistance==100&geometry=Point&coordinates=[1,2]")
             .expect("a valid geoquery")
             .0

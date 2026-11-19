@@ -368,7 +368,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         filter::{Filter, compiled_filter::CompiledFilter, language_matching::LanguageMatching},
-        name_stage::Written,
+        name_stage::{Expanded, Written},
         namespace_expander::EXAMPLE_NAMESPACE,
         projection::expanded_projection::ExpandedProjection,
         scope::scope_query::ScopeQuery,
@@ -396,7 +396,7 @@ mod tests {
             .into_iter()
             .map(|attribute| AttributeChange {
                 key: AttributeInstanceKey {
-                    attr: attribute.parse().expect("valid test attribute name"),
+                    attr: format!("https://example.com/{attribute}").parse().expect("valid test attribute name"),
                     dataset_id: None,
                 },
                 kind,
@@ -404,14 +404,19 @@ mod tests {
             .collect();
         ChangeEvent::builder()
             .entity_id(entity_id.parse().expect("valid test URI"))
-            .entity_types(types.into_iter().map(|t| t.parse().expect("valid test type name")).collect())
+            .entity_types(
+                types
+                    .into_iter()
+                    .map(|t| format!("https://example.com/{t}").parse().expect("valid test type name"))
+                    .collect(),
+            )
             .change(EntityChange::new(EntityLifecycle::Modified, instances))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
             .build()
     }
 
-    fn make_sub(id: &str, selectors: Vec<EntitySelector>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {
+    fn make_sub(id: &str, selectors: Vec<EntitySelector<Expanded>>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {
         CompiledSubscription {
             id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI"),
             key: SubscriptionKey::try_from(1).expect("a valid subscription key"),
@@ -429,7 +434,7 @@ mod tests {
             watched_attrs: watched.map(|attributes| {
                 attributes
                     .into_iter()
-                    .map(|attribute| attribute.parse().expect("valid test attribute name"))
+                    .map(|attribute| format!("https://example.com/{attribute}").parse().expect("valid test attribute name"))
                     .collect()
             }),
             selectors,
@@ -464,7 +469,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -480,7 +485,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Parking".parse().expect("valid type expression"),
+                type_: "https://example.com/Parking".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -496,7 +501,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["entityCreated"],
             None,
@@ -512,7 +517,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             Some(vec!["speed"]),
@@ -533,7 +538,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             Some(vec!["speed"]),
@@ -549,7 +554,7 @@ mod tests {
             vec![EntitySelector {
                 id: Some(vec!["urn:ngsi-ld:Vehicle:A1".parse().expect("valid id")]),
                 id_pattern: Some("urn:ngsi-ld:Parking:.*".parse().expect("valid pattern")),
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -565,7 +570,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: Some("urn:ngsi-ld:Vehicle:.*".parse().expect("valid pattern")),
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -581,7 +586,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: Some("urn:ngsi-ld:Parking:.*".parse().expect("valid pattern")),
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -597,7 +602,7 @@ mod tests {
             vec![EntitySelector {
                 id: Some(vec!["urn:ngsi-ld:Vehicle:A1".parse().expect("valid uri")]),
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -613,7 +618,7 @@ mod tests {
             vec![EntitySelector {
                 id: Some(vec!["urn:ngsi-ld:Vehicle:B2".parse().expect("valid uri")]),
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -629,7 +634,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -653,7 +658,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: "https://example.com/Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -746,7 +751,7 @@ mod tests {
             vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Truck".parse().expect("valid type expression"),
+                type_: "https://example.com/Truck".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             Some(vec!["heading"]),
@@ -836,8 +841,11 @@ mod tests {
             at(1_500),
             addressed(ChangeAudience::Live, &cache, &ContextTarget::Live, &event, at(1_500)),
         );
-        pretty_assertions::assert_eq!(watched(&owed), vec!["speed".to_owned()]);
-        pretty_assertions::assert_eq!(watched(&in_force_versions(&cache, &ContextTarget::Live, owed)), vec!["heading".to_owned()]);
+        pretty_assertions::assert_eq!(watched(&owed), vec!["https://example.com/speed".to_owned()]);
+        pretty_assertions::assert_eq!(
+            watched(&in_force_versions(&cache, &ContextTarget::Live, owed)),
+            vec!["https://example.com/heading".to_owned()]
+        );
 
         let later = owed_since_commit(
             ChangeAudience::Live,

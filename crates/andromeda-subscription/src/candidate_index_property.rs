@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_entity::reads::{
     attribute_change::{AttributeChange, AttributeChangeKind},
     attribute_instance_key::AttributeInstanceKey,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     entity_selector::EntitySelector,
@@ -44,8 +44,8 @@ use std::{
 use strum::IntoEnumIterator;
 use url::Url;
 
-const TYPES: [&str; 3] = ["Building", "Vehicle", "Sensor"];
-const ATTRIBUTES: [&str; 3] = ["temperature", "speed", "name"];
+const TYPES: [&str; 3] = ["https://example.com/Building", "https://example.com/Vehicle", "https://example.com/Sensor"];
+const ATTRIBUTES: [&str; 3] = ["https://example.com/temperature", "https://example.com/speed", "https://example.com/name"];
 const ID_PATTERNS: [&str; 2] = ["^urn:ngsi-ld:E:1$", "urn:ngsi-ld:E:.*"];
 
 #[derive(Debug, Clone)]
@@ -160,7 +160,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         .map(|watched| {
             watched
                 .iter()
-                .map(|index| ATTRIBUTES[*index].parse::<AttributeName>().map_err(|error| internal(&error)))
+                .map(|index| ATTRIBUTES[*index].parse::<AttributeIri>().map_err(|error| internal(&error)))
                 .collect::<Result<HashSet<_>, SubscriptionError>>()
         })
         .transpose()?;

@@ -288,7 +288,7 @@ async fn deleted_rendering(
         .instances
         .iter()
         .filter(|instance| instance.kind == AttributeChangeKind::Deleted)
-        .filter(|instance| sub.watched_attrs.as_ref().is_none_or(|watched| watched.contains(&instance.key.attr)))
+        .filter(|instance| sub.watched_attrs.as_ref().is_none_or(|watched| watched.contains(instance.key.attr.as_str())))
         .map(|instance| &instance.key);
     let Some(selection) = Selection::deleted(previous, params.notified, deleted, rule) else {
         return Ok(None);

@@ -121,7 +121,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         filter::language_matching::LanguageMatching,
-        geo::written_geo_query::WrittenGeoQuery,
+        geo::geo_constraint::GeoConstraint,
+        name_stage::Expanded,
         projection::expanded_projection::ExpandedProjection,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -148,7 +149,7 @@ mod tests {
     /// when given.
     fn subscription(key: i64, typed: bool, near: Option<Near>) -> CompiledSubscription {
         let compiled_geo_q = near.map_or(SubscriptionGeoFilter::Unrestricted, |near| {
-            let geo_q: WrittenGeoQuery = serde_json::from_value(json!({
+            let geo_q: GeoConstraint<Expanded> = serde_json::from_value(json!({
                 "georel": "near;maxDistance==200",
                 "geometry": "Point",
                 "coordinates": near.at,
