@@ -76,11 +76,11 @@ tokio = { version = "1.54.1", features = ["full"] }
 mimalloc = "0.1.52"
 
 # Background threads purge freed memory off the allocating threads.
-[target.'cfg(not(any(target_env = "msvc", target_env = "musl")))'.dependencies]
+[target.'cfg(not(any(target_env = "msvc", target_env = "musl", target_vendor = "apple")))'.dependencies]
 tikv-jemallocator = { version = "0.7.0", features = ["background_threads"] }
 
-# jemalloc has no background thread support on musl.
-[target.'cfg(target_env = "musl")'.dependencies]
+# jemalloc has no background threads on musl or on Apple targets, so freed memory is purged on the allocating threads.
+[target.'cfg(any(target_env = "musl", target_vendor = "apple"))'.dependencies]
 tikv-jemallocator = { version = "0.7.0", default-features = false }
 
 [dev-dependencies]
