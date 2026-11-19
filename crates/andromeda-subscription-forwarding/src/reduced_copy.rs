@@ -258,6 +258,10 @@ mod tests {
     use andromeda_federation::split_entities::SplitEntities;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription, subscription_request::SubscriptionRequest};
+    use andromeda_ngsi_ld_query::{
+        filter::Filter,
+        name_stage::{Expanded, Written},
+    };
     use andromeda_subscription::deleted_members::DeletedMembers;
     use serde_json::{Value, json};
     use url::Url;
@@ -334,6 +338,22 @@ mod tests {
         );
         pretty_assertions::assert_eq!(document["notification"]["format"], json!("normalized"));
         assert!(document.get("@context").is_none());
+    }
+
+    /// Clause 4.9: a trailing member is the raw JSON key the client wrote, which
+    /// no `@context` rewrites, so the copy carries `[city]` and not the IRI the
+    /// member addresses.
+    #[test]
+    fn the_forwarded_q_carries_a_trailing_member_as_the_client_wrote_it() {
+        let addressed =
+            Filter::<Expanded>::try_from(r#""https://example.org/address"["https://example.org/city"]=="Berlin""#.to_owned()).expect("an expanded filter");
+        let spelled = r#""https://example.org/address"[city]=="Berlin""#.parse::<Filter<Written>>().expect("a written filter");
+        let mut stored = subscription();
+        stored.filters.q = Some(addressed.with_written_members(&spelled));
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let copy = ReducedSubscription::reduce(&stored, &registration, &receiver(), &minted(), FilterCarriage::Keep).expect("the subscription is reducible");
+
+        pretty_assertions::assert_eq!(written(&copy.request)["q"], json!(r#""https://example.org/address"[city]=="Berlin""#));
     }
 
     /// A subscription selecting the given entity selectors and nothing else.

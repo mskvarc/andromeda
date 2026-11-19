@@ -95,11 +95,11 @@ impl TryFrom<&Subscription> for WrittenSubscriptionTerms {
             pick: notification.pick.as_deref().map(written_projection).transpose()?,
             omit: notification.omit.as_deref().map(written_projection).transpose()?,
             // clone: the written filter is owned apart from the stored subscription
-            q: filters.q.clone().map(Filter::into_written).transpose()?,
+            q: filters.q.clone().map(Filter::into_written_with_member_spelling).transpose()?,
             // clone: the written geo-query is owned apart from the stored subscription
             geo_q: filters.geo_q.clone().map(GeoConstraint::into_written),
             // clone: the written filter is owned apart from the stored subscription
-            csf: filters.csf.clone().map(Filter::into_written).transpose()?,
+            csf: filters.csf.clone().map(Filter::into_written_with_member_spelling).transpose()?,
             expand_values: filters.expand_values.as_deref().map(written_names),
             json_keys: filters.json_keys.as_deref().map(written_names),
         })
