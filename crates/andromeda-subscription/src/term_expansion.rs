@@ -29,9 +29,11 @@ use andromeda_ngsi_ld_query::{
     filter::{
         compilation::{AdmittedFilter, compile_q_filter},
         expansion::{expand_attribute_names, expand_context_source_filter},
+        filter_error::FilterError,
     },
     geo::expansion::expand_geo_constraint,
     name_stage::{Expanded, Written},
+    projection::attrs_selection::{AttrsAdmission, expand_attrs_admitted},
     query_error::QueryError,
     term_expander::TermExpander,
     type_selection::expansion::expand_type_selection,
@@ -64,11 +66,20 @@ pub(crate) async fn expand_names(
 /// Expand the attribute list and the projection lists of a notification.
 async fn expand_notification(notification: &NotificationRequest, expander: &impl TermExpander) -> Result<ExpandedNotificationTerms, SubscriptionError> {
     let attributes = match notification.attributes.as_deref() {
-        Some(names) => Some(expand_attribute_names(names, expander).await?),
+        Some(names) => Some(expand_notified_attributes(names, expander).await?),
         None => None,
     };
     let (pick, omit) = expand_notification_projection(notification.pick.as_deref(), notification.omit.as_deref(), expander).await?;
     Ok(ExpandedNotificationTerms { attributes, pick, omit })
+}
+
+/// Expand `notification.attributes`, which Table 5.2.14.1-1 makes "A synonym
+/// for pick, except that id, type, scope are not allowed", into the names a
+/// stored subscription keeps.
+async fn expand_notified_attributes(names: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeIri>, SubscriptionError> {
+    let iris = expand_attrs_admitted(names, AttrsAdmission::NotificationAttributes, expander).await?;
+    let kept = iris.into_iter().map(AttributeIri::try_from).collect::<Result<_, _>>();
+    Ok(kept.map_err(FilterError::from).map_err(QueryError::from)?)
 }
 
 /// Expand the terms of `request` through `expander`, its `q` compiled from
@@ -167,6 +178,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{attribute_iri_csv, request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_query::{
         filter::language_targeting::LanguageTargeting,
+        projection::{pick_synonym::PickSynonym, projection_error::ProjectionError},
         query_error::QueryError,
         term_expander::TermExpansionError,
         type_selection::type_selection_error::TypeSelectionError,
@@ -476,6 +488,64 @@ mod tests {
         pretty_assertions::assert_eq!(spelled(terms.watched_attributes.as_set()), vec![format!("{DEFAULT}speed")]);
         let geoproperty = terms.geo_q.as_set().and_then(|geo_q| geo_q.geoproperty.as_ref());
         pretty_assertions::assert_eq!(geoproperty.map(AttributeIri::as_str), Some(format!("{DEFAULT}place").as_str()));
+    }
+
+    /// Whether `result` refuses `member` as an Entity member written in
+    /// `notification.attributes`.
+    fn refused_as_reserved(result: &Result<ExpandedTerms, SubscriptionError>, member: &str) -> bool {
+        matches!(
+            result,
+            Err(SubscriptionError::Query(QueryError::Projection(ProjectionError::ReservedAttrsMember {
+                term,
+                synonym: PickSynonym::NotificationAttributes,
+            }))) if term.as_str() == member
+        )
+    }
+
+    /// The notification of a request naming `attributes` and nothing else.
+    fn notifying(attributes: &[&str]) -> Value {
+        json!({"notification": {"attributes": attributes, "endpoint": {"uri": "http://example.com/notify"}}})
+    }
+
+    /// Table 5.2.14.1-1: `attributes` is "A synonym for pick, except that id,
+    /// type, scope are not allowed".
+    #[tokio::test]
+    async fn the_notified_attributes_refuse_id_type_and_scope() {
+        for member in ["id", "type", "scope"] {
+            let result = expanded(notifying(&["speed", member])).await;
+            assert!(refused_as_reserved(&result, member), "{member}: {result:?}");
+        }
+    }
+
+    /// The Scope is one Entity member whichever term the `@context` names it
+    /// by, so a term of the request's own `@context` for it is refused as the
+    /// Scope itself.
+    #[tokio::test]
+    async fn a_context_alias_of_the_scope_in_the_notified_attributes_is_refused() {
+        let context = JsonLiteral::admit(&json!({"sc": "https://uri.etsi.org/ngsi-ld/scope"}).to_string()).expect("an admissible literal");
+
+        let result = expanded_under(notifying(&["speed", "sc"]), &ContextSpec::from_body(context)).await;
+
+        assert!(refused_as_reserved(&result, "sc"), "{result:?}");
+    }
+
+    /// The control for the tests above: Attribute names are notified, and
+    /// `pick` takes the members `attributes` does not (Table 5.2.14.1-1).
+    #[tokio::test]
+    async fn the_notified_attributes_take_attribute_names_and_pick_takes_the_entity_members() {
+        let attributes = expanded(notifying(&["speed", "colour"])).await.expect("expands");
+        pretty_assertions::assert_eq!(
+            spelled(attributes.notification.attributes.as_ref()),
+            vec![format!("{DEFAULT}speed"), format!("{DEFAULT}colour")]
+        );
+
+        let picked = expanded(json!({"notification": {"pick": ["id,type,scope"], "endpoint": {"uri": "http://example.com/notify"}}}))
+            .await
+            .expect("expands");
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(picked.notification.pick).expect("the tree writes"),
+            json!([[{"name": "id", "linked": []}, {"name": "type", "linked": []}, {"name": "scope", "linked": []}]])
+        );
     }
 
     /// A written `q` that validation never admitted, and an admission with no
