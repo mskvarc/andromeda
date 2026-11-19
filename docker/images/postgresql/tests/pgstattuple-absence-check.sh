@@ -142,11 +142,14 @@ expect "an UPDATE into the converted chunk leaves it partial" 9 "$(sql "$aged_st
 # Page pruning reclaims a dead HOT version on the next visit to its page, so
 # a session holds the database's xmin horizon back while the rewrites run:
 # no version is removable, the pages fill, and every rewrite after that is
-# not HOT and adds an entry per row to pk_ca_grain. They go on until that
-# B-tree reaches 16 MiB too: an index under the size floor is never a probe
-# candidate, and the absence of probes asserted below would then prove
-# nothing. A relation or index still short after the cap ends the check here
-# rather than after the fifteen-minute wait.
+# not HOT and adds a heap pointer per row to pk_ca_grain. B-tree deduplication
+# keeps a key's versions in one posting list, so a rewrite of the forty
+# thousand rows grows the index by about 240 kB, and it takes about seventy
+# rewrites to reach 16 MiB. They go on until that B-tree reaches 16 MiB too:
+# an index under the size floor is never a probe candidate, and the absence of
+# probes asserted below would then prove nothing. A relation or index still
+# short after the cap ends the check here rather than after the fifteen-minute
+# wait.
 docker exec -d -u postgres "$database" psql -U andromeda -XAtq -d andromeda -c "SET application_name = 'horizon-hold'; SELECT pg_sleep(3600)"
 for _ in $(seq 1 20); do
 	[ "$(sql "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'horizon-hold' AND state = 'active'")" = 1 ] && break
@@ -157,7 +160,7 @@ index_floor=$((16 * 1024 * 1024))
 rewrites=0
 heap_bytes=0
 index_bytes=0
-while [ "$rewrites" -lt 60 ]; do
+while [ "$rewrites" -lt 160 ]; do
 	sql "UPDATE current_attributes SET modified_at = modified_at" > /dev/null
 	rewrites=$((rewrites + 1))
 	heap_bytes="$(sql "SELECT pg_total_relation_size('current_attributes')")"

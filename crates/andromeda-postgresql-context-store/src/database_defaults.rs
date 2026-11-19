@@ -33,7 +33,7 @@
 //! transaction-pooling proxy keeps the server sessions it holds, and a session
 //! it opened before the write would serve without them.
 
-use crate::error::ContextStoreError;
+use crate::{error::ContextStoreError, extension_update::begin_without_timescaledb};
 use andromeda_configuration::schema::database::SynchronousCommit;
 use andromeda_postgresql_seaquery::{
     advisory_lock::advisory_xact_lock,
@@ -166,12 +166,17 @@ pub enum DefaultsReconciliation {
 /// and the writes run in one transaction behind an advisory lock keyed on the
 /// database.
 ///
+/// The transaction keeps `TimescaleDB` unloaded: a tenant's serving pool runs
+/// it before the tenant's extensions are updated, and a pooled session that
+/// loaded the old library is closed by `TimescaleDB` at its first statement
+/// after the update.
+///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the transaction, the lock, the
 /// read or an `ALTER DATABASE` fails.
 pub async fn reconcile_database_defaults(pool: &PgPool, defaults: &DatabaseDefaults) -> Result<DefaultsReconciliation, ContextStoreError> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = begin_without_timescaledb(pool).await?;
     let row = stored_defaults_statement().to_query().fetch_one(&mut *transaction).await?;
     let database: String = row.try_get("database")?;
     configuration_lock(&database).to_query().execute(&mut *transaction).await?;

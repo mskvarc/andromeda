@@ -4,8 +4,13 @@
 //! one-connection pool on the tenant's request URL, so a usage read adds no
 //! permanent backend and never makes the tenant resident. The expensive
 //! `?options=usage` half of tenant introspection stays off the dormancy path.
+//!
+//! The reads run in one transaction that keeps `TimescaleDB` unloaded. Through
+//! a pooler the server session they borrow may serve the tenant next, and a
+//! session holding the library at a version the tenant's next open updates
+//! away from is closed by `TimescaleDB` at its first statement after.
 
-use crate::store_fault::persistence_failure;
+use crate::{extension_update::begin_without_timescaledb, store_fault::persistence_failure};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -20,7 +25,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_tenancy::{error::TenancyError, tenant_usage::TenantUsage, usage_probe::TenantUsageProbe};
 use async_trait::async_trait;
 use sea_query::{Alias, Expr, ExprTrait, Func, Query, SelectStatement};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use std::{num::TryFromIntError, time::Duration};
 
 /// Reads a tenant's own database for its operational usage.
@@ -52,10 +57,12 @@ impl PostgresTenantUsageProbe {
 
     /// Run the four usage reads over the transient pool and assemble the result.
     async fn read_over(&self, pool: &PgPool) -> Result<TenantUsage, TenancyError> {
-        let database_size = fetch_count(pool, database_size_query()).await?;
-        let pool_connections = fetch_count(pool, backend_count_query()).await?;
-        let entity_count = fetch_count(pool, entity_count_query()).await?;
-        let snapshot_count = fetch_count(pool, snapshot_count_query()).await?;
+        let mut transaction = begin_without_timescaledb(pool).await.map_err(|error| usage_read_failure(&error))?;
+        let database_size = fetch_count(&mut transaction, database_size_query()).await?;
+        let pool_connections = fetch_count(&mut transaction, backend_count_query()).await?;
+        let entity_count = fetch_count(&mut transaction, entity_count_query()).await?;
+        let snapshot_count = fetch_count(&mut transaction, snapshot_count_query()).await?;
+        transaction.rollback().await.map_err(|error| usage_read_failure(&error))?;
         Ok(TenantUsage {
             pool_connections,
             database_size,
@@ -91,9 +98,13 @@ struct NegativeUsageCount {
     source: TryFromIntError,
 }
 
-/// Run one single-scalar `bigint` count over the probe pool and widen it.
-async fn fetch_count(pool: &PgPool, statement: SelectStatement) -> Result<u64, TenancyError> {
-    let value: i64 = statement.to_query_scalar().fetch_one(pool).await.map_err(|error| usage_read_failure(&error))?;
+/// Run one single-scalar `bigint` count on the probe's connection and widen it.
+async fn fetch_count(connection: &mut PgConnection, statement: SelectStatement) -> Result<u64, TenancyError> {
+    let value: i64 = statement
+        .to_query_scalar()
+        .fetch_one(connection)
+        .await
+        .map_err(|error| usage_read_failure(&error))?;
     usage_count(value)
 }
 

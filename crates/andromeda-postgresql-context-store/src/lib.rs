@@ -59,6 +59,8 @@ pub mod notification_delivery;
 /// The extensions installed when the server ships them, though the schema
 /// does not depend on them.
 pub mod optional_extension;
+/// The versioned extensions of a database below the version the server ships.
+pub mod pending_extension_update;
 /// Durable side-effect queue for opt-in async batch processing.
 pub mod pending_side_effects;
 /// Reading a tenant's database for the earliest instant it has work due.

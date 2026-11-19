@@ -93,7 +93,7 @@ mod tests {
         tenant_ref::TenantRef,
     };
     use async_trait::async_trait;
-    use std::sync::Arc;
+    use std::{sync::Arc, time::SystemTime};
     use tokio::runtime::Handle;
 
     /// No tenant is behind the server's extension versions.
@@ -101,7 +101,7 @@ mod tests {
 
     #[async_trait]
     impl CatchUpCandidates for NoneLagging {
-        async fn lagging_tenants(&self) -> Result<Vec<TenantName>, CatchUpError> {
+        async fn lagging_tenants(&self, _after: SystemTime) -> Result<Vec<TenantName>, CatchUpError> {
             Ok(Vec::new())
         }
     }

@@ -96,7 +96,10 @@ impl PostgresTenantRegistry {
     /// database is migrated after, a copy included, so a copy of a template
     /// behind this binary's migrations is brought forward, and a database an
     /// earlier provisioning left, whatever release made it, is migrated where
-    /// it stands and never replaced.
+    /// it stands and never replaced. Such a database may be a copy whose
+    /// provisioning stopped before its stamp was renewed, so it is stamped
+    /// anew once migrated: it has served nothing, so no name cache holds its
+    /// previous instant.
     ///
     /// `CREATE DATABASE`, the stamp and the extension update run over plain
     /// connections, so the only pool this step waits on is the one its
@@ -112,7 +115,11 @@ impl PostgresTenantRegistry {
             DatabaseCreation::Copied => renew_copy_stamp(&tenant_url).await?,
             DatabaseCreation::AlreadyPresent | DatabaseCreation::Created => {}
         }
-        migrate_single_tenant_db(&tenant_url, &self.defaults, self.acquire_timeout).await
+        migrate_single_tenant_db(&tenant_url, &self.defaults, self.acquire_timeout).await?;
+        match creation {
+            DatabaseCreation::AlreadyPresent => renew_copy_stamp(&tenant_url).await,
+            DatabaseCreation::Copied | DatabaseCreation::Created => Ok(()),
+        }
     }
 }
 

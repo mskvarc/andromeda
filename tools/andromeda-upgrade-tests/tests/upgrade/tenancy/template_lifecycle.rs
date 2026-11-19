@@ -223,6 +223,35 @@ async fn a_template_whose_stamp_is_ahead_of_this_build_is_built_again() -> Resul
 }
 
 #[tokio::test]
+async fn a_template_stamped_with_another_migration_set_at_this_version_is_built_again() -> Result<(), UpgradeTestError> {
+    let server = UpgradeServer::from_environment()?;
+    let platform = UpgradeDatabase::create(&server).await?;
+    let prefix = fresh_prefix()?;
+    let mut foreign = UpgradeDatabase::create_named(&server, template_database_name(&prefix)).await?;
+    foreign.migrate_to_current().await?;
+    Query::update()
+        .table(name("schema_metadata"))
+        .value(name("migrations_sha256"), Expr::val("0".repeat(64)))
+        .to_owned()
+        .to_query()
+        .execute(foreign.pool())
+        .await?;
+    lock_template(platform.pool(), foreign.pool(), foreign.database_name()).await?;
+    let template = foreign.close().await;
+    let foreign_oid = database_oid(platform.pool(), &template).await?;
+
+    open_registry(&platform, &prefix).await?.main_pool().close().await;
+
+    assert_ne!(database_oid(platform.pool(), &template).await?, foreign_oid);
+    assert_eq!(template_flags(platform.pool(), &template).await?, Some((true, false)));
+    assert_new_tenant_is_current(&server, &platform, &prefix).await?;
+
+    drop_registry_template(&server, &prefix).await?;
+    platform.drop_database().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_template_gone_missing_leaves_new_tenant_databases_created_empty_and_migrated() -> Result<(), UpgradeTestError> {
     let server = UpgradeServer::from_environment()?;
     let platform = UpgradeDatabase::create(&server).await?;
@@ -239,6 +268,71 @@ async fn a_template_gone_missing_leaves_new_tenant_databases_created_empty_and_m
     pool.close().await;
     registry.main_pool().close().await;
     server.drop_database(&acme).await?;
+    platform.drop_database().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_template_a_session_holds_leaves_the_new_tenant_created_empty_and_migrated() -> Result<(), UpgradeTestError> {
+    let server = UpgradeServer::from_environment()?;
+    let platform = UpgradeDatabase::create(&server).await?;
+    let prefix = fresh_prefix()?;
+    let registry = open_registry(&platform, &prefix).await?;
+    let template = template_database_name(&prefix);
+    DatabaseDefinition::unlock_template(Alias::new(template.as_str()))
+        .to_query()
+        .execute(platform.pool())
+        .await?;
+    // The one-connection pool keeps its session open on the template while
+    // the tenant is provisioned.
+    let holder = open_tenant_pool(&server, &template).await?;
+    let template_first_migration = first_migration_applied_at(&holder).await?;
+
+    let acme = registry.provision(&TenantName::try_from("acme".to_owned())?).await?;
+
+    let pool = open_tenant_pool(&server, &acme).await?;
+    assert_eq!(public_applied_through(&pool).await?, last_tenant_migration());
+    assert_eq!(tenant_schema_state(&pool).await?, TenantSchemaState::Current);
+    assert_ne!(first_migration_applied_at(&pool).await?, template_first_migration);
+
+    pool.close().await;
+    holder.close().await;
+    registry.main_pool().close().await;
+    server.drop_database(&acme).await?;
+    drop_registry_template(&server, &prefix).await?;
+    platform.drop_database().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_template_a_session_holds_when_it_must_be_built_again_is_left_and_new_tenants_are_created_empty() -> Result<(), UpgradeTestError> {
+    let server = UpgradeServer::from_environment()?;
+    let platform = UpgradeDatabase::create(&server).await?;
+    let prefix = fresh_prefix()?;
+    let mut ahead = UpgradeDatabase::create_named(&server, template_database_name(&prefix)).await?;
+    ahead.migrate_to_current().await?;
+    Query::update()
+        .table(name("schema_metadata"))
+        .value(name("schema_version"), Expr::col(name("schema_version")).add(1))
+        .to_owned()
+        .to_query()
+        .execute(ahead.pool())
+        .await?;
+    let held_oid = database_oid(platform.pool(), ahead.database_name()).await?;
+
+    let registry = open_registry(&platform, &prefix).await?;
+    let acme = registry.provision(&TenantName::try_from("acme".to_owned())?).await?;
+
+    assert_eq!(database_oid(platform.pool(), ahead.database_name()).await?, held_oid);
+    let pool = open_tenant_pool(&server, &acme).await?;
+    assert_eq!(public_applied_through(&pool).await?, last_tenant_migration());
+    assert_eq!(tenant_schema_state(&pool).await?, TenantSchemaState::Current);
+
+    pool.close().await;
+    registry.main_pool().close().await;
+    server.drop_database(&acme).await?;
+    ahead.close().await;
+    drop_registry_template(&server, &prefix).await?;
     platform.drop_database().await?;
     Ok(())
 }

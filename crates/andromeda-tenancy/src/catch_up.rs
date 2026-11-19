@@ -7,12 +7,15 @@
 //! first request would wait for the update, and an image that stops shipping
 //! the old library would leave it unopenable. The wake pass therefore spends
 //! what its scheduled wakes leave of its budget on loading these tenants, the
-//! furthest behind first. The store that records each tenant's versions knows
-//! which tenants are behind and in what order; this crate only loads them.
+//! furthest behind first, a tenant whose scheduled wake lies beyond the pass
+//! included: a wake weeks away would leave it on the old versions until then.
+//! The store that records each tenant's versions knows which tenants are
+//! behind and in what order; this crate only loads them.
 
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
+use std::time::SystemTime;
 use thiserror::Error;
 
 /// Why the tenants behind the server's extension versions could not be read.
@@ -29,8 +32,13 @@ pub enum CatchUpError {
 /// The tenants a wake pass loads to bring their extensions up to date.
 #[async_trait]
 pub trait CatchUpCandidates: Send + Sync + 'static {
-    /// The active named tenants with no wake pending whose database is behind
-    /// the extension versions the server ships, furthest behind first.
+    /// The active named tenants whose database is behind the extension
+    /// versions the server ships and whose scheduled wake, if any, falls after
+    /// `after`, furthest behind first.
+    ///
+    /// A wake due by `after` is left to the pass that claims it: a claim in
+    /// flight holds its row's wake at its lease, and a failed build at its
+    /// retry, both of which end by then.
     ///
     /// A tenant whose last open already tried to update against the versions
     /// the server ships now is not listed until the server ships newer ones,
@@ -41,5 +49,5 @@ pub trait CatchUpCandidates: Send + Sync + 'static {
     ///
     /// Returns [`CatchUpError::Store`] when the read fails.
     #[must_use = "reading the tenants to catch up must be awaited"]
-    async fn lagging_tenants(&self) -> Result<Vec<TenantName>, CatchUpError>;
+    async fn lagging_tenants(&self, after: SystemTime) -> Result<Vec<TenantName>, CatchUpError>;
 }

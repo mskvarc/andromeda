@@ -85,6 +85,7 @@ pub mod schema_migration;
 pub mod seal_conversion;
 pub mod search_path;
 pub mod sequence;
+pub mod session_termination;
 pub mod setting;
 pub mod spherical_distance;
 pub mod statement;
@@ -97,6 +98,8 @@ pub mod statistics_object;
 pub mod structured_value;
 pub mod system_catalog;
 pub mod temporary_table;
+#[cfg(feature = "test-support")]
+pub mod test_role;
 pub mod timescale;
 pub mod timescale_job;
 pub mod timescale_scheduler;

@@ -12,7 +12,10 @@
 # - IMAGE, retention disabled: the aged chunk is converted to the columnstore
 #   and no columnstore-overdue is logged.
 # - APACHE_IMAGE, retention disabled, when given: nothing is ever due, so the
-#   reconciliation probe records no wake and the chunk stays in place.
+#   reconciliation probe records no wake and the chunk stays in place. Its data
+#   directory is then started on IMAGE, as an operator moving to the TSL
+#   edition does: the broker enables the columnstore it finds there, and the
+#   wake loop converts the aged chunk.
 #
 # Both sweeps run every hour, so neither can act on the aged rows from the
 # load the setup request caused; the work a case waits for is done by the load
@@ -30,7 +33,7 @@ tenant=hwc
 failures=0
 
 cleanup() {
-	docker rm -f -v "$broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$database" "$database-apache" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 }
 trap cleanup EXIT
@@ -77,29 +80,30 @@ aged_chunks="SELECT coalesce(string_agg(is_compressed::text, ','), 'none') FROM 
 # one sooner.
 wake_state="SELECT coalesce((SELECT CASE WHEN w.wake_at IS NULL THEN 'none' WHEN w.wake_at > now() + interval '7 days' THEN 'weeks-ahead' ELSE 'soon' END FROM tenant_wake_schedule w JOIN tenants t USING (tenant_key) WHERE t.name = '$tenant'), 'unprobed')"
 
-# usage: run_case LABEL IMAGE RETENTION_MODE
-# Leaves the case's database and broker running for the assertions that follow.
-run_case() {
-	cleanup
-	docker network create "$network" > /dev/null
-	docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$2" > /dev/null
+# usage: start_database IMAGE [docker-run-args...]
+start_database() {
+	local image="$1"
+	shift
+	docker run -d --name "$database" --network "$network" -e POSTGRES_PASSWORD=check "$@" "$image" > /dev/null
 	for _ in $(seq 1 120); do
 		if docker exec "$database" pg_isready -q -h 127.0.0.1 2> /dev/null; then
 			break
 		fi
 		sleep 0.5
 	done
+}
 
+# usage: start_broker RETENTION_MODE; sets base to its API once it is healthy.
+start_broker() {
 	docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
 		-e "ANDROMEDA__DATABASE__CONNECTION=postgres://andromeda:check@$database:5432/andromeda" \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__MODE=observe \
-		-e "ANDROMEDA__TEMPORAL__STORAGE__RETENTION__MODE=$3" \
+		-e "ANDROMEDA__TEMPORAL__STORAGE__RETENTION__MODE=$1" \
 		-e ANDROMEDA__TEMPORAL__STORAGE__RETENTION__DELETE_AFTER=30days \
 		-e ANDROMEDA__TENANCY__RESIDENCY__IDLE_EVICTION_AFTER=2m \
 		-e ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME=30s \
 		"$broker_image" > /dev/null
-	local base
 	base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 	for _ in $(seq 1 120); do
 		if docker exec "$broker" andromeda health > /dev/null 2>&1; then
@@ -107,6 +111,15 @@ run_case() {
 		fi
 		sleep 0.5
 	done
+}
+
+# usage: run_case LABEL IMAGE RETENTION_MODE
+# Leaves the case's database and broker running for the assertions that follow.
+run_case() {
+	cleanup
+	docker network create "$network" > /dev/null
+	start_database "$2"
+	start_broker "$3"
 
 	local status
 	status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "NGSILD-Tenant: $tenant" -H 'Content-Type: application/json' \
@@ -164,6 +177,14 @@ if [ -n "$apache_image" ]; then
 	expect "apache: the aged chunk stays in the rowstore" false "$(sql "$db" "$aged_chunks")"
 	expect "apache: still no wake" none "$(sql andromeda "$wake_state")"
 	check_log apache
+
+	docker rm -f "$broker" > /dev/null
+	docker stop "$database" > /dev/null
+	docker rename "$database" "$database-apache"
+	start_database "$image" --volumes-from "$database-apache"
+	start_broker disabled
+	wait_for "edition switch: the wake loop loads the tenant and the aged chunk is converted" true 300 "$db" "$aged_chunks"
+	check_log "edition switch"
 fi
 
 if [ "$failures" -gt 0 ]; then

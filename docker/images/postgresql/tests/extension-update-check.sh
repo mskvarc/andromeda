@@ -9,27 +9,39 @@
 # tenants with the previous broker on the previous image, then restarts the
 # data directory on IMAGE under BROKER_IMAGE and sends no request: the wake
 # pass alone must bring every tenant up to date, the one with the most
-# committed transactions early, and record what each holds.
+# committed transactions early, and record what each holds. The second case
+# runs three times: with the broker reaching the server directly, with its
+# requests served through a transaction-pooling PgBouncer, and with the broker
+# stopped and started again while it catches the tenants up.
 set -Eeuo pipefail
 
 image="$1"
 broker_image="$2"
 previous_image="${3:-}"
 previous_broker_image="${4:-}"
+pooler_image=pgbouncer/pgbouncer:1.25.2-20260911.206
 prefix="extension-update-check-$$"
 network="$prefix-net"
 volume="$prefix-data"
 database="$prefix-db"
 broker="$prefix-broker"
+pooler="$prefix-pooler"
+mounts="$(mktemp -d)"
+chmod 755 "$mounts"
+# The environment every broker of the case running is started with.
+broker_env=()
+# The log of a broker the running case stopped before its checks.
+earlier_log="$mounts/earlier.log"
 tenant=upd
 failures=0
 response="$(mktemp)"
 
 cleanup() {
-	docker rm -f -v "$broker" "$database" > /dev/null 2>&1 || :
+	docker rm -f -v "$broker" "$pooler" "$database" > /dev/null 2>&1 || :
 	docker volume rm -f "$volume" > /dev/null 2>&1 || :
 	docker network rm "$network" > /dev/null 2>&1 || :
 	rm -f "$response"
+	rm -rf "$mounts"
 }
 trap cleanup EXIT
 
@@ -99,7 +111,7 @@ start_broker() {
 	docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
 		-e "ANDROMEDA__DATABASE__CONNECTION=postgres://andromeda:check@$database:5432/andromeda" \
-		"$1" > /dev/null
+		"${broker_env[@]}" "$1" > /dev/null
 	local port
 	port="$(docker port "$broker" 1056/tcp)"
 	base="http://${port}/ngsi-ld/v1"
@@ -122,6 +134,46 @@ start_broker() {
 stop_broker() {
 	docker stop "$broker" > /dev/null
 	docker rm "$broker" > /dev/null
+}
+
+# A transaction-pooling PgBouncer in front of the server, with the server-side
+# timings PgBouncer defaults to: a server session idle for less than ten
+# minutes is kept and handed to the next client after its check query.
+start_pooler() {
+	mkdir -p "$mounts/pgbouncer"
+	cat > "$mounts/pgbouncer/pgbouncer.ini" <<-INI
+		[databases]
+		* = host=$database port=5432
+		[pgbouncer]
+		listen_addr = 0.0.0.0
+		listen_port = 6432
+		unix_socket_dir = /tmp
+		pool_mode = transaction
+		auth_type = trust
+		auth_file = /etc/pgbouncer/userlist.txt
+		max_client_conn = 1000
+		default_pool_size = 8
+		max_db_connections = 40
+		max_prepared_statements = 64
+		ignore_startup_parameters = extra_float_digits,IntervalStyle,DateStyle,TimeZone,client_encoding
+	INI
+	printf '"andromeda" "check"\n' > "$mounts/pgbouncer/userlist.txt"
+	chmod -R a+rX "$mounts/pgbouncer"
+	docker run -d --name "$pooler" --network "$network" -v "$mounts/pgbouncer:/etc/pgbouncer:ro" \
+		--entrypoint /opt/pgbouncer/pgbouncer "$pooler_image" /etc/pgbouncer/pgbouncer.ini > /dev/null
+	for _ in $(seq 1 60); do
+		if docker exec "$pooler" nc -z 127.0.0.1 6432 > /dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.5
+	done
+	docker logs "$pooler" >&2
+	printf 'FAIL %s not listening after 30s\n' "$pooler" >&2
+	exit 1
+}
+
+stop_pooler() {
+	docker rm -f "$pooler" > /dev/null
 }
 
 # usage: status METHOD PATH [BODY]
@@ -164,7 +216,7 @@ log_errors='ERROR|already loaded with a different version|extension_update_refus
 
 assert_broker_log_clean() {
 	local log
-	log="$(docker logs "$broker" 2>&1)"
+	log="$(cat "$earlier_log" 2> /dev/null; docker logs "$broker" 2>&1)"
 	if grep -qE "$log_errors" <<< "$log"; then
 		fail "broker log carries an error"
 		grep -E "$log_errors" <<< "$log" >&2
@@ -199,8 +251,23 @@ stop_broker
 stop_database
 docker volume rm "$volume" > /dev/null
 
-if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
-	printf -- '--- tenants created on the previous image, brought up to date on this one with no request\n'
+# usage: current_tenants; prints how many catch-up tenants hold the shipped
+# TimescaleDB and PostGIS.
+current_tenants() {
+	local name db count=0
+	for name in "${catch_up_tenants[@]}"; do
+		db="$(sql andromeda "SELECT database_name FROM tenants WHERE name = '$name'")"
+		if [ "$(extversion "$db" timescaledb)" = "$(shipped timescaledb)" ] && [ "$(extversion "$db" postgis)" = "$(shipped postgis)" ]; then
+			count=$((count + 1))
+		fi
+	done
+	printf '%s' "$count"
+}
+
+# usage: previous_release_case direct|pooled|interrupted
+previous_release_case() {
+	printf -- '--- tenants created on the previous image, brought up to date on this one with no request, %s\n' "$1"
+	broker_env=()
 	mapfile -t catch_up_tenants < <(seq -f 'cu%02g' 1 20)
 	# An image older than the andromeda default role is told to create it.
 	start_database "$previous_image" -e POSTGRES_USER=andromeda -e POSTGRES_DB=andromeda
@@ -216,11 +283,34 @@ if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
 	stop_database
 	start_database "$image"
 	expect "$first_db timescaledb on the new image before the broker" "$old_timescaledb" "$(extversion "$first_db" timescaledb)"
+	# The image tunes the data directory the previous release left on every
+	# start, replacing the block of overrides that release appended.
+	expect "the previous release's server runs no TimescaleDB background worker" 0 "$(sql andromeda 'SHOW timescaledb.max_background_workers')"
+	expect "the previous release's postgresql.conf holds one block of overrides" 1 \
+		"$(docker exec "$database" sh -c 'grep -c "^# --- andromeda overrides BEGIN ---\$" "$PGDATA/postgresql.conf"')"
+	if [ "$1" = pooled ]; then
+		start_pooler
+		broker_env=(
+			-e "ANDROMEDA__DATABASE__POOLER__CONNECTION=postgres://andromeda:check@$pooler:6432/andromeda"
+			-e ANDROMEDA__DATABASE__POOLER__MAX_CONNECTIONS_PER_TENANT=2
+		)
+	fi
 	# A resident tenant's background work commits far more than a client's
 	# writes, so the busiest is read from the counter the catch-up ranks by.
 	busiest="$(sql andromeda "SELECT t.name FROM tenants t JOIN pg_stat_database d ON d.datname = t.database_name WHERE t.name LIKE 'cu%' ORDER BY d.xact_commit DESC LIMIT 1")"
 	start_broker "$broker_image"
 	assert_current andromeda
+	if [ "$1" = interrupted ]; then
+		# Stopped once a quarter of the tenants are current, possibly within an
+		# update, the broker leaves the rest to its next start.
+		for _ in $(seq 1 90); do
+			[ "$(current_tenants)" -ge 5 ] && break
+			sleep 0.2
+		done
+		docker logs "$broker" > "$earlier_log" 2>&1
+		stop_broker
+		start_broker "$broker_image"
+	fi
 	# Five wake passes of four tenants, plus building each, with no request.
 	lagging=''
 	for _ in $(seq 1 90); do
@@ -255,11 +345,37 @@ if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
 	[ "$old_timescaledb" != "$(shipped timescaledb)" ] && updates=$((updates + 1 + ${#catch_up_tenants[@]}))
 	[ "$old_postgis" != "$(shipped postgis)" ] && updates=$((updates + 1 + ${#catch_up_tenants[@]}))
 	assert_broker_log_clean "$updates"
-	# A request after the catch-up runs no further update.
+	# Every tenant serves after the catch-up, on sessions its pool opened after
+	# the update, and no request runs a further update.
+	for name in "${catch_up_tenants[@]}"; do
+		tenant="$name"
+		read_tenant b
+	done
 	tenant=cu01
-	read_tenant b
 	write_tenant c
 	assert_broker_log_clean "$updates"
+	# A broker started again on the upgraded server updates nothing and loads no
+	# tenant for its extensions.
+	rm -f "$earlier_log"
+	stop_broker
+	start_broker "$broker_image"
+	tenant=cu02
+	read_tenant b
+	assert_broker_log_clean 0
+	expect "tenants listed behind the image after the restart" 0 \
+		"$(sql andromeda "SELECT count(*) FROM tenant_extension_versions v JOIN pg_available_extensions a ON a.name = v.extension WHERE v.installed_version IS DISTINCT FROM a.default_version")"
+	stop_broker
+	if [ "$1" = pooled ]; then
+		stop_pooler
+	fi
+	stop_database
+	docker volume rm "$volume" > /dev/null
+}
+
+if [ -n "$previous_image" ] && [ -n "$previous_broker_image" ]; then
+	previous_release_case direct
+	previous_release_case pooled
+	previous_release_case interrupted
 fi
 
 if [ "$failures" -gt 0 ]; then
