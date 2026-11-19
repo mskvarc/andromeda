@@ -1,13 +1,15 @@
-//! Whether a `@context` document the broker is to store holds a valid JSON-LD
-//! context: one a client hands over to Add @context, or one downloaded to
-//! reload a Cached `@context`.
+//! Whether a `@context` document holds a valid JSON-LD context, before the
+//! broker stores or uses it: one a client hands over to Add @context, or one
+//! downloaded for a request or a reload.
 //!
-//! ETSI GS CIM 009 v1.9.1 clauses 5.13.2.4 and 5.13.5.4 apply the JSON and
-//! JSON-LD validation of clause 5.5.4 to both, and each operation names the
-//! error type its own refusal is answered with. The document's `@context` is
-//! read as the JSON-LD processor reads a context document and, when that needs
-//! no other document, processed as the processor processes it, against an
-//! empty active context, with the result discarded.
+//! ETSI GS CIM 009 v1.9.1 applies the JSON and JSON-LD validation of clause
+//! 5.5.4 to a `@context` a client adds (clause 5.13.2.4) and to one a reload
+//! downloads (clause 5.13.5.4), and clause 5.5.6 refuses an invalid remote
+//! `@context` a request names; each operation names the error type its own
+//! refusal is answered with. The document's `@context` is read as the JSON-LD
+//! processor reads a context document and, when that needs no other document,
+//! processed as the processor processes it, against an empty active context,
+//! with the result discarded.
 //!
 //! A `@context` that names another document, by URL or by `@import` at any
 //! depth, is checked only as far as its syntax: processing it needs that
@@ -18,7 +20,6 @@ use crate::{
         context_fault_reading::{extraction_failure, processing_fault},
         expansion_context::processing_options,
         processing_warning::LoggedWarnings,
-        processor_text::ProcessorTextError,
     },
     loader::error::InvalidContextDocument,
 };
@@ -29,36 +30,21 @@ use jsonld::{
     NoLoader,
     context_processing::{Process, algorithm::requires_loader},
 };
-use jstrict::parse::parse_str_value;
 use rdfx::vocabulary::no_vocabulary_mut;
-use thiserror::Error;
-
-/// Why a `@context` document is refused for storage.
-#[derive(Debug, Error)]
-pub enum ContextDocumentRefusal {
-    /// The document holds no valid JSON-LD context.
-    #[error(transparent)]
-    Invalid(InvalidContextDocument),
-    /// The processor's reader refused the document, which the broker admitted
-    /// as JSON.
-    #[error(transparent)]
-    Unreadable(#[from] ProcessorTextError),
-}
+use std::sync::Arc;
 
 /// Check that `document`, a JSON object with a top-level `@context` member,
 /// holds a valid JSON-LD context.
 ///
 /// # Errors
 ///
-/// Returns [`ContextDocumentRefusal::Invalid`] when the `@context` is not
-/// valid JSON-LD, naming the term, keyword or member it is wrong in, and
-/// [`ContextDocumentRefusal::Unreadable`] when the processor cannot read the
-/// document at all.
-pub async fn check_context_document(document: &JsonLiteral) -> Result<(), ContextDocumentRefusal> {
-    let value = parse_str_value(document.text()).map_err(ProcessorTextError::from)?;
-    let context = value
-        .into_ld_context()
-        .map_err(|error| ContextDocumentRefusal::Invalid(extraction_failure(&error)))?;
+/// Returns [`InvalidContextDocument::InvalidContext`] when the `@context` is
+/// not valid JSON-LD, naming the term, keyword or member it is wrong in, and
+/// [`InvalidContextDocument::NotJson`] when the processor's reader refuses the
+/// document.
+pub async fn check_context_document(document: &JsonLiteral) -> Result<(), InvalidContextDocument> {
+    let value = document.to_processor_json().map_err(|error| InvalidContextDocument::NotJson(Arc::new(error)))?;
+    let context = value.into_ld_context().map_err(|error| extraction_failure(&error))?;
     if requires_loader(&context) {
         return Ok(());
     }
@@ -73,26 +59,22 @@ pub async fn check_context_document(document: &JsonLiteral) -> Result<(), Contex
         )
         .await
         .map(|_| ())
-        .map_err(|error| ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(processing_fault(&error))))
+        .map_err(|error| InvalidContextDocument::InvalidContext(processing_fault(&error)))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        context_fault::ContextFault,
-        engine::context_document_check::{ContextDocumentRefusal, check_context_document},
-        loader::error::InvalidContextDocument,
-    };
+    use crate::{context_fault::ContextFault, engine::context_document_check::check_context_document, loader::error::InvalidContextDocument};
     use andromeda_json_literal::JsonLiteral;
 
-    async fn checked(document: &str) -> Result<(), ContextDocumentRefusal> {
+    async fn checked(document: &str) -> Result<(), InvalidContextDocument> {
         check_context_document(&JsonLiteral::admit(document).expect("admissible")).await
     }
 
     /// The fault a refused document reports.
     async fn fault(document: &str) -> ContextFault {
         match checked(document).await {
-            Err(ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(fault))) => fault,
+            Err(InvalidContextDocument::InvalidContext(fault)) => fault,
             other => panic!("expected an invalid @context for {document}, got {other:?}"),
         }
     }
@@ -139,13 +121,7 @@ mod tests {
             r#"{"@context": {"a": "b:x", "b": "a:y"}}"#,
             r#"{"@context": {"speed": {"@id": "https://example.org/speed", "@container": "@bogus"}}}"#,
         ] {
-            assert!(
-                matches!(
-                    checked(document).await,
-                    Err(ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(_)))
-                ),
-                "{document}"
-            );
+            assert!(matches!(checked(document).await, Err(InvalidContextDocument::InvalidContext(_))), "{document}");
         }
     }
 

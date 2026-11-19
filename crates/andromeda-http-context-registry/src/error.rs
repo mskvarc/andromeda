@@ -55,12 +55,7 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 mod tests {
     use crate::error::classify_context_registry_error;
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
-    use andromeda_jsonld::{
-        context_fault::ContextFault,
-        context_subtree::UnusableLocalContext,
-        engine::context_document_check::ContextDocumentRefusal,
-        loader::error::InvalidContextDocument,
-    };
+    use andromeda_jsonld::{context_fault::ContextFault, context_subtree::UnusableLocalContext, loader::error::InvalidContextDocument};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -79,7 +74,7 @@ mod tests {
                 NgsiLdErrorType::BadRequestData,
             ),
             (
-                ContextRegistryError::InvalidContext(ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(ContextFault::TooDeep))),
+                ContextRegistryError::InvalidContext(InvalidContextDocument::InvalidContext(ContextFault::TooDeep)),
                 NgsiLdErrorType::BadRequestData,
             ),
             (
@@ -92,7 +87,7 @@ mod tests {
             (
                 ContextRegistryError::InvalidDownload {
                     source_url: IriBuf::new("https://example.org/vehicle.jsonld".to_owned()).expect("an IRI"),
-                    refusal: ContextDocumentRefusal::Invalid(InvalidContextDocument::InvalidContext(ContextFault::TooDeep)),
+                    refusal: InvalidContextDocument::InvalidContext(ContextFault::TooDeep),
                 },
                 NgsiLdErrorType::LdContextNotAvailable,
             ),

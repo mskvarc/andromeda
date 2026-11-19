@@ -158,7 +158,9 @@ impl JsonLdEngine {
     ///
     /// # Errors
     ///
-    /// Returns a context-loading variant when the fetch fails.
+    /// Returns [`JsonLdError::ContextInvalid`] when the downloaded document is
+    /// not a valid `@context` document, and another context-loading variant
+    /// when the fetch fails.
     pub async fn fetch_remote_context(&self, url: &IriBuf) -> Result<DownloadedContext, JsonLdError> {
         self.loader.fetch_remote_value(url).await.map_err(|error| JsonLdError::from(&error))
     }

@@ -97,7 +97,8 @@ pub enum ContextUnavailable {
     UnaddressableDocument(#[source] Arc<InvalidIri<String>>),
 }
 
-/// Why a retrieved JSON-shaped response is not a usable `@context` document.
+/// Why a JSON document is not a usable `@context` document: a retrieved
+/// JSON-shaped response, or a document a client hands over to Add @context.
 ///
 /// A response whose media type no context is read from is not here: clause
 /// 5.5.6 reports an invalid remote context as `BadRequestData`, but such a
@@ -109,7 +110,8 @@ pub enum InvalidContextDocument {
     #[error("the response body is not UTF-8: {0}")]
     NotUtf8(#[source] Utf8Error),
     /// The response body is not JSON the broker admits: malformed, naming a
-    /// member twice in one object, or nesting too deep.
+    /// member twice in one object, nesting too deep, or refused by the JSON-LD
+    /// processor's reader.
     ///
     /// Shared for the same reason as [`ContextUnavailable::Request`].
     #[error("the response body is not JSON: {0}")]

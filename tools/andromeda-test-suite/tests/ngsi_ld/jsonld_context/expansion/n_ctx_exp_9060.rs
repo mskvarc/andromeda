@@ -52,7 +52,9 @@ async fn n_ctx_exp_9060_a_context_link_that_does_not_process_is_named_in_the_det
         .await;
     expect_that!(
         &answer_2,
-        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!("the @context {cyclic} cannot define the term a: cyclic IRI mapping"))
+        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
+            "invalid JSON-LD context at {cyclic}: the @context cannot define the term a: cyclic IRI mapping"
+        ))
     );
     Ok(())
 }

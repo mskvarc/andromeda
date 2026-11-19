@@ -2,10 +2,17 @@
 //!
 //! Everything a response must satisfy before its body becomes a context lives
 //! here: the media type has to be JSON-shaped, the body has to fit the
-//! configured limit, it has to parse, and it has to carry a usable top-level
-//! `@context`. The response's cache directives are read on the way past, since
-//! clause 6.3.16 makes them part of what was fetched rather than an afterthought
-//! the cache tiers each re-derive.
+//! configured limit, it has to parse, it has to carry a usable top-level
+//! `@context`, and that `@context` has to be valid JSON-LD as far as it can be
+//! checked without retrieving another document. The response's cache
+//! directives are read on the way past, since clause 6.3.16 makes them part of
+//! what was fetched rather than an afterthought the cache tiers each re-derive.
+//!
+//! A document refused here is held in neither cache tier. Clause 5.5.6 answers
+//! an invalid remote `@context` with `BadRequestData` and clause 5.13.5.4
+//! refuses an invalid reload download, while clause 5.13.1 keeps a Cached copy
+//! only to spare later downloads: a copy no request can use spares none, and
+//! would keep a corrected document from being read until it expired.
 //!
 //! What leaves here is the document's `@context` subtree and nothing else.
 //! Clause 5.13.2.3 requires that "all extra information located outside of the
@@ -16,6 +23,7 @@
 
 use crate::{
     context_subtree::context_subtree,
+    engine::context_document_check::check_context_document,
     loader::{
         alternate_link::{JsonLdAlternate, json_ld_alternate},
         cache_lifetime::{CacheLifetime, ContextFreshness, response_freshness},
@@ -151,6 +159,7 @@ async fn read_document(
     let text = from_utf8(&bytes).map_err(|error| invalid(reported, InvalidContextDocument::NotUtf8(error)))?;
     let document = JsonLiteral::admit(text).map_err(|error| invalid(reported, InvalidContextDocument::NotJson(Arc::new(error))))?;
     let subtree = context_subtree(&document).map_err(|reason| invalid(reported, InvalidContextDocument::NoContext(reason)))?;
+    check_context_document(&subtree).await.map_err(|reason| invalid(reported, reason))?;
     Ok(RemoteContextDocument {
         value: subtree,
         freshness,
@@ -358,6 +367,32 @@ mod tests {
     /// The document as JSON.
     fn json_of(document: &RemoteContextDocument) -> Value {
         as_value(&document.value)
+    }
+
+    /// Clause 5.5.6: a document whose `@context` is not valid JSON-LD is
+    /// refused as invalid where it is read, before either cache tier holds it.
+    #[tokio::test]
+    async fn a_document_whose_context_is_not_valid_json_ld_is_refused_as_invalid() {
+        let origin = TestOrigin::start().await;
+        for (path, document) in [
+            ("/number.jsonld", r#"{"@context": {"speed": 5}}"#),
+            ("/boolean.jsonld", r#"{"@context": {"speed": true}}"#),
+            ("/not-a-url.jsonld", r#"{"@context": "not a url"}"#),
+            ("/type.jsonld", r#"{"@context": {"@type": "https://example.org/t"}}"#),
+            ("/id.jsonld", r#"{"@context": {"speed": {"@id": 5}}}"#),
+            ("/cyclic.jsonld", r#"{"@context": {"a": "b:x", "b": "a:y"}}"#),
+            (
+                "/container.jsonld",
+                r#"{"@context": {"speed": {"@id": "https://example.org/speed", "@container": "@bogus"}}}"#,
+            ),
+        ] {
+            origin.stage(path, ok("application/ld+json", document, &[])).await;
+            let error = fetched(&origin, path).await.expect_err("the document is refused");
+            assert!(
+                matches!(error.kind, LoaderErrorKind::Invalid(InvalidContextDocument::InvalidContext(_))),
+                "{document}: {error}"
+            );
+        }
     }
 
     /// JSON-LD 1.1 section 6.2: an HTML page naming one JSON-LD alternate is
