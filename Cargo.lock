@@ -1608,10 +1608,8 @@ dependencies = [
  "iri-rs",
  "jsonld",
  "pretty_assertions",
- "reqwest",
  "serde_json",
  "sha2 0.11.1",
- "tokio",
  "urn-rs",
 ]
 

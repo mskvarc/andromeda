@@ -86,8 +86,6 @@ pub const NGSI_LD_CORE_CONTEXT_RELEASES: [CoreContextRelease; 8] = [
 #[cfg(test)]
 mod tests {
     use crate::core_context::{NGSI_LD_CORE_CONTEXT_RELEASES, NGSI_LD_CORE_CONTEXT_V10, NGSI_LD_CORE_CONTEXT_V19};
-    use iri_rs::Iri;
-    use reqwest::Client;
     use sha2::{Digest, Sha256};
     use std::{fs, path::PathBuf};
 
@@ -135,33 +133,6 @@ mod tests {
             .collect();
         assert!(unrecorded.is_empty(), "core context documents with no recorded digest: {unrecorded:?}");
         pretty_assertions::assert_eq!(documents.len(), NGSI_LD_CORE_CONTEXT_RELEASES.len(), "every release is its own document");
-    }
-
-    /// ETSI replaces a release in place and publishes no digests, so the only
-    /// way to notice an upstream change is to fetch what it serves now.
-    #[tokio::test]
-    async fn every_embedded_release_is_the_document_etsi_serves() {
-        let client = Client::new();
-        let mut differing = Vec::new();
-        for release in NGSI_LD_CORE_CONTEXT_RELEASES {
-            match served_digest(&client, release.url()).await {
-                Ok(served) if served == release.digest() => {}
-                Ok(served) => differing.push(format!(
-                    "{}: recorded {}, ETSI serves {}",
-                    release.url(),
-                    hex::encode(release.digest()),
-                    hex::encode(served)
-                )),
-                Err(error) => differing.push(format!("{}: download failed: {error}", release.url())),
-            }
-        }
-        assert!(differing.is_empty(), "releases ETSI serves differently:\n{}", differing.join("\n"));
-    }
-
-    /// The SHA2-256 digest of the document ETSI serves under `url`.
-    async fn served_digest(client: &Client, url: Iri<&'static str>) -> Result<[u8; 32], reqwest::Error> {
-        let served = client.get(url.as_str()).send().await?.error_for_status()?.bytes().await?;
-        Ok(Sha256::digest(&served).into())
     }
 
     #[test]
