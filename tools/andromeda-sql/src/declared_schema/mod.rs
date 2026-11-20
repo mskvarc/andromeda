@@ -4,9 +4,11 @@
 //! Every rule and every test of the schema reads this one model, so they all
 //! agree on what the migrations contain: the tables and their replica
 //! identities, columns, composite types, domains, constraints, indexes,
-//! statistics objects, functions, triggers and `do` blocks, every relation
-//! named and every function called, and every token, the tokens of routine
-//! bodies included.
+//! statistics objects, functions, schemas, triggers and `do` blocks, the
+//! tables, functions and schemas dropped, every relation named, those the
+//! statements of a PL/pgSQL routine name included, and every token, the tokens
+//! of routine bodies included. A dropped table's declarations are forgotten,
+//! so a table created again is read as the new table alone.
 
 /// The bounds a check expression puts on its columns.
 pub mod check_bound;
@@ -22,6 +24,10 @@ pub mod declared_type;
 pub mod do_block;
 /// A domain.
 pub mod domain;
+/// A table, function or schema a migration drops.
+pub mod dropped_object;
+/// The SQL statements a PL/pgSQL routine embeds.
+pub mod embedded_statement;
 /// A function.
 pub mod function;
 /// An index.
@@ -34,7 +40,7 @@ pub mod parsed_migration;
 pub mod parser_node;
 /// A possibly schema-qualified object name.
 pub mod qualified_name;
-/// A relation a statement names, and a function it calls.
+/// A relation a statement names.
 pub mod relation_reference;
 /// The reading of every object a migration declares.
 pub mod schema_reader;
@@ -60,11 +66,12 @@ use crate::{
         declared_type::{BuiltinType, DeclaredType, IntegerWidth, Storage},
         do_block::DoBlock,
         domain::DeclaredDomain,
+        dropped_object::DroppedObject,
         function::DeclaredFunction,
         index::DeclaredIndex,
         origin::Origin,
         parsed_migration::{MigrationParseError, ParsedMigration},
-        relation_reference::{FunctionCall, RelationReference},
+        relation_reference::RelationReference,
         schema_reader::{SchemaObjects, SchemaReadError},
         statistics::DeclaredStatistics,
         table::{DeclaredTable, Hypertable, ReplicaIdentity, StorageParameter},
@@ -255,10 +262,10 @@ impl DeclaredSchema {
         &self.objects.references
     }
 
-    /// Every function called outside a function body.
+    /// Every table, function and schema dropped, in the order written.
     #[must_use]
-    pub fn calls(&self) -> &[FunctionCall] {
-        &self.objects.calls
+    pub fn dropped(&self) -> &[DroppedObject] {
+        &self.objects.dropped
     }
 
     /// Whether a migration creates a composite type named `name`.

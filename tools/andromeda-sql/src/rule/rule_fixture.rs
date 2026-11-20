@@ -15,7 +15,7 @@ use crate::{
         sealed_release::{SealedMigration, SealedRelease},
     },
 };
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 /// Why a fixture could not be set up.
 #[derive(Debug, thiserror::Error)]
@@ -59,14 +59,10 @@ fn fixture_file(path: &str) -> Result<MigrationFile, FixtureError> {
     Ok(MigrationFile::new(set, PathBuf::from("/root/migrations").join(path))?)
 }
 
-/// A vocabulary of no words in which `pg_format` knows `known`.
+/// A vocabulary teaching `pg_format` the keywords of `keywords`.
 #[must_use]
-pub fn vocabulary(functions: &str, keywords: &str, known: &[&str]) -> FormatterVocabulary {
-    FormatterVocabulary::new(
-        VocabularyList::new(VocabularyFile::Functions, Arc::from(functions)),
-        VocabularyList::new(VocabularyFile::Keywords, Arc::from(keywords)),
-        known.iter().map(|name| (*name).to_owned()).collect::<BTreeSet<_>>(),
-    )
+pub fn vocabulary(keywords: &str) -> FormatterVocabulary {
+    FormatterVocabulary::new(VocabularyList::new(VocabularyFile::Keywords, Arc::from(keywords)))
 }
 
 /// Where `rule` finds something in `migrations`, each place written as
@@ -76,7 +72,7 @@ pub fn vocabulary(functions: &str, keywords: &str, known: &[&str]) -> FormatterV
 ///
 /// Returns [`FixtureError`] when a fixture is not a readable migration.
 pub fn findings(rule: Rule, migrations: &[(&str, &str)]) -> Result<Vec<String>, FixtureError> {
-    findings_with(rule, migrations, &vocabulary("", "", &[]))
+    findings_with(rule, migrations, &vocabulary(""))
 }
 
 /// Where `rule` finds something in `migrations` read with `vocabulary`.
@@ -101,7 +97,7 @@ pub fn findings_sealing(rule: Rule, migrations: &[(&str, &str)], sealed: &[&str]
         .map(|(path, text)| Ok(SealedMigration::new(&fixture_file(path)?, FileDigest::of(text.as_bytes()))))
         .collect::<Result<Vec<_>, FixtureError>>()?;
     let ledger = SealLedger::default().with_release(SealedRelease::new(FIXTURE_RELEASE.parse::<ReleaseVersion>()?, sealed));
-    findings_in(rule, migrations, &vocabulary("", "", &[]), &ledger)
+    findings_in(rule, migrations, &vocabulary(""), &ledger)
 }
 
 /// Where `rule` finds something in `migrations` read with `vocabulary` and

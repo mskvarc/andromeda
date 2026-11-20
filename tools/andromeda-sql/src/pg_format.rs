@@ -28,15 +28,13 @@ pub const OVERRIDE_VARIABLE: &str = "PG_FORMAT";
 /// The statement a candidate executable is probed with.
 const PROBE_STATEMENT: &str = "select 1;\n";
 
-/// The three repository-root files `pg_format` is configured with.
+/// The two repository-root files `pg_format` is configured with.
 #[derive(Debug)]
 pub struct PgFormatConfiguration {
     /// The option file, `.pg_format`.
     options: PathBuf,
     /// The extension keywords `pg_format` does not know, `.pg_format_keywords`.
     keywords: PathBuf,
-    /// The extension functions `pg_format` does not know, `.pg_format_functions`.
-    functions: PathBuf,
 }
 
 impl PgFormatConfiguration {
@@ -58,7 +56,6 @@ impl PgFormatConfiguration {
         Ok(PgFormatConfiguration {
             options: existing(".pg_format")?,
             keywords: existing(VocabularyFile::Keywords.as_ref())?,
-            functions: existing(VocabularyFile::Functions.as_ref())?,
         })
     }
 }
@@ -104,8 +101,6 @@ impl PgFormat {
             .arg(&self.configuration.options)
             .arg("--extra-keyword")
             .arg(&self.configuration.keywords)
-            .arg("--extra-function")
-            .arg(&self.configuration.functions)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

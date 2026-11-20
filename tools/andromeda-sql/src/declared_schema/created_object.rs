@@ -28,6 +28,8 @@ pub enum ObjectKind {
     Trigger,
     /// An extension.
     Extension,
+    /// A schema.
+    Schema,
 }
 
 /// One object a migration creates, by name.

@@ -17,8 +17,6 @@ pub struct DeclaredTrigger {
     transition_tables: Vec<String>,
     /// Where its name is written.
     origin: Origin,
-    /// Where the function it executes is named.
-    function_origin: Origin,
     /// The bytes of the migration holding its definition after its name.
     definition: Range<usize>,
 }
@@ -31,13 +29,6 @@ impl DeclaredTrigger {
         let function = QualifiedName::of_nodes(&trigger.funcname)?;
         let origin = statement.origin_of_name(&trigger.trigname);
         let after_name = statement.after_name(origin.offset(), &trigger.trigname);
-        let function_offset = statement
-            .migration()
-            .code_tokens(statement.span())
-            .filter(|token| token.range().start >= after_name)
-            .filter(|token| statement.migration().token_text(token).eq_ignore_ascii_case(function.name()))
-            .last()
-            .map_or(after_name, |token| token.range().start);
         Some(DeclaredTrigger {
             name: trigger.trigname.clone(),
             table: trigger.relation.as_ref().map_or_default(|relation| relation.relname.clone()),
@@ -51,7 +42,6 @@ impl DeclaredTrigger {
                 .collect(),
             function,
             origin,
-            function_origin: statement.migration().origin(function_offset),
             definition: statement.rest_from(after_name),
         })
     }
@@ -84,12 +74,6 @@ impl DeclaredTrigger {
     #[must_use]
     pub const fn origin(&self) -> Origin {
         self.origin
-    }
-
-    /// Where the function it executes is named.
-    #[must_use]
-    pub const fn function_origin(&self) -> Origin {
-        self.function_origin
     }
 
     /// The bytes of the migration holding its definition after its name.

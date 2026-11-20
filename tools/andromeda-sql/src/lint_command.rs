@@ -17,7 +17,6 @@ use crate::{
     migration_file::MigrationFile,
     migration_tree::{MigrationTree, MigrationTreeError},
     migration_version::MigrationVersion,
-    pg_format::PgFormat,
     rule::{Rule, RuleContext},
     seal_ledger::{SealLedger, SealLedgerError},
     squawk::{Squawk, SquawkError},
@@ -89,15 +88,14 @@ impl LintOutcome {
 
 /// Lint every migration below `root/migrations` with Squawk, against the
 /// oldest PostgreSQL release the broker supports, and with Andromeda's own
-/// rules, asking `pg_format` which functions it knows. Only the migrations the
-/// seal ledger does not hold are reported on.
+/// rules. Only the migrations the seal ledger does not hold are reported on.
 ///
 /// # Errors
 ///
 /// Returns [`LintError`] when the migrations, the ledger or the vocabulary
 /// cannot be read, a linter fails, or a linter reports a file it was not
 /// given.
-pub fn lint_migrations(root: &Path, squawk: &Squawk, pg_format: &PgFormat) -> Result<LintOutcome, LintError> {
+pub fn lint_migrations(root: &Path, squawk: &Squawk) -> Result<LintOutcome, LintError> {
     let ledger = SealLedger::load(root)?;
     let mut migrations = Vec::new();
     for file in MigrationTree::read(root)?.into_files() {
@@ -133,7 +131,7 @@ pub fn lint_migrations(root: &Path, squawk: &Squawk, pg_format: &PgFormat) -> Re
         }
     }
     if !unreadable {
-        lint_schema(root, pg_format, &ledger, migrations, &mut files)?;
+        lint_schema(root, &ledger, migrations, &mut files)?;
     }
     let mut files = files.into_values().filter(|file| !file.findings.is_empty()).collect::<Vec<_>>();
     for file in &mut files {
@@ -147,13 +145,12 @@ pub fn lint_migrations(root: &Path, squawk: &Squawk, pg_format: &PgFormat) -> Re
 /// migration `ledger` seals.
 fn lint_schema(
     root: &Path,
-    pg_format: &PgFormat,
     ledger: &SealLedger,
     migrations: Vec<(MigrationFile, Arc<str>)>,
     files: &mut BTreeMap<SourceKey, LintedFile>,
 ) -> Result<(), LintError> {
     let schema = DeclaredSchema::read(migrations)?;
-    let vocabulary = FormatterVocabulary::probe(root, pg_format, schema.calls().iter().map(|call| call.name().name()))?;
+    let vocabulary = FormatterVocabulary::read(root)?;
     for found in Rule::check_all(&RuleContext::new(&schema, &vocabulary, ledger)) {
         let key = found.source();
         let file = match key {
@@ -172,7 +169,6 @@ fn lint_schema(
 /// The linted file of the vocabulary file `file`.
 fn vocabulary_file(vocabulary: &FormatterVocabulary, file: VocabularyFile) -> LintedFile {
     let list = match file {
-        VocabularyFile::Functions => vocabulary.functions(),
         VocabularyFile::Keywords => vocabulary.keywords(),
     };
     LintedFile {
@@ -208,7 +204,7 @@ pub enum LintError {
     /// The schema the migrations declare could not be read.
     #[error(transparent)]
     Schema(#[from] DeclaredSchemaError),
-    /// The formatter's vocabulary could not be read or probed.
+    /// The formatter's vocabulary could not be read.
     #[error(transparent)]
     Vocabulary(#[from] VocabularyError),
     /// The seal ledger could not be read.

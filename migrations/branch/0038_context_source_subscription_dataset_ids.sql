@@ -9,6 +9,10 @@
 -- The check on csource rows is added again without `dataset_ids`, and still
 -- holds `local_only` at its default. Every row the check it replaces admitted
 -- meets it, so it is added `not valid` and no row is read to add it.
+--
+-- Codes:
+--
+--   subscriptions.kind: 1 entity, 2 csource
 -- ============================================================================
 alter table subscriptions
     drop constraint chk_subscriptions_csource_defaults,

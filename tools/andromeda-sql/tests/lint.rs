@@ -1,4 +1,4 @@
-//! `andromeda-sql lint`, run as a process against Squawk and `pg_format`.
+//! `andromeda-sql lint`, run as a process against Squawk.
 
 /// The repository fixtures the process tests run against.
 mod repository_fixture;
@@ -21,7 +21,6 @@ fn lint(root: &Path) -> io::Result<Output> {
         .arg(root)
         .arg("lint")
         .env_remove("SQUAWK")
-        .env_remove("PG_FORMAT")
         .output()
 }
 
@@ -90,7 +89,6 @@ fn a_missing_squawk_is_a_named_error() -> io::Result<()> {
         .arg("lint")
         .env("PATH", empty.path())
         .env_remove("SQUAWK")
-        .env_remove("PG_FORMAT")
         .output()?;
     assert_eq!(
         (output.status.success(), String::from_utf8_lossy(&output.stderr).into_owned()),
@@ -160,14 +158,14 @@ fn an_andromeda_rule_finding_is_reported_where_it_is_and_counted() -> io::Result
 #[test]
 fn a_stale_vocabulary_word_is_reported_in_its_file() -> io::Result<()> {
     let root = repository_with(&[("tenant/0001_entities.sql", &format!("{}{CLEAN}", header("0001", "Entities")))])?;
-    fs::write(root.path().join(".pg_format_functions"), "sub_path_hash\n")?;
+    fs::write(root.path().join(".pg_format_keywords"), "BRIN\n")?;
     let output = lint(root.path())?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.success(), false, "{stderr}");
     for expected in [
         "formatter-vocabulary",
-        "[.pg_format_functions:1:1]",
-        "no migration uses sub_path_hash, which .pg_format_functions lists",
+        "[.pg_format_keywords:1:1]",
+        "no migration uses BRIN, which .pg_format_keywords lists",
     ] {
         assert!(stderr.contains(expected), "{expected:?} missing from:\n{stderr}");
     }

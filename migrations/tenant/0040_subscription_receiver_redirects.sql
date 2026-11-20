@@ -16,24 +16,29 @@
 -- empty, so a tenant's first adoption owes the receiver to every companion
 -- and copy placed before it.
 --
--- A companion owes the receiver while its `redirect_due_at` is set, and a
--- copy while `forwarded_subscription_redirects` holds a row for it. A column
--- added to `forwarded_subscriptions` would follow its variable-length
--- columns, so a copy's redirect is a row of its own, keyed like the copy and
--- removed with it. Either holds the instant the update is next due. The
--- tenant's background pass updates each one due and clears it, or moves the
--- instant on when the source gives no verdict.
+-- A companion owes the receiver while `subscription_companion_redirects`
+-- holds a row for it, and a copy while `forwarded_subscription_redirects`
+-- holds one. Each row is keyed like what it redirects and removed with it, as
+-- a copy's claim is, and holds the instant the update is next due. The
+-- tenant's background pass updates each one due and removes its row, or
+-- moves the instant on when the source gives no verdict.
 -- ============================================================================
 create table subscription_receiver (
     singleton boolean not null default true,
-    -- The receiver every companion and copy notifies but those owing it.
+    -- The receiver every companion and copy notifies, except one that still
+    -- owes the update.
     receiver text compression lz4 collate "C" not null,
     constraint pk_subscription_receiver primary key (singleton),
     constraint chk_subscription_receiver_singleton check (singleton)
 );
 
-alter table subscription_companions
-    add column redirect_due_at timestamptz;
+create table subscription_companion_redirects (
+    local_subscription_key bigint not null,
+    -- The instant the companion's update to the current receiver is next due.
+    redirect_due_at timestamptz not null,
+    constraint pk_subscription_companion_redirects primary key (local_subscription_key),
+    constraint fk_subscription_companion_redirects_companion foreign key (local_subscription_key) references subscription_companions (local_subscription_key) on delete cascade
+);
 
 create table forwarded_subscription_redirects (
     local_subscription_key bigint not null,
@@ -48,8 +53,6 @@ create table forwarded_subscription_redirects (
 
 -- The obligation read and the background pass read the updates due, the
 -- earliest first.
-create index idx_subscription_companions_redirect_due_at on subscription_companions (redirect_due_at)
-where
-    redirect_due_at is not null;
+create index idx_subscription_companion_redirects_redirect_due_at on subscription_companion_redirects (redirect_due_at);
 
 create index idx_forwarded_subscription_redirects_redirect_due_at on forwarded_subscription_redirects (redirect_due_at);

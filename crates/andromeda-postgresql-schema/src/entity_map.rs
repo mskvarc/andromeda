@@ -19,10 +19,17 @@ pub enum EntityMaps {
     ExpiresAt,
     /// The map's URI identifier.
     Id,
-    /// The `<operation>:<sha256 hex>` digest of the creating request's
-    /// filter parameters (clause 5.5.14), absent on maps created before it
-    /// was recorded.
-    RequestFingerprint,
+    /// The stored code of the operation that created the map (clause
+    /// 5.5.14); NULL, together with both digests, for a map created without a
+    /// recorded request.
+    RequestKind,
+    /// The 32-byte SHA-256 digest of the creating request's compiled query;
+    /// NULL exactly when `request_kind` is.
+    QueryDigest,
+    /// The 32-byte SHA-256 digest of every other input of the creating request
+    /// that clause 5.5.14 holds a follow-up to; NULL exactly when
+    /// `request_kind` is.
+    InputsDigest,
 }
 
 /// The `entity_map_entries` table - one (entity, source) pair per row.
@@ -65,7 +72,9 @@ mod tests {
         assert_eq!(EntityMaps::Table.to_string(), "entity_maps");
         assert_eq!(EntityMaps::EntityMapKey.to_string(), "entity_map_key");
         assert_eq!(EntityMaps::ExpiresAt.to_string(), "expires_at");
-        assert_eq!(EntityMaps::RequestFingerprint.to_string(), "request_fingerprint");
+        assert_eq!(EntityMaps::RequestKind.to_string(), "request_kind");
+        assert_eq!(EntityMaps::QueryDigest.to_string(), "query_digest");
+        assert_eq!(EntityMaps::InputsDigest.to_string(), "inputs_digest");
         assert_eq!(EntityMapEntries::Table.to_string(), "entity_map_entries");
         assert_eq!(EntityMapEntries::EntityId.to_string(), "entity_id");
         assert_eq!(EntityMapLinks::Table.to_string(), "entity_map_links");

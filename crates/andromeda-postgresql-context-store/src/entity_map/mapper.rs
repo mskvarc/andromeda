@@ -2,10 +2,8 @@
 
 use crate::{entity_map::lifecycle::MapControlRecord, error::ContextStoreError};
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
-use andromeda_ngsi_ld_model::{
-    entity_map::{EntityMap, EntityMapSource, EntityMapSourceError},
-    entity_map_fingerprint::{RequestFingerprint, RequestFingerprintError},
-};
+use andromeda_ngsi_ld_model::entity_map::{EntityMap, EntityMapSource, EntityMapSourceError};
+use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use indexmap::{IndexMap, IndexSet};
 use thiserror::Error;
 
@@ -15,9 +13,18 @@ use thiserror::Error;
 /// holding something the broker never wrote.
 #[derive(Debug, Error)]
 pub enum StoredEntityMapError {
-    /// The control record's request fingerprint is not a fingerprint.
-    #[error("a stored entity map request fingerprint is not a fingerprint: {0}")]
-    RequestFingerprint(#[source] RequestFingerprintError),
+    /// The control record's request kind is not an assigned code.
+    #[error("a stored entity map request kind is not an operation: {0}")]
+    RequestKind(#[source] UnknownCompactCode),
+    /// The control record's query digest is not 32 bytes.
+    #[error("a stored entity map query digest is {0} bytes, not 32")]
+    QueryDigestLength(usize),
+    /// The control record's inputs digest is not 32 bytes.
+    #[error("a stored entity map inputs digest is {0} bytes, not 32")]
+    InputsDigestLength(usize),
+    /// The control record sets some of its request columns but not all of them.
+    #[error("a stored entity map records only part of its creating request")]
+    PartialRequestRecord,
     /// An entry's entity identifier is not a URI.
     #[error("a stored entity map entry id is not a URI: {0}")]
     EntryId(#[source] IdentifierParseError),
@@ -39,11 +46,7 @@ pub(crate) fn rows_to_entity_map(
     entries: Vec<(String, String)>,
     links: Vec<(String, String)>,
 ) -> Result<EntityMap, ContextStoreError> {
-    let request_fingerprint = control
-        .request_fingerprint
-        .as_deref()
-        .map(|stored| stored.parse::<RequestFingerprint>().map_err(StoredEntityMapError::RequestFingerprint))
-        .transpose()?;
+    let request_fingerprint = control.request.fingerprint()?;
     let mut entity_map: IndexMap<Identifier, IndexSet<EntityMapSource>> = IndexMap::new();
     for (entity_id, source) in entries {
         let entity_id = entity_id.parse::<Identifier>().map_err(StoredEntityMapError::EntryId)?;
@@ -67,7 +70,14 @@ pub(crate) fn rows_to_entity_map(
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_map::{lifecycle::MapControlRecord, mapper::rows_to_entity_map};
+    use crate::{
+        entity_map::{
+            lifecycle::MapControlRecord,
+            mapper::{StoredEntityMapError, rows_to_entity_map},
+            request_record::RequestRecord,
+        },
+        error::ContextStoreError,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_map::EntityMapSource,
@@ -75,10 +85,10 @@ mod tests {
     };
     use chrono::Utc;
 
-    fn control(request_fingerprint: Option<String>) -> MapControlRecord {
+    fn control(request: RequestRecord) -> MapControlRecord {
         MapControlRecord {
             expires_at: Utc::now(),
-            request_fingerprint,
+            request,
         }
     }
 
@@ -87,7 +97,7 @@ mod tests {
         let fingerprint = RequestFingerprint::new(QueryFingerprint::new(MapRequestKind::QueryEntities, [9; 32]), [9; 32]);
         let map = rows_to_entity_map(
             "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
-            &control(Some(fingerprint.to_string())),
+            &control(RequestRecord::of(Some(&fingerprint))),
             vec![
                 ("urn:ngsi-ld:Vehicle:2".to_string(), "@none".to_string()),
                 ("urn:ngsi-ld:Vehicle:1".to_string(), "@none".to_string()),
@@ -112,18 +122,28 @@ mod tests {
     }
 
     #[test]
-    fn a_map_recorded_without_a_fingerprint_reads_back_without_one_and_a_corrupt_one_is_internal() {
-        let map = rows_to_entity_map("urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"), &control(None), Vec::new(), Vec::new()).expect("maps");
+    fn a_map_recorded_without_a_fingerprint_reads_back_without_one_and_a_partial_record_is_refused() {
+        let map = rows_to_entity_map(
+            "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
+            &control(RequestRecord::of(None)),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("maps");
         assert!(map.request_fingerprint.is_none());
-        assert!(
+        assert!(matches!(
             rows_to_entity_map(
                 "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
-                &control(Some("garbage".to_string())),
+                &control(RequestRecord {
+                    kind: Some(1),
+                    query_digest: None,
+                    inputs_digest: None
+                }),
                 Vec::new(),
                 Vec::new()
-            )
-            .is_err()
-        );
+            ),
+            Err(ContextStoreError::StoredEntityMap(StoredEntityMapError::PartialRequestRecord))
+        ));
     }
 
     #[test]
@@ -131,7 +151,7 @@ mod tests {
         assert!(
             rows_to_entity_map(
                 "urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
-                &control(None),
+                &control(RequestRecord::of(None)),
                 vec![("urn:ngsi-ld:Vehicle:1".to_string(), "not a uri".to_string())],
                 Vec::new(),
             )

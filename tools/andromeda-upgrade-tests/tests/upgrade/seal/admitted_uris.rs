@@ -12,13 +12,13 @@ use crate::fixtures::{
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_postgresql_context_store::migration_set::migration_version::MigrationVersion;
-use andromeda_postgresql_seaquery::{seal_conversion::seal_conversion_admits_uri, statement::Statement, unnest::unnest_of};
+use andromeda_postgresql_seaquery::{seal_conversion::admits_uri, statement::Statement, unnest::unnest_of};
 use sea_query::{Expr, Query};
 use sqlx::PgPool;
 use std::collections::HashSet;
 
-/// The tenant migration that creates the conversion functions. The upgrade
-/// drops them again, so the corpus is judged with the tenant stopped here.
+/// The tenant migration that creates the `seal_conversion` schema. The upgrade
+/// drops it again, so the corpus is judged with the tenant stopped here.
 const CONVERSION: MigrationVersion = MigrationVersion::new(32);
 
 /// How many candidates one statement binds, below the protocol's bound on
@@ -153,7 +153,7 @@ async fn admitted(pool: &PgPool, batch: &[String]) -> Result<Vec<String>, Upgrad
     let select = Query::select()
         .column(candidate.clone())
         .from_function(unnest_of(texts(&candidates)), candidate.clone())
-        .and_where(seal_conversion_admits_uri(Expr::col(candidate)))
+        .and_where(admits_uri(Expr::col(candidate)))
         .to_owned();
     Ok(select.to_query_scalar::<String>().fetch_all(pool).await?)
 }

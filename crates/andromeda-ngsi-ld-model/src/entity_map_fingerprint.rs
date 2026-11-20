@@ -11,13 +11,8 @@
 //! it is held to the first digest alone. The fingerprint is never a member of
 //! the clause 5.2.39 representation.
 
-use std::str::FromStr;
-use strum::{Display, EnumString};
-use thiserror::Error;
-
 /// The operation that created an `EntityMap` (clause 5.5.14 lists the four).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
-#[strum(serialize_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MapRequestKind {
     /// Query Entities (clause 5.7.2) or Create `EntityMap` for Query Entities (clause 5.14.4).
     QueryEntities,
@@ -42,6 +37,9 @@ pub enum RequestComparison {
     DifferentOperation,
 }
 
+/// The bytes of each digest of a map's request record, a SHA-256 output.
+pub const REQUEST_DIGEST_BYTES: usize = 32;
+
 /// The digest of what a request's compiled query selects, tagged with the
 /// operation it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,13 +47,13 @@ pub struct QueryFingerprint {
     /// The operation the query belongs to.
     kind: MapRequestKind,
     /// The SHA-256 over the canonical identity of the compiled query.
-    digest: [u8; 32],
+    digest: [u8; REQUEST_DIGEST_BYTES],
 }
 
 impl QueryFingerprint {
     /// A query fingerprint of `kind` over an already computed digest.
     #[must_use]
-    pub const fn new(kind: MapRequestKind, digest: [u8; 32]) -> QueryFingerprint {
+    pub const fn new(kind: MapRequestKind, digest: [u8; REQUEST_DIGEST_BYTES]) -> QueryFingerprint {
         QueryFingerprint { kind, digest }
     }
 
@@ -63,6 +61,12 @@ impl QueryFingerprint {
     #[must_use]
     pub const fn kind(&self) -> MapRequestKind {
         self.kind
+    }
+
+    /// The SHA-256 over the canonical identity of the compiled query.
+    #[must_use]
+    pub const fn digest(&self) -> &[u8; REQUEST_DIGEST_BYTES] {
+        &self.digest
     }
 
     /// Compare another request's query with this one.
@@ -80,20 +84,19 @@ impl QueryFingerprint {
 
 /// The digests of the request that created a map: what its compiled query
 /// selects, and every other input clause 5.5.14 holds a follow-up to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
-#[display("{}:{}:{}", query.kind, hex::encode(query.digest), hex::encode(inputs))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestFingerprint {
     /// What the compiled query selects, tagged with the creating operation.
     query: QueryFingerprint,
     /// The SHA-256 over the canonical record of the request's other inputs.
-    inputs: [u8; 32],
+    inputs: [u8; REQUEST_DIGEST_BYTES],
 }
 
 impl RequestFingerprint {
     /// A fingerprint of the request whose query is `query` and whose other
     /// inputs digest to `inputs`.
     #[must_use]
-    pub const fn new(query: QueryFingerprint, inputs: [u8; 32]) -> RequestFingerprint {
+    pub const fn new(query: QueryFingerprint, inputs: [u8; REQUEST_DIGEST_BYTES]) -> RequestFingerprint {
         RequestFingerprint { query, inputs }
     }
 
@@ -109,6 +112,12 @@ impl RequestFingerprint {
         &self.query
     }
 
+    /// The SHA-256 over the canonical record of the request's other inputs.
+    #[must_use]
+    pub const fn inputs(&self) -> &[u8; REQUEST_DIGEST_BYTES] {
+        &self.inputs
+    }
+
     /// Compare a follow-up request's fingerprint with the creating one.
     #[must_use]
     pub fn compare(&self, follow_up: &RequestFingerprint) -> RequestComparison {
@@ -119,88 +128,20 @@ impl RequestFingerprint {
     }
 }
 
-/// Why stored text is not a [`RequestFingerprint`].
-#[derive(Debug, Clone, PartialEq, Error)]
-pub enum RequestFingerprintError {
-    /// The text is not three fields joined by `:`.
-    #[error("entity map request fingerprint is not <operation>:<64 lowercase hex digits>:<64 lowercase hex digits>")]
-    MissingSeparator,
-    /// The text before the first `:` names no known operation.
-    #[error("entity map request fingerprint names no known operation: {0}")]
-    UnknownOperation(#[source] strum::ParseError),
-    /// A digest is not 64 hex digits.
-    #[error("entity map request fingerprint digest is not 64 hex digits: {0}")]
-    Digest(#[source] hex::FromHexError),
-    /// A digest is hex, but not in the lowercase spelling the broker writes.
-    #[error("entity map request fingerprint digest is not lowercase hex")]
-    NonCanonicalDigest,
-}
-
-/// The 32 bytes `text` spells in the lowercase hex the broker writes.
-fn canonical_digest(text: &str) -> Result<[u8; 32], RequestFingerprintError> {
-    let mut bytes = [0_u8; 32];
-    hex::decode_to_slice(text, &mut bytes).map_err(RequestFingerprintError::Digest)?;
-    if hex::encode(bytes) != text {
-        return Err(RequestFingerprintError::NonCanonicalDigest);
-    }
-    Ok(bytes)
-}
-
-// The stored form carries three fields behind two separators, which no derive
-// can split and validate.
-impl FromStr for RequestFingerprint {
-    type Err = RequestFingerprintError;
-
-    fn from_str(value: &str) -> Result<RequestFingerprint, RequestFingerprintError> {
-        let (kind, digests) = value.split_once(':').ok_or(RequestFingerprintError::MissingSeparator)?;
-        let (query, inputs) = digests.split_once(':').ok_or(RequestFingerprintError::MissingSeparator)?;
-        let kind = kind.parse::<MapRequestKind>().map_err(RequestFingerprintError::UnknownOperation)?;
-        Ok(RequestFingerprint {
-            query: QueryFingerprint {
-                kind,
-                digest: canonical_digest(query)?,
-            },
-            inputs: canonical_digest(inputs)?,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestComparison, RequestFingerprint, RequestFingerprintError};
+    use crate::entity_map_fingerprint::{MapRequestKind, QueryFingerprint, RequestComparison, RequestFingerprint};
 
     fn fingerprint(kind: MapRequestKind, query: u8, inputs: u8) -> RequestFingerprint {
         RequestFingerprint::new(QueryFingerprint::new(kind, [query; 32]), [inputs; 32])
     }
 
     #[test]
-    fn the_stored_form_names_the_operation_and_both_digests_and_round_trips() -> Result<(), RequestFingerprintError> {
+    fn the_digests_are_the_bytes_the_fingerprint_was_built_from() {
         let fingerprint = fingerprint(MapRequestKind::QueryTemporal, 0xab, 0xcd);
-        let stored = fingerprint.to_string();
-        pretty_assertions::assert_eq!(stored, format!("query-temporal:{}:{}", "ab".repeat(32), "cd".repeat(32)));
-        pretty_assertions::assert_eq!(stored.parse::<RequestFingerprint>()?, fingerprint);
-        Ok(())
-    }
-
-    #[test]
-    fn malformed_stored_text_is_refused_with_the_reason_it_is_malformed() {
-        pretty_assertions::assert_eq!("query-entities".parse::<RequestFingerprint>(), Err(RequestFingerprintError::MissingSeparator));
-        pretty_assertions::assert_eq!(
-            format!("query-entities:{}", "0".repeat(64)).parse::<RequestFingerprint>(),
-            Err(RequestFingerprintError::MissingSeparator)
-        );
-        assert!(matches!(
-            format!("purge:{0}:{0}", "0".repeat(64)).parse::<RequestFingerprint>(),
-            Err(RequestFingerprintError::UnknownOperation(_))
-        ));
-        assert!(matches!(
-            format!("retrieve-entity:{}:{}", "0".repeat(63), "0".repeat(64)).parse::<RequestFingerprint>(),
-            Err(RequestFingerprintError::Digest(_))
-        ));
-        pretty_assertions::assert_eq!(
-            format!("retrieve-entity:{}:{}", "0".repeat(64), "A".repeat(64)).parse::<RequestFingerprint>(),
-            Err(RequestFingerprintError::NonCanonicalDigest)
-        );
+        pretty_assertions::assert_eq!(fingerprint.kind(), MapRequestKind::QueryTemporal);
+        pretty_assertions::assert_eq!(fingerprint.query().digest(), &[0xab; 32]);
+        pretty_assertions::assert_eq!(fingerprint.inputs(), &[0xcd; 32]);
     }
 
     #[test]

@@ -6,12 +6,16 @@
 -- No top-level instance, temporal entry or row is a data-integrity seal, and
 -- a seal element holds its non-reified subproperties in fields of their own,
 -- so no type keeps `proof_seals`. Every branch is converted, so nothing
--- calls a `seal_conversion_` function again, and they are dropped in one
--- statement, as some of them call others. The view of the queued temporal
+-- calls a function of the `seal_conversion` schema again. They are dropped
+-- in one statement, as some of them call others, and the schema after them
+-- without `cascade`, so a function left out of the list fails the migration
+-- rather than outlive the conversion. The view of the queued temporal
 -- entries names every field of an entry, so it is dropped before the types
 -- change and created again after them.
 -- ============================================================================
-drop function seal_conversion_typed_state, seal_conversion_typed_tree, seal_conversion_state_holds_seal, seal_conversion_kept_changes, seal_conversion_intern_entity_types, seal_conversion_entity_type_names, seal_conversion_entity_id, seal_conversion_proof, seal_conversion_reference, seal_conversion_plain_string, seal_conversion_typed_string, seal_conversion_admits_uri, seal_conversion_attribute_key;
+drop function seal_conversion.typed_state, seal_conversion.typed_tree, seal_conversion.state_holds_seal, seal_conversion.kept_changes, seal_conversion.intern_entity_types, seal_conversion.entity_type_names, seal_conversion.entity_id, seal_conversion.proof, seal_conversion.reference, seal_conversion.plain_string, seal_conversion.typed_string, seal_conversion.admits_uri, seal_conversion.attribute_key;
+
+drop schema seal_conversion;
 
 drop view temporal_append_entries;
 

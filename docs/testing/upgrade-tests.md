@@ -29,7 +29,7 @@ The crate's one test target, `upgrade`, has seven groups of tests.
 - In a database that names `ngsildproof`, a pending change, a notification event and an append intent that hold no seal keep the row versions v1.0.0 wrote, so the upgrade rewrites no queued row it does not convert.
 - Seals in history the columnstore holds are converted, and a top-level seal's stream leaves it, while the session lets one statement decompress a single row. The columnstore is turned on with the layout the broker gives it and every chunk is converted, as the broker does at runtime, since no migration does.
 - The check that a tombstone of history holds nothing beside its deletion is added again without `proof_seals` and without reading a row of history, so the hypertable and the chunks v1.0.0 wrote hold it unvalidated. It refuses a tombstone holding a member all the same, in rowstore history and in history the columnstore holds.
-- The upgrade leaves no `seal_conversion_` function in `public`. Migration 0034 drops them once every branch is converted, and the two that convert the queues are temporary and never reach the schema.
+- The upgrade leaves no `seal_conversion` schema. Migration 0034 drops it with its functions once every branch is converted, and the two functions that convert the queues are temporary and dropped by migration 0032 itself.
 - A database that never stored a seal upgrades with nothing changed.
 
 `lockstep` covers how every schema of a tenant database moves through the migrations together, as [Schema](../database/schema.md#migrations) describes.
@@ -75,7 +75,7 @@ The crate's one test target, `upgrade`, has seven groups of tests.
 
 `entity_map` covers the Entity Maps a v1.0.0 tenant stored.
 
-- Migration 0039 removes every stored map, its entries and its links: a map v1.0.0 stored records only a digest of its filters as written, which compares with no follow-up request, so a request naming it is answered as one naming an expired map.
+- Migration 0039 removes every stored map, its entries and its links: a map v1.0.0 stored records only a digest of its filters as written, which compares with no follow-up request, so a request naming it is answered as one naming an expired map. The migration creates the three relations again with the operation that created a map and the digests of its request in columns of their own.
 
 `registration` covers the Context Source Property document a `csf` filter reads, which every registration row stores and migration 0037 brings to the shape this build writes.
 

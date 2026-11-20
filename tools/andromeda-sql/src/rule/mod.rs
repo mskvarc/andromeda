@@ -27,8 +27,10 @@ pub mod forbidden_word;
 pub mod foreign_key_column_name;
 /// A foreign key's columns lead an index.
 pub mod foreign_key_indexed;
-/// Every called function is known to `pg_format`, every vocabulary word used.
+/// Every keyword `pg_format` is taught is used.
 pub mod formatter_vocabulary;
+/// A function states its volatility and its parallel safety.
+pub mod function_attributes;
 /// A function body is bound when created, and names relations qualified.
 pub mod function_body_bound;
 /// Columns rewritten on every write stay out of every index.
@@ -110,6 +112,9 @@ pub enum Rule {
     /// A function body is bound when created, and names relations qualified.
     #[strum(message = "write a SQL-standard body, or qualify the relation, through `%I` and `tg_table_schema` when it is dynamic")]
     FunctionBodyBound,
+    /// A function states its volatility and its parallel safety.
+    #[strum(message = "state `immutable`, `stable` or `volatile`, and `parallel safe`, `restricted` or `unsafe`")]
+    FunctionAttributes,
     /// No object is created `or replace`.
     #[strum(message = "create the object plainly; a migration runs once")]
     NoOrReplace,
@@ -122,9 +127,8 @@ pub enum Rule {
     /// No code token holds an uppercase letter.
     #[strum(message = "write the token in lowercase")]
     Lowercase,
-    /// Every called function is known to `pg_format`, every vocabulary word
-    /// used.
-    #[strum(message = "list the function in `.pg_format_functions`, or remove the word no migration uses")]
+    /// Every keyword `pg_format` is taught is used.
+    #[strum(message = "remove the word no migration uses")]
     FormatterVocabulary,
     /// Every created name fits a PostgreSQL identifier.
     #[strum(message = "shorten the name to 63 bytes, which PostgreSQL keeps whole")]
@@ -194,6 +198,7 @@ impl Rule {
             Rule::ForeignKeyIndexed => foreign_key_indexed::check,
             Rule::HypertableShape => hypertable_shape::check,
             Rule::FunctionBodyBound => function_body_bound::check,
+            Rule::FunctionAttributes => function_attributes::check,
             Rule::NoOrReplace => no_or_replace::check,
             Rule::NoCatchAllException => no_catch_all_exception::check,
             Rule::NoSecurityDefiner => no_security_definer::check,
@@ -283,7 +288,6 @@ impl<'input> RuleContext<'input> {
     #[must_use]
     pub fn vocabulary_finding(&self, rule: Rule, file: VocabularyFile, bytes: Range<usize>, violation: &impl fmt::Display) -> RuleFinding {
         let list = match file {
-            VocabularyFile::Functions => self.vocabulary.functions(),
             VocabularyFile::Keywords => self.vocabulary.keywords(),
         };
         RuleFinding {

@@ -1,22 +1,15 @@
-//! The words `pg_format` is taught beside the ones it knows, and which called
-//! functions it knows.
+//! The words `pg_format` is taught beside the ones it knows.
 //!
-//! `pg_format` lays a call of a function it knows out as `name(`, and one it
-//! does not as `name (`, so the canonical layout of a migration depends on its
-//! vocabulary. Which names it knows is asked of the pinned `pg_format` itself,
-//! in one run over a statement calling every name once, so the answer follows
-//! the release rather than a copied list.
+//! `pg_format` cases the keywords it knows, so an extension's keyword it does
+//! not know keeps the case it was typed in until `.pg_format_keywords` lists
+//! it. A call is laid out from the parse, not from the formatter's dictionary
+//! of functions, so no function is taught.
 
-use crate::pg_format::{PgFormat, PgFormatError};
-use pg_query::protobuf::Token;
-use std::{collections::BTreeSet, fs, io, ops::Range, path::Path, sync::Arc};
+use std::{fs, io, ops::Range, path::Path, sync::Arc};
 
 /// A repository-root file of words `pg_format` is taught.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display, strum::AsRefStr, strum::EnumIter)]
 pub enum VocabularyFile {
-    /// The functions it lays out as calls.
-    #[strum(serialize = ".pg_format_functions")]
-    Functions,
     /// The keywords it cases like its own.
     #[strum(serialize = ".pg_format_keywords")]
     Keywords,
@@ -98,58 +91,31 @@ impl VocabularyList {
     }
 }
 
-/// Both vocabulary files, and the called functions `pg_format` knows.
+/// The words `pg_format` is taught beside its own.
 #[derive(Debug, Clone)]
 pub struct FormatterVocabulary {
-    /// `.pg_format_functions`.
-    functions: VocabularyList,
     /// `.pg_format_keywords`.
     keywords: VocabularyList,
-    /// The called names, lowercase, `pg_format` lays out as calls.
-    known_functions: BTreeSet<String>,
 }
 
 impl FormatterVocabulary {
-    /// The vocabulary of `functions` and `keywords`, with `known_functions`
-    /// the lowercase names `pg_format` lays out as calls.
+    /// The vocabulary of `keywords`.
     #[must_use]
-    pub const fn new(functions: VocabularyList, keywords: VocabularyList, known_functions: BTreeSet<String>) -> FormatterVocabulary {
-        FormatterVocabulary {
-            functions,
-            keywords,
-            known_functions,
-        }
+    pub const fn new(keywords: VocabularyList) -> FormatterVocabulary {
+        FormatterVocabulary { keywords }
     }
 
-    /// Read both files at `root` and ask `pg_format` which of `called`, the
-    /// names the migrations call, it lays out as calls.
+    /// Read the vocabulary files at `root`.
     ///
     /// # Errors
     ///
-    /// Returns [`VocabularyError`] when a file cannot be read or `pg_format`
-    /// fails.
-    pub fn probe<'name>(root: &Path, pg_format: &PgFormat, called: impl IntoIterator<Item = &'name str>) -> Result<FormatterVocabulary, VocabularyError> {
-        let read = |file: VocabularyFile| {
-            fs::read_to_string(root.join(file.as_ref()))
-                .map(|text| VocabularyList::new(file, Arc::from(text)))
-                .map_err(|source| VocabularyError::Read { file, source })
-        };
-        let names = called
-            .into_iter()
-            .map(str::to_ascii_lowercase)
-            .filter(|name| is_plain_identifier(name))
-            .collect::<BTreeSet<_>>();
+    /// Returns [`VocabularyError`] when a file cannot be read.
+    pub fn read(root: &Path) -> Result<FormatterVocabulary, VocabularyError> {
+        let file = VocabularyFile::Keywords;
+        let text = fs::read_to_string(root.join(file.as_ref())).map_err(|source| VocabularyError::Read { file, source })?;
         Ok(FormatterVocabulary {
-            functions: read(VocabularyFile::Functions)?,
-            keywords: read(VocabularyFile::Keywords)?,
-            known_functions: known_calls(pg_format, &names)?,
+            keywords: VocabularyList::new(file, Arc::from(text)),
         })
-    }
-
-    /// `.pg_format_functions`.
-    #[must_use]
-    pub const fn functions(&self) -> &VocabularyList {
-        &self.functions
     }
 
     /// `.pg_format_keywords`.
@@ -157,43 +123,9 @@ impl FormatterVocabulary {
     pub const fn keywords(&self) -> &VocabularyList {
         &self.keywords
     }
-
-    /// Whether `pg_format` lays a call of `name` out as a call.
-    #[must_use]
-    pub fn knows(&self, name: &str) -> bool {
-        self.known_functions.contains(&name.to_ascii_lowercase())
-    }
 }
 
-/// Whether `name` needs no quoting: a lowercase letter or underscore, then
-/// lowercase letters, digits and underscores.
-fn is_plain_identifier(name: &str) -> bool {
-    name.bytes().next().is_some_and(|first| first.is_ascii_lowercase() || first == b'_')
-        && name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-}
-
-/// The names of `names` that `pg_format` writes directly before their
-/// parenthesis when each is called once in one statement.
-fn known_calls(pg_format: &PgFormat, names: &BTreeSet<String>) -> Result<BTreeSet<String>, VocabularyError> {
-    if names.is_empty() {
-        return Ok(BTreeSet::new());
-    }
-    let probe = format!("select {};\n", names.iter().map(|name| format!("{name}(1)")).collect::<Vec<_>>().join(", "));
-    let formatted = pg_format.format(&probe)?;
-    let tokens = pg_query::scan(&formatted).map_err(VocabularyError::Unscanned)?.tokens;
-    Ok(tokens
-        .windows(2)
-        .filter(|pair| Token::try_from(pair[1].token).ok() == Some(Token::Ascii40) && pair[0].end == pair[1].start)
-        .filter_map(|pair| {
-            let start = usize::try_from(pair[0].start).ok()?;
-            let end = usize::try_from(pair[0].end).ok()?;
-            formatted.get(start..end).map(str::to_ascii_lowercase)
-        })
-        .filter(|name| names.contains(name))
-        .collect())
-}
-
-/// Why the vocabulary could not be read or probed.
+/// Why the vocabulary could not be read.
 #[derive(Debug, thiserror::Error)]
 pub enum VocabularyError {
     /// A vocabulary file could not be read.
@@ -204,12 +136,6 @@ pub enum VocabularyError {
         /// What reading it failed with.
         source: io::Error,
     },
-    /// `pg_format` could not lay the probe out.
-    #[error(transparent)]
-    PgFormat(#[from] PgFormatError),
-    /// What `pg_format` returned could not be scanned.
-    #[error("the probe pg_format returned could not be scanned: {0}")]
-    Unscanned(pg_query::Error),
 }
 
 #[cfg(test)]
@@ -220,8 +146,8 @@ mod tests {
 
     #[test]
     fn every_whitespace_separated_word_is_an_entry_with_its_place() {
-        let list = VocabularyList::new(VocabularyFile::Functions, Arc::from("by_range\n  ST_IsValid\n"));
+        let list = VocabularyList::new(VocabularyFile::Keywords, Arc::from("BRIN\n  STATISTICS\n"));
         let entries: Vec<(&str, usize)> = list.entries().iter().map(|entry| (entry.word(), entry.range().start)).collect();
-        assert_eq!(entries, [("by_range", 0), ("ST_IsValid", 11)]);
+        assert_eq!(entries, [("BRIN", 0), ("STATISTICS", 7)]);
     }
 }

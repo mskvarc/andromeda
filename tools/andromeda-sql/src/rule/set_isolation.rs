@@ -10,7 +10,9 @@
 //! of `public`, which its search path reaches), and it creates no type, domain
 //! or extension, which would live in that schema alone. A foreign key into a
 //! tenant relation is such a reference too, and would let a Snapshot's
-//! deletion wait on a lock in the live branch.
+//! deletion wait on a lock in the live branch. A statement a PL/pgSQL
+//! function or a `do` block plans as written counts like a top-level one, at
+//! the place of its routine, since the PL/pgSQL parser keeps no offset of it.
 
 use crate::{
     declared_schema::created_object::ObjectKind,
@@ -145,6 +147,19 @@ mod tests {
             "create table history (\n    attribute_name_key integer references attribute_names (attribute_name_key)\n);\n",
         );
         assert_eq!(findings(Rule::SetIsolation, &[NAMES, history])?, ["migrations/branch/0003_history.sql:2:43"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_branch_do_block_reading_a_tenant_relation_is_refused_at_the_block() -> Result<(), FixtureError> {
+        let conversion = (
+            "branch/0003_conversion.sql",
+            "do $$\ndeclare\n    key integer;\nbegin\n    key := (\n        select\n            attribute_name_key\n        from\n            attribute_names);\nend\n$$;\n",
+        );
+        assert_eq!(
+            findings(Rule::SetIsolation, &[NAMES, conversion])?,
+            ["migrations/branch/0003_conversion.sql:1:1"]
+        );
         Ok(())
     }
 

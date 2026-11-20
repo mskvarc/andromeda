@@ -2,7 +2,7 @@
 //! the expiry, delete, and sweep. Everything here names a map by its URI; the
 //! surrogate `entity_map_key` is issued by the database and resolved in-statement.
 
-use crate::store_fault::persistence_error;
+use crate::{entity_map::request_record::RequestRecord, store_fault::persistence_error};
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
@@ -16,8 +16,8 @@ use sqlx::{PgConnection, PgPool, Row};
 pub(crate) struct MapControlRecord {
     /// The map's expiry.
     pub(crate) expires_at: DateTime<Utc>,
-    /// The stored `<operation>:<sha256 hex>` fingerprint of the creating request, when one was recorded.
-    pub(crate) request_fingerprint: Option<String>,
+    /// The columns recording the creating request, all unset when none was recorded.
+    pub(crate) request: RequestRecord,
 }
 
 /// The `SELECT` resolving a map's URI to the surrogate the child tables carry.
@@ -73,14 +73,26 @@ pub(crate) async fn delete_map_row(connection: &mut PgConnection, id: &Identifie
 }
 
 /// Write the control record: identifier, expiry and the creating request's
-/// fingerprint.
+/// operation and digests.
 pub(crate) async fn insert_map_row(connection: &mut PgConnection, map: &EntityMap) -> Result<(), EntityMapError> {
-    let fingerprint = map.request_fingerprint.as_ref().map(ToString::to_string);
+    let request = RequestRecord::of(map.request_fingerprint.as_ref());
     let mut insert = Query::insert();
     insert
         .into_table(EntityMaps::Table)
-        .columns([EntityMaps::Id, EntityMaps::ExpiresAt, EntityMaps::RequestFingerprint])
-        .values([Expr::val(map.id.as_str()), Expr::val(map.expires_at), Expr::val(fingerprint)])
+        .columns([
+            EntityMaps::Id,
+            EntityMaps::ExpiresAt,
+            EntityMaps::RequestKind,
+            EntityMaps::QueryDigest,
+            EntityMaps::InputsDigest,
+        ])
+        .values([
+            Expr::val(map.id.as_str()),
+            Expr::val(map.expires_at),
+            Expr::val(request.kind),
+            Expr::val(request.query_digest),
+            Expr::val(request.inputs_digest),
+        ])
         .map_err(|error| persistence_error::<EntityMapError>(error))?;
     insert
         .to_query()
@@ -94,7 +106,9 @@ pub(crate) async fn insert_map_row(connection: &mut PgConnection, map: &EntityMa
 pub(crate) async fn read_live_control(pool: &PgPool, id: &Identifier) -> Result<Option<MapControlRecord>, EntityMapError> {
     let row = Query::select()
         .column((EntityMaps::Table, EntityMaps::ExpiresAt))
-        .column((EntityMaps::Table, EntityMaps::RequestFingerprint))
+        .column((EntityMaps::Table, EntityMaps::RequestKind))
+        .column((EntityMaps::Table, EntityMaps::QueryDigest))
+        .column((EntityMaps::Table, EntityMaps::InputsDigest))
         .from(EntityMaps::Table)
         .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id.as_str()))
         .and_where(live())
@@ -108,9 +122,17 @@ pub(crate) async fn read_live_control(pool: &PgPool, id: &Identifier) -> Result<
             expires_at: row
                 .try_get::<DateTime<Utc>, _>("expires_at")
                 .map_err(|error| persistence_error::<EntityMapError>(error))?,
-            request_fingerprint: row
-                .try_get::<Option<String>, _>("request_fingerprint")
-                .map_err(|error| persistence_error::<EntityMapError>(error))?,
+            request: RequestRecord {
+                kind: row
+                    .try_get::<Option<i16>, _>("request_kind")
+                    .map_err(|error| persistence_error::<EntityMapError>(error))?,
+                query_digest: row
+                    .try_get::<Option<Vec<u8>>, _>("query_digest")
+                    .map_err(|error| persistence_error::<EntityMapError>(error))?,
+                inputs_digest: row
+                    .try_get::<Option<Vec<u8>>, _>("inputs_digest")
+                    .map_err(|error| persistence_error::<EntityMapError>(error))?,
+            },
         })
     })
     .transpose()

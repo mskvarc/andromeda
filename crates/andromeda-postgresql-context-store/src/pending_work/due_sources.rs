@@ -28,7 +28,7 @@ use andromeda_postgresql_schema::{
     posted_query::PostedQueries,
     queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
-    subscription_forwarding::{ForwardedSubscriptionClaims, ForwardedSubscriptionRedirects, SubscriptionCompanions, SubscriptionReceiver},
+    subscription_forwarding::{ForwardedSubscriptionClaims, ForwardedSubscriptionRedirects, SubscriptionCompanionRedirects, SubscriptionReceiver},
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
@@ -117,7 +117,7 @@ pub(crate) fn least_due_select(forwarding: Option<&ReceiverEndpoint>) -> SelectS
 fn forwarding_due(receiver: &ReceiverEndpoint) -> [SimpleExpr; 4] {
     [
         earliest_min(ForwardedSubscriptionClaims::Table, ForwardedSubscriptionClaims::LeaseUntil),
-        present_min(SubscriptionCompanions::Table, SubscriptionCompanions::RedirectDueAt),
+        earliest_min(SubscriptionCompanionRedirects::Table, SubscriptionCompanionRedirects::RedirectDueAt),
         earliest_min(ForwardedSubscriptionRedirects::Table, ForwardedSubscriptionRedirects::RedirectDueAt),
         receiver_change_due(receiver),
     ]
@@ -440,7 +440,7 @@ mod tests {
     fn the_probe_reads_the_earliest_update_owed_the_current_receiver() {
         let sql = least_sql();
         assert!(
-            sql.contains(r#"(SELECT MIN("redirect_due_at") FROM "subscription_companions" WHERE "redirect_due_at" IS NOT NULL)"#),
+            sql.contains(r#"(SELECT MIN("redirect_due_at") FROM "subscription_companion_redirects")"#),
             "{sql}"
         );
         assert!(

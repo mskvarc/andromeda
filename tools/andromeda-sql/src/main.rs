@@ -158,7 +158,7 @@ fn report_format(outcome: &FormatOutcome, mode: FormatMode) -> ExitCode {
 
 /// Lint the migrations below `root`.
 fn run_lint(root: &Path) -> Result<LintOutcome, CommandError> {
-    Ok(lint_migrations(root, &resolve_squawk(root)?, &resolve_pg_format(root)?)?)
+    Ok(lint_migrations(root, &resolve_squawk(root)?)?)
 }
 
 /// Seal `release` over the migrations below `root`.

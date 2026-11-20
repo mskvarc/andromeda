@@ -128,7 +128,7 @@ mod tests {
 
     /// How a branch migration sets a `TimescaleDB` setting for its own
     /// transaction, which names `TimescaleDB` without calling it.
-    const TRANSACTION_SETTING: &str = "set_config('timescaledb.";
+    const TRANSACTION_SETTING: &str = "set local timescaledb.";
 
     #[test]
     fn no_branch_migration_calls_timescaledb() {

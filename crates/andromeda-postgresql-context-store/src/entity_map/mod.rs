@@ -8,6 +8,10 @@ pub mod lifecycle;
 pub mod mapper;
 /// The Entity Map repository struct.
 pub mod repo;
+/// Translation between the operation that created a map and its stored code.
+pub mod request_kind_code;
+/// The columns recording the request that created a map.
+pub mod request_record;
 pub mod store;
 
 #[cfg(test)]
