@@ -43,12 +43,13 @@ async fn d003_02_red_append_entity_attribute() -> Result<()> {
     }
     let _registrations = registrations;
     let source = serve(source).await?;
+    let rule = |below: &str| vehicle_rule(&namespace, Method::POST, below, "/attrs");
     for below in ["/broker1", "/broker2"] {
-        stub(&source, vehicle_rule(&namespace, Method::POST, below, "/attrs"), StatusCode::MULTI_STATUS, None).await?;
+        stub(&source, rule(below), StatusCode::MULTI_STATUS, None).await?;
     }
     let id = namespace.urn("Vehicle", 1)?;
     append_without_overwrite(&broker, &id, &parked_by_john_doe_and_speed(&namespace)?).await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule("/broker1")).await?;
     expect_no_overwrite_forwarded(&forwarded);
     unregister(&broker, &namespace, 1).await?;
     unregister(&broker, &namespace, 2).await

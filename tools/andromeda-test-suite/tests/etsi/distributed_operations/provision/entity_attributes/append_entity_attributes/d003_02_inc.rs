@@ -10,8 +10,8 @@ use crate::{
             parked_by_john_doe_and_speed,
             vehicle_attribute_registration,
             vehicle_rule,
-            wait_for_request,
         },
+        redirected_request::wait_for_request,
     },
     entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, retrieve_entity_json},
     vehicle_entity_payloads::vehicle_parked,
@@ -45,10 +45,10 @@ async fn d003_02_inc_append_entity_attribute() -> Result<()> {
     let id = namespace.urn("Vehicle", 1)?;
     let reader = broker.with_context(vocabulary.context())?.with_accept(Accept::any());
     let old_body = retrieve_entity_json(&reader, &id).await?;
-    stub(&source, vehicle_rule(&namespace, Method::POST, "", "/attrs"), StatusCode::MULTI_STATUS, None).await?;
-    let taken = source.received().await?.len();
+    let rule = || vehicle_rule(&namespace, Method::POST, "", "/attrs");
+    stub(&source, rule(), StatusCode::MULTI_STATUS, None).await?;
     append_without_overwrite(&ld_json_body_client(&broker, &vocabulary)?, &id, &parked_by_john_doe_and_speed(&namespace)?).await?;
-    expect_no_overwrite_forwarded(&wait_for_request(&source, taken).await?);
+    expect_no_overwrite_forwarded(&wait_for_request(&source, &rule()).await?);
     let body = retrieve_entity_json(&reader, &id).await?;
     expect_that!(body.pointer("/speed"), some(anything()));
     expect_that!(body.pointer("/isParked"), eq(old_body.pointer("/isParked")));

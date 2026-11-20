@@ -46,7 +46,7 @@ async fn d014_02_exc_update_batch_entities_with_no_overwrite_option() -> Result<
     let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/broker1/ngsi-ld/v1/entityoperations/update"));
     stub(&source, rule(), StatusCode::NO_CONTENT, None).await?;
     update_vehicles(&broker, &vocabulary, &namespace, Overwrite::Keep).await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     expect_that!(
         forwarded_options(&forwarded),
         any![elements_are![contains_substring("noOverwrite")], all![len(gt(1)), contains(eq("noOverwrite"))]]

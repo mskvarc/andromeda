@@ -55,16 +55,11 @@ async fn d013_02_inc_batch_upsert_entities_with_inclusive_registration_with_upda
     let first = namespace.urn("Vehicle", 1)?;
     let old = json_body(&reader.with_accept(Accept::any()).with_responses().entities().retrieve(&first).send().await?)?;
     let old_brand_name = old.get("brandName").or_fail()?;
-    stub(
-        &source,
-        ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entityoperations/upsert")),
-        StatusCode::NO_CONTENT,
-        None,
-    )
-    .await?;
+    let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entityoperations/upsert"));
+    stub(&source, rule(), StatusCode::NO_CONTENT, None).await?;
     let writer = ld_json_body_client(&broker, &vocabulary)?;
     upsert(&writer, &[vehicle_parked2(&namespace, 1)?, vehicle_parked2(&namespace, 2)?], "update").await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     expect_that!(
         forwarded_options(&forwarded),
         any![elements_are![contains_substring("update")], all![len(gt(1)), contains(eq("update"))]]

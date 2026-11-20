@@ -38,6 +38,7 @@ use ngsi_ld::{
 };
 use serde_json::{Value, json};
 use std::fmt::Debug;
+use tokio::sync::OnceCell;
 
 /// Posts `registration` to `/csourceRegistrations` with `client`, answering the broker's response whatever its status.
 pub(crate) async fn send_registration(client: &BrokerClient, registration: &CSourceRegistration<Input>) -> Result<Response<Bytes>, ClientError<ReqwestError>> {
@@ -57,10 +58,15 @@ pub(crate) async fn create_registration(broker: &BrokerClient, vocabulary: &Voca
     Ok(cleanup)
 }
 
-/// The endpoint `sources/<ns>/<host>` of a fresh context source: the address under the mock origin the context source
-/// tests register.
+/// The mock origin every [`csource_endpoint`] of the test process lies under. A static is never dropped, so the origin
+/// keeps its port until the process exits, after the test's cleanups have deleted every registration naming it.
+static MOCK_ORIGIN: OnceCell<ContextSource> = OnceCell::const_new();
+
+/// The endpoint `sources/<ns>/<host>` under the test process's mock origin: the address the context source tests
+/// register, answered 404 whatever it is sent.
 pub(crate) async fn csource_endpoint(namespace: &Namespace, host: &str) -> Result<url::Url> {
-    Ok(ContextSource::start().await?.endpoint(&format!("sources/{namespace}/{host}"))?)
+    let origin = MOCK_ORIGIN.get_or_try_init(ContextSource::start).await?;
+    Ok(origin.endpoint(&format!("sources/{namespace}/{host}"))?)
 }
 
 /// `Update Context Source Registration` of `id` with `document` as its body, sent by `client` in the context it

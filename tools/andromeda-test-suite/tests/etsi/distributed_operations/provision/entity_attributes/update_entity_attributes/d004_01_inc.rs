@@ -34,7 +34,7 @@ async fn d004_01_inc_query_the_context_broker_with_type() -> Result<()> {
     let writer = broker.with_context(vocabulary.context())?.with_context_delivery(ContextDelivery::LdJsonBody);
     let fragment = EntityFragment::builder().property("brandname", "BMW").build()?;
     update_attributes(&writer, &namespace.urn("Vehicle", 1)?, &fragment).await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     expect_that!(stub_count(&source, &rule()).await?, gt(0));
     expect_that!(forwarded_body(&forwarded)?.pointer("/brandname/value"), some(eq(&json!("BMW"))));
     unregister(&broker, &namespace, 1).await

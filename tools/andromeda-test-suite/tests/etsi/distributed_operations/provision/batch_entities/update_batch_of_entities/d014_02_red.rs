@@ -43,7 +43,7 @@ async fn d014_02_red_update_batch_entities_with_no_overwrite_option() -> Result<
     stub(&source, rule("/broker1"), StatusCode::NO_CONTENT, None).await?;
     stub(&source, rule("/broker2"), StatusCode::NO_CONTENT, None).await?;
     update_vehicles(&broker, &vocabulary, &namespace, Overwrite::Keep).await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule("/broker1")).await?;
     expect_that!(
         forwarded_options(&forwarded),
         any![elements_are![contains_substring("noOverwrite")], all![len(gt(1)), contains(eq("noOverwrite"))]]

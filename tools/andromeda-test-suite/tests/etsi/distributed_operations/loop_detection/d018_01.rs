@@ -33,16 +33,11 @@ async fn d018_01_loop_detection_with_via_header() -> Result<()> {
     )
     .await?;
     let source = serve(source).await?;
-    stub(
-        &source,
-        ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entities")),
-        StatusCode::CREATED,
-        None,
-    )
-    .await?;
+    let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entities"));
+    stub(&source, rule(), StatusCode::CREATED, None).await?;
     let vehicle = namespace.urn("Vehicle", 1)?;
     create_entity_with_context_string(&broker, &vocabulary, &vehicle_parked(&namespace, 1)?).await?;
-    let via = forwarded_via(&source).await?.or_fail()?;
+    let via = forwarded_via(&source, &rule()).await?.or_fail()?;
     let request = broker
         .unchecked(&DeleteEntity {
             id: &vehicle,

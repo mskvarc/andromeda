@@ -42,16 +42,11 @@ async fn d003_02_exc_append_entity_attribute() -> Result<()> {
     )
     .await?;
     let source = serve(source).await?;
-    stub(
-        &source,
-        vehicle_rule(&namespace, Method::POST, "/broker1", "/attrs"),
-        StatusCode::MULTI_STATUS,
-        None,
-    )
-    .await?;
+    let rule = || vehicle_rule(&namespace, Method::POST, "/broker1", "/attrs");
+    stub(&source, rule(), StatusCode::MULTI_STATUS, None).await?;
     let id = namespace.urn("Vehicle", 1)?;
     append_without_overwrite(&ld_json_body_client(&broker, &vocabulary)?, &id, &parked_by_john_doe_and_speed(&namespace)?).await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     expect_no_overwrite_forwarded(&forwarded);
     unregister(&broker, &namespace, 1).await?;
     delete_entities(&broker, &[&id]).await;

@@ -4,13 +4,8 @@
 use crate::{
     distributed_operations::{
         forwarding_source::{create_entity_locally, register, serve, source_endpoint, stub, stub_count, unregister},
-        provision::entity_attributes::attribute_sources::{
-            DeletedInstances,
-            delete_attribute_instance,
-            vehicle_attribute_registration,
-            vehicle_rule,
-            wait_for_request,
-        },
+        provision::entity_attributes::attribute_sources::{DeletedInstances, delete_attribute_instance, vehicle_attribute_registration, vehicle_rule},
+        redirected_request::wait_for_request,
     },
     entity_operations::delete_entities,
     vehicle_entity_payloads::vehicle_parked,
@@ -43,7 +38,7 @@ async fn d006_02_exc_delete_entity_attributes() -> Result<()> {
     stub(&source, rule(), StatusCode::NO_CONTENT, None).await?;
     let id = namespace.urn("Vehicle", 1)?;
     delete_attribute_instance(&broker.with_context(vocabulary.context())?, &id, "speed", DeletedInstances::All).await?;
-    wait_for_request(&source, 0).await?;
+    wait_for_request(&source, &rule()).await?;
     expect_that!(stub_count(&source, &rule()).await?, gt(0));
     unregister(&broker, &namespace, 1).await?;
     delete_entities(&broker, &[&id]).await;

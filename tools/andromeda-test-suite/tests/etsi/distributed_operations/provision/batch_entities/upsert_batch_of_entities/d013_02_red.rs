@@ -53,7 +53,7 @@ async fn d013_02_red_batch_upsert_entities_with_redirect_registration_with_updat
     stub(&source, rule("/broker2"), StatusCode::NO_CONTENT, None).await?;
     let writer = ld_json_body_client(&broker, &vocabulary)?;
     upsert(&writer, &[vehicle_parked2(&namespace, 1)?, vehicle_parked2(&namespace, 2)?], "update").await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule("/broker1")).await?;
     expect_that!(
         forwarded_options(&forwarded),
         any![elements_are![contains_substring("update")], all![len(gt(1)), contains(eq("update"))]]

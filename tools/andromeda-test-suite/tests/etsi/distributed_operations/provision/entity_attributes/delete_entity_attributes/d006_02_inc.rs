@@ -10,8 +10,8 @@ use crate::{
             vehicle_attribute_registration,
             vehicle_rule,
             vehicle_with_two_speeds,
-            wait_for_request,
         },
+        redirected_request::wait_for_request,
     },
     entity_operations::{create_entity_with_context_string, delete_entities},
 };
@@ -39,17 +39,12 @@ async fn d006_02_inc_delete_entity_attributes() -> Result<()> {
     )
     .await?;
     let source = serve(source).await?;
-    stub(
-        &source,
-        vehicle_rule(&namespace, Method::DELETE, "", "/attrs/speed"),
-        StatusCode::NO_CONTENT,
-        None,
-    )
-    .await?;
+    let rule = || vehicle_rule(&namespace, Method::DELETE, "", "/attrs/speed");
+    stub(&source, rule(), StatusCode::NO_CONTENT, None).await?;
     let id = namespace.urn("Vehicle", 1)?;
     let linked = broker.with_context(vocabulary.context())?;
     delete_attribute_instance(&linked, &id, "speed", DeletedInstances::All).await?;
-    wait_for_request(&source, 0).await?;
+    wait_for_request(&source, &rule()).await?;
     let retrieved = linked
         .with_accept(Accept::any())
         .with_responses()

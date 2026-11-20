@@ -10,8 +10,8 @@ use crate::{
             vehicle_attribute_registration,
             vehicle_parked2_by_alice,
             vehicle_rule,
-            wait_for_request,
         },
+        redirected_request::wait_for_request,
     },
     entity_operations::{create_entity_with_context_string, delete_entities, ld_json_body_client, partial_update_document, retrieve_entity_json},
 };
@@ -55,9 +55,8 @@ async fn d005_01_inc_partial_partial_attribute_update() -> Result<()> {
     let rule = || vehicle_rule(&namespace, Method::PATCH, "", "/attrs/speed");
     stub(&source, rule(), StatusCode::NO_CONTENT, None).await?;
     let speed: AttributeName = "speed".parse()?;
-    let taken = source.received().await?.len();
     partial_update_document(&ld_json_body_client(&broker, &vocabulary)?, &id, &speed, &speed_patch_document()?).await?;
-    let forwarded = wait_for_request(&source, taken).await?;
+    let forwarded = wait_for_request(&source, &rule()).await?;
     expect_that!(stub_count(&source, &rule()).await?, gt(0));
     expect_speed_forwarded(&forwarded)?;
     let retrieved = reader.with_responses().entities().retrieve(&id).locality(Locality::Local).send().await;

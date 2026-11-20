@@ -31,20 +31,15 @@ async fn d001_03_01_inc_create_entity_already_existing_locally_on_a_context_sour
     let endpoint = source_endpoint(&source, &namespace, "")?;
     let _registration = register(&broker, &vocabulary, &vehicle_id_registration(&namespace, 1, 1, &endpoint, None, REDIRECTION)?).await?;
     let source = serve(source).await?;
-    stub(
-        &source,
-        ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entities")),
-        StatusCode::CREATED,
-        None,
-    )
-    .await?;
+    let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entities"));
+    stub(&source, rule(), StatusCode::CREATED, None).await?;
     let writer = broker.with_context(vocabulary.context())?.with_context_delivery(ContextDelivery::LdJsonBody);
     let answer = send_create_entity(&writer, &vehicle_parked(&namespace, 1)?).await;
     verify_that!(&answer, answered(StatusCode::MULTI_STATUS))?;
     let body = serde_json::from_slice::<Value>(answer?.body())?;
     expect_that!(body.pointer("/errors/0/error/status"), some(any![eq(&json!(409)), eq(&json!("409"))]));
     expect_that!(body.get("errors").and_then(Value::as_array), some(len(eq(1))));
-    let forwarded = forwarded_body(&wait_for_redirected(&source, 0).await?)?;
+    let forwarded = forwarded_body(&wait_for_redirected(&source, &rule()).await?)?;
     expect_that!(forwarded.get("id"), some(eq(&json!(namespace.urn_text("Vehicle", 1)))));
     unregister(&broker, &namespace, 1).await?;
     delete_entities(&broker, &[&namespace.urn("Vehicle", 1)?]).await;

@@ -50,7 +50,7 @@ async fn d013_02_exc_batch_upsert_entities_with_exclusive_registration_with_upda
         "update",
     )
     .await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     expect_that!(
         forwarded_options(&forwarded),
         any![elements_are![contains_substring("update")], all![len(gt(1)), contains(eq("update"))]]

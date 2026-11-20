@@ -1,10 +1,16 @@
 //! A context source of one test: a server the test registers with a broker and stubs the answers of.
 //!
-//! The broker forwards to the source what its registration matches. A broker also forwards a discovery of types or
-//! attributes to every registration of the tenant supporting it (clauses 5.7.5 to 5.7.11), so the source receives
-//! other tests' discovery requests; every read of what the source received leaves a discovery of types or
-//! attributes out, below whatever prefix the registration's endpoint names, and counts entity paths only, except the
-//! read of discoveries a test in a tenant of its own makes.
+//! The broker forwards to the source what its registration matches, other tests' requests included. A discovery of
+//! types or attributes goes to every registration of the tenant supporting it (clauses 5.7.5 to 5.7.11), and a
+//! request that names an entity id but no entity type matches every registration whose entity information names a
+//! type and neither an id nor an idPattern (clause 5.12). Every read of what the source received therefore leaves a
+//! discovery of types or attributes out, below whatever prefix the registration's endpoint names, and counts entity
+//! paths only, except the read of discoveries a test in a tenant of its own makes. Every wait names the requests it
+//! waits for.
+//!
+//! A dropped source releases its port, and the kernel can hand that port to another test's server at once. The
+//! broker then forwards to that server whatever matches a registration still naming the port, so a source lives as
+//! long as every registration that names it.
 
 use crate::{
     callback_server::{CallbackError, CallbackServer},
@@ -13,7 +19,7 @@ use crate::{
 };
 use http::Method;
 use url::Url;
-use wiremock::{Mock, MockBuilder, Request, ResponseTemplate};
+use wiremock::{Match, Mock, MockBuilder, Request, ResponseTemplate};
 
 /// The API name and version a forwarded request names after the registration's endpoint, the apiRoot with its
 /// optional prefix (clause 6.2).
@@ -253,14 +259,24 @@ impl ContextSource {
             .collect())
     }
 
-    /// The source's requests on entity paths once it holds at least `count`, waiting up to the [`delivery_deadline`].
+    /// Every request on an entity path that `matcher` matches, in arrival order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError::Server`] before the source serves.
+    pub async fn received_matched(&self, matcher: &impl Match) -> Result<Vec<Request>, SourceError> {
+        Ok(matched(matcher, self.received().await?))
+    }
+
+    /// Every request on an entity path that `matcher` matches once the source holds at least `count` of them, waiting
+    /// up to the [`delivery_deadline`].
     ///
     /// # Errors
     ///
     /// Returns [`SourceError::TimedOut`] when fewer than `count` arrive within the deadline.
-    pub async fn wait_for(&self, count: usize) -> Result<Vec<Request>, SourceError> {
+    pub async fn wait_for_matched(&self, matcher: &impl Match, count: usize) -> Result<Vec<Request>, SourceError> {
         eventually(delivery_deadline(), || async move {
-            match self.received().await {
+            match self.received_matched(matcher).await {
                 Ok(received) if received.len() >= count => Poll::Ready(Ok(received)),
                 Ok(received) => Poll::Pending(Arrivals {
                     held: received.len(),
@@ -271,6 +287,11 @@ impl ContextSource {
         })
         .await?
     }
+}
+
+/// The requests of `received` that `matcher` matches, in their order.
+fn matched(matcher: &impl Match, received: Vec<Request>) -> Vec<Request> {
+    received.into_iter().filter(|request| matcher.matches(request)).collect()
 }
 
 /// The requests of `received` that `request` describes, in their order.
@@ -287,13 +308,13 @@ fn described(request: &SourceRequest, received: Vec<Request>) -> Result<Vec<Requ
 #[cfg(test)]
 mod tests {
     use crate::{
-        context_source::{described, is_discovery},
+        context_source::{described, is_discovery, matched},
         source_request::SourceRequest,
     };
     use googletest::prelude::*;
     use http::Method;
     use url::Url;
-    use wiremock::Request;
+    use wiremock::{Request, matchers::path};
 
     fn get(url: &str) -> Result<Request> {
         Ok(Request {
@@ -328,6 +349,24 @@ mod tests {
         ] {
             assert!(!is_discovery(path), "{path}");
         }
+    }
+
+    #[gtest]
+    fn only_the_matched_requests_are_kept_in_arrival_order() -> Result<()> {
+        let received = vec![
+            get("http://source.test/a/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:a-1")?,
+            get("http://source.test/b/my.csource.org:1026/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:b-1")?,
+            get("http://source.test/a/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:a-1?attrs=speed")?,
+        ];
+        let kept = matched(&path("/a/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:a-1"), received);
+        let urls: Vec<&str> = kept.iter().map(|request| request.url.as_str()).collect();
+        verify_that!(
+            urls,
+            elements_are![
+                eq(&"http://source.test/a/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:a-1"),
+                eq(&"http://source.test/a/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:a-1?attrs=speed")
+            ]
+        )
     }
 
     #[gtest]

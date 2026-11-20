@@ -83,8 +83,8 @@ async fn d018_02_01_check_post_via_header_forwarding_to_context_source() -> Resu
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let terms = [BASE_TERMS.as_slice(), &["speed", "source", "isParked2"]].concat();
-    let rule = ForkRule::resource(Method::POST, &source_path(&namespace, "/broker1/ngsi-ld/v1/entities"));
-    let (vocabulary, source, _registrations) = via_source(&broker, &namespace, &terms, rule, StatusCode::CREATED).await?;
+    let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/broker1/ngsi-ld/v1/entities"));
+    let (vocabulary, source, _registrations) = via_source(&broker, &namespace, &terms, rule(), StatusCode::CREATED).await?;
     let speed = Property::builder(56)
         .property("source", "Speedometer")
         .dataset_id(namespace.urn_text("Property", "speedometerA4567-speed2").parse::<DatasetId>()?);
@@ -98,7 +98,7 @@ async fn d018_02_01_check_post_via_header_forwarding_to_context_source() -> Resu
         .relationship("isParked2", parked)
         .build()?;
     create_entity_with_context_string(&broker, &vocabulary, &second).await?;
-    expect_that!(forwarded_via(&source).await?, some(anything()));
+    expect_that!(forwarded_via(&source, &rule()).await?, some(anything()));
     torn_down(&broker, &namespace).await
 }
 
@@ -113,8 +113,8 @@ async fn d018_02_02_check_update_via_header_forwarding_to_context_source() -> Re
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let terms = [BASE_TERMS.as_slice(), &["brandname"]].concat();
-    let rule = vehicle_rule(&namespace, Method::PATCH, "/attrs");
-    let (vocabulary, source, _registrations) = via_source(&broker, &namespace, &terms, rule, StatusCode::NO_CONTENT).await?;
+    let rule = || vehicle_rule(&namespace, Method::PATCH, "/attrs");
+    let (vocabulary, source, _registrations) = via_source(&broker, &namespace, &terms, rule(), StatusCode::NO_CONTENT).await?;
     let fragment = EntityFragment::builder().property("brandname", "BMW").build()?;
     let updated = broker
         .with_context(vocabulary.context())?
@@ -125,7 +125,7 @@ async fn d018_02_02_check_update_via_header_forwarding_to_context_source() -> Re
         .send()
         .await;
     expect_that!(&updated, answered(StatusCode::NO_CONTENT));
-    expect_that!(forwarded_via(&source).await?, some(anything()));
+    expect_that!(forwarded_via(&source, &rule()).await?, some(anything()));
     torn_down(&broker, &namespace).await
 }
 
@@ -139,13 +139,13 @@ async fn d018_02_02_check_update_via_header_forwarding_to_context_source() -> Re
 async fn d018_02_03_check_delete_via_header_forwarding_to_context_source() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let rule = vehicle_rule(&namespace, Method::DELETE, "");
-    let (_vocabulary, source, _registrations) = via_source(&broker, &namespace, &BASE_TERMS, rule, StatusCode::NO_CONTENT).await?;
+    let rule = || vehicle_rule(&namespace, Method::DELETE, "");
+    let (_vocabulary, source, _registrations) = via_source(&broker, &namespace, &BASE_TERMS, rule(), StatusCode::NO_CONTENT).await?;
     let vehicle = namespace.urn("Vehicle", 1)?;
     let deleted = broker.with_responses().entities().delete(&vehicle).send().await;
     expect_that!(&deleted, answered(StatusCode::NO_CONTENT));
     broker.temporal().delete(&vehicle).send().await.any_answer();
-    expect_that!(forwarded_via(&source).await?, some(anything()));
+    expect_that!(forwarded_via(&source, &rule()).await?, some(anything()));
     torn_down(&broker, &namespace).await
 }
 
@@ -160,8 +160,8 @@ async fn d018_02_04_check_put_via_header_forwarding_to_context_source() -> Resul
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let terms = [BASE_TERMS.as_slice(), &["isParked2"]].concat();
-    let rule = vehicle_rule(&namespace, Method::PUT, "");
-    let (vocabulary, source, _registrations) = via_source(&broker, &namespace, &terms, rule, StatusCode::NO_CONTENT).await?;
+    let rule = || vehicle_rule(&namespace, Method::PUT, "");
+    let (vocabulary, source, _registrations) = via_source(&broker, &namespace, &terms, rule(), StatusCode::NO_CONTENT).await?;
     let replaced = broker
         .with_context(vocabulary.context())?
         .with_responses()
@@ -170,7 +170,7 @@ async fn d018_02_04_check_put_via_header_forwarding_to_context_source() -> Resul
         .send()
         .await;
     expect_that!(&replaced, answered(StatusCode::NO_CONTENT));
-    expect_that!(forwarded_via(&source).await?, some(anything()));
+    expect_that!(forwarded_via(&source, &rule()).await?, some(anything()));
     torn_down(&broker, &namespace).await
 }
 
@@ -184,8 +184,8 @@ async fn d018_02_04_check_put_via_header_forwarding_to_context_source() -> Resul
 async fn d018_02_05_check_get_via_header_forwarding_to_context_source() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let rule = vehicle_retrieval_rule(&namespace, "/broker1", 1);
-    let (_vocabulary, source, _registrations) = via_source(&broker, &namespace, &BASE_TERMS, rule, StatusCode::OK).await?;
+    let rule = || vehicle_retrieval_rule(&namespace, "/broker1", 1);
+    let (_vocabulary, source, _registrations) = via_source(&broker, &namespace, &BASE_TERMS, rule(), StatusCode::OK).await?;
     let retrieved = broker
         .with_accept(Accept::any())
         .with_responses()
@@ -194,6 +194,6 @@ async fn d018_02_05_check_get_via_header_forwarding_to_context_source() -> Resul
         .send()
         .await;
     expect_that!(&retrieved, answered(StatusCode::OK));
-    expect_that!(forwarded_via(&source).await?, some(anything()));
+    expect_that!(forwarded_via(&source, &rule()).await?, some(anything()));
     torn_down(&broker, &namespace).await
 }
