@@ -1,9 +1,13 @@
 //! Reading what a broker forwarded to the test's context source: the wait for a forwarded request, its body and its
 //! query parameters, and the `@context` reading of an entity the broker answers with.
 //!
+//! A wait names its request by the rule of the stub that answers it: the source can also hold requests of other
+//! tests that its registration matches.
+//!
 //! A wait whose request a stub has already answered keeps its 200 reply for the next request no stub matches: the wait
 //! queues that one reply on the source.
 
+use crate::distributed_operations::fork_rule::ForkRule;
 use andromeda_test_suite::context_source::ContextSource;
 use googletest::prelude::*;
 use http::StatusCode;
@@ -13,10 +17,10 @@ use wiremock::{Mock, Request, ResponseTemplate, matchers::any};
 /// The priority of the queued reply: below every stub, above the source's answer to an unmatched request.
 const QUEUED_REPLY_PRIORITY: u8 = u8::MAX - 1;
 
-/// Waits until the source holds a request beyond the `taken` earlier waits took, queues the 200 reply for the next
-/// request no stub matches, and answers the last request the source holds.
-pub(crate) async fn wait_for_redirected(source: &ContextSource, taken: usize) -> Result<Request> {
-    let request = wait_for_request(source, taken).await?;
+/// Waits until the source holds a request `rule` matches, queues the 200 reply for the next request no stub matches,
+/// and answers the last request `rule` matches.
+pub(crate) async fn wait_for_redirected(source: &ContextSource, rule: &ForkRule) -> Result<Request> {
+    let request = wait_for_request(source, rule).await?;
     source
         .mount(
             Mock::given(any())
@@ -28,10 +32,9 @@ pub(crate) async fn wait_for_redirected(source: &ContextSource, taken: usize) ->
     Ok(request)
 }
 
-/// Waits until the source holds a request beyond the `taken` earlier waits took, and answers the last request the
-/// source holds.
-pub(crate) async fn wait_for_request(source: &ContextSource, taken: usize) -> Result<Request> {
-    source.wait_for(taken + 1).await?.into_iter().last().or_fail()
+/// Waits until the source holds a request `rule` matches, and answers the last request `rule` matches.
+pub(crate) async fn wait_for_request(source: &ContextSource, rule: &ForkRule) -> Result<Request> {
+    source.wait_for_matched(rule, 1).await?.into_iter().last().or_fail()
 }
 
 /// The forwarded body read as JSON.

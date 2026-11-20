@@ -31,15 +31,10 @@ async fn d001_01_inc_create_entity_on_both_context_broker_and_context_source() -
     let endpoint = source_endpoint(&source, &namespace, "")?;
     let _registration = register(&broker, &vocabulary, &vehicle_id_registration(&namespace, 1, 1, &endpoint, None, REDIRECTION)?).await?;
     let source = serve(source).await?;
-    stub(
-        &source,
-        ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entities")),
-        StatusCode::CREATED,
-        None,
-    )
-    .await?;
+    let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entities"));
+    stub(&source, rule(), StatusCode::CREATED, None).await?;
     create_entity_with_context_string(&broker, &vocabulary, &vehicle_parked(&namespace, 1)?).await?;
-    let forwarded = forwarded_body(&wait_for_request(&source, 0).await?)?;
+    let forwarded = forwarded_body(&wait_for_request(&source, &rule()).await?)?;
     let id = namespace.urn_text("Vehicle", 1);
     expect_that!(forwarded.get("id"), some(eq(&json!(id))));
     let listed = broker

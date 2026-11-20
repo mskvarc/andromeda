@@ -50,7 +50,7 @@ async fn d013_01_exc_batch_upsert_entities_with_exclusive_registration_without_u
         "replace",
     )
     .await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     let body = forwarded_body(&forwarded)?;
     let entities = body.as_array().or_fail()?;
     expect_that!(entities, contains(matches_document(speed_forwarded(&namespace, 1))));

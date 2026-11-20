@@ -32,7 +32,7 @@ use ngsi_ld::{
 use serde_json::{Value, json};
 use std::time::Duration;
 use url::Url;
-use wiremock::{Match, Mock, MockBuilder, ResponseTemplate, matchers::any};
+use wiremock::{Mock, MockBuilder, ResponseTemplate, matchers::any};
 
 /// How long the source holds a request no stub matches before it answers: below the broker's 5 s wait for a
 /// source, so the answer, and the request with it, is recorded before the broker answers the client.
@@ -113,7 +113,7 @@ pub(crate) async fn create_entity_locally(broker: &BrokerClient, vocabulary: &Vo
 
 /// How many of the requests the source received on entity paths `rule` matches.
 pub(crate) async fn stub_count(source: &ContextSource, rule: &ForkRule) -> Result<usize> {
-    Ok(source.received().await?.iter().filter(|request| rule.matches(request)).count())
+    Ok(source.received_matched(rule).await?.len())
 }
 
 /// The path `/sources/<ns><below>` of the source, as the source's stubs and the registration's endpoint name it.

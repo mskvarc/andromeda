@@ -9,7 +9,6 @@ use crate::distributed_operations::{
 };
 use andromeda_test_suite::{
     broker::BrokerClient,
-    context_source::ContextSource,
     namespace::Namespace,
     problem::answered,
     wire::{content_type, request_to},
@@ -24,12 +23,6 @@ use ngsi_ld::{
 use serde_json::{Value, json};
 use url::Url;
 use wiremock::Request;
-
-/// Waits until the source holds a request beyond the `taken` it held before the test's action, and answers the last
-/// request it holds.
-pub(crate) async fn wait_for_request(source: &ContextSource, taken: usize) -> Result<Request> {
-    source.wait_for(taken + 1).await?.into_iter().last().or_fail()
-}
 
 /// Which instances of an attribute a deletion names, as its `deleteAll` parameter writes it.
 #[derive(Clone, Copy, Debug)]

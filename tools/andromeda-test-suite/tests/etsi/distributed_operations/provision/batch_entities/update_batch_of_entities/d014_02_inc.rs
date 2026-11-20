@@ -43,15 +43,10 @@ async fn d014_02_inc_update_batch_entities_with_the_no_overwrite_option() -> Res
     )
     .await?;
     let source = serve(source).await?;
-    stub(
-        &source,
-        ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entityoperations/update")),
-        StatusCode::NO_CONTENT,
-        None,
-    )
-    .await?;
+    let rule = || ForkRule::resource(Method::POST, &source_path(&namespace, "/ngsi-ld/v1/entityoperations/update"));
+    stub(&source, rule(), StatusCode::NO_CONTENT, None).await?;
     update_vehicles(&broker, &vocabulary, &namespace, Overwrite::Keep).await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule()).await?;
     expect_that!(
         forwarded_options(&forwarded),
         any![elements_are![contains_substring("noOverwrite")], all![len(gt(1)), contains(eq("noOverwrite"))]]

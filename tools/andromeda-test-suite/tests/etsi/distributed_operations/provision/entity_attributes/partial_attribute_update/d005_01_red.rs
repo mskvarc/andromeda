@@ -4,13 +4,8 @@
 use crate::{
     distributed_operations::{
         forwarding_source::{register, serve, source_endpoint, stub, stub_count, unregister},
-        provision::entity_attributes::attribute_sources::{
-            expect_speed_forwarded,
-            speed_patch_document,
-            vehicle_attribute_registration,
-            vehicle_rule,
-            wait_for_request,
-        },
+        provision::entity_attributes::attribute_sources::{expect_speed_forwarded, speed_patch_document, vehicle_attribute_registration, vehicle_rule},
+        redirected_request::wait_for_request,
     },
     entity_operations::{delete_entities, ld_json_body_client, partial_update_document},
 };
@@ -49,7 +44,7 @@ async fn d005_01_red_partial_partial_attribute_update() -> Result<()> {
     let id = namespace.urn("Vehicle", 1)?;
     let speed: AttributeName = "speed".parse()?;
     partial_update_document(&ld_json_body_client(&broker, &vocabulary)?, &id, &speed, &speed_patch_document()?).await?;
-    let forwarded = wait_for_request(&source, 0).await?;
+    let forwarded = wait_for_request(&source, &rule("/broker1")).await?;
     expect_that!(stub_count(&source, &rule("/broker1")).await?, gt(0));
     expect_speed_forwarded(&forwarded)?;
     expect_that!(stub_count(&source, &rule("/broker2")).await?, gt(0));

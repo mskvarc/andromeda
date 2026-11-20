@@ -53,7 +53,7 @@ async fn d013_01_red_batch_upsert_entities_with_redirect_registration_without_up
     stub(&source, rule("/broker2"), StatusCode::NO_CONTENT, None).await?;
     let writer = ld_json_body_client(&broker, &vocabulary)?;
     upsert(&writer, &[vehicle_parked2(&namespace, 1)?, vehicle_parked2(&namespace, 2)?], "replace").await?;
-    let forwarded = wait_for_redirected(&source, 0).await?;
+    let forwarded = wait_for_redirected(&source, &rule("/broker1")).await?;
     let body = forwarded_body(&forwarded)?;
     let entities = body.as_array().or_fail()?;
     expect_that!(entities, contains(matches_document(parked2_forwarded(&namespace, 1))));
