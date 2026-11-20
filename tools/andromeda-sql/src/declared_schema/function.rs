@@ -17,6 +17,32 @@ const PLPGSQL: &str = "plpgsql";
 /// The return type of a trigger function.
 const TRIGGER_TYPE: &str = "trigger";
 
+/// How a function's result depends on the database, as `create function`
+/// declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub enum Volatility {
+    /// The result depends on the arguments alone.
+    Immutable,
+    /// The result is fixed within one statement.
+    Stable,
+    /// The result may change at any call, or the call has side effects.
+    Volatile,
+}
+
+/// Whether a function may run in a parallel worker, as `create function`
+/// declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub enum ParallelSafety {
+    /// It may run in any worker.
+    Safe,
+    /// It runs only in the leader of a parallel plan.
+    Restricted,
+    /// It keeps the whole plan serial.
+    Unsafe,
+}
+
 /// How a function's body is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FunctionBody {
@@ -41,6 +67,10 @@ pub struct DeclaredFunction {
     or_replace: bool,
     /// Its return type, absent for a procedure.
     returns: Option<DeclaredType>,
+    /// The volatility it states, `None` when it states none.
+    volatility: Option<Volatility>,
+    /// The parallel safety it states, `None` when it states none.
+    parallel: Option<ParallelSafety>,
     /// The PL/pgSQL tree of its body, for a PL/pgSQL function.
     routines: Vec<PlpgsqlRoutine>,
     /// Where its name is written.
@@ -60,23 +90,9 @@ impl DeclaredFunction {
         let Some(name) = QualifiedName::of_nodes(&function.funcname) else {
             return Ok(None);
         };
-        let options = function.options.iter().filter_map(definition_element).collect::<Vec<_>>();
-        let language = options
-            .iter()
-            .find(|option| option.defname == "language")
-            .and_then(|option| string_argument(option))
-            .unwrap_or_default()
-            .to_owned();
-        let returns = function.return_type.as_ref().and_then(DeclaredType::of);
+        let language = language_of(function).to_owned();
         let routines = if language == PLPGSQL {
-            let start = statement.span().start;
-            let trigger_return = function
-                .return_type
-                .as_ref()
-                .filter(|_| returns.as_ref().is_some_and(|returns| returns.name().name() == TRIGGER_TYPE))
-                .and_then(|returns| usize::try_from(returns.location).ok())
-                .map(|location| location.saturating_sub(start)..location.saturating_sub(start) + TRIGGER_TYPE.len());
-            PlpgsqlRoutine::parse(statement.text(), trigger_return)?
+            PlpgsqlRoutine::parse(statement.text(), trigger_return(function, statement.span().start))?
         } else {
             Vec::new()
         };
@@ -91,7 +107,9 @@ impl DeclaredFunction {
             or_replace: function.replace,
             name,
             language,
-            returns,
+            returns: function.return_type.as_ref().and_then(DeclaredType::of),
+            volatility: string_option(function, "volatility").and_then(|volatility| volatility.parse().ok()),
+            parallel: string_option(function, "parallel").and_then(|parallel| parallel.parse().ok()),
             routines,
             origin,
         }))
@@ -127,6 +145,25 @@ impl DeclaredFunction {
         self.returns.as_ref()
     }
 
+    /// Whether it is a trigger function, which PostgreSQL calls only from its
+    /// triggers.
+    #[must_use]
+    pub fn is_trigger(&self) -> bool {
+        self.returns.as_ref().is_some_and(|returns| returns.name().name() == TRIGGER_TYPE)
+    }
+
+    /// The volatility it states, `None` when it states none.
+    #[must_use]
+    pub const fn volatility(&self) -> Option<Volatility> {
+        self.volatility
+    }
+
+    /// The parallel safety it states, `None` when it states none.
+    #[must_use]
+    pub const fn parallel(&self) -> Option<ParallelSafety> {
+        self.parallel
+    }
+
     /// The PL/pgSQL tree of its body, for a PL/pgSQL function.
     #[must_use]
     pub fn routines(&self) -> &[PlpgsqlRoutine] {
@@ -144,6 +181,41 @@ impl DeclaredFunction {
     pub fn definition(&self) -> Range<usize> {
         self.definition.clone()
     }
+}
+
+/// The language `function` is written in, empty when it names none.
+#[must_use]
+pub fn language_of(function: &CreateFunctionStmt) -> &str {
+    string_option(function, "language").unwrap_or_default()
+}
+
+/// Whether `function` is written in PL/pgSQL.
+#[must_use]
+pub fn is_plpgsql(function: &CreateFunctionStmt) -> bool {
+    language_of(function) == PLPGSQL
+}
+
+/// The bytes of the `trigger` return type of `function` within its statement,
+/// which starts at byte `start` of the text parsed; `None` for a function
+/// returning anything else.
+#[must_use]
+pub fn trigger_return(function: &CreateFunctionStmt, start: usize) -> Option<Range<usize>> {
+    function
+        .return_type
+        .as_ref()
+        .filter(|returns| DeclaredType::of(returns).is_some_and(|declared| declared.name().name() == TRIGGER_TYPE))
+        .and_then(|returns| usize::try_from(returns.location).ok())
+        .map(|location| location.saturating_sub(start)..location.saturating_sub(start) + TRIGGER_TYPE.len())
+}
+
+/// The string argument of the option `name` of `function`, when it states one.
+fn string_option<'function>(function: &'function CreateFunctionStmt, name: &str) -> Option<&'function str> {
+    function
+        .options
+        .iter()
+        .filter_map(definition_element)
+        .find(|option| option.defname == name)
+        .and_then(string_argument)
 }
 
 /// The definition element `node` holds.

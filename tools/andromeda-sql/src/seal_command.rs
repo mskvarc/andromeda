@@ -88,7 +88,7 @@ pub fn seal_migrations(root: &Path, release: ReleaseVersion, layout: &CanonicalL
     if !drifted.drifted().is_empty() {
         return Ok(SealOutcome::Refused(SealRefusal::NotFormatted(drifted.drifted().to_vec())));
     }
-    let lint = lint_migrations(root, squawk, layout.pg_format())?;
+    let lint = lint_migrations(root, squawk)?;
     if !lint.files().is_empty() {
         return Ok(SealOutcome::Refused(SealRefusal::Lint(lint)));
     }

@@ -15,6 +15,7 @@
 use crate::{
     declared_schema::{
         DeclaredSchema,
+        embedded_statement::{EmbeddedStatementError, sites_of},
         function::{DeclaredFunction, FunctionBody},
         parser_node::string_constant,
         syntax_walk::SyntaxSites,
@@ -137,25 +138,21 @@ fn relations_named(sql: &EmbeddedSql<'_>) -> Result<Vec<(Option<String>, String)
         SqlRole::Static => (sql.query().to_owned(), sql.parse_options()),
         SqlRole::DynamicCommand => (expanded_command(sql.query())?, ParserOptions::DEFAULT),
     };
-    let parsed = pg_query::parse(&text, options).map_err(|source| BodyFault::Unparsed {
-        query: sql.query().to_owned(),
-        source,
+    let sites = sites_of(&text, options).map_err(|error| match error {
+        EmbeddedStatementError::Unparsed(source) => BodyFault::Unparsed {
+            query: sql.query().to_owned(),
+            source,
+        },
+        EmbeddedStatementError::Unwalkable(source) => BodyFault::Unwalkable(source),
     })?;
-    let mut relations = Vec::new();
-    for statement in parsed.protobuf.stmts.iter().filter_map(|statement| statement.stmt.as_deref()) {
-        let sites = SyntaxSites::of(statement).map_err(BodyFault::Unwalkable)?;
-        relations.extend(
-            sites
-                .relations()
-                .iter()
-                .filter(|relation| relation.name().schema().is_some() || !sites.common_tables().iter().any(|common| common == relation.name().name()))
-                .map(|relation| {
-                    let qualifier = relation.name().schema().filter(|schema| *schema != UNBOUND_IDENTIFIER).map(str::to_owned);
-                    (qualifier, relation.name().name().to_owned())
-                }),
-        );
-    }
-    Ok(relations)
+    Ok(sites
+        .iter()
+        .flat_map(SyntaxSites::named_relations)
+        .map(|relation| {
+            let qualifier = relation.name().schema().filter(|schema| *schema != UNBOUND_IDENTIFIER).map(str::to_owned);
+            (qualifier, relation.name().name().to_owned())
+        })
+        .collect())
 }
 
 /// The command a `format(template, ...)` call builds, every `%I` bound to

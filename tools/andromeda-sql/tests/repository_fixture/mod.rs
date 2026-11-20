@@ -23,9 +23,7 @@ pub(crate) fn repository_with(migrations: &[(&str, &str)]) -> io::Result<TempDir
     for file in [".squawk.toml", ".pg_format"] {
         fs::copy(repository_root().join(file), root.path().join(file))?;
     }
-    for file in [".pg_format_functions", ".pg_format_keywords"] {
-        fs::write(root.path().join(file), "")?;
-    }
+    fs::write(root.path().join(".pg_format_keywords"), "")?;
     for (file, text) in migrations {
         write_migration(root.path(), file, text)?;
     }

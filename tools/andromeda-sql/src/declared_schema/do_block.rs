@@ -31,21 +31,13 @@ impl DoBlock {
     ///
     /// Returns [`PlpgsqlError`] when a PL/pgSQL body cannot be read.
     pub fn read(block: &DoStmt, statement: &StatementContext<'_>) -> Result<DoBlock, PlpgsqlError> {
-        let language = block
-            .args
-            .iter()
-            .filter_map(definition_element)
-            .find(|option| option.defname == "language")
-            .and_then(string_argument)
-            .unwrap_or(DEFAULT_LANGUAGE)
-            .to_owned();
-        let routines = if language == DEFAULT_LANGUAGE {
+        let routines = if is_plpgsql(block) {
             PlpgsqlRoutine::parse(statement.text(), None)?
         } else {
             Vec::new()
         };
         Ok(DoBlock {
-            language,
+            language: language_of(block).to_owned(),
             routines,
             origin: statement.migration().origin(statement.span().start),
         })
@@ -68,4 +60,22 @@ impl DoBlock {
     pub const fn origin(&self) -> Origin {
         self.origin
     }
+}
+
+/// The language `block` is written in, PL/pgSQL when it names none.
+#[must_use]
+pub fn language_of(block: &DoStmt) -> &str {
+    block
+        .args
+        .iter()
+        .filter_map(definition_element)
+        .find(|option| option.defname == "language")
+        .and_then(string_argument)
+        .unwrap_or(DEFAULT_LANGUAGE)
+}
+
+/// Whether `block` is written in PL/pgSQL.
+#[must_use]
+pub fn is_plpgsql(block: &DoStmt) -> bool {
+    language_of(block) == DEFAULT_LANGUAGE
 }

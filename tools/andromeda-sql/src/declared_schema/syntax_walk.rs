@@ -72,6 +72,14 @@ impl SyntaxSites {
     pub fn common_tables(&self) -> &[String] {
         &self.common_tables
     }
+
+    /// Every relation named that is no common table expression of the tree:
+    /// a qualified name, or an unqualified one no `with` of the tree defines.
+    pub fn named_relations(&self) -> impl Iterator<Item = &NameSite> {
+        self.relations
+            .iter()
+            .filter(|relation| relation.name().schema().is_some() || !self.common_tables.iter().any(|common| common == relation.name().name()))
+    }
 }
 
 /// A function called, and where.

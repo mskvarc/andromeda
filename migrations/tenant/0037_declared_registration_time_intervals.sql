@@ -12,13 +12,12 @@
 -- kept as the `@value`, and leaves every other member, and every document
 -- holding no such string, as it is.
 -- ============================================================================
--- `instant` declared as a `DateTime` when it is a string, as it is otherwise.
--- Temporary, as only the rewrite here calls it.
+-- `instant` declared as a `DateTime` when it is a string, any other value
+-- unchanged. Temporary, as only the rewrite here calls it.
 create function pg_temp.declared_date_time (instant jsonb)
     returns jsonb
     language sql
     immutable
-    strict
     parallel safe
     return case when jsonb_typeof(instant) = 'string' then
         jsonb_build_object('@type', 'https://uri.etsi.org/ngsi-ld/DateTime', '@value', instant)
@@ -27,14 +26,14 @@ create function pg_temp.declared_date_time (instant jsonb)
     end;
 
 -- A time interval with its `startAt` and its `endAt`, when it has one,
--- declared as a `DateTime`. Temporary, as only the rewrite here calls it.
+-- declared as a `DateTime`, and NULL for an absent interval. Temporary, as
+-- only the rewrite here calls it.
 create function pg_temp.declared_time_interval (time_interval jsonb)
     returns jsonb
     language sql
     immutable
-    strict
     parallel safe
-    return time_interval || jsonb_strip_nulls(jsonb_build_object('startAt', pg_temp.declared_date_time (time_interval -> 'startAt'), 'endAt', pg_temp.declared_date_time (time_interval -> 'endAt')));
+    return time_interval || jsonb_strip_nulls(jsonb_build_object('startAt', pg_temp.declared_date_time(time_interval -> 'startAt'), 'endAt', pg_temp.declared_date_time(time_interval -> 'endAt')));
 
 update
     context_source_registrations
@@ -45,3 +44,5 @@ where
     or jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/managementInterval,endAt}') = 'string'
     or jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/observationInterval,startAt}') = 'string'
     or jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/observationInterval,endAt}') = 'string';
+
+drop function pg_temp.declared_time_interval, pg_temp.declared_date_time;

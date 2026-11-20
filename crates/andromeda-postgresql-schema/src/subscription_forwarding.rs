@@ -13,8 +13,19 @@ pub enum SubscriptionCompanions {
     /// The `subscriptions(subscription_key)` of the minted companion
     /// registration subscription.
     CompanionSubscriptionKey,
-    /// When the companion's update to the current receiver is next due, NULL
-    /// when it notifies that receiver.
+}
+
+/// The tenant-scoped `subscription_companion_redirects` table, holding each
+/// companion owed the current receiver, with the instant its update is next
+/// due. A companion without a row notifies that receiver.
+#[derive(Iden, Clone, Copy)]
+pub enum SubscriptionCompanionRedirects {
+    /// Table name: `subscription_companion_redirects`
+    Table,
+    /// The `subscriptions(subscription_key)` of the local entity subscription
+    /// whose companion owes the update.
+    LocalSubscriptionKey,
+    /// When the companion's update to the current receiver is next due.
     RedirectDueAt,
 }
 
@@ -93,6 +104,7 @@ mod tests {
         ForwardedSubscriptionRedirects,
         ForwardedSubscriptionRoutes,
         ForwardedSubscriptions,
+        SubscriptionCompanionRedirects,
         SubscriptionCompanions,
         SubscriptionReceiver,
     };
@@ -111,7 +123,9 @@ mod tests {
         assert_eq!(ForwardedSubscriptionRedirects::LocalSubscriptionKey.to_string(), "local_subscription_key");
         assert_eq!(ForwardedSubscriptionRedirects::RedirectDueAt.to_string(), "redirect_due_at");
         assert_eq!(ForwardedSubscriptionRedirects::RegistrationId.to_string(), "registration_id");
-        assert_eq!(SubscriptionCompanions::RedirectDueAt.to_string(), "redirect_due_at");
+        assert_eq!(SubscriptionCompanionRedirects::Table.to_string(), "subscription_companion_redirects");
+        assert_eq!(SubscriptionCompanionRedirects::LocalSubscriptionKey.to_string(), "local_subscription_key");
+        assert_eq!(SubscriptionCompanionRedirects::RedirectDueAt.to_string(), "redirect_due_at");
         assert_eq!(SubscriptionReceiver::Table.to_string(), "subscription_receiver");
         assert_eq!(SubscriptionReceiver::Singleton.to_string(), "singleton");
         assert_eq!(SubscriptionReceiver::Receiver.to_string(), "receiver");

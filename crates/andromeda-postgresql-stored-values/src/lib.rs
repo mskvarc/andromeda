@@ -60,6 +60,8 @@ pub mod dataset_key;
 pub mod entity_key;
 /// The persisted lifecycle transition of one notification event.
 pub mod entity_lifecycle;
+/// The persisted operation that created one stored Entity Map.
+pub mod entity_map_request_kind;
 /// The key the `entity_type_names` dictionary hands out for an expanded type
 /// IRI.
 pub mod entity_type_name_key;

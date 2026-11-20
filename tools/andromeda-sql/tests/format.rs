@@ -18,7 +18,7 @@ fn repository_root() -> PathBuf {
 /// given migrations.
 fn repository_with(migrations: &[(&str, &str)]) -> io::Result<TempDir> {
     let root = TempDir::new()?;
-    for configuration in [".pg_format", ".pg_format_keywords", ".pg_format_functions"] {
+    for configuration in [".pg_format", ".pg_format_keywords"] {
         fs::copy(repository_root().join(configuration), root.path().join(configuration))?;
     }
     for (file, text) in migrations {

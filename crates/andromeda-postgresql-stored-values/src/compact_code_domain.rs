@@ -30,6 +30,8 @@ pub enum CompactCodeDomain {
     CsrStatusCode,
     /// [`EntityLifecycleCode`](crate::entity_lifecycle::EntityLifecycleCode).
     EntityLifecycleCode,
+    /// [`EntityMapRequestKindCode`](crate::entity_map_request_kind::EntityMapRequestKindCode).
+    EntityMapRequestKindCode,
     /// [`EntityTypeShapeCode`](crate::entity_type_shape::EntityTypeShapeCode).
     EntityTypeShapeCode,
     /// [`JsonldContextKindCode`](crate::jsonld_context_kind::JsonldContextKindCode).

@@ -1,8 +1,10 @@
 //! The canonical layout of one migration: `pg_format` with the repository
-//! configuration, function statements kept as written, one-line lists rejoined
-//! and the file ending in one newline.
+//! configuration, function statements kept as written, one-line lists
+//! rejoined, every function call written as `name(` and the file ending in one
+//! newline.
 
 use crate::{
+    call_spacing::{CallSpacingError, with_tight_calls},
     file_ending::{with_final_newline, without_trailing_blank_lines},
     function_statement::{FunctionStatementError, HeldOutFunctions},
     list_rejoin::rejoin_one_line_lists,
@@ -23,16 +25,11 @@ impl CanonicalLayout {
         CanonicalLayout { pg_format }
     }
 
-    /// The formatter every file goes through.
-    #[must_use]
-    pub const fn pg_format(&self) -> &PgFormat {
-        &self.pg_format
-    }
-
     /// The canonical text of the migration `sql`.
     ///
     /// The lists are rejoined before the function statements are put back, so
-    /// a function statement keeps the text it was written with.
+    /// a function statement keeps the text it was written with but for the
+    /// spacing of its calls.
     ///
     /// # Errors
     ///
@@ -43,7 +40,7 @@ impl CanonicalLayout {
         let held = HeldOutFunctions::hold_out(sql)?;
         let formatted = self.pg_format.format(&with_final_newline(held.shielded()))?;
         let restored = held.restore(&rejoin_one_line_lists(&formatted))?;
-        Ok(without_trailing_blank_lines(&restored))
+        Ok(without_trailing_blank_lines(&with_tight_calls(&restored)?))
     }
 }
 
@@ -56,4 +53,7 @@ pub enum CanonicalLayoutError {
     /// The function statements could not be held out or put back.
     #[error(transparent)]
     FunctionStatement(#[from] FunctionStatementError),
+    /// The calls of the laid-out text could not be read.
+    #[error(transparent)]
+    CallSpacing(#[from] CallSpacingError),
 }

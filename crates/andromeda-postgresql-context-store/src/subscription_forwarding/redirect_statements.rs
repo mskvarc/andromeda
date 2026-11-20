@@ -1,10 +1,11 @@
 //! The statements over the receiver the companions and copies notify, and the
 //! companions and copies owed the current one.
 //!
-//! A companion owes the current receiver while its `redirect_due_at` is set, a
-//! copy while `forwarded_subscription_redirects` holds a row for it, and each
-//! holds the instant its update is next due on the database clock, which every
-//! pass and every obligation read compares against.
+//! A companion owes the current receiver while
+//! `subscription_companion_redirects` holds a row for it, a copy while
+//! `forwarded_subscription_redirects` holds one, and each row holds the instant
+//! its update is next due on the database clock, which every pass and every
+//! obligation read compares against.
 
 use crate::{store_fault::persistence_error, subscription_store::surrogate_key::subscription_key_of};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -13,6 +14,7 @@ use andromeda_postgresql_schema::{
         ForwardedSubscriptionClaims,
         ForwardedSubscriptionRedirects,
         ForwardedSubscriptions,
+        SubscriptionCompanionRedirects,
         SubscriptionCompanions,
         SubscriptionReceiver,
     },
@@ -58,12 +60,23 @@ pub(crate) fn record_receiver_statement(receiver: &ReceiverEndpoint) -> Result<I
 }
 
 /// Owe the current receiver from now to every companion that owes nothing.
-pub(crate) fn owe_companions_statement() -> UpdateStatement {
-    Query::update()
-        .table(SubscriptionCompanions::Table)
-        .value(SubscriptionCompanions::RedirectDueAt, now())
-        .and_where(Expr::col(SubscriptionCompanions::RedirectDueAt).is_null())
-        .to_owned()
+pub(crate) fn owe_companions_statement() -> Result<InsertStatement, SubscriptionForwardingError> {
+    let companions = Query::select()
+        .column(SubscriptionCompanions::LocalSubscriptionKey)
+        .expr(now())
+        .from(SubscriptionCompanions::Table)
+        .to_owned();
+    let mut insert = Query::insert();
+    insert
+        .into_table(SubscriptionCompanionRedirects::Table)
+        .columns([
+            SubscriptionCompanionRedirects::LocalSubscriptionKey,
+            SubscriptionCompanionRedirects::RedirectDueAt,
+        ])
+        .select_from(companions)
+        .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
+        .on_conflict(OnConflict::column(SubscriptionCompanionRedirects::LocalSubscriptionKey).do_nothing().to_owned());
+    Ok(insert)
 }
 
 /// Owe the current receiver from now to every copy whose claim is settled and
@@ -146,21 +159,21 @@ pub(crate) fn owe_copy_statement(local: &Identifier, registration: &Identifier) 
 
 /// The URI of up to `limit` local subscriptions whose companion's update is
 /// due, the longest overdue first, served by
-/// `idx_subscription_companions_redirect_due_at`.
+/// `idx_subscription_companion_redirects_redirect_due_at`.
 pub(crate) fn overdue_companions_statement(limit: u32) -> SelectStatement {
     let owing = Alias::new(OWING);
     let subscription = Alias::new(SUBSCRIPTION);
     Query::select()
         .column((subscription.clone(), Subscriptions::Id))
-        .from_as(SubscriptionCompanions::Table, owing.clone())
+        .from_as(SubscriptionCompanionRedirects::Table, owing.clone())
         .join_as(
             JoinType::InnerJoin,
             Subscriptions::Table,
             subscription.clone(),
-            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((owing.clone(), SubscriptionCompanions::LocalSubscriptionKey)),
+            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((owing.clone(), SubscriptionCompanionRedirects::LocalSubscriptionKey)),
         )
-        .and_where(Expr::col((owing.clone(), SubscriptionCompanions::RedirectDueAt)).lte(Expr::current_timestamp()))
-        .order_by((owing, SubscriptionCompanions::RedirectDueAt), Order::Asc)
+        .and_where(Expr::col((owing.clone(), SubscriptionCompanionRedirects::RedirectDueAt)).lte(Expr::current_timestamp()))
+        .order_by((owing, SubscriptionCompanionRedirects::RedirectDueAt), Order::Asc)
         .limit(u64::from(limit))
         .to_owned()
 }
@@ -198,12 +211,10 @@ pub(crate) fn overdue_copies_statement(limit: u32) -> SelectStatement {
 }
 
 /// Clear what the companion of `local` owes.
-pub(crate) fn companion_redirected_statement(local: &Identifier) -> UpdateStatement {
-    Query::update()
-        .table(SubscriptionCompanions::Table)
-        .value(SubscriptionCompanions::RedirectDueAt, Expr::null())
-        .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionKey).in_subquery(subscription_key_of(local)))
-        .and_where(Expr::col(SubscriptionCompanions::RedirectDueAt).is_not_null())
+pub(crate) fn companion_redirected_statement(local: &Identifier) -> DeleteStatement {
+    Query::delete()
+        .from_table(SubscriptionCompanionRedirects::Table)
+        .and_where(Expr::col(SubscriptionCompanionRedirects::LocalSubscriptionKey).in_subquery(subscription_key_of(local)))
         .to_owned()
 }
 
@@ -219,10 +230,9 @@ pub(crate) fn copy_redirected_statement(local: &Identifier, registration: &Ident
 /// Make the update the companion of `local` owes due `after` from now.
 pub(crate) fn postpone_companion_statement(local: &Identifier, after: Duration) -> UpdateStatement {
     Query::update()
-        .table(SubscriptionCompanions::Table)
-        .value(SubscriptionCompanions::RedirectDueAt, span_after_transaction_start(after))
-        .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionKey).in_subquery(subscription_key_of(local)))
-        .and_where(Expr::col(SubscriptionCompanions::RedirectDueAt).is_not_null())
+        .table(SubscriptionCompanionRedirects::Table)
+        .value(SubscriptionCompanionRedirects::RedirectDueAt, span_after_transaction_start(after))
+        .and_where(Expr::col(SubscriptionCompanionRedirects::LocalSubscriptionKey).in_subquery(subscription_key_of(local)))
         .to_owned()
 }
 
@@ -291,8 +301,12 @@ mod tests {
     #[test]
     fn every_companion_owing_nothing_owes_the_receiver_from_now() {
         assert_eq!(
-            owe_companions_statement().to_string(PostgresQueryBuilder),
-            r#"UPDATE "subscription_companions" SET "redirect_due_at" = NOW() WHERE "redirect_due_at" IS NULL"#
+            owe_companions_statement().expect("the statement builds").to_string(PostgresQueryBuilder),
+            concat!(
+                r#"INSERT INTO "subscription_companion_redirects" ("local_subscription_key", "redirect_due_at") "#,
+                r#"SELECT "local_subscription_key", NOW() FROM "subscription_companions" "#,
+                r#"ON CONFLICT ("local_subscription_key") DO NOTHING"#
+            )
         );
     }
 
@@ -338,7 +352,7 @@ mod tests {
         assert_eq!(
             overdue_companions_statement(100).to_string(PostgresQueryBuilder),
             concat!(
-                r#"SELECT "s"."id" FROM "subscription_companions" AS "o" "#,
+                r#"SELECT "s"."id" FROM "subscription_companion_redirects" AS "o" "#,
                 r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "o"."local_subscription_key" "#,
                 r#"WHERE "o"."redirect_due_at" <= CURRENT_TIMESTAMP ORDER BY "o"."redirect_due_at" ASC LIMIT 100"#
             )
@@ -359,12 +373,10 @@ mod tests {
     }
 
     #[test]
-    fn a_redirected_companion_owes_nothing_and_one_owing_nothing_is_left_alone() {
+    fn a_redirected_companion_loses_its_row_by_the_key_of_its_local_subscription() {
         assert_eq!(
             companion_redirected_statement(&uri("urn:ngsi-ld:Subscription:local")).to_string(PostgresQueryBuilder),
-            format!(
-                r#"UPDATE "subscription_companions" SET "redirect_due_at" = NULL WHERE "local_subscription_key" IN {LOCAL_KEY} AND "redirect_due_at" IS NOT NULL"#
-            )
+            format!(r#"DELETE FROM "subscription_companion_redirects" WHERE "local_subscription_key" IN {LOCAL_KEY}"#)
         );
     }
 
@@ -383,7 +395,7 @@ mod tests {
         assert_eq!(
             postpone_companion_statement(&uri("urn:ngsi-ld:Subscription:local"), Duration::from_secs(60)).to_string(PostgresQueryBuilder),
             format!(
-                r#"UPDATE "subscription_companions" SET "redirect_due_at" = CURRENT_TIMESTAMP + (make_interval(secs => 60)) WHERE "local_subscription_key" IN {LOCAL_KEY} AND "redirect_due_at" IS NOT NULL"#
+                r#"UPDATE "subscription_companion_redirects" SET "redirect_due_at" = CURRENT_TIMESTAMP + (make_interval(secs => 60)) WHERE "local_subscription_key" IN {LOCAL_KEY}"#
             )
         );
         assert_eq!(

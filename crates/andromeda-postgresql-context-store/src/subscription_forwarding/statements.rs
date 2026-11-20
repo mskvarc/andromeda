@@ -43,8 +43,8 @@ fn reading_subscription_uri<T: Iden + Copy + 'static>(table: T, key: T) -> Selec
 }
 
 /// Record `companion` as the companion of `local`, replacing the one `local`
-/// had. A companion just created notifies the current receiver, so it owes
-/// nothing.
+/// had. The caller clears what the companion owes the receiver, since one just
+/// created notifies the current receiver and owes nothing.
 ///
 /// A URI no subscription carries resolves to NULL, which the key columns
 /// refuse, so a link naming a missing subscription fails.
@@ -57,7 +57,7 @@ pub(crate) fn link_companion_statement(local: &Identifier, companion: &Identifie
         .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
         .on_conflict(
             OnConflict::column(SubscriptionCompanions::LocalSubscriptionKey)
-                .update_columns([SubscriptionCompanions::CompanionSubscriptionKey, SubscriptionCompanions::RedirectDueAt])
+                .update_column(SubscriptionCompanions::CompanionSubscriptionKey)
                 .to_owned(),
         );
     Ok(insert)
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(
             sql,
             format!(
-                r#"INSERT INTO "subscription_companions" ("local_subscription_key", "companion_subscription_key") VALUES ({}, {}) ON CONFLICT ("local_subscription_key") DO UPDATE SET "companion_subscription_key" = "excluded"."companion_subscription_key", "redirect_due_at" = "excluded"."redirect_due_at""#,
+                r#"INSERT INTO "subscription_companions" ("local_subscription_key", "companion_subscription_key") VALUES ({}, {}) ON CONFLICT ("local_subscription_key") DO UPDATE SET "companion_subscription_key" = "excluded"."companion_subscription_key""#,
                 key_of("local"),
                 key_of("companion")
             )

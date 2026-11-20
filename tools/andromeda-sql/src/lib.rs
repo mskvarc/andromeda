@@ -7,6 +7,8 @@
 //! migrations declare, every finding rendered as a diagnostic that quotes the
 //! line it is on.
 
+/// The spacing of a function call.
+pub mod call_spacing;
 /// The canonical layout of one migration.
 pub mod canonical_layout;
 /// The schema the migrations declare.
@@ -19,7 +21,7 @@ pub mod file_digest;
 pub mod file_ending;
 /// `andromeda-sql format`.
 pub mod format_command;
-/// The words `pg_format` is taught, and the functions it knows.
+/// The words `pg_format` is taught.
 pub mod formatter_vocabulary;
 /// The function statements held out of `pg_format`.
 pub mod function_statement;
@@ -77,6 +79,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: ["andromeda-postgresql-context-store"],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-request",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-stored-values",

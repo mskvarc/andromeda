@@ -1,5 +1,5 @@
 //! `RedirectLedger` implementation over `subscription_receiver`, the
-//! companions' `redirect_due_at` and `forwarded_subscription_redirects`.
+//! `subscription_companion_redirects` and `forwarded_subscription_redirects`.
 
 use crate::{
     store_fault::{persistence_error, undecodable},
@@ -62,7 +62,7 @@ impl RedirectLedger for SubscriptionForwardingRepository {
             if adopted.as_ref().is_some_and(|(adopted,)| adopted.as_str() == receiver.url().as_str()) {
                 return Ok(());
             }
-            owe_companions_statement()
+            owe_companions_statement()?
                 .to_query()
                 .execute(&mut *transaction)
                 .await

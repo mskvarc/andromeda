@@ -5,7 +5,7 @@ use crate::{
     store_fault::{persistence_error, undecodable},
     subscription_forwarding::{
         claim_statements::{lease_claim_statement, settle_claim_statement, stale_claims_statement, take_over_claim_statement},
-        redirect_statements::owe_copy_statement,
+        redirect_statements::{companion_redirected_statement, owe_copy_statement},
         repo::SubscriptionForwardingRepository,
         statements::{
             companion_of_statement,
@@ -51,9 +51,25 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
+            // One transaction, so a companion just created never keeps what
+            // the one it replaces owed the receiver.
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             link_companion_statement(local, companion)?
                 .to_query()
-                .execute(self.pool())
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
+            companion_redirected_statement(local)
+                .to_query()
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
+            transaction
+                .commit()
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             Ok(())

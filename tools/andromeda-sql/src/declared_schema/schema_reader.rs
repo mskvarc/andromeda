@@ -7,19 +7,22 @@ use crate::{
         created_object::{CreatedObject, ObjectKind},
         do_block::DoBlock,
         domain::DeclaredDomain,
+        dropped_object::DroppedObject,
+        embedded_statement::static_sites,
         function::{DeclaredFunction, definition_element},
         index::DeclaredIndex,
+        origin::Origin,
         parsed_migration::ParsedMigration,
         parser_node::{function_call, string_constant},
         qualified_name::QualifiedName,
-        relation_reference::{CallPlace, FunctionCall, RelationReference},
+        relation_reference::RelationReference,
         statement_context::StatementContext,
         statistics::DeclaredStatistics,
         syntax_walk::SyntaxSites,
         table::{DeclaredTable, Hypertable, ReplicaIdentity, ReplicaIdentityKind, StorageParameter},
         trigger::DeclaredTrigger,
     },
-    plpgsql_tree::PlpgsqlError,
+    plpgsql_tree::{PlpgsqlError, PlpgsqlRoutine},
 };
 use pg_query::{
     Node,
@@ -69,8 +72,8 @@ pub struct SchemaObjects {
     pub(crate) created: Vec<CreatedObject>,
     /// Every relation named without being created.
     pub(crate) references: Vec<RelationReference>,
-    /// Every function called outside a function body.
-    pub(crate) calls: Vec<FunctionCall>,
+    /// Every table, function and schema dropped.
+    pub(crate) dropped: Vec<DroppedObject>,
 }
 
 impl SchemaObjects {
@@ -88,23 +91,12 @@ impl SchemaObjects {
             let context = StatementContext::new(migration, statement.span());
             let sites = SyntaxSites::of(node).map_err(SchemaReadError::Walk)?;
             let created_relation = self.read_statement(node, &context)?;
-            let common_tables = sites.common_tables();
             self.references.extend(
                 sites
-                    .relations()
-                    .iter()
+                    .named_relations()
                     .filter(|relation| created_relation.is_none_or(|created| relation.offset() != Some(created)))
-                    .filter(|relation| relation.name().schema().is_some() || !common_tables.iter().any(|common| common == relation.name().name()))
                     .map(|relation| RelationReference::new(relation.name().clone(), context.origin_at(location_of(relation.offset())))),
             );
-            if !matches!(node, NodeEnum::CreateFunctionStmt(_)) {
-                self.calls.extend(
-                    sites
-                        .calls()
-                        .iter()
-                        .map(|call| FunctionCall::new(call.name().clone(), CallPlace::Statement, context.origin_at(location_of(call.offset())))),
-                );
-            }
         }
         Ok(())
     }
@@ -147,19 +139,27 @@ impl SchemaObjects {
         {
             self.created
                 .push(CreatedObject::new(ObjectKind::Function, function.name().name(), function.origin()));
+            self.read_routine_references(function.routines(), function.origin());
             self.functions.push(function);
         } else if let NodeEnum::CreateTrigStmt(trigger) = node
             && let Some(trigger) = DeclaredTrigger::read(trigger, context)
         {
             self.created.push(CreatedObject::new(ObjectKind::Trigger, trigger.name(), trigger.origin()));
-            self.calls.push(FunctionCall::new(
-                trigger.function().clone(),
-                CallPlace::TriggerTarget,
-                trigger.function_origin(),
-            ));
             self.triggers.push(trigger);
         } else if let NodeEnum::DoStmt(block) = node {
-            self.do_blocks.push(DoBlock::read(block, context).map_err(SchemaReadError::Routine)?);
+            let block = DoBlock::read(block, context).map_err(SchemaReadError::Routine)?;
+            self.read_routine_references(block.routines(), block.origin());
+            self.do_blocks.push(block);
+        } else if let NodeEnum::CreateSchemaStmt(schema) = node {
+            let origin = context.origin_of_name(&schema.schemaname);
+            self.created.push(CreatedObject::new(ObjectKind::Schema, schema.schemaname.as_str(), origin));
+        } else if let NodeEnum::DropStmt(drop) = node {
+            for dropped in DroppedObject::read_all(drop, context) {
+                if dropped.kind() == ObjectKind::Table {
+                    self.forget_table(dropped.name().name());
+                }
+                self.dropped.push(dropped);
+            }
         } else if let NodeEnum::ViewStmt(view) = node
             && let Some(relation) = view.view.as_ref()
         {
@@ -176,6 +176,34 @@ impl SchemaObjects {
             self.read_hypertables(select, context);
         }
         Ok(None)
+    }
+
+    /// Record every relation the statements `routines` plan as written name,
+    /// at `origin`, the routine's place: the PL/pgSQL parser keeps no offset
+    /// of an embedded statement.
+    fn read_routine_references(&mut self, routines: &[PlpgsqlRoutine], origin: Origin) {
+        for sites in static_sites(routines) {
+            self.references
+                .extend(sites.named_relations().map(|relation| RelationReference::new(relation.name().clone(), origin)));
+        }
+    }
+
+    /// Forget every declaration of `table` so far, which a `drop table`
+    /// removes, so a table created again under its name is read as the new
+    /// table alone. The created objects stay, as the record of every name a
+    /// migration has created.
+    fn forget_table(&mut self, table: &str) {
+        self.tables.retain(|declared| declared.name() != table);
+        self.columns.retain(|column| column.relation() != table);
+        self.compression_settings.retain(|setting| setting.relation() != table);
+        self.constraints.retain(|constraint| constraint.table() != table);
+        self.validations.retain(|validation| validation.table() != table);
+        self.storage_parameters.retain(|parameter| parameter.table() != table);
+        self.indexes.retain(|index| index.table() != table);
+        self.statistics.retain(|statistics| statistics.table() != table);
+        self.triggers.retain(|trigger| trigger.table() != table);
+        self.hypertables.retain(|hypertable| hypertable.table() != table);
+        self.replica_identities.retain(|identity| identity.table() != table);
     }
 
     /// Read a `create table`, returning the offset of the table's name.

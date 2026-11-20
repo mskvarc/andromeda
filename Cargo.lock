@@ -1405,7 +1405,6 @@ dependencies = [
  "compact_str",
  "derive_more",
  "geo",
- "hex",
  "http",
  "indexmap 2.14.2",
  "iri-rs",
@@ -2278,6 +2277,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-request",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-schema",
