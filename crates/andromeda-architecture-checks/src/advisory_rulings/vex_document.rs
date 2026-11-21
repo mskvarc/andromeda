@@ -1,11 +1,13 @@
 //! The part of an OpenVEX v0.2.0 document the gate reads.
 //!
 //! Members the gate does not compare, the document's identity, author,
-//! timestamp and version and a vulnerability's aliases, are read past. The
-//! status and justification tokens are the ones the OpenVEX specification
-//! defines, so a misspelt token fails to parse.
+//! timestamps and version, are read past. The status and justification tokens
+//! are the ones the OpenVEX specification defines, so a misspelt token fails
+//! to parse, and a statement's timestamp has to be an RFC 3339 instant.
 
+use jiff::Timestamp;
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use strum::Display;
 
 /// An OpenVEX document, read for its statements.
@@ -20,6 +22,9 @@ pub(crate) struct VexDocument {
 pub(crate) struct Statement {
     /// The vulnerability ruled on.
     pub(crate) vulnerability: Vulnerability,
+    /// When the ruling was known to hold; `None` when the statement takes the
+    /// document's timestamp.
+    pub(crate) timestamp: Option<Timestamp>,
     /// The products the ruling covers.
     pub(crate) products: Vec<Product>,
     /// How the vulnerability affects the products.
@@ -32,12 +37,36 @@ pub(crate) struct Statement {
     pub(crate) impact: Option<String>,
 }
 
+impl Statement {
+    /// The package URL of every component the statement names inside any of
+    /// its products, each once, in sorted order.
+    pub(crate) fn subcomponents(&self) -> BTreeSet<&str> {
+        self.products
+            .iter()
+            .flat_map(|product| &product.subcomponents)
+            .map(|subcomponent| subcomponent.id.as_str())
+            .collect()
+    }
+}
+
 /// The vulnerability a statement rules on.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Vulnerability {
-    /// The advisory identifier the vulnerability is named by, such as a
-    /// `RUSTSEC-` id.
+    /// The identifier the statement is named by, such as a `RUSTSEC-`, `CVE-`
+    /// or `GHSA-` id.
     pub(crate) name: String,
+    /// The vulnerability's other identifiers; empty when the statement lists
+    /// none.
+    #[serde(default)]
+    pub(crate) aliases: Vec<String>,
+}
+
+impl Vulnerability {
+    /// Every identifier of the vulnerability, its name and its aliases, each
+    /// once, in sorted order.
+    pub(crate) fn identifiers(&self) -> BTreeSet<&str> {
+        self.aliases.iter().map(String::as_str).chain([self.name.as_str()]).collect()
+    }
 }
 
 /// A product a statement covers, with the components inside it that carry the
@@ -92,4 +121,15 @@ pub(crate) enum Justification {
     VulnerableCodeCannotBeControlledByAdversary,
     /// The product mitigates the vulnerability itself.
     InlineMitigationsAlreadyExist,
+}
+
+impl Justification {
+    /// Whether the ruling rests on what the crates linking the component call
+    /// into it, so it holds only for the linking crates it was proven for.
+    pub(crate) const fn rests_on_callers(self) -> bool {
+        match self {
+            Justification::VulnerableCodeNotInExecutePath | Justification::VulnerableCodeCannotBeControlledByAdversary => true,
+            Justification::ComponentNotPresent | Justification::VulnerableCodeNotPresent | Justification::InlineMitigationsAlreadyExist => false,
+        }
+    }
 }

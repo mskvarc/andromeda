@@ -25,7 +25,9 @@
 //! - a manifest enabling `chrono`'s `serde` feature, which would let a model
 //!   derive a reader for a bare `DateTime<Utc>` that skips the clause, or
 //!   depending on another date-time library, which would bring a reader and a
-//!   writer of its own;
+//!   writer of its own; the guard crate may depend on `jiff`, which reads the
+//!   RFC 3339 timestamps of the broker image's VEX document, no NGSI-LD time
+//!   value;
 //! - a name of, or a dependency on, the XSD datatype library outside the
 //!   lexicon's datatype module, which reads XSD datatypes and never an NGSI-LD
 //!   time value.
@@ -55,6 +57,13 @@ const TIME_OWNER: &str = "crates/andromeda-ngsi-ld-lexicon/src/time/";
 
 /// The guard's own sources, which spell the names they look for.
 const GUARD_SOURCES: &str = "crates/andromeda-architecture-checks/src/time_handling/";
+
+/// The manifest of the guard crate, whose VEX gate reads RFC 3339 timestamps
+/// that are no NGSI-LD time values.
+const GUARD_MANIFEST: &str = "crates/andromeda-architecture-checks/Cargo.toml";
+
+/// The date-time libraries [`GUARD_MANIFEST`] may depend on.
+const GUARD_DATE_TIME_LIBRARIES: [&str; 1] = ["jiff"];
 
 /// The module that reads XSD datatypes, the one source naming the XSD library.
 const XSD_OWNER: &str = "crates/andromeda-ngsi-ld-lexicon/src/datatype/";
@@ -123,9 +132,13 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
     }
     for manifest in workspace_manifest_paths(root) {
         let path = manifest.strip_prefix(root).unwrap_or(&manifest).to_string_lossy().replace('\\', "/");
+        let admitted: &[&str] = if path == GUARD_MANIFEST { &GUARD_DATE_TIME_LIBRARIES } else { &[] };
         let findings = match fs::read_to_string(&manifest) {
-            Ok(text) if path == XSD_OWNER_MANIFEST => date_time_library_findings(&text),
-            Ok(text) => date_time_library_findings(&text).into_iter().chain(xsd_dependency_findings(&text)).collect(),
+            Ok(text) if path == XSD_OWNER_MANIFEST => date_time_library_findings(&text, admitted),
+            Ok(text) => date_time_library_findings(&text, admitted)
+                .into_iter()
+                .chain(xsd_dependency_findings(&text))
+                .collect(),
             Err(error) => vec![format!("could not be read: {error}")],
         };
         sites.extend(findings.into_iter().map(|subject| TimeHandlingSite {

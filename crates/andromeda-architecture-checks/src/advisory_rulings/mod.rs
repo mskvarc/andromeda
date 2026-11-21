@@ -4,21 +4,27 @@
 //! `deny.toml` ignores an advisory with the reason the broker is not affected
 //! by it. The OpenVEX document attested beside the image tells scanners the
 //! same ruling, as a `not_affected` statement whose impact statement is that
-//! reason, about the crate version the image links. The gate holds every
-//! statement to an ignore of its advisory with the same reason, and every crate
-//! a statement names to a version `Cargo.lock` holds, so a ruling cannot change,
-//! lapse or move to another crate version in one place alone. A ruling that a
-//! crate's code never runs rests on what the crates linking it call, so the
-//! impact statement names each of them with its version, and the gate fails
-//! once the lockfile adds or moves one, because the ruling then has to be
-//! proven again for it. Each product is
-//! the broker image's package URL without a version, under the owner of the
-//! workspace's repository, the form a scanner matches every digest of the image
-//! by.
+//! reason, about the crate version the image links. Scanners that read the
+//! Rust advisory database report every advisory cargo-deny reports, so every
+//! ignore needs a statement. A scanner reports an advisory under one of its
+//! identifiers, the Rust advisory, CVE or GitHub one, and some apply only a
+//! statement named by the identifier they report, so an advisory gets one
+//! statement per identifier, each listing the others as aliases and all ruling
+//! alike.
 //!
-//! An ignore needs a statement only when scanners report its advisory, which
-//! the advisory databases decide and the workspace does not record, so an
-//! ignore without a statement passes.
+//! The gate holds every ignore to a statement, every statement to an ignore of
+//! one of its identifiers with the same reason, the statements of one advisory
+//! to the same identifiers, justification and crates, and every crate a
+//! statement names to a version `Cargo.lock` holds, so a ruling cannot change,
+//! lapse or move to another crate version in one place alone. A ruling that a
+//! crate's code never runs, or runs only on input no adversary controls, rests
+//! on what the crates linking it call, so its impact statement names each of
+//! them with its version, and the gate fails once the lockfile adds or moves
+//! one, because the ruling then has to be proven again for it. Each statement
+//! names the broker image in every form scanners match every digest of it by,
+//! under the owner of the workspace's repository, and carries its own
+//! timestamp, so a later change elsewhere in the document leaves its date as
+//! it was.
 
 mod advisory_ignores;
 mod broker_image;
@@ -29,10 +35,10 @@ mod vex_document;
 use crate::{
     advisory_rulings::{
         advisory_ignores::advisory_ignores,
-        broker_image::BrokerImage,
+        broker_image::{BrokerImage, ImageForm},
         disagreement::Disagreement,
         locked_crates::LockedCrates,
-        vex_document::{Product, Statement, Status, VexDocument},
+        vex_document::{Justification, Statement, Status, VexDocument},
     },
     workspace_file::{read_toml_document, read_workspace_file},
 };
@@ -40,8 +46,10 @@ use packageurl::PackageUrl;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    ptr,
     str::FromStr,
 };
+use strum::IntoEnumIterator;
 
 /// The OpenVEX document the release attests to the broker image, relative to
 /// the workspace root.
@@ -60,12 +68,14 @@ const ROOT_MANIFEST: &str = "Cargo.toml";
 /// The package URL type of a crate.
 const CRATE_TYPE: &str = "cargo";
 
-/// Assert that every statement of the broker image's VEX document repeats an
-/// advisory ruling of `deny.toml` for a crate version `Cargo.lock` holds.
+/// Assert that the broker image's VEX document states every advisory ruling of
+/// `deny.toml`, once under each identifier of the advisory, for crate versions
+/// `Cargo.lock` holds.
 ///
 /// # Panics
 ///
-/// Panics when a statement disagrees with `deny.toml` or `Cargo.lock`, when a
+/// Panics when an ignore has no statement, when a statement disagrees with
+/// `deny.toml`, `Cargo.lock` or the other statements of its advisory, when a
 /// product or crate it names is not spelt as a scanner matches it, when the
 /// root manifest names no GitHub repository, or when one of the four files
 /// cannot be read or parsed.
@@ -112,85 +122,151 @@ fn read_vex_document(root: &Path, violations: &mut Vec<String>) -> Option<VexDoc
 }
 
 /// Every way a statement of `document` disagrees with the advisories `ignores`
-/// records, the crates `locked` holds or the broker `image`, in statement order.
+/// records, the crates `locked` holds, the broker `image` or the other
+/// statements of its advisory, in statement order, followed by every ignore no
+/// statement names.
 fn disagreements<'a>(
     document: &'a VexDocument,
-    ignores: &BTreeMap<String, Option<String>>,
+    ignores: &'a BTreeMap<String, Option<String>>,
     locked: &'a LockedCrates,
     image: &'a BrokerImage,
 ) -> Vec<Disagreement<'a>> {
-    let mut ruled = BTreeSet::new();
-    document
-        .statements
-        .iter()
-        .flat_map(|statement| {
-            let advisory = statement.vulnerability.name.as_str();
-            let repeated = (!ruled.insert(advisory)).then_some(Disagreement::Repeated { advisory });
-            repeated
-                .into_iter()
-                .chain(ruling_disagreements(statement, ignores))
-                .chain(product_disagreements(statement, locked, image))
+    let named = first_statement_by_name(document);
+    let stated = document.statements.iter().flat_map(|statement| {
+        let advisory = statement.vulnerability.name.as_str();
+        let repeated = named
+            .get(advisory)
+            .is_some_and(|first| !ptr::eq(*first, statement))
+            .then_some(Disagreement::Repeated { advisory });
+        repeated
+            .into_iter()
+            .chain(ruling_disagreements(statement, ignores))
+            .chain(alias_disagreements(statement, &named))
+            .chain(product_disagreements(statement, image))
+            .chain(crate_disagreements(statement, locked))
+    });
+    let unstated = ignores
+        .keys()
+        .filter(|ignored| {
+            !document
+                .statements
+                .iter()
+                .any(|statement| statement.vulnerability.identifiers().contains(ignored.as_str()))
         })
-        .collect()
+        .map(|ignored| Disagreement::IgnoreWithoutStatement { advisory: ignored });
+    stated.chain(unstated).collect()
 }
 
-/// How `statement` disagrees with the ruling `ignores` records for its advisory.
-fn ruling_disagreements<'a>(statement: &'a Statement, ignores: &BTreeMap<String, Option<String>>) -> Vec<Disagreement<'a>> {
+/// The first statement of `document` named by each identifier.
+fn first_statement_by_name(document: &VexDocument) -> BTreeMap<&str, &Statement> {
+    document.statements.iter().fold(BTreeMap::new(), |mut named, statement| {
+        named.entry(statement.vulnerability.name.as_str()).or_insert(statement);
+        named
+    })
+}
+
+/// How `statement` disagrees with the ruling `ignores` records for the first
+/// of its identifiers, in sorted order, that `deny.toml` ignores.
+fn ruling_disagreements<'a>(statement: &'a Statement, ignores: &'a BTreeMap<String, Option<String>>) -> Vec<Disagreement<'a>> {
     let advisory = statement.vulnerability.name.as_str();
-    let ignore = match ignores.get(advisory) {
+    let ignore = match statement
+        .vulnerability
+        .identifiers()
+        .into_iter()
+        .find_map(|identifier| ignores.get_key_value(identifier))
+    {
         None => Some(Disagreement::NotIgnored { advisory }),
-        Some(None) => Some(Disagreement::IgnoredWithoutReason { advisory }),
-        Some(Some(reason)) => (statement.impact.as_deref() != Some(reason.as_str())).then_some(Disagreement::ImpactDiffers { advisory }),
+        Some((identifier, None)) => Some(Disagreement::IgnoredWithoutReason { advisory, ignored: identifier }),
+        Some((identifier, Some(reason))) => {
+            (statement.impact.as_deref() != Some(reason.as_str())).then_some(Disagreement::ImpactDiffers { advisory, ignored: identifier })
+        }
     };
     let status = (statement.status != Status::NotAffected).then_some(Disagreement::NotNotAffected {
         advisory,
         status: statement.status,
     });
     let justification = statement.justification.is_none().then_some(Disagreement::Unjustified { advisory });
-    [ignore, status, justification].into_iter().flatten().collect()
+    let undated = statement.timestamp.is_none().then_some(Disagreement::Undated { advisory });
+    [ignore, status, justification, undated].into_iter().flatten().collect()
 }
 
-/// How the products of `statement`, and the crates inside them, disagree with
-/// the broker `image` and the crates `locked` holds.
-fn product_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates, image: &'a BrokerImage) -> Vec<Disagreement<'a>> {
+/// How the statements the aliases of `statement` name, among the first
+/// statement of each name in `named`, disagree with it: an alias names no
+/// statement, or its statement lists other identifiers, gives another
+/// justification or names other crates.
+fn alias_disagreements<'a>(statement: &'a Statement, named: &BTreeMap<&str, &'a Statement>) -> Vec<Disagreement<'a>> {
     let advisory = statement.vulnerability.name.as_str();
-    if statement.products.is_empty() {
-        return vec![Disagreement::NoProduct { advisory }];
-    }
+    let identifiers = statement.vulnerability.identifiers();
     statement
-        .products
+        .vulnerability
+        .aliases
         .iter()
-        .flat_map(|product| {
-            let not_image = (!image.is_named_by(&product.id)).then_some(Disagreement::ProductNotImage {
-                advisory,
-                product: &product.id,
-                image: image.purl(),
-            });
-            not_image.into_iter().chain(subcomponent_disagreements(statement, product, locked))
+        .filter_map(|alias| {
+            let Some(aliased) = named.get(alias.as_str()) else {
+                return Some(Disagreement::AliasWithoutStatement { advisory, alias });
+            };
+            if aliased.vulnerability.identifiers() != identifiers {
+                Some(Disagreement::AliasesDiffer { advisory, alias })
+            } else if aliased.justification != statement.justification || aliased.subcomponents() != statement.subcomponents() {
+                Some(Disagreement::AliasRulesOtherwise { advisory, alias })
+            } else {
+                None
+            }
         })
         .collect()
 }
 
-/// How the crates inside `product` disagree with the crates `locked` holds.
-fn subcomponent_disagreements<'a>(statement: &'a Statement, product: &'a Product, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+/// How the products of `statement` disagree with the broker `image`: a product
+/// is no form of the image or names no crate inside it, or a form of the image
+/// is named by no product.
+fn product_disagreements<'a>(statement: &'a Statement, image: &'a BrokerImage) -> Vec<Disagreement<'a>> {
     let advisory = statement.vulnerability.name.as_str();
-    if product.subcomponents.is_empty() {
-        return vec![Disagreement::NoSubcomponent {
+    if statement.products.is_empty() {
+        return vec![Disagreement::NoProduct { advisory }];
+    }
+    let forms: BTreeSet<ImageForm> = statement.products.iter().filter_map(|product| image.form_named_by(&product.id)).collect();
+    let foreign = statement
+        .products
+        .iter()
+        .filter(|product| image.form_named_by(&product.id).is_none())
+        .map(|product| Disagreement::ProductNotImage {
             advisory,
             product: &product.id,
-        }];
-    }
-    product
-        .subcomponents
+            oci: image.purl(ImageForm::Oci),
+            docker: image.purl(ImageForm::Docker),
+        });
+    let missing = ImageForm::iter()
+        .filter(|form| !forms.contains(form))
+        .map(|form| Disagreement::ImageFormMissing {
+            advisory,
+            form: image.purl(form),
+        });
+    let empty = statement
+        .products
         .iter()
-        .flat_map(|subcomponent| crate_disagreements(statement, &subcomponent.id, locked))
+        .filter(|product| product.subcomponents.is_empty())
+        .map(|product| Disagreement::NoSubcomponent {
+            advisory,
+            product: &product.id,
+        });
+    foreign.chain(missing).chain(empty).collect()
+}
+
+/// How the crates `statement` names inside its products, each once, disagree
+/// with the crates `locked` holds.
+fn crate_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+    statement
+        .subcomponents()
+        .into_iter()
+        .flat_map(|subcomponent| subcomponent_disagreements(statement, subcomponent, locked))
         .collect()
 }
 
 /// How the crate version `subcomponent` names disagrees with the crates
-/// `locked` holds: it is no crate version, the lockfile does not hold it, or a
-/// crate linking it goes unnamed in the impact statement of `statement`.
-fn crate_disagreements<'a>(statement: &'a Statement, subcomponent: &'a str, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+/// `locked` holds: it is no crate version, the lockfile does not hold it, or,
+/// for a ruling that rests on what the linking crates call, a crate linking it
+/// goes unnamed in the impact statement of `statement`.
+fn subcomponent_disagreements<'a>(statement: &'a Statement, subcomponent: &'a str, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
     let advisory = statement.vulnerability.name.as_str();
     let purl = PackageUrl::from_str(subcomponent).ok().filter(|purl| purl.ty() == CRATE_TYPE);
     let Some((name, version)) = purl.as_ref().and_then(|purl| Some((purl.name(), purl.version()?))) else {
@@ -198,6 +274,9 @@ fn crate_disagreements<'a>(statement: &'a Statement, subcomponent: &'a str, lock
     };
     if !locked.holds(name, version) {
         return vec![Disagreement::NotLocked { advisory, subcomponent }];
+    }
+    if !statement.justification.is_some_and(Justification::rests_on_callers) {
+        return Vec::new();
     }
     let impact = statement.impact.as_deref().unwrap_or_default();
     locked

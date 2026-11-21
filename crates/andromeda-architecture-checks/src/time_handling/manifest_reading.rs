@@ -11,13 +11,13 @@ const OTHER_DATE_TIME_LIBRARIES: [&str; 7] = ["chrono-tz", "dateparser", "iso860
 const DEPENDENCY_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
 
 /// One finding per dependency table that enables `chrono/serde` and per other
-/// date-time library it names, or the one finding that the manifest is not
-/// TOML.
+/// date-time library it names outside `admitted`, or the one finding that the
+/// manifest is not TOML.
 ///
 /// `chrono`'s `serde` feature gives `DateTime<Utc>` a reader of its own, which
 /// admits numeric offsets and nanoseconds; with it off, a model member holding
 /// an instant compiles only through the lexicon's `instant_serde` adapters.
-pub(crate) fn date_time_library_findings(manifest: &str) -> Vec<String> {
+pub(crate) fn date_time_library_findings(manifest: &str, admitted: &[&str]) -> Vec<String> {
     let document = match manifest.parse::<DocumentMut>() {
         Ok(document) => document,
         Err(error) => return vec![format!("does not parse as TOML: {error}")],
@@ -29,7 +29,10 @@ pub(crate) fn date_time_library_findings(manifest: &str) -> Vec<String> {
             if enables_chrono_serde(dependencies) {
                 findings.push(format!("[{table}] chrono enables its `serde` feature"));
             }
-            for library in OTHER_DATE_TIME_LIBRARIES.iter().filter(|library| dependencies.contains_key(library)) {
+            for library in OTHER_DATE_TIME_LIBRARIES
+                .iter()
+                .filter(|library| dependencies.contains_key(library) && !admitted.contains(library))
+            {
                 findings.push(format!("[{table}] depends on the date-time library `{library}`"));
             }
         }
@@ -52,30 +55,39 @@ mod tests {
 
     #[test]
     fn chrono_with_the_serde_feature_is_a_finding() {
-        let findings = date_time_library_findings("[dependencies]\nchrono = { version = \"0.4.45\", features = [\"serde\"] }\n");
+        let findings = date_time_library_findings("[dependencies]\nchrono = { version = \"0.4.45\", features = [\"serde\"] }\n", &[]);
         pretty_assertions::assert_eq!(findings, vec!["[dependencies] chrono enables its `serde` feature".to_owned()]);
     }
 
     #[test]
     fn chrono_in_a_dev_dependency_table_is_read_too() {
-        let findings = date_time_library_findings("[dev-dependencies.chrono]\nversion = \"0.4.45\"\nfeatures = [\"std\", \"serde\"]\n");
+        let findings = date_time_library_findings("[dev-dependencies.chrono]\nversion = \"0.4.45\"\nfeatures = [\"std\", \"serde\"]\n", &[]);
         pretty_assertions::assert_eq!(findings.len(), 1, "{findings:?}");
     }
 
     #[test]
     fn another_date_time_library_is_a_finding() {
-        let findings = date_time_library_findings("[dependencies]\njiff = \"0.2.38\"\ntime = { version = \"0.3.44\" }\n");
+        let findings = date_time_library_findings("[dependencies]\njiff = \"0.2.38\"\ntime = { version = \"0.3.44\" }\n", &[]);
         pretty_assertions::assert_eq!(findings.len(), 2, "{findings:?}");
+    }
+
+    #[test]
+    fn an_admitted_date_time_library_is_no_finding_and_the_others_still_are() {
+        let findings = date_time_library_findings("[dependencies]\njiff = \"1.0.2\"\ntime = { version = \"0.3.44\" }\n", &["jiff"]);
+        pretty_assertions::assert_eq!(findings, vec!["[dependencies] depends on the date-time library `time`".to_owned()]);
     }
 
     #[test]
     fn chrono_without_the_serde_feature_is_clean() {
         pretty_assertions::assert_eq!(
-            date_time_library_findings("[dependencies]\nchrono = \"0.4.45\"\nserde = { version = \"1.0.229\", features = [\"derive\"] }\n"),
+            date_time_library_findings(
+                "[dependencies]\nchrono = \"0.4.45\"\nserde = { version = \"1.0.229\", features = [\"derive\"] }\n",
+                &[]
+            ),
             Vec::<String>::new()
         );
         pretty_assertions::assert_eq!(
-            date_time_library_findings("[dependencies]\nchrono = { version = \"0.4.45\", features = [\"clock\"] }\n"),
+            date_time_library_findings("[dependencies]\nchrono = { version = \"0.4.45\", features = [\"clock\"] }\n", &[]),
             Vec::<String>::new()
         );
     }
