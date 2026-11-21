@@ -54,7 +54,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt"] }
 tracing = "0.1.44"
 typed-builder = "0.23.2"
-url = { version = "2.5.8", features = ["serde"] }
+url = { version = "2.5.9", features = ["serde"] }
 urn-rs = { version = "1.0.0", features = ["static"] }
 
 [dev-dependencies]

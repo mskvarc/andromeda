@@ -22,7 +22,7 @@ derive_more = { version = "2.1.1", features = ["display", "from"] }
 semver = "1.0.28"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
-xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+xxhash-rust = { version = "0.8.21", features = ["xxh3"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

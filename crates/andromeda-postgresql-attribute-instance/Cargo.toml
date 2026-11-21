@@ -28,7 +28,7 @@ indexmap = "2.14.2"
 langtag = "1.1.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
-sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono"] }
+sqlx = { version = "0.9.1", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono"] }
 thiserror = "2.0.21"
 
 [dev-dependencies]
