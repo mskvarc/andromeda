@@ -4,7 +4,7 @@
 
 use crate::{
     config::BrokerRole,
-    raw_http::{RawHttpError, RawTarget, find, parse},
+    raw_http::{AnswerHead, RawHttpError, RawTarget},
 };
 use bytes::Bytes;
 use http::{Response, header::CONTENT_LENGTH};
@@ -86,17 +86,17 @@ impl HeldConnection {
     pub async fn response(&mut self) -> Result<Response<Bytes>, HeldConnectionError> {
         let mut received = Vec::new();
         loop {
-            if let Some(head_end) = find(&received, b"\r\n\r\n") {
-                let head = parse(received.get(..head_end.saturating_add(4)).unwrap_or_default())?;
-                let length = head
+            if let Some(AnswerHead { response, octets }) = AnswerHead::read(&received)? {
+                let length = response
                     .headers()
                     .get(CONTENT_LENGTH)
                     .and_then(|value| value.to_str().ok())
                     .and_then(|value| value.parse::<usize>().ok())
                     .ok_or(HeldConnectionError::NoContentLength)?;
-                if received.len() >= head_end.saturating_add(4).saturating_add(length) {
+                let end = octets.saturating_add(length);
+                if let Some(body) = received.get(octets..end) {
                     println!("held connection receives:\n{}", String::from_utf8_lossy(&received));
-                    return Ok(parse(&received)?);
+                    return Ok(response.map(|()| Bytes::copy_from_slice(body)));
                 }
             }
             let mut chunk = [0; 4096];

@@ -107,6 +107,7 @@ dependencies = [
  "syn 3.0.10",
  "thiserror 2.0.21",
  "toml_edit",
+ "walkdir",
 ]
 
 [[package]]
@@ -2410,6 +2411,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "walkdir",
 ]
 
 [[package]]
@@ -2510,6 +2512,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "httparse",
  "indexmap 2.14.2",
  "iri-rs",
  "mediatype",

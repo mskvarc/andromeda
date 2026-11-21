@@ -67,6 +67,7 @@ andromeda_architecture_checks::dependency_boundary! {
 #[cfg(test)]
 mod boundary_tests {
     use std::{fs, io::Error, path::Path};
+    use walkdir::WalkDir;
 
     #[test]
     fn source_names_no_policy_adapter_http_or_database_dependency() -> Result<(), Error> {
@@ -123,12 +124,11 @@ mod boundary_tests {
     }
 
     fn assert_policy_sources_are_runtime_neutral(directory: &Path, policy: &str) -> Result<(), Error> {
-        for entry in fs::read_dir(directory)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                assert_policy_sources_are_runtime_neutral(&path, policy)?;
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                let source = fs::read_to_string(&path)?;
+        for entry in WalkDir::new(directory).follow_links(true) {
+            let entry = entry?;
+            let path = entry.path();
+            if !entry.file_type().is_dir() && path.extension().is_some_and(|extension| extension == "rs") {
+                let source = fs::read_to_string(path)?;
                 for forbidden in ["TaskRegistration", "TaskSupervisor", "tokio::task::JoinHandle"] {
                     assert!(
                         !source.contains(forbidden),
