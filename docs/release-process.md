@@ -1,6 +1,6 @@
 # Release process
 
-A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alpha.N`, `-beta.N` or `-rc.N` for a pre-release. The `release` workflow then publishes the signed broker image with its provenance, SBOM and VEX attestations, and a GitHub release with the configuration schema and descriptor attached. Before it builds anything, it refuses a tag whose commit has no passing `ci-ok` check, and a tag whose migrations break the seal. The arm64 image it publishes is the one `ci` built for the tagged commit and ran the suite trees against. The amd64 image is the one `ci` built from the same broker inputs, so a release compiles nothing when both exist, and builds the amd64 image only when `ci` has none. The seal check takes the SQL tool as the `sql` job of `ci` last compiled it on `main`. `prune-ci-images` deletes the commit's `broker-<sha>` tag 30 days after `ci` made it unless the commit is still the head of `main`, so any other commit older than that has to go through `ci` again before it can be tagged. When its broker image still exists, `ci` only tags it again.
+A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alpha.N`, `-beta.N` or `-rc.N` for a pre-release. The `release` workflow then publishes the signed broker image with its provenance, SBOM and VEX attestations, and a GitHub release with the configuration schema, the descriptor and the VEX document attached. Before it builds anything, it refuses a tag whose commit has no passing `ci-ok` check, and a tag whose migrations break the seal. The arm64 image it publishes is the one `ci` built for the tagged commit and ran the suite trees against. The amd64 image is the one `ci` built from the same broker inputs, so a release compiles nothing when both exist, and builds the amd64 image only when `ci` has none. The seal check takes the SQL tool as the `sql` job of `ci` last compiled it on `main`. `prune-ci-images` deletes the commit's `broker-<sha>` tag 30 days after `ci` made it unless the commit is still the head of `main`, so any other commit older than that has to go through `ci` again before it can be tagged. When its broker image still exists, `ci` only tags it again.
 
 ## Stable release
 
@@ -52,11 +52,11 @@ An advisory published after a release gets a new VEX attestation on the image th
 
 1. On a branch off the release's tag, add the ignore and the statement, so the gate checks the statement against the lockfile the release shipped. When `main` still links the same crate version, add both to `main` too.
 2. Start `ci` by hand on the branch and let it pass.
-3. Start the `vex` workflow on the branch with the release's version, such as `1.0.0`. It refuses a commit without a passing `ci-ok` check, and attests the branch's document to the release's manifest list and to both platform images.
+3. Start the `vex` workflow on the branch with the release's version, such as `1.0.0`. It refuses a commit without a passing `ci-ok` check, attests the branch's document to the release's manifest list and to both platform images, and replaces the release's `andromeda-vX.Y.Z.openvex.json` asset with it.
 
 This works for releases cut after VEX attestations were introduced. `v1.0.0` predates them, so its tag holds neither the `vex` workflow nor the document, and its binary carries no dependency tree, which leaves a scanner no crate of it to report.
 
-Each attestation carries the whole document. Trivy reads only the first OpenVEX attestation the registry lists for a digest, which may still be the older one, so a scanner that misses the newest statement can be given the document from the repository with `--vex`.
+Each attestation carries the whole document. Trivy reads only the first OpenVEX attestation the registry lists for a digest, which may still be the older one. The release asset always holds the newest document, so a scanner given it with `--vex` sees every statement, as in `trivy image --vex andromeda-vX.Y.Z.openvex.json ghcr.io/<owner>/andromeda:X.Y.Z`.
 
 To check that scanners honour the document, scan each platform image once after a release.
 

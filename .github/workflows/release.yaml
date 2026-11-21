@@ -226,6 +226,11 @@ jobs:
           cp docs/configuration/andromeda.schema.json "dist/andromeda-${{ github.ref_name }}.schema.json"
           cp docs/configuration/andromeda.descriptor.json "dist/andromeda-${{ github.ref_name }}.descriptor.json"
 
+      # The document the image's VEX attestations carry, for a scanner given it with --vex. Trivy reads only the first
+      # OpenVEX attestation of a digest, so this asset is how a later document reaches it; the vex workflow replaces it.
+      - name: Stage the VEX document
+        run: cp .vex/andromeda.openvex.json "dist/andromeda-${{ github.ref_name }}.openvex.json"
+
       # Every release, a pre-release too, lists the changes since the previous stable release. git-cliff's --current
       # stops at the newest tag of any kind, so the range names the stable tag. Via env: never parsed as shell.
       - name: Resolve the release notes range
