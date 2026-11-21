@@ -3,7 +3,8 @@ name: vex
 # Attests the VEX document of the commit the run starts from to a released broker image, for an advisory published
 # after the release. The commit must have passed ci, whose unit job holds its statements to the rulings of deny.toml and
 # to the crate versions of its lockfile, so a statement about a crate the release links is attested from a branch off
-# the release's tag.
+# the release's tag. The release's VEX asset is replaced with the same document, since Trivy reads only the first
+# OpenVEX attestation of a digest and the asset is how a scanner given it with --vex sees the newest one.
 on:
   workflow_dispatch:
     inputs:
@@ -27,7 +28,7 @@ jobs:
     permissions:
       attestations: write
       checks: read
-      contents: read
+      contents: write
       id-token: write
       packages: write
     env:
@@ -61,3 +62,14 @@ jobs:
         with:
           image: ${{ env.IMAGE }}
           digest: ${{ steps.digest.outputs.digest }}
+
+      # The asset keeps the name the release gave it. Via env: never parsed as shell.
+      - name: Replace the release's VEX asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          asset="${RUNNER_TEMP}/andromeda-v${VERSION}.openvex.json"
+          cp .vex/andromeda.openvex.json "$asset"
+          gh release upload "v${VERSION}" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
