@@ -17,7 +17,7 @@ use ngsi_ld::{
 /// `^` and `$` limit the match to the start and the end of the identifier.
 #[gtest]
 #[tokio::test]
-async fn n_qry_ent_9016_an_id_pattern_matches_anywhere_in_the_identifier_unless_anchored() -> Result<()> {
+async fn n_qry_ent_9018_an_id_pattern_matches_anywhere_in_the_identifier_unless_anchored() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let car_type = namespace.entity_type("Car")?;
