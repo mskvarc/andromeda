@@ -116,6 +116,12 @@ macro_rules! workspace_architecture {
                 $crate::toolchain_pin::assert_images_build_from_the_pinned_toolchain(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// The broker image builds the broker binary with the dependency tree scanners read embedded.
+            #[test]
+            fn the_broker_image_builds_an_auditable_binary() {
+                $crate::auditable_build::assert_the_broker_image_builds_an_auditable_binary(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Every VEX statement repeats an advisory ruling of `deny.toml` for a crate version the lockfile holds.
             #[test]
             fn vex_statements_repeat_the_advisory_rulings() {
