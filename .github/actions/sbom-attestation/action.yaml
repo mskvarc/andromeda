@@ -1,0 +1,70 @@
+name: SBOM attestation
+description: Generates an SPDX SBOM of each platform image a published image index points at, and attests each to its platform image and to the index, pushing the attestations to the registry. The job checks out the commit, logs in to the registry, sets up buildx and holds attestations, id-token and packages write permission.
+
+inputs:
+  image:
+    description: The image's repository, without a tag, such as ghcr.io/<owner>/andromeda.
+    required: true
+  digest:
+    description: The digest of the image's index.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: platforms
+      uses: ./.github/actions/platform-digests
+      with:
+        image: ${{ inputs.image }}
+        digest: ${{ inputs.digest }}
+
+    # Pulled by its own digest, a platform image is scanned as it is, whatever the runner's platform. Each SBOM is
+    # attested, so it is not uploaded as a workflow artifact as well, which would count against storage.
+    - name: Generate the linux/amd64 SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ inputs.image }}@${{ steps.platforms.outputs.amd64 }}
+        format: spdx-json
+        output-file: ${{ runner.temp }}/sbom-linux-amd64.spdx.json
+        upload-artifact: false
+
+    - name: Generate the linux/arm64 SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ inputs.image }}@${{ steps.platforms.outputs.arm64 }}
+        format: spdx-json
+        output-file: ${{ runner.temp }}/sbom-linux-arm64.spdx.json
+        upload-artifact: false
+
+    - name: Attest the linux/amd64 SBOM to its image
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ steps.platforms.outputs.amd64 }}
+        sbom-path: ${{ runner.temp }}/sbom-linux-amd64.spdx.json
+        push-to-registry: true
+
+    - name: Attest the linux/arm64 SBOM to its image
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ steps.platforms.outputs.arm64 }}
+        sbom-path: ${{ runner.temp }}/sbom-linux-arm64.spdx.json
+        push-to-registry: true
+
+    # A tag resolves to the index, so a lookup by tag finds the SBOM of every platform there.
+    - name: Attest the linux/amd64 SBOM to the index
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ inputs.digest }}
+        sbom-path: ${{ runner.temp }}/sbom-linux-amd64.spdx.json
+        push-to-registry: true
+
+    - name: Attest the linux/arm64 SBOM to the index
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ inputs.digest }}
+        sbom-path: ${{ runner.temp }}/sbom-linux-arm64.spdx.json
+        push-to-registry: true

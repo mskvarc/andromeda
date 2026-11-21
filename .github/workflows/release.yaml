@@ -190,22 +190,12 @@ jobs:
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
 
-      - name: Generate SBOM
+      - name: Attest SBOMs
         if: ${{ github.event.repository.visibility == 'public' }}
-        uses: anchore/sbom-action@v0
+        uses: ./.github/actions/sbom-attestation
         with:
-          image: ${{ env.IMAGE }}@${{ steps.digest.outputs.digest }}
-          format: spdx-json
-          output-file: sbom.spdx.json
-
-      - name: Attest SBOM
-        if: ${{ github.event.repository.visibility == 'public' }}
-        uses: actions/attest@v4
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.digest.outputs.digest }}
-          sbom-path: sbom.spdx.json
-          push-to-registry: true
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.digest.outputs.digest }}
 
       - name: Attest VEX
         if: ${{ github.event.repository.visibility == 'public' }}
