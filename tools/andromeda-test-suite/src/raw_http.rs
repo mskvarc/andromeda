@@ -10,6 +10,7 @@ use crate::{
 };
 use bytes::Bytes;
 use http::{
+    HeaderMap,
     HeaderName,
     HeaderValue,
     Method,
@@ -17,10 +18,10 @@ use http::{
     StatusCode,
     header::{InvalidHeaderName, InvalidHeaderValue, TRANSFER_ENCODING},
 };
+use httparse::{EMPTY_HEADER, Status};
 use std::{
     io::{self, Read, Write},
     net::TcpStream,
-    num::ParseIntError,
     time::Duration,
 };
 use tokio::task::{self, JoinError};
@@ -28,6 +29,9 @@ use url::Url;
 
 /// The longest the broker may take to answer.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The most header fields an answer's head is read with; a head carrying more is refused as unreadable.
+const MAX_FIELDS: usize = 64;
 
 /// Why a raw request could not be sent or its answer read.
 #[derive(Debug, thiserror::Error)]
@@ -47,35 +51,32 @@ pub enum RawHttpError {
     /// The blocking exchange did not finish.
     #[error("the exchange with the broker did not finish")]
     Join(#[from] JoinError),
-    /// The answer holds no blank line ending its head.
+    /// The answer ends before the blank line that ends its head.
     #[error("the answer has no end of its head")]
     NoHeadEnd,
-    /// The status line names no status code.
+    /// The head is not the head of an HTTP/1.x response.
+    #[error("the head of the answer does not read")]
+    Head(#[source] httparse::Error),
+    /// The three-digit status code lies below 100, where no status is defined.
     #[error("the status line of the answer names no status code")]
     StatusLine,
-    /// A field line of the head holds no `:`.
-    #[error("a field line of the answer holds no colon")]
-    FieldLine,
     /// A field name of the head is not a header name.
     #[error("a field name of the answer is not a header name")]
     FieldName(#[source] InvalidHeaderName),
     /// A field value of the head is not a header value.
     #[error("a field value of the answer is not a header value")]
     FieldValue(#[source] InvalidHeaderValue),
-    /// The parts read do not form a response.
-    #[error("the answer does not form a response")]
-    Response(#[source] http::Error),
-    /// A chunk of the body has no size line.
+    /// The body ends before the line stating a chunk's size.
     #[error("a chunk of the answer has no size line")]
     NoChunkSizeLine,
-    /// A chunk size is not hexadecimal.
+    /// A chunk size line is not a hexadecimal size with optional extensions.
     #[error("a chunk size of the answer is not hexadecimal")]
-    ChunkSize(#[source] ParseIntError),
+    ChunkSize,
     /// The body ends before a chunk of the stated size.
     #[error("the answer ends inside a chunk of {size} octets")]
     ShortChunk {
         /// The octets the chunk states.
-        size: usize,
+        size: u64,
     },
     /// A chunk is not followed by its line end.
     #[error("a chunk of the answer is not followed by its line end")]
@@ -145,67 +146,88 @@ fn exchange(host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, io::Error>
     Ok(answer)
 }
 
+/// The head of an answer, read from the front of the octets received so far.
+#[derive(Debug)]
+pub(crate) struct AnswerHead {
+    /// The status and header fields, with no body.
+    pub(crate) response: Response<()>,
+    /// The octets the head spans, the blank line that ends it included.
+    pub(crate) octets: usize,
+}
+
+impl AnswerHead {
+    /// The head at the front of `received`; `None` while the blank line that ends it has not arrived.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RawHttpError`] when `received` does not open with the head of an HTTP/1.x response.
+    pub(crate) fn read(received: &[u8]) -> Result<Option<AnswerHead>, RawHttpError> {
+        let mut fields = [EMPTY_HEADER; MAX_FIELDS];
+        let mut head = httparse::Response::new(&mut fields);
+        let octets = match head.parse(received).map_err(RawHttpError::Head)? {
+            Status::Complete(octets) => octets,
+            Status::Partial => return Ok(None),
+        };
+        let status = head.code.and_then(|code| StatusCode::from_u16(code).ok()).ok_or(RawHttpError::StatusLine)?;
+        let headers = head
+            .headers
+            .iter()
+            .map(|field| {
+                let name = HeaderName::from_bytes(field.name.as_bytes()).map_err(RawHttpError::FieldName)?;
+                let value = HeaderValue::from_bytes(field.value).map_err(RawHttpError::FieldValue)?;
+                Ok((name, value))
+            })
+            .collect::<Result<HeaderMap, RawHttpError>>()?;
+        let mut response = Response::new(());
+        *response.status_mut() = status;
+        *response.headers_mut() = headers;
+        Ok(Some(AnswerHead { response, octets }))
+    }
+}
+
 /// The response in `answer`: its status line, header fields and body, with a chunked body decoded.
 ///
 /// # Errors
 ///
 /// Returns [`RawHttpError`] when `answer` is not an HTTP response.
 pub fn parse(answer: &[u8]) -> Result<Response<Bytes>, RawHttpError> {
-    let split = find(answer, b"\r\n\r\n").ok_or(RawHttpError::NoHeadEnd)?;
-    let head = String::from_utf8_lossy(&answer[..split]).into_owned();
-    let mut lines = head.split("\r\n");
-    let status_line = lines.next().unwrap_or_default();
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse::<u16>().ok())
-        .and_then(|code| StatusCode::from_u16(code).ok())
-        .ok_or(RawHttpError::StatusLine)?;
-    let mut builder = Response::builder().status(status);
-    for line in lines {
-        let (name, value) = line.split_once(':').ok_or(RawHttpError::FieldLine)?;
-        let name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(RawHttpError::FieldName)?;
-        let value = HeaderValue::from_str(value.trim()).map_err(RawHttpError::FieldValue)?;
-        builder = builder.header(name, value);
-    }
-    let rest = &answer[split + 4..];
-    let chunked = builder
-        .headers_ref()
-        .and_then(|headers| headers.get(TRANSFER_ENCODING))
+    let AnswerHead { response, octets } = AnswerHead::read(answer)?.ok_or(RawHttpError::NoHeadEnd)?;
+    let rest = &answer[octets..];
+    let chunked = response
+        .headers()
+        .get(TRANSFER_ENCODING)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"));
     let body = if chunked { dechunk(rest)? } else { rest.to_vec() };
-    builder.body(Bytes::from(body)).map_err(RawHttpError::Response)
+    Ok(response.map(|()| Bytes::from(body)))
 }
 
 /// The payload of a chunked body.
 fn dechunk(mut rest: &[u8]) -> Result<Vec<u8>, RawHttpError> {
     let mut payload = Vec::new();
     loop {
-        let end = find(rest, b"\r\n").ok_or(RawHttpError::NoChunkSizeLine)?;
-        let size_text = String::from_utf8_lossy(&rest[..end]);
-        let size_text = size_text.split(';').next().unwrap_or_default().trim();
-        let size = usize::from_str_radix(size_text, 16).map_err(RawHttpError::ChunkSize)?;
-        rest = &rest[end + 2..];
+        let (size_line, size) = match httparse::parse_chunk_size(rest).map_err(|_invalid| RawHttpError::ChunkSize)? {
+            Status::Complete(sized) => sized,
+            Status::Partial => return Err(RawHttpError::NoChunkSizeLine),
+        };
+        rest = &rest[size_line..];
         if size == 0 {
             return Ok(payload);
         }
-        let chunk = rest.get(..size).ok_or(RawHttpError::ShortChunk { size })?;
+        let chunk = usize::try_from(size)
+            .ok()
+            .and_then(|length| rest.get(..length))
+            .ok_or(RawHttpError::ShortChunk { size })?;
         payload.extend_from_slice(chunk);
-        rest = rest.get(size + 2..).ok_or(RawHttpError::NoChunkEnd)?;
+        rest = rest[chunk.len()..].strip_prefix(b"\r\n").ok_or(RawHttpError::NoChunkEnd)?;
     }
-}
-
-/// The offset of the first `needle` in `haystack`.
-pub(crate) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::raw_http::parse;
+    use crate::raw_http::{AnswerHead, RawHttpError, parse};
     use googletest::prelude::*;
-    use http::StatusCode;
+    use http::{StatusCode, header::CONTENT_LENGTH};
 
     #[gtest]
     fn a_response_without_a_body_is_read() -> Result<()> {
@@ -228,6 +250,40 @@ mod tests {
 
     #[gtest]
     fn a_message_that_is_no_response_is_refused() -> Result<()> {
-        verify_that!(parse(b"garbage"), err(anything()))
+        verify_that!(parse(b"garbage"), err(predicate(|error: &RawHttpError| matches!(error, RawHttpError::Head(_)))))
+    }
+
+    #[gtest]
+    fn a_head_without_its_blank_line_is_not_read_yet() -> Result<()> {
+        verify_that!(AnswerHead::read(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n")?, none())
+    }
+
+    #[gtest]
+    fn a_finished_head_spans_every_octet_before_the_body() -> Result<()> {
+        let answer = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}";
+        let head = AnswerHead::read(answer)?.or_fail()?;
+        expect_that!(head.octets, eq(answer.len() - b"{}".len()));
+        verify_that!(head.response.headers().get(CONTENT_LENGTH), some(eq("2")))
+    }
+
+    #[gtest]
+    fn a_chunk_size_with_an_extension_is_read() -> Result<()> {
+        let response = parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3;name=value\r\nabc\r\n0\r\n\r\n")?;
+        verify_that!(response.body().as_ref(), eq(b"abc".as_slice()))
+    }
+
+    #[gtest]
+    fn a_chunk_not_followed_by_its_line_end_is_refused() -> Result<()> {
+        let answer = parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcX\r\n0\r\n\r\n");
+        verify_that!(answer, err(predicate(|error: &RawHttpError| matches!(error, RawHttpError::NoChunkEnd))))
+    }
+
+    #[gtest]
+    fn a_chunk_longer_than_the_body_is_refused() -> Result<()> {
+        let answer = parse(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\nabc");
+        verify_that!(
+            answer,
+            err(predicate(|error: &RawHttpError| matches!(error, RawHttpError::ShortChunk { size: 9 })))
+        )
     }
 }

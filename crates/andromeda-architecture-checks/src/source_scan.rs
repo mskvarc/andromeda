@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use syn::{Attribute, File, Item, UseTree};
+use walkdir::{DirEntry, WalkDir};
 
 /// The directories holding one workspace package per subdirectory: the broker
 /// crates and the tooling packages.
@@ -142,32 +143,14 @@ pub(crate) fn file_paths(root: &Path, wanted: fn(&Path) -> bool) -> Vec<PathBuf>
     if !root.exists() {
         return Vec::new();
     }
-    let mut paths = Vec::new();
     let mut unreadable = Vec::new();
-    let mut directories = vec![root.to_path_buf()];
-    while let Some(directory) = directories.pop() {
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) => {
-                unreadable.push(format!("{} could not be listed: {error}", directory.display()));
-                continue;
-            }
-        };
-        for entry in entries {
-            let path = match entry {
-                Ok(entry) => entry.path(),
-                Err(error) => {
-                    unreadable.push(format!("an entry of {} could not be read: {error}", directory.display()));
-                    continue;
-                }
-            };
-            if path.is_dir() {
-                directories.push(path);
-            } else if wanted(&path) {
-                paths.push(path);
-            }
-        }
-    }
+    let mut paths = WalkDir::new(root)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|entry| entry.inspect_err(|error| unreadable.push(error.to_string())).ok())
+        .filter(|entry| !entry.file_type().is_dir() && wanted(entry.path()))
+        .map(DirEntry::into_path)
+        .collect::<Vec<_>>();
     assert!(
         unreadable.is_empty(),
         "the source tree below {} could not be listed:\n{}",
