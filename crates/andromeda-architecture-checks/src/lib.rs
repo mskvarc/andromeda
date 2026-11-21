@@ -8,6 +8,7 @@
 
 pub mod advisory_rulings;
 pub mod architecture;
+pub mod auditable_build;
 pub mod comment_hygiene;
 mod comment_lexer;
 pub mod configuration_description;

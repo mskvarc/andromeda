@@ -45,18 +45,22 @@ runs:
         fixtures=('**/*.json' '**/*.jsonld' '**/*.abnf' 'docs/configuration/**')
         sql=('migrations/**' '.pg_format*' .squawk.toml)
         settings=(clippy.toml .taplo.toml deny.toml cliff.toml '.config/**')
+        # Inputs a check reads from among the paths it excludes: architecture gates of unit read image definitions.
+        also=()
         case "$CHECK" in
           fmt) included=(.); excluded=("${pages[@]}" "${images[@]}" "${fixtures[@]}" "${sql[@]}" "${settings[@]}" '**/*.sh') ;;
           machete) included=(.); excluded=("${pages[@]}" "${images[@]}" "${fixtures[@]}" "${sql[@]}" "${settings[@]}" '**/*.sh' rustfmt.toml) ;;
           taplo) included=('**/*.toml' docs/configuration/andromeda.schema.json); excluded=() ;;
           shellcheck) included=('**/*.sh' '**/.shellcheckrc'); excluded=() ;;
-          clippy | unit) included=(.); excluded=("${pages[@]}" "${images[@]}") ;;
+          clippy) included=(.); excluded=("${pages[@]}" "${images[@]}") ;;
+          unit) included=(.); excluded=("${pages[@]}" "${images[@]}"); also=('**/Dockerfile') ;;
           sql) included=(.); excluded=("${pages[@]}" "${images[@]}" 'src/**' 'tools/andromeda-test-suite/**') ;;
           suite-*) included=('tools/andromeda-test-suite/stacks/**' tools/andromeda-test-suite/run-suite.sh .config/nextest.toml); excluded=() ;;
           *) echo "unknown check: ${CHECK}" >&2; exit 1 ;;
         esac
         digest="$({
           git ls-files --stage -z -- "${included[@]}" ':(exclude).github/**' "${excluded[@]/#/:(exclude)}"
+          if ((${#also[@]})); then git ls-files --stage -z -- "${also[@]}"; fi
           git ls-files --stage -z -- '.github/workflows/**' '.github/actions/**'
           printf '%s\n' "$PARTS"
         } | sha256sum | cut -d ' ' -f 1)"
