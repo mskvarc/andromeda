@@ -94,7 +94,7 @@ FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384def
 COPY --from=builder --chown=10001:10001 /rootfs/ /
 COPY --from=builder /dist/andromeda /usr/local/bin/andromeda
 
-COPY LICENSE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md crates/andromeda-http-headers/LICENSE-MIT.md /usr/share/doc/andromeda/
+COPY LICENSE.md NOTICE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md crates/andromeda-http-headers/LICENSE-MIT.md /usr/share/doc/andromeda/
 
 # 10001 has no passwd entry, so HOME is set here: the default configuration file and log directory resolve under it.
 ENV HOME=/var/lib/andromeda
