@@ -2,8 +2,8 @@
 //!
 //! Clause 4.9 gives a Query Term, and clause 4.10 a geoquery, one meaning wherever a broker evaluates it, and a broker
 //! may evaluate it in more than one place: in its store for a query, and over the Entity a write produced for a
-//! Subscription. This module asks both with the same filter and reads back the Entities each answers; the corpora of
-//! [`crate::q_parity`] and [`crate::geo_parity`] state the Entities each filter selects.
+//! Subscription. This module asks both with the same filter and reads back the Entities each answers, and holds both
+//! answers to the Entities a corpus case states.
 
 use crate::{
     broker::BrokerClient,
@@ -24,7 +24,7 @@ use std::{collections::HashSet, num::NonZeroU32, time::Duration};
 use tokio::time::sleep;
 
 /// How long every endpoint is watched for a notification beyond the ones owed.
-const QUIET_WINDOW: Duration = Duration::from_secs(3);
+pub(crate) const QUIET_WINDOW: Duration = Duration::from_secs(3);
 
 /// The members a query and a Subscription are both asked with.
 #[derive(Debug, Clone)]
@@ -93,90 +93,6 @@ pub(crate) async fn expect_alike(
         broker.subscriptions().delete(subscription_id).send().await?;
     }
     Ok(())
-}
-
-/// One filter asked of Query Entities and of a Subscription with no answer stated for it.
-#[derive(Debug, Clone)]
-pub(crate) struct LabelledFilter<'c> {
-    /// How the filter is named in a failure.
-    pub(crate) label: String,
-    /// The filter.
-    pub(crate) filter: Filter<'c>,
-}
-
-/// Subscribes to the Entities of `entity_type` once for each of `filters`, creates `entities`, and expects the
-/// notifications of each Subscription to name the Entities Query Entities answers for its filter, whichever those
-/// are. A failure names the filter, and each Entity only one of the two named, with what `described` says of the
-/// Entity at its position in `entities`.
-///
-/// One Subscription's notifications are not delivered in the order of the writes that raised them, so no count of
-/// them proves the last has come. Each endpoint is awaited until it holds as many notifications as Query Entities
-/// answered Entities, every endpoint is then watched for the same quiet window as a corpus case, and only then are
-/// both directions compared: an Entity Query Entities answers and no notification named, and an Entity a
-/// notification named that Query Entities did not answer.
-///
-/// # Errors
-///
-/// Fails when a request member cannot be built, a request is refused or the sink cannot be read.
-pub(crate) async fn expect_agreement(
-    broker: &BrokerClient,
-    namespace: &Namespace,
-    entity_type: &EntityTypeName,
-    entities: &[Entity<Input>],
-    filters: &[LabelledFilter<'_>],
-    described: impl Fn(usize) -> Option<String>,
-) -> Result<()> {
-    let sink = NotificationSink::start().await?;
-    for (endpoint, filter) in filters.iter().enumerate() {
-        subscribe(broker, namespace, entity_type, &sink, endpoint, "drawn", &filter.filter).await?;
-    }
-    for entity in entities {
-        broker.entities().create(entity).send().await?.done()?;
-    }
-    let mut answers = Vec::with_capacity(filters.len());
-    for (endpoint, filter) in filters.iter().enumerate() {
-        let queried = queried_ids(broker, entity_type, &filter.filter).await?;
-        match sink.wait_for_at_least(endpoint, queried.len()).await {
-            Ok(_) | Err(SinkError::TimedOut(_)) => {}
-            Err(failure @ SinkError::Server(_)) => return Err(failure.into()),
-        }
-        answers.push(queried);
-    }
-    sleep(QUIET_WINDOW).await;
-    for (endpoint, (filter, queried)) in filters.iter().zip(&answers).enumerate() {
-        let notified = notified_ids(&sink, endpoint).await?;
-        let one_sided = queried
-            .symmetric_difference(&notified)
-            .map(|id| {
-                entities
-                    .iter()
-                    .position(|entity| entity.id == *id)
-                    .and_then(&described)
-                    .map_or_else(|| id.to_string(), |drawn| format!("{id} {drawn}"))
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        expect_that!(
-            notified,
-            eq(queried),
-            "a Subscription and Query Entities with {}; named by one of them alone: {one_sided}",
-            filter.label
-        );
-    }
-    Ok(())
-}
-
-/// The identifiers of `count` drawn Entities under `namespace`, each named for its position.
-///
-/// # Errors
-///
-/// Fails when an identifier cannot be built.
-pub(crate) fn drawn_ids(namespace: &Namespace, count: usize) -> Result<Vec<EntityId>> {
-    let mut ids = Vec::with_capacity(count);
-    for position in 0..count {
-        ids.push(namespace.urn("Drawn", position)?);
-    }
-    Ok(ids)
 }
 
 /// Subscribes to the Entities of `entity_type` with `filter`, notifying the sink's endpoint `endpoint`, under an

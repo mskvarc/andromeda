@@ -1,9 +1,18 @@
 //! The strategies that draw the Attributes of an Entity, weighted so that every attribute family and every Property
 //! value turns up in the cases the suite draws.
+//!
+//! Each name has a home family it is drawn with three times as often as with any family, so that several Entities of
+//! a case hold a name with values one ordering, range or pattern compares alike, and a filter can select some of them
+//! and leave the others.
 
-use crate::q_generation::{
-    drawn_attribute::{Companion, DrawnAttribute, DrawnFamily, DrawnGeometry, DrawnJson, Member, MemberValue, PropertyValue},
-    drawn_pool::{DATE_TIMES, DATES, DOUBLES, JSON_MEMBERS, NAMES, OBJECTS, POSITIONS, STRINGS, STRUCTURE_MEMBERS, TERMS, TIMES},
+use crate::{
+    geo_generation::pooled,
+    q_generation::{
+        drawn_attribute::{Companion, DrawnAttribute, DrawnDouble, DrawnFamily, DrawnJson, Member, MemberValue, PropertyValue},
+        drawn_entity::DrawnEntity,
+        drawn_object::{DrawnObject, drawn_object},
+        drawn_pool::{DATE_TIMES, DATES, JSON_MEMBERS, NAMES, STRINGS, STRUCTURE_MEMBERS, TERMS, TIMES},
+    },
 };
 use proptest::{
     bool::ANY,
@@ -12,6 +21,43 @@ use proptest::{
     sample::select,
 };
 use std::fmt::Debug;
+use strum::IntoEnumIterator;
+
+/// The family a name is drawn with three times as often as with any family.
+#[derive(Debug, Clone, Copy)]
+enum Home {
+    /// A Property holding a number.
+    Number,
+    /// A Property holding a string.
+    Text,
+    /// A Property holding a declared `DateTime`.
+    DateTime,
+    /// A Property holding a declared Time.
+    Time,
+    /// A Property holding a JSON object.
+    Structured,
+    /// A Relationship.
+    Relationship,
+    /// A `LanguageProperty`.
+    Language,
+}
+
+/// The home of the name at each position of [`NAMES`].
+const HOMES: [Home; 8] = [
+    Home::Number,
+    Home::Text,
+    Home::DateTime,
+    Home::Relationship,
+    Home::Number,
+    Home::Language,
+    Home::Structured,
+    Home::Time,
+];
+
+/// Each name of [`NAMES`] with its home.
+fn named() -> Vec<(&'static str, Home)> {
+    NAMES.into_iter().zip(HOMES).collect()
+}
 
 /// What a member holds.
 fn member_value() -> BoxedStrategy<MemberValue> {
@@ -54,16 +100,6 @@ fn drawn_json() -> BoxedStrategy<DrawnJson> {
     .boxed()
 }
 
-/// The geometry of a `GeoProperty`.
-fn drawn_geometry() -> BoxedStrategy<DrawnGeometry> {
-    let count = POSITIONS.len();
-    prop_oneof![
-        (0..count).prop_map(DrawnGeometry::Point),
-        (0..count, 1..count).prop_map(move |(from, step)| DrawnGeometry::Line(from, (from + step) % count)),
-    ]
-    .boxed()
-}
-
 /// The value of a Property.
 fn property_value() -> BoxedStrategy<PropertyValue> {
     prop_oneof![
@@ -74,7 +110,7 @@ fn property_value() -> BoxedStrategy<PropertyValue> {
         select(&DATES[..]).prop_map(PropertyValue::Date),
         select(&DATE_TIMES[..]).prop_map(PropertyValue::DateTime),
         select(&TIMES[..]).prop_map(PropertyValue::Time),
-        select(&DOUBLES[..]).prop_map(PropertyValue::Double),
+        select(DrawnDouble::iter().collect::<Vec<_>>()).prop_map(PropertyValue::Double),
         members(&STRUCTURE_MEMBERS, member_value()).prop_map(PropertyValue::Structured),
         vec(members(&STRUCTURE_MEMBERS, member_value()), 1..3).prop_map(PropertyValue::Structures),
     ]
@@ -92,8 +128,15 @@ fn companion() -> BoxedStrategy<Companion> {
     .boxed()
 }
 
+/// A Property holding what `value` draws, with a companion.
+fn property(value: BoxedStrategy<PropertyValue>) -> BoxedStrategy<DrawnFamily> {
+    (value, companion())
+        .prop_map(|(value, companion)| DrawnFamily::Property(value, companion))
+        .boxed()
+}
+
 /// The objects `drawn`, each once, in the order first drawn.
-fn distinct(drawn: Vec<&'static str>) -> Vec<&'static str> {
+fn distinct(drawn: Vec<DrawnObject>) -> Vec<DrawnObject> {
     let mut objects = Vec::with_capacity(drawn.len());
     for object in drawn {
         if !objects.contains(&object) {
@@ -103,32 +146,88 @@ fn distinct(drawn: Vec<&'static str>) -> Vec<&'static str> {
     objects
 }
 
-/// The family of an Attribute, weighted so that each Property value is about as frequent as each other family.
-fn drawn_family() -> BoxedStrategy<DrawnFamily> {
+/// A Relationship of the Entity at `position`, with one object or several.
+fn relationship(position: usize) -> BoxedStrategy<DrawnFamily> {
+    vec(drawn_object(position), 1..4)
+        .prop_map(|objects| DrawnFamily::Relationship(distinct(objects)))
+        .boxed()
+}
+
+/// A `LanguageProperty`, with an English and a French string.
+fn language() -> BoxedStrategy<DrawnFamily> {
+    (select(&STRINGS[..]), select(&STRINGS[..]))
+        .prop_map(|(english, french)| DrawnFamily::Language(english, french))
+        .boxed()
+}
+
+/// An Attribute of the Entity at `position` of any family, weighted so that each Property value is about as frequent
+/// as each other family.
+fn any_family(position: usize) -> BoxedStrategy<DrawnFamily> {
     prop_oneof![
-        10 => (property_value(), companion()).prop_map(|(value, companion)| DrawnFamily::Property(value, companion)),
-        1 => drawn_geometry().prop_map(DrawnFamily::Geometry),
+        10 => property(property_value()),
+        1 => pooled().prop_map(DrawnFamily::Geometry),
         1 => drawn_json().prop_map(DrawnFamily::Json),
-        1 => vec(select(&OBJECTS[..]), 1..4).prop_map(|objects| DrawnFamily::Relationship(distinct(objects))),
-        1 => vec(select(&OBJECTS[..]), 1..3).prop_map(DrawnFamily::ListRelationship),
+        1 => relationship(position),
+        1 => vec(drawn_object(position), 1..3).prop_map(DrawnFamily::ListRelationship),
         1 => vec(0..10_u8, 1..3).prop_map(DrawnFamily::ListProperty),
         1 => select(&TERMS[..]).prop_map(DrawnFamily::Vocab),
-        1 => (select(&STRINGS[..]), select(&STRINGS[..])).prop_map(|(english, french)| DrawnFamily::Language(english, french)),
+        1 => language(),
     ]
     .boxed()
 }
 
-/// The Attributes of a drawn Entity, one to four, each name once.
-pub fn drawn_entity() -> BoxedStrategy<Vec<DrawnAttribute>> {
-    vec((select(&NAMES[..]), drawn_family()), 1..5)
+/// An Attribute of the Entity at `position` of the family `home`.
+fn home_family(home: Home, position: usize) -> BoxedStrategy<DrawnFamily> {
+    match home {
+        Home::Number => property((0..10_u8).prop_map(PropertyValue::Number).boxed()),
+        Home::Text => property(select(&STRINGS[..]).prop_map(PropertyValue::Text).boxed()),
+        Home::DateTime => property(select(&DATE_TIMES[..]).prop_map(PropertyValue::DateTime).boxed()),
+        Home::Time => property(select(&TIMES[..]).prop_map(PropertyValue::Time).boxed()),
+        Home::Structured => property(members(&STRUCTURE_MEMBERS, member_value()).prop_map(PropertyValue::Structured).boxed()),
+        Home::Relationship => relationship(position),
+        Home::Language => language(),
+    }
+}
+
+/// An Attribute of the Entity at `position` under one of `names`, drawn with the name's home three times as often as
+/// with any family.
+fn named_attribute(names: Vec<(&'static str, Home)>, position: usize) -> BoxedStrategy<DrawnAttribute> {
+    select(names)
+        .prop_flat_map(move |(name, home)| {
+            prop_oneof![3 => home_family(home, position), 1 => any_family(position)].prop_map(move |family| DrawnAttribute { name, family })
+        })
+        .boxed()
+}
+
+/// What a second write appends to the Entity at `position` holding `attributes`: an Attribute under a name the
+/// Entity does not hold, which raises `attributeCreated`, a default notification trigger (Table 5.2.12-1), and maybe
+/// an Attribute under a name it holds, which replaces that one. An Entity holds at most seven of the eight names, so a
+/// name is always free.
+fn drawn_change(attributes: &[DrawnAttribute], position: usize) -> BoxedStrategy<Vec<DrawnAttribute>> {
+    let (held, free): (Vec<_>, Vec<_>) = named()
+        .into_iter()
+        .partition(|(name, _)| attributes.iter().any(|attribute| attribute.name == *name));
+    let replaced = prop_oneof![Just(None), named_attribute(held, position).prop_map(Some)];
+    (named_attribute(free, position), replaced)
+        .prop_map(|(added, replaced)| [Some(added), replaced].into_iter().flatten().collect())
+        .boxed()
+}
+
+/// The Attributes of the Entity at `position`, one to seven, each name once, and what its second write appends.
+pub fn drawn_entity(position: usize) -> BoxedStrategy<DrawnEntity> {
+    vec(named_attribute(named(), position), 4..8)
         .prop_map(|drawn| {
             let mut attributes: Vec<DrawnAttribute> = Vec::with_capacity(drawn.len());
-            for (name, family) in drawn {
-                if attributes.iter().all(|kept| kept.name != name) {
-                    attributes.push(DrawnAttribute { name, family });
+            for attribute in drawn {
+                if attributes.iter().all(|kept| kept.name != attribute.name) {
+                    attributes.push(attribute);
                 }
             }
             attributes
+        })
+        .prop_flat_map(move |attributes| {
+            let change = drawn_change(&attributes, position);
+            (Just(attributes), change).prop_map(|(attributes, change)| DrawnEntity { attributes, change })
         })
         .boxed()
 }

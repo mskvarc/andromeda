@@ -58,6 +58,8 @@ pub mod deferred_creation;
 pub mod deleted_instance;
 pub mod delivery_queue;
 pub mod discovery_state;
+mod drawn_agreement;
+pub mod drawn_selection;
 pub mod early_refusal;
 pub mod entity_lookup;
 pub mod entity_matcher;

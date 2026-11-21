@@ -7,20 +7,17 @@ pub const NAMES: [&str; 8] = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"];
 /// and two time-shaped strings, which are Strings because nothing declares them a time.
 pub const STRINGS: [&str; 8] = ["a", "b", "ab", "ba", "A", "urn:x:1", "2024-01-15", "12:00:00Z"];
 
-/// The objects a Relationship is drawn from.
+/// The URIs a Relationship names beside the Entities of its case, none of which identifies a drawn Entity.
 pub const OBJECTS: [&str; 3] = ["urn:x:1", "urn:x:2", "urn:x:3"];
 
 /// The Dates a value and an operand are drawn from.
-pub const DATES: [&str; 2] = ["2024-01-15", "2024-06-30"];
+pub const DATES: [&str; 4] = ["2024-01-15", "2024-03-10", "2024-06-30", "2024-09-01"];
 
 /// The `DateTime`s a value and an operand are drawn from.
-pub const DATE_TIMES: [&str; 2] = ["2024-01-15T12:00:00Z", "2024-06-30T00:00:00Z"];
+pub const DATE_TIMES: [&str; 4] = ["2024-01-15T12:00:00Z", "2024-03-10T06:30:00Z", "2024-06-30T00:00:00Z", "2024-09-01T18:00:00Z"];
 
 /// The Times a value and an operand are drawn from.
-pub const TIMES: [&str; 2] = ["08:30:00Z", "12:00:00Z"];
-
-/// The `xsd:double` lexical forms a value is drawn from.
-pub const DOUBLES: [&str; 4] = ["1.5", "NaN", "INF", "-INF"];
+pub const TIMES: [&str; 4] = ["08:30:00Z", "10:15:00Z", "12:00:00Z", "18:45:00Z"];
 
 /// The vocabulary terms a `VocabProperty` holds.
 pub const TERMS: [&str; 2] = ["Male", "Female"];
@@ -36,11 +33,11 @@ pub const JSON_MEMBERS: [&str; 3] = ["a", "b", "value"];
 /// languages and `*`, which names every language.
 pub const PATH_MEMBERS: [&str; 8] = ["a", "b", "value", "type", "coordinates", "en", "fr", "*"];
 
-/// The positions a `GeoProperty` is drawn through, each a longitude and a latitude.
-pub const POSITIONS: [(f64, f64); 3] = [(13.4, 52.5), (8.8, 52.6), (0.0, 0.0)];
+/// The ordinates and geometry type names of the pooled geometries an operand compares a `GeoProperty` member with.
+pub const GEOMETRY_OPERANDS: [&str; 6] = ["0", "5", "175", "\"Point\"", "\"LineString\"", "\"Polygon\""];
 
-/// The ordinates and geometry type names an operand compares a `GeoProperty` member with.
-pub const GEOMETRY_OPERANDS: [&str; 5] = ["13.4", "52.5", "0", "\"Point\"", "\"LineString\""];
+/// An entity type no drawn Entity has, which a type hint of a Linked Entity path names so that the hop reads nothing.
+pub const OTHER_TYPE: &str = "Other";
 
 /// The members that hold an Attribute's value in its own representation, which a dotted path names as if they were
 /// sub-Attributes.
