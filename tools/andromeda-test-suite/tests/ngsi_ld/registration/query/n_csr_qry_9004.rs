@@ -1,11 +1,17 @@
 //! Only the four content inputs narrow a registration discovery.
 
-use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire::request_to};
+use andromeda_test_suite::{
+    broker,
+    namespace::Namespace,
+    problem::{answered, problem},
+    wire::request_to,
+};
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
 use ngsi_ld::{
-    http::headers::Accept,
+    http::{headers::Accept, operation::QueryRegistrations},
     model::{
+        AttributeName,
         ErrorType,
         NgsiLdMediaType,
         geometry::{Position, Shape},
@@ -28,27 +34,19 @@ async fn n_csr_qry_9004_only_the_four_content_inputs_narrow_a_registration_disco
         .entity_type(namespace.entity_type("Vehicle")?)
         .send()
         .await?;
-    broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .registrations()
-        .query()
-        .attrs(vec![format!("speed_{namespace}").parse()?])
-        .send()
-        .await?;
-    broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .registrations()
-        .query()
-        .q(q::attr(&namespace.attribute("speed")?).gt(10))
-        .send()
-        .await?;
-    broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .registrations()
-        .query()
-        .geo_q(geoquery::near_max(100, Shape::Point(Position::try_new(1.0, 2.0)?)))
-        .send()
-        .await?;
+    let attrs = [format!("speed_{namespace}").parse::<AttributeName>()?];
+    let speed = q::attr(&namespace.attribute("speed")?).gt(10).build()?;
+    let near = geoquery::near_max(100, Shape::Point(Position::try_new(1.0, 2.0)?)).build()?;
+    let listing = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
+    // Each of these answers every registration of the tenant its one input does not exclude (clause 5.12), each
+    // Context Source Property as its registrant wrote it, which the typed registration model may refuse, so only the
+    // status is read.
+    let by_attrs = listing.unchecked(&QueryRegistrations::builder().attrs(&attrs).build())?;
+    expect_that!(listing.send_unchecked(by_attrs).await, answered(StatusCode::OK));
+    let by_q = listing.unchecked(&QueryRegistrations::builder().q(&speed).build())?;
+    expect_that!(listing.send_unchecked(by_q).await, answered(StatusCode::OK));
+    let by_geo_q = listing.unchecked(&QueryRegistrations::builder().geo_q(&near).build())?;
+    expect_that!(listing.send_unchecked(by_geo_q).await, answered(StatusCode::OK));
     // The client cannot write a parameter of this read, so it is sent as written.
     let request = request_to(
         &broker.with_accept(Accept::new(NgsiLdMediaType::Json)),

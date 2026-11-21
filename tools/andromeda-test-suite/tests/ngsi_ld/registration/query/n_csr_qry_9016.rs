@@ -1,10 +1,14 @@
 //! A discovery q naming a full language tag is bad request data.
 
-use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{
+    broker,
+    namespace::Namespace,
+    problem::{answered, problem},
+};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::headers::Accept,
+    http::{headers::Accept, operation::QueryRegistrations},
     model::{ErrorType, NgsiLdMediaType},
     query::q,
 };
@@ -32,12 +36,11 @@ async fn n_csr_qry_9016_a_discovery_q_naming_a_full_language_tag_is_bad_request_
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_body_containing("en-GB")
     );
-    broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .registrations()
-        .query()
-        .q(q::attr(&label).member("en").eq("Lift"))
-        .send()
-        .await?;
+    let language = q::attr(&label).member("en").eq("Lift").build()?;
+    let listing = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
+    // The answer lists every registration of the tenant that registers no attribute (clause 5.12), each Context Source
+    // Property as its registrant wrote it, which the typed registration model may refuse, so only the status is read.
+    let request = listing.unchecked(&QueryRegistrations::builder().q(&language).build())?;
+    expect_that!(listing.send_unchecked(request).await, answered(StatusCode::OK));
     Ok(())
 }
