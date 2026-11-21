@@ -122,6 +122,12 @@ macro_rules! workspace_architecture {
                 $crate::auditable_build::assert_the_broker_image_builds_an_auditable_binary(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// cargo-about accepts the licences cargo-deny allows, and no others.
+            #[test]
+            fn cargo_about_accepts_the_licences_cargo_deny_allows() {
+                $crate::licence_policy::assert_cargo_about_accepts_the_licences_cargo_deny_allows(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Every VEX statement repeats an advisory ruling of `deny.toml` for a crate version the lockfile holds.
             #[test]
             fn vex_statements_repeat_the_advisory_rulings() {

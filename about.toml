@@ -1,0 +1,13 @@
+# The licences the broker binary's crates may be used under, in the order cargo-about prefers one when a crate offers a
+# choice: the licences deny.toml allows. A crate deny.toml grants a further licence gets it here too when the binary
+# links the crate.
+
+accepted = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "BSL-1.0", "ISC", "Zlib", "Unicode-3.0", "EUPL-1.2"]
+
+# The binary links neither, and the broker's own crates are covered by its notice.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
+
+[notify]
+accepted = ["CC0-1.0"]

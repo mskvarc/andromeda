@@ -13,6 +13,12 @@ Before you implement new functionality, look for a well-maintained crate that al
 
 The gate `manifest_hygiene` checks the version precision, the ordering and where each kind of dependency is declared. CI also fails on a dependency nothing uses, which `cargo machete --with-metadata` finds.
 
+## Licences
+
+`cargo deny` accepts a dependency only under a licence the `allow` list of `deny.toml` names, or under an exception `[[licenses.exceptions]]` makes for that one crate. The broker image ships the licence text of every crate its binary links, as `/usr/share/doc/andromeda/third-party-licenses.md`, beside `LICENSE.md` and `NOTICE.md`. cargo-about writes it when the image is built, from `about.toml` and the template `docker/images/andromeda/third-party-licenses.hbs`, and the build appends the `NOTICE` file of each linked crate that ships one, which cargo-about doesn't collect.
+
+`about.toml` accepts the licences `deny.toml` allows, in the order cargo-about prefers one when a crate offers a choice. A crate `deny.toml` makes an exception for gets the same licence in `about.toml` once the binary links it, since cargo-about fails the image build on a licence it doesn't accept. The gate `licence_policy` fails when the two lists name different licences, or when `about.toml` grants a crate a licence `deny.toml` makes no exception for.
+
 ## Ignoring an advisory
 
 When `cargo deny` reports an advisory that doesn't affect the broker, ignore it in `deny.toml` with its id and a reason that says why the broker can't reach the affected code. Scanners report the same advisory against the broker image, so every ignore also gets statements in `.vex/andromeda.openvex.json`, an unmaintained crate's included. Docker Scout reads the Rust advisory database and reports every advisory `cargo deny` does. Trivy and Grype read GitHub's advisory database alone, which lists some of them.
