@@ -44,4 +44,4 @@ jsonld = { version = "0.28.0", features = ["serde-json"] }
 pretty_assertions = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
-url = "2.5.8"
+url = "2.5.9"

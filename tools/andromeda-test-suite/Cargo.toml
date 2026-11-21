@@ -16,7 +16,7 @@ workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-q-corpus.workspace = true
-bytes = "1.12.1"
+bytes = "1.12.2"
 cefact-units = "1.0.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 derive_more = { version = "2.1.1", features = ["display", "from"] }
@@ -34,8 +34,8 @@ percent-encoding = "2.3.2"
 prometheus-parse = "0.2.5"
 proptest = "1.12.0"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
-rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }
-regex = "1.13.1"
+rand = { version = "0.10.4", default-features = false, features = ["std", "std_rng"] }
+regex = "1.13.2"
 reqwest = { version = "0.13.5", default-features = false, features = ["http2", "http3", "rustls"] }
 rumqttc = { version = "0.25.1", default-features = false }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
@@ -43,13 +43,13 @@ sea-query = { version = "1.0.2", default-features = false, features = ["backend-
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 serde_json_path = "0.7.2"
-sqlx = { version = "0.9.0", default-features = false, features = ["chrono", "postgres", "runtime-tokio"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["chrono", "postgres", "runtime-tokio"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7.20", features = ["codec"] }
-url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.29.2", features = ["v4"] }
+url = { version = "2.5.9", features = ["serde"] }
+uuid = { version = "1.29.3", features = ["v4"] }
 wiremock = "0.6.5"
 x509-parser = "0.18.1"
 

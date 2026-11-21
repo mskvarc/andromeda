@@ -30,7 +30,7 @@ tracing = "0.1.44"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-server-tls = { workspace = true, features = ["test-identity"] }
-bytes = "1.12.1"
+bytes = "1.12.2"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
 rustls-pki-types = "1.16.0"
