@@ -5,235 +5,32 @@
 //! whatever those are, so a filter no corpus case thought of can still find the two executions disagreeing. Every
 //! seed draws the same case on every run.
 //!
-//! An Entity holds one to four Attributes named from a pool of eight, each a Property holding a number, a string, a
-//! Boolean, an array of one or two numbers, a declared Date or `DateTime`, or a declared `xsd:double` (not-a-number
-//! and the infinities among them), or a Relationship, a `ListRelationship`, a `ListProperty`, a `VocabProperty` or a
-//! `LanguageProperty`, a Property with a second instance in a dataset or a sub-property or neither. A filter is up to
-//! four Query Terms over the same names, joined by `;` and `|` and grouped up to two deep, every operator and operand
-//! type among them.
+//! An Entity holds one to four Attributes named from a pool of eight, of every attribute family: a Property holding a number, a string, a Boolean, an array of numbers, a declared Date, `DateTime` or Time, an `xsd:double` (not-a-number and the infinities among them), a JSON object or an array of JSON objects, with a second instance in a dataset, a sub-property, an observation time or none of them; a `GeoProperty` holding a Point or a `LineString`; a `JsonProperty` whose object, or array of objects, holds the JSON `null` among other values; a Relationship with one object or several; a `ListRelationship`, a `ListProperty`, a `VocabProperty` or a `LanguageProperty`. A filter is up to four Query Terms over the same names, joined by `;` and `|` and grouped up to two deep, with every operator and every operand type, ranges and value lists among them. A term reads a name, its sub-property or observation time, a trailing path into its value, a language of it, or a member of its own representation named as if it were a sub-Attribute, and the filter is asked with `jsonKeys` and `expandValues` naming some of the names.
 
-use crate::value::xsd_typed;
+pub mod attribute_strategy;
+pub mod drawn_attribute;
+pub mod drawn_filter;
+pub mod drawn_pool;
+
+use crate::{
+    q_generation::{
+        attribute_strategy::drawn_entity,
+        drawn_attribute::DrawnAttribute,
+        drawn_filter::{DrawnFilter, drawn_filter},
+    },
+    seeded_draw::drawn_from_seed,
+};
 use googletest::prelude::*;
-use ngsi_ld::model::{
-    DatasetId,
-    Entity,
-    EntityId,
-    EntityTypeName,
-    Input,
-    LanguageMap,
-    ListProperty,
-    ListRelationship,
-    Number,
-    Property,
-    Relationship,
-    Value,
-    VocabProperty,
-    VocabTerm,
-};
-use proptest::{
-    bool::ANY,
-    collection::vec,
-    prelude::{BoxedStrategy, Just, Strategy, prop_oneof},
-    sample::select,
-    strategy::ValueTree,
-    test_runner::{Config, RngSeed, TestRunner},
-};
-
-/// The Attribute names an Entity and a filter are drawn over.
-pub const NAMES: [&str; 8] = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"];
-
-/// The strings a value and an operand are drawn from.
-const STRINGS: [&str; 4] = ["a", "b", "ab", "ba"];
-
-/// The objects a Relationship is drawn from.
-const OBJECTS: [&str; 3] = ["urn:x:1", "urn:x:2", "urn:x:3"];
-
-/// The Dates a value and an operand are drawn from.
-const DATES: [&str; 2] = ["2024-01-15", "2024-06-30"];
-
-/// The `DateTime`s a value and an operand are drawn from.
-const DATE_TIMES: [&str; 2] = ["2024-01-15T12:00:00Z", "2024-06-30T00:00:00Z"];
-
-/// The `xsd:double` lexical forms a value is drawn from.
-const DOUBLES: [&str; 4] = ["1.5", "NaN", "INF", "-INF"];
-
-/// The vocabulary terms a `VocabProperty` holds.
-const TERMS: [&str; 2] = ["Male", "Female"];
-
-/// The patterns a filter matches strings with.
-const PATTERNS: [&str; 3] = ["^a", "b$", "a.*"];
-
-/// The value of one drawn Attribute.
-#[derive(Debug, Clone)]
-enum DrawnValue {
-    /// A Property holding a number.
-    Number(u8),
-    /// A Property holding a string.
-    Text(&'static str),
-    /// A Property holding a Boolean.
-    Boolean(bool),
-    /// A Property holding an array of numbers.
-    Numbers(Vec<u8>),
-    /// A Property holding a declared Date.
-    Date(&'static str),
-    /// A Property holding a declared `DateTime`.
-    DateTime(&'static str),
-    /// A Property holding a declared `xsd:double`.
-    Double(&'static str),
-    /// A Relationship.
-    Relationship(&'static str),
-    /// A `ListRelationship`.
-    ListRelationship(Vec<&'static str>),
-    /// A `ListProperty` of numbers.
-    ListProperty(Vec<u8>),
-    /// A `VocabProperty` holding a term.
-    Vocab(&'static str),
-    /// A `LanguageProperty` with an English and a French string.
-    Language(&'static str, &'static str),
-}
-
-/// What a drawn Property carries beside its value.
-#[derive(Debug, Clone, Copy)]
-enum Companion {
-    /// Nothing.
-    Alone,
-    /// A second instance in a dataset, holding this number.
-    DatasetInstance(u8),
-    /// A sub-property `sub` holding this number.
-    SubProperty(u8),
-}
-
-/// One drawn Attribute.
-#[derive(Debug, Clone)]
-struct DrawnAttribute {
-    /// Its name, from [`NAMES`].
-    name: &'static str,
-    /// Its value.
-    value: DrawnValue,
-    /// What a Property carries beside its value.
-    companion: Companion,
-}
+use ngsi_ld::model::{DatasetId, Entity, EntityId, EntityTypeName, Input};
+use proptest::collection::vec;
 
 /// A drawn case: Entities and the filters asked of them.
 #[derive(Debug, Clone)]
 pub struct GeneratedCase {
     /// The Attributes of each Entity.
     entities: Vec<Vec<DrawnAttribute>>,
-    /// The filters, as a client writes them.
-    pub filters: Vec<String>,
-}
-
-/// The value of a drawn Attribute.
-fn drawn_value() -> BoxedStrategy<DrawnValue> {
-    prop_oneof![
-        (0..10_u8).prop_map(DrawnValue::Number),
-        select(&STRINGS[..]).prop_map(DrawnValue::Text),
-        ANY.prop_map(DrawnValue::Boolean),
-        vec(0..10_u8, 1..3).prop_map(DrawnValue::Numbers),
-        select(&DATES[..]).prop_map(DrawnValue::Date),
-        select(&DATE_TIMES[..]).prop_map(DrawnValue::DateTime),
-        select(&DOUBLES[..]).prop_map(DrawnValue::Double),
-        select(&OBJECTS[..]).prop_map(DrawnValue::Relationship),
-        vec(select(&OBJECTS[..]), 1..3).prop_map(DrawnValue::ListRelationship),
-        vec(0..10_u8, 1..3).prop_map(DrawnValue::ListProperty),
-        select(&TERMS[..]).prop_map(DrawnValue::Vocab),
-        (select(&STRINGS[..]), select(&STRINGS[..])).prop_map(|(english, french)| DrawnValue::Language(english, french)),
-    ]
-    .boxed()
-}
-
-/// A drawn Attribute.
-fn drawn_attribute() -> BoxedStrategy<DrawnAttribute> {
-    let companion = prop_oneof![
-        Just(Companion::Alone),
-        (0..10_u8).prop_map(Companion::DatasetInstance),
-        (0..10_u8).prop_map(Companion::SubProperty),
-    ];
-    (select(&NAMES[..]), drawn_value(), companion)
-        .prop_map(|(name, value, companion)| DrawnAttribute { name, value, companion })
-        .boxed()
-}
-
-/// The Attributes of a drawn Entity, each name once.
-fn drawn_entity() -> BoxedStrategy<Vec<DrawnAttribute>> {
-    vec(drawn_attribute(), 1..5)
-        .prop_map(|attributes| {
-            let mut named: Vec<DrawnAttribute> = Vec::with_capacity(attributes.len());
-            for attribute in attributes {
-                if named.iter().all(|kept| kept.name != attribute.name) {
-                    named.push(attribute);
-                }
-            }
-            named
-        })
-        .boxed()
-}
-
-/// An operand of an equality: a single value, a range or a value list.
-fn equality_operand() -> BoxedStrategy<String> {
-    prop_oneof![
-        (0..10_u8).prop_map(|number| number.to_string()),
-        select(&STRINGS[..]).prop_map(|text| format!("\"{text}\"")),
-        select(&["true", "false"][..]).prop_map(str::to_owned),
-        select(&DATES[..]).prop_map(str::to_owned),
-        select(&DATE_TIMES[..]).prop_map(str::to_owned),
-        select(&OBJECTS[..]).prop_map(|object| format!("\"{object}\"")),
-        (0..10_u8, 0..10_u8).prop_map(|(low, high)| format!("{}..{}", low.min(high), low.max(high))),
-        Just("\"a\"..\"b\"".to_owned()),
-        (0..10_u8, 0..10_u8).prop_map(|(first, second)| format!("{first},{second}")),
-        (select(&STRINGS[..]), select(&STRINGS[..])).prop_map(|(first, second)| format!("\"{first}\",\"{second}\"")),
-    ]
-    .boxed()
-}
-
-/// An operand of an ordering.
-fn ordering_operand() -> BoxedStrategy<String> {
-    prop_oneof![
-        (0..10_u8).prop_map(|number| number.to_string()),
-        select(&STRINGS[..]).prop_map(|text| format!("\"{text}\"")),
-        select(&DATES[..]).prop_map(str::to_owned),
-        select(&DATE_TIMES[..]).prop_map(str::to_owned),
-    ]
-    .boxed()
-}
-
-/// A Query Term over a name of [`NAMES`], or over its sub-property.
-fn drawn_term() -> BoxedStrategy<String> {
-    let path = prop_oneof![
-        select(&NAMES[..]).prop_map(str::to_owned),
-        select(&NAMES[..]).prop_map(|name| format!("{name}.sub")),
-    ];
-    prop_oneof![
-        path.clone(),
-        (path.clone(), select(&["==", "!="][..]), equality_operand()).prop_map(|(path, op, operand)| format!("{path}{op}{operand}")),
-        (path.clone(), select(&[">", ">=", "<", "<="][..]), ordering_operand()).prop_map(|(path, op, operand)| format!("{path}{op}{operand}")),
-        (path, select(&["~=", "!~="][..]), select(&PATTERNS[..])).prop_map(|(path, op, pattern)| format!("{path}{op}\"{pattern}\"")),
-    ]
-    .boxed()
-}
-
-/// A filter of up to four Query Terms, grouped up to two deep.
-fn drawn_filter() -> BoxedStrategy<String> {
-    drawn_term()
-        .prop_recursive(2, 4, 2, |inner| {
-            (vec(inner, 2..3), select(&[";", "|"][..])).prop_map(|(members, op)| format!("({})", members.join(op)))
-        })
-        .boxed()
-}
-
-/// Adds the drawn Property `$attribute` holding `$value` to `$builder`, with its companion, and evaluates to the
-/// builder. A macro keeps the builder's typestate unnamed.
-macro_rules! with_property {
-    ($builder:expr, $attribute:expr, $value:expr, $dataset:expr) => {{
-        let value: Value = $value;
-        match $attribute.companion {
-            Companion::Alone => $builder.property($attribute.name, value),
-            Companion::DatasetInstance(second) => $builder
-                .property($attribute.name, value)
-                .property($attribute.name, Property::builder(number(second)?).dataset_id($dataset.clone())),
-            Companion::SubProperty(sub) => $builder.property($attribute.name, Property::builder(value).property("sub", number(sub)?)),
-        }
-    }};
+    /// The filters.
+    filters: Vec<DrawnFilter>,
 }
 
 impl GeneratedCase {
@@ -243,15 +40,26 @@ impl GeneratedCase {
     ///
     /// Fails when the generator rejects its draw.
     pub fn drawn(seed: u64, entities: usize, filters: usize) -> Result<GeneratedCase> {
-        let config = Config {
-            rng_seed: RngSeed::Fixed(seed),
-            failure_persistence: None,
-            ..Config::default()
-        };
-        let mut runner = TestRunner::new(config);
-        let strategy = (vec(drawn_entity(), entities), vec(drawn_filter(), filters));
-        let (entities, filters) = strategy.new_tree(&mut runner).or_fail()?.current();
+        let (entities, filters) = drawn_from_seed(seed, &(vec(drawn_entity(), entities), vec(drawn_filter(), filters)))?;
         Ok(GeneratedCase { entities, filters })
+    }
+
+    /// How many Entities the case holds.
+    #[must_use]
+    pub const fn entity_count(&self) -> usize {
+        self.entities.len()
+    }
+
+    /// The filters of the case.
+    #[must_use]
+    pub fn filters(&self) -> &[DrawnFilter] {
+        &self.filters
+    }
+
+    /// The Attributes of the Entity at `position`, as the generator drew them, for a failure to name.
+    #[must_use]
+    pub fn described(&self, position: usize) -> Option<String> {
+        self.entities.get(position).map(|attributes| format!("{attributes:?}"))
     }
 
     /// The Entities of the case, of `entity_type`, the one at each position identified by `ids` at that position,
@@ -268,22 +76,9 @@ impl GeneratedCase {
         for (attributes, id) in self.entities.iter().zip(ids) {
             let mut builder = Entity::builder().id(id.clone()).entity_type(entity_type.clone());
             for attribute in attributes {
-                builder = match &attribute.value {
-                    DrawnValue::Number(value) => with_property!(builder, attribute, number(*value)?, dataset),
-                    DrawnValue::Text(text) => with_property!(builder, attribute, Value::from(*text), dataset),
-                    DrawnValue::Boolean(flag) => with_property!(builder, attribute, Value::from(*flag), dataset),
-                    DrawnValue::Numbers(values) => with_property!(builder, attribute, numbers(values)?, dataset),
-                    DrawnValue::Double(lexical) => with_property!(builder, attribute, xsd_typed("double", lexical)?, dataset),
-                    DrawnValue::Date(date) => builder.property(attribute.name, Property::builder(*date).value_type("Date".parse::<VocabTerm>()?)),
-                    DrawnValue::DateTime(instant) => builder.property(attribute.name, Property::builder(*instant).value_type("DateTime".parse::<VocabTerm>()?)),
-                    DrawnValue::Relationship(object) => builder.relationship(attribute.name, Relationship::builder(object.parse::<EntityId>()?)),
-                    DrawnValue::ListRelationship(objects) => builder.list_relationship(attribute.name, ListRelationship::builder(object_list(objects)?)),
-                    DrawnValue::ListProperty(values) => builder.list_property(attribute.name, ListProperty::builder(number_list(values)?)),
-                    DrawnValue::Vocab(term) => builder.vocab_property(attribute.name, VocabProperty::builder(term.parse::<VocabTerm>()?)),
-                    DrawnValue::Language(english, french) => {
-                        builder.language_property(attribute.name, LanguageMap::try_from_pairs([("en", *english), ("fr", *french)])?)
-                    }
-                };
+                for instance in attribute.instances(dataset)? {
+                    builder = builder.attribute(attribute.name, instance);
+                }
             }
             documents.push(builder.build()?);
         }
@@ -291,26 +86,158 @@ impl GeneratedCase {
     }
 }
 
-/// The objects `objects` as Entity identifiers.
-fn object_list(objects: &[&str]) -> Result<Vec<EntityId>> {
-    let mut identifiers = Vec::with_capacity(objects.len());
-    for object in objects {
-        identifiers.push(object.parse()?);
+#[cfg(test)]
+mod tests {
+    use crate::q_generation::{
+        GeneratedCase,
+        drawn_attribute::{DrawnFamily, DrawnJson, PropertyValue},
+    };
+    use googletest::prelude::*;
+    use ngsi_ld::{
+        model::{DatasetId, EntityId, EntityTypeName},
+        query::q::Query,
+    };
+    use std::collections::BTreeSet;
+
+    /// The seeds the suite draws its cases from.
+    const SEEDS: u64 = 64;
+
+    /// Names each Attribute shape a case can hold, so that a shape added to the generator is also counted here.
+    fn shape(family: &DrawnFamily) -> &'static str {
+        match family {
+            DrawnFamily::Property(value, _) => match value {
+                PropertyValue::Number(_) => "number",
+                PropertyValue::Text(_) => "string",
+                PropertyValue::Boolean(_) => "boolean",
+                PropertyValue::Numbers(_) => "array",
+                PropertyValue::Date(_) => "date",
+                PropertyValue::DateTime(_) => "date-time",
+                PropertyValue::Time(_) => "time",
+                PropertyValue::Double(_) => "double",
+                PropertyValue::Structured(_) => "object",
+                PropertyValue::Structures(_) => "array-of-objects",
+            },
+            DrawnFamily::Geometry(_) => "geo-property",
+            DrawnFamily::Json(DrawnJson::Object(members)) if members.iter().any(|member| member.value.is_none()) => "json-object-with-null",
+            DrawnFamily::Json(DrawnJson::Objects(objects)) if objects.iter().flatten().any(|member| member.value.is_none()) => "json-objects-with-null",
+            DrawnFamily::Json(_) => "json-property",
+            DrawnFamily::Relationship(objects) if objects.len() > 1 => "relationship-to-several",
+            DrawnFamily::Relationship(_) => "relationship",
+            DrawnFamily::ListRelationship(_) => "list-relationship",
+            DrawnFamily::ListProperty(_) => "list-property",
+            DrawnFamily::Vocab(_) => "vocab-property",
+            DrawnFamily::Language(_, _) => "language-property",
+        }
     }
-    Ok(identifiers)
-}
 
-/// The number `value` as a Value.
-fn number(value: u8) -> Result<Value> {
-    Ok(Value::Number(value.to_string().parse::<Number>()?))
-}
+    #[gtest]
+    fn a_seed_draws_the_same_case_on_every_run() -> Result<()> {
+        let first = GeneratedCase::drawn(7, 20, 30)?;
+        let second = GeneratedCase::drawn(7, 20, 30)?;
+        verify_that!(format!("{second:?}"), eq(&format!("{first:?}")))
+    }
 
-/// The numbers `values` as Values.
-fn number_list(values: &[u8]) -> Result<Vec<Value>> {
-    values.iter().map(|value| number(*value)).collect()
-}
+    #[gtest]
+    fn the_suite_seeds_draw_every_attribute_shape() -> Result<()> {
+        let mut shapes = BTreeSet::new();
+        for seed in 0..SEEDS {
+            for attributes in GeneratedCase::drawn(seed, 20, 30)?.entities {
+                shapes.extend(attributes.iter().map(|attribute| shape(&attribute.family)));
+            }
+        }
+        verify_that!(
+            shapes,
+            eq(&BTreeSet::from([
+                "array",
+                "array-of-objects",
+                "boolean",
+                "date",
+                "date-time",
+                "double",
+                "geo-property",
+                "json-object-with-null",
+                "json-objects-with-null",
+                "json-property",
+                "language-property",
+                "list-property",
+                "list-relationship",
+                "number",
+                "object",
+                "relationship",
+                "relationship-to-several",
+                "string",
+                "time",
+                "vocab-property",
+            ]))
+        )
+    }
 
-/// The array of the numbers `values`.
-fn numbers(values: &[u8]) -> Result<Value> {
-    Ok(Value::Array(number_list(values)?))
+    #[gtest]
+    fn the_suite_seeds_draw_every_operator_path_and_operand_form() -> Result<()> {
+        let mut filters = String::new();
+        for seed in 0..SEEDS {
+            for filter in GeneratedCase::drawn(seed, 20, 30)?.filters {
+                filters.push_str(&filter.q);
+                filters.push('\n');
+            }
+        }
+        for form in [
+            "==",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<=",
+            "~=\"",
+            "!~=\"",
+            ";",
+            "|",
+            "((",
+            ".sub",
+            ".observedAt",
+            "[a]",
+            "[a.b]",
+            "[*]",
+            "[en]",
+            "[type]",
+            "[coordinates]",
+            "[value]",
+            ".value",
+            ".object",
+            ".languageMap",
+            ".valueList",
+            ".objectList",
+            ".json",
+            ".vocab",
+            "..",
+            "\"a\"..\"b\"",
+            "08:30:00Z..",
+            "==urn:x:",
+            "\"urn:x:1\",\"urn:x:2\"",
+            "true,false",
+            "12:00:00Z",
+            "2.5",
+            "-1",
+        ] {
+            expect_that!(filters, contains_substring(form), "no filter writes {form}");
+        }
+        Ok(())
+    }
+
+    #[gtest]
+    fn every_drawn_filter_is_a_query_and_every_drawn_entity_builds() -> Result<()> {
+        let entity_type: EntityTypeName = "Drawn".parse()?;
+        let dataset: DatasetId = "urn:ngsi-ld:Dataset:drawn".parse()?;
+        let ids = (0..20)
+            .map(|position| format!("urn:ngsi-ld:Drawn:{position}").parse())
+            .collect::<Result<Vec<EntityId>, _>>()?;
+        for seed in 0..SEEDS {
+            let case = GeneratedCase::drawn(seed, 20, 30)?;
+            for filter in case.filters() {
+                expect_that!(filter.q.parse::<Query>(), ok(anything()), "seed {seed}: {}", filter.q);
+            }
+            expect_that!(case.documents(&entity_type, &dataset, &ids), ok(len(eq(20))), "seed {seed}");
+        }
+        Ok(())
+    }
 }

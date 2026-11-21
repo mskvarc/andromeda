@@ -3,14 +3,13 @@
 //! Clause 4.9 gives a Query Term one meaning wherever a broker evaluates it, and a broker may evaluate it in more than
 //! one place: in its store for a query, and over the Entity a write produced for a Subscription. A corpus states once
 //! which Entities each term selects and expects both answers to be exactly those, so neither reading can drift from
-//! the clause without the other noticing.
+//! the clause without the other noticing. A generated case states no answer and expects the two answers to agree.
 
 use crate::{
     broker::BrokerClient,
-    filter_parity::{Filter, ParityCase, expect_alike, notified_ids, queried_ids, subscribe},
+    filter_parity::{Filter, LabelledFilter, ParityCase, drawn_ids, expect_agreement, expect_alike},
     namespace::Namespace,
-    notification_sink::{NotificationSink, SinkError},
-    outcome::Done,
+    q_generation::GeneratedCase,
 };
 use andromeda_q_corpus::corpus::Traversal;
 use googletest::prelude::*;
@@ -83,48 +82,38 @@ pub async fn expect_query_and_subscription_alike(
     expect_alike(broker, namespace, entity_type, entities, &parity_cases).await
 }
 
-/// Subscribes to the Entities of `entity_type` once for each of `filters`, creates `entities`, and expects the
-/// notifications of each Subscription to name the Entities Query Entities answers for its filter, whichever those
-/// are.
+/// Creates the Entities the case `seed` drew, of a type of `namespace`, and expects Query Entities and a Subscription
+/// with each filter it drew to select the same Entities, whichever those are.
 ///
-/// One Subscription's notifications are not delivered in the order of the writes that raised them, so no wait can
-/// prove a notification will never come. The comparison waits for as many notifications as Query Entities answered
-/// Entities, then compares what arrived both ways: an Entity Query Entities answers and no notification named, and
-/// an Entity a notification named that Query Entities did not answer. A notification of an unselected Entity that
-/// arrives later is not seen; the fixed corpus states those Entities instead.
+/// A failure names the seed, the filter and the request members it was asked with, and the drawn Attributes of each
+/// Entity only one of the two selected, which is what a fixed corpus case needs to keep the disagreement covered.
 ///
 /// # Errors
 ///
 /// Fails when a value cannot be built, a filter is not a query, a request is refused or the sink cannot be read.
-pub async fn expect_query_and_subscription_to_agree(
-    broker: &BrokerClient,
-    namespace: &Namespace,
-    entity_type: &EntityTypeName,
-    entities: &[Entity<Input>],
-    filters: &[String],
-) -> Result<()> {
-    let sink = NotificationSink::start().await?;
-    let mut drawn = Vec::with_capacity(filters.len());
-    for (endpoint, filter) in filters.iter().enumerate() {
-        let drawn_filter = Filter {
-            q: Some(filter.parse::<Query>()?),
-            geo_q: None,
-            request: QRequest::PLAIN,
-        };
-        subscribe(broker, namespace, entity_type, &sink, endpoint, "drawn", &drawn_filter).await?;
-        drawn.push(drawn_filter);
+pub async fn expect_generated_case_to_agree(broker: &BrokerClient, namespace: &Namespace, seed: u64, case: &GeneratedCase) -> Result<()> {
+    let entity_type = namespace.entity_type("Drawn")?;
+    let dataset = namespace.dataset_id("Dataset", 1)?;
+    let documents = case.documents(&entity_type, &dataset, &drawn_ids(namespace, case.entity_count())?)?;
+    let mut filters = Vec::with_capacity(case.filters().len());
+    for filter in case.filters() {
+        filters.push(LabelledFilter {
+            label: format!(
+                "seed {seed}: q={} jsonKeys={} expandValues={}",
+                filter.q,
+                filter.json_keys.join(","),
+                filter.expand_values.join(",")
+            ),
+            filter: Filter {
+                q: Some(filter.q.parse::<Query>()?),
+                geo_q: None,
+                request: QRequest {
+                    expand_values: &filter.expand_values,
+                    json_keys: &filter.json_keys,
+                    traversal: Traversal::Local,
+                },
+            },
+        });
     }
-    for entity in entities {
-        broker.entities().create(entity).send().await?.done()?;
-    }
-    for (endpoint, (filter, drawn_filter)) in filters.iter().zip(&drawn).enumerate() {
-        let queried = queried_ids(broker, entity_type, drawn_filter).await?;
-        match sink.wait_for_at_least(endpoint, queried.len()).await {
-            Ok(_) | Err(SinkError::TimedOut(_)) => {}
-            Err(failure @ SinkError::Server(_)) => return Err(failure.into()),
-        }
-        let notified = notified_ids(&sink, endpoint).await?;
-        expect_that!(notified, eq(&queried), "a Subscription and Query Entities with q={filter}");
-    }
-    Ok(())
+    expect_agreement(broker, namespace, &entity_type, &documents, &filters, |position| case.described(position)).await
 }
