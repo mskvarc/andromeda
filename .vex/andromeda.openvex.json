@@ -1,0 +1,118 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/mskvarc/andromeda/blob/main/.vex/andromeda.openvex.json",
+  "author": "Andromeda",
+  "timestamp": "2026-11-21T19:47:08Z",
+  "version": 2,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0049",
+        "aliases": [
+          "CVE-2026-93602",
+          "GHSA-pwjx-qhcg-rvj4"
+        ]
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 compares only the first CRL distribution point of a certificate when it checks revocation, so a revoked certificate can pass when unknown revocation status is allowed. The broker never runs that check. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which is patched, and with no revocation lists."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0098",
+        "aliases": [
+          "CVE-2026-93600",
+          "GHSA-965h-392x-2mh5"
+        ]
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 ignores name constraints on URI names when it verifies a certificate path, so a misissued certificate can pass a constraint it breaks. The broker never runs that verification. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which rejects URI name constraints."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0099",
+        "aliases": [
+          "CVE-2026-93601",
+          "GHSA-xgp8-3hg3-c2mh"
+        ]
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 accepts a certificate for a wildcard DNS name under a permitted name constraint the wildcard reaches past when it verifies a certificate path. The broker never runs that verification. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which is patched."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0104",
+        "aliases": [
+          "CVE-2026-93599",
+          "GHSA-82j2-j2ch-gfr8"
+        ]
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 panics when it parses a certificate revocation list whose issuing distribution point holds an empty onlySomeReasons bit string. The broker parses no revocation lists. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker's certificate checks run on rustls-webpki 0.103.17, which is patched, with no revocation lists."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0382",
+        "aliases": [
+          "CVE-2026-111943"
+        ]
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 accepts certificate paths through the distrusted emSign intermediates, whose private keys are public, when its trust anchors lead to them. The broker never verifies a path with it. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which rejects those intermediates."
+    }
+  ]
+}

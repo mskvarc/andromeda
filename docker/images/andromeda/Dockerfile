@@ -41,8 +41,28 @@ RUN set -eux; \
     install -m 0755 "/tmp/${release}/sccache" /usr/local/bin/sccache; \
     rm -rf /tmp/sccache.tar.gz "/tmp/${release}"
 
-# cc follows RUSTC_WRAPPER; CMake launchers cover aws-lc-sys; sccache cannot cache incremental.
+# Embeds the dependency tree in the binary, where SBOM generators and scanners read the image's crates from.
+ARG CARGO_AUDITABLE_VERSION=0.7.7
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) sha256=7676443367c5e33d9fb22acef63cccb5e9202de12dae1b0579995eb3e2bc7a18 ;; \
+        aarch64) sha256=c324af56990601354bbf40080f582ba46f8ec8b807a1388e25bb7e429d285c18 ;; \
+        *) echo "no pinned cargo-auditable checksum for $arch" >&2; exit 1 ;; \
+    esac; \
+    release="cargo-auditable-${arch}-unknown-linux-musl"; \
+    curl -fsSL -o /tmp/cargo-auditable.tar.xz \
+        "https://github.com/rust-secure-code/cargo-auditable/releases/download/v${CARGO_AUDITABLE_VERSION}/${release}.tar.xz"; \
+    echo "${sha256}  /tmp/cargo-auditable.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/cargo-auditable.tar.xz -C /tmp; \
+    install -m 0755 "/tmp/${release}/cargo-auditable" /usr/local/bin/cargo-auditable; \
+    rm -rf /tmp/cargo-auditable.tar.xz "/tmp/${release}"
+
+# cc follows RUSTC_WRAPPER; CMake launchers cover aws-lc-sys; sccache cannot cache incremental. cargo auditable runs as
+# the workspace wrapper inside sccache, and sccache caches a wrapped compile only when the wrapper's first argument is
+# the bare name rustc, which cargo passes only when RUSTC names it so.
 ENV RUSTC_WRAPPER=sccache \
+    RUSTC=rustc \
     CMAKE_C_COMPILER_LAUNCHER=sccache \
     CMAKE_CXX_COMPILER_LAUNCHER=sccache \
     CARGO_INCREMENTAL=0 \
@@ -61,7 +81,7 @@ COPY . .
 RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
-    with-sccache cargo build --profile dist --locked --bin andromeda \
+    with-sccache cargo auditable build --profile dist --locked --bin andromeda \
     && install -D -m 0755 target/dist/andromeda /dist/andromeda \
     && rm -rf target
 

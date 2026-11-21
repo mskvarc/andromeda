@@ -1,0 +1,63 @@
+name: vex
+
+# Attests the VEX document of the commit the run starts from to a released broker image, for an advisory published
+# after the release. The commit must have passed ci, whose unit job holds its statements to the rulings of deny.toml and
+# to the crate versions of its lockfile, so a statement about a crate the release links is attested from a branch off
+# the release's tag.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The release whose image gets the attestation, such as 1.0.0.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  attest:
+    name: attest
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      attestations: write
+      checks: read
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/ci-passed
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Via env: never parsed as shell.
+      - name: Resolve the release's manifest list digest
+        id: digest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "not a release version: ${VERSION}" >&2
+            exit 1
+          fi
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -er '.digest')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/vex-attestation
+        with:
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.digest.outputs.digest }}

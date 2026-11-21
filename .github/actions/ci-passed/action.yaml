@@ -1,0 +1,18 @@
+name: CI passed
+description: Fails unless the commit the run is for carries a passing ci-ok check, the one ci gives a commit whose checks and suite trees all passed. The job needs checks read permission.
+
+runs:
+  using: composite
+  steps:
+    - name: Require a passing ci-ok check on the commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        passed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?check_name=ci-ok&filter=latest" \
+          --jq '[.check_runs[] | select(.conclusion == "success")] | length')"
+        if [ "$passed" -eq 0 ]; then
+          echo "${GITHUB_SHA} has no passing ci-ok check: let ci pass on the commit first" >&2
+          exit 1
+        fi

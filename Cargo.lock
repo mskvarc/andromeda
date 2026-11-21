@@ -100,13 +100,17 @@ name = "andromeda-architecture-checks"
 version = "1.0.0"
 dependencies = [
  "andromeda-ngsi-ld-vocabulary",
+ "packageurl",
  "pretty_assertions",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_json",
  "strum",
  "syn 3.0.10",
  "thiserror 2.0.21",
  "toml_edit",
+ "url",
  "walkdir",
 ]
 
@@ -7263,6 +7267,16 @@ name = "owo-colors"
 version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
+
+[[package]]
+name = "packageurl"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7719f5f3fc6fbf28f1b6b3d1cddd43958116db8f2e6c97e520757fbb490fcbf"
+dependencies = [
+ "percent-encoding",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "page_size"
