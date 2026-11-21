@@ -1,6 +1,5 @@
 //! The identity of one atomic broker write.
 
-use crate::uuid_v7_clock;
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -20,7 +19,7 @@ impl WriteId {
     /// Mint the identity of a write that is about to be attempted.
     #[must_use]
     pub fn mint() -> WriteId {
-        WriteId(uuid_v7_clock::mint())
+        WriteId(Uuid::now_v7())
     }
 
     /// Reconstruct an identity read back from durable storage.
@@ -43,7 +42,13 @@ impl WriteId {
 mod tests {
     use crate::write_id::WriteId;
     use pretty_assertions::assert_eq;
-    use std::collections::HashSet;
+    use std::{array, collections::HashSet, thread};
+
+    /// Threads minting at once.
+    const THREADS: usize = 8;
+
+    /// Identities each thread mints.
+    const PER_THREAD: usize = 256;
 
     #[test]
     fn minted_identities_are_version_seven() {
@@ -69,6 +74,17 @@ mod tests {
     fn identities_minted_in_one_millisecond_are_distinct() {
         let minted: HashSet<WriteId> = (0..1024).map(|_| WriteId::mint()).collect();
         assert_eq!(minted.len(), 1024);
+    }
+
+    #[test]
+    fn identities_minted_concurrently_are_distinct_and_keep_each_thread_in_order() {
+        // Every thread is spawned before any is joined, so the mints contend
+        // for the one process-wide counter.
+        let handles: [_; THREADS] = array::from_fn(|_| thread::spawn(|| (0..PER_THREAD).map(|_| WriteId::mint()).collect::<Vec<_>>()));
+        let batches = handles.map(|handle| handle.join().expect("a minting thread"));
+        assert!(batches.iter().all(|batch| batch.is_sorted()), "one thread's mints went backwards");
+        let minted: HashSet<WriteId> = batches.iter().flatten().copied().collect();
+        assert_eq!(minted.len(), THREADS * PER_THREAD);
     }
 
     #[test]
