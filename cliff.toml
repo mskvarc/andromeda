@@ -3,9 +3,10 @@ header = """
 # Changelog\n
 """
 # Groups named in `internal` are listed only for the release GIT_CLIFF_TAG names, in a collapsed block, so the file keeps
-# them for the newest release alone. Past 600 commits that block gives way to a link, which keeps a release body under
-# GitHub's 125,000-character limit. Every other group is listed in the order of `commit_parsers`. Breaking commits are
-# listed once, under Breaking changes, whatever their type.
+# them for the newest release alone. Every other release names how many it leaves out and links its compare range, and
+# so does the newest past 600 commits, which keeps a release body under GitHub's 125,000-character limit. Every other
+# group is listed in the order of `commit_parsers`. Breaking commits are listed once, under Breaking changes, whatever
+# their type.
 body = """
 {%- set repository = "https://github.com/mskvarc/andromeda" -%}
 {%- set latest = get_env(name="GIT_CLIFF_TAG", default="") -%}
@@ -42,6 +43,7 @@ body = """
 {% if not previous.version %}\
 Initial release.
 {% else %}\
+{% if version %}{% set history = repository ~ "/compare/" ~ previous.version ~ "..." ~ version %}{% else %}{% set history = repository ~ "/compare/" ~ previous.version ~ "...HEAD" %}{% endif %}\
 ### Changes
 {% set breaking = commits | filter(attribute="breaking", value=true) %}\
 {% if breaking | length > 0 %}
@@ -61,8 +63,8 @@ Initial release.
 {%- endfor %}
 {% endif %}\
 {% endfor %}\
-{% if internal_count > 0 and version == latest %}\
-{% if commits | length <= 600 %}
+{% if internal_count > 0 %}\
+{% if version == latest and commits | length <= 600 %}
 <details>
 <summary>Internal changes ({{ internal_count }})</summary>
 {% for entry in commits | filter(attribute="breaking", value=false) | commit_groups(groups=commit_parsers_groups) %}\
@@ -75,7 +77,7 @@ Initial release.
 {% endfor %}
 </details>
 {% else %}
-The {{ internal_count }} internal changes are left out of this list. The [commit history]({{ repository }}/commits/{{ version }}) has them.
+This list leaves out {{ internal_count }} internal change{{ internal_count | pluralize }}. The [commit history]({{ history }}) has {% if internal_count == 1 %}it{% else %}them{% endif %}.
 {% endif %}\
 {% endif %}\
 {% endif %}
