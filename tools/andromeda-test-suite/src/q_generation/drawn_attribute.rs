@@ -1,6 +1,6 @@
 //! The Attributes a drawn Entity holds, every attribute family among them, and the instances each one writes.
 
-use crate::{geometry_round_trip::line, q_generation::drawn_pool::POSITIONS, value::xsd_typed};
+use crate::{geo_generation::pooled_geometry::PooledGeometry, q_generation::drawn_object::DrawnObject, value::xsd_typed};
 use googletest::prelude::*;
 use indexmap::IndexMap;
 use ngsi_ld::model::{
@@ -23,8 +23,8 @@ use ngsi_ld::model::{
     Value,
     VocabProperty,
     VocabTerm,
-    geometry::{Position, Shape},
 };
+use strum::{EnumIter, IntoStaticStr};
 
 /// What a member of a drawn JSON object holds.
 #[derive(Debug, Clone)]
@@ -60,13 +60,29 @@ pub enum DrawnJson {
     Objects(Vec<Vec<Member<Option<MemberValue>>>>),
 }
 
-/// The geometry a drawn `GeoProperty` holds, through positions of [`POSITIONS`] named by index.
-#[derive(Debug, Clone, Copy)]
-pub enum DrawnGeometry {
-    /// A Point.
-    Point(usize),
-    /// A `LineString` between two distinct positions.
-    Line(usize, usize),
+/// The `xsd:double` a drawn Property holds, not-a-number and the infinities among them.
+#[derive(Debug, Clone, Copy, EnumIter, IntoStaticStr)]
+pub enum DrawnDouble {
+    /// The finite 1.5.
+    #[strum(serialize = "1.5")]
+    Finite,
+    /// Not-a-number, unordered and unequal to every number.
+    #[strum(serialize = "NaN")]
+    NotANumber,
+    /// The positive infinity, ordered past every finite number.
+    #[strum(serialize = "INF")]
+    Infinity,
+    /// The negative infinity, ordered before every finite number.
+    #[strum(serialize = "-INF")]
+    NegativeInfinity,
+}
+
+impl DrawnDouble {
+    /// The `xsd:double` lexical form.
+    #[must_use]
+    pub fn lexical(self) -> &'static str {
+        self.into()
+    }
 }
 
 /// The value a drawn Property holds.
@@ -86,8 +102,8 @@ pub enum PropertyValue {
     DateTime(&'static str),
     /// A string declared an NGSI-LD Time.
     Time(&'static str),
-    /// An `xsd:double` lexical form, not-a-number and the infinities among them.
-    Double(&'static str),
+    /// An `xsd:double`.
+    Double(DrawnDouble),
     /// A JSON object, its members named from the pool of structure member names.
     Structured(Vec<Member<MemberValue>>),
     /// An array of JSON objects.
@@ -112,20 +128,51 @@ pub enum Companion {
 pub enum DrawnFamily {
     /// A Property.
     Property(PropertyValue, Companion),
-    /// A `GeoProperty`.
-    Geometry(DrawnGeometry),
+    /// A `GeoProperty` holding a geometry of the pool.
+    Geometry(PooledGeometry),
     /// A `JsonProperty`.
     Json(DrawnJson),
     /// A Relationship with one object or several distinct ones.
-    Relationship(Vec<&'static str>),
+    Relationship(Vec<DrawnObject>),
     /// A `ListRelationship`.
-    ListRelationship(Vec<&'static str>),
+    ListRelationship(Vec<DrawnObject>),
     /// A `ListProperty` of numbers.
     ListProperty(Vec<u8>),
     /// A `VocabProperty` holding a term.
     Vocab(&'static str),
     /// A `LanguageProperty` with an English and a French string.
     Language(&'static str, &'static str),
+}
+
+impl DrawnFamily {
+    /// The objects of a Relationship or a `ListRelationship`, None for every other family.
+    #[must_use]
+    pub fn objects(&self) -> Option<&[DrawnObject]> {
+        match self {
+            DrawnFamily::Relationship(objects) | DrawnFamily::ListRelationship(objects) => Some(objects),
+            DrawnFamily::Property(..)
+            | DrawnFamily::Geometry(_)
+            | DrawnFamily::Json(_)
+            | DrawnFamily::ListProperty(_)
+            | DrawnFamily::Vocab(_)
+            | DrawnFamily::Language(..) => None,
+        }
+    }
+
+    /// The geometry of a `GeoProperty`, None for every other family.
+    #[must_use]
+    pub const fn geometry(&self) -> Option<PooledGeometry> {
+        match self {
+            DrawnFamily::Geometry(geometry) => Some(*geometry),
+            DrawnFamily::Property(..)
+            | DrawnFamily::Json(_)
+            | DrawnFamily::Relationship(_)
+            | DrawnFamily::ListRelationship(_)
+            | DrawnFamily::ListProperty(_)
+            | DrawnFamily::Vocab(_)
+            | DrawnFamily::Language(..) => None,
+        }
+    }
 }
 
 /// One drawn Attribute.
@@ -138,21 +185,24 @@ pub struct DrawnAttribute {
 }
 
 impl DrawnAttribute {
-    /// The default instance the Attribute writes, and a second one in `dataset` when its companion asks for one.
+    /// The default instance the Attribute writes, and a second one in `dataset` when its companion asks for one, an
+    /// object naming an Entity of the case identified by the identifier at its position of `ids`.
     ///
     /// # Errors
     ///
-    /// Fails when a drawn value does not build.
-    pub fn instances(&self, dataset: &DatasetId) -> Result<Vec<Attribute<Input>>> {
+    /// Fails when a drawn value does not build or `ids` has no identifier for an object.
+    pub fn instances(&self, dataset: &DatasetId, ids: &[EntityId]) -> Result<Vec<Attribute<Input>>> {
         Ok(match &self.family {
             DrawnFamily::Property(value, companion) => property_instances(value, *companion, dataset)?,
             DrawnFamily::Geometry(geometry) => vec![Attribute::GeoProperty(geometry.shape()?.into_attribute()?)],
             DrawnFamily::Json(json) => vec![Attribute::JsonProperty(JsonProperty::builder(json.text().parse::<RawJson>()?).build()?)],
-            DrawnFamily::Relationship(objects) => vec![Attribute::Relationship(match object_list(objects)?.as_slice() {
+            DrawnFamily::Relationship(objects) => vec![Attribute::Relationship(match object_list(objects, ids)?.as_slice() {
                 [object] => Relationship::builder(object.clone()).build()?,
                 several => Relationship::builder(several.to_vec()).build()?,
             })],
-            DrawnFamily::ListRelationship(objects) => vec![Attribute::ListRelationship(ListRelationship::builder(object_list(objects)?).build()?)],
+            DrawnFamily::ListRelationship(objects) => {
+                vec![Attribute::ListRelationship(ListRelationship::builder(object_list(objects, ids)?).build()?)]
+            }
             DrawnFamily::ListProperty(values) => vec![Attribute::ListProperty(ListProperty::builder(number_list(values)?).build()?)],
             DrawnFamily::Vocab(term) => vec![Attribute::VocabProperty(VocabProperty::builder(term.parse::<VocabTerm>()?).build()?)],
             DrawnFamily::Language(english, french) => vec![Attribute::LanguageProperty(
@@ -190,7 +240,7 @@ impl PropertyValue {
             PropertyValue::Text(text) | PropertyValue::Date(text) | PropertyValue::DateTime(text) | PropertyValue::Time(text) => Value::from(*text),
             PropertyValue::Boolean(flag) => Value::from(*flag),
             PropertyValue::Numbers(values) => Value::Array(number_list(values)?),
-            PropertyValue::Double(lexical) => xsd_typed("double", lexical)?,
+            PropertyValue::Double(double) => xsd_typed("double", double.lexical())?,
             PropertyValue::Structured(members) => structure(members)?,
             PropertyValue::Structures(objects) => Value::Array(objects.iter().map(|members| structure(members)).collect::<Result<_>>()?),
         })
@@ -264,27 +314,6 @@ impl DrawnJson {
     }
 }
 
-impl DrawnGeometry {
-    /// The geometry as a shape.
-    fn shape(self) -> Result<Shape> {
-        Ok(match self {
-            DrawnGeometry::Point(at) => Shape::Point(position(at)?),
-            DrawnGeometry::Line(from, to) => Shape::LineString(line(&[coordinates(from)?, coordinates(to)?])?),
-        })
-    }
-}
-
-/// The longitude and latitude of the position of [`POSITIONS`] at `index`.
-fn coordinates(index: usize) -> Result<(f64, f64)> {
-    POSITIONS.get(index).copied().or_fail()
-}
-
-/// The position of [`POSITIONS`] at `index`.
-fn position(index: usize) -> Result<Position> {
-    let (longitude, latitude) = coordinates(index)?;
-    Ok(Position::try_new(longitude, latitude)?)
-}
-
 /// The JSON object with `members`, as a Property value holds it.
 fn structure(members: &[Member<MemberValue>]) -> Result<Value> {
     Ok(Value::Object(
@@ -295,13 +324,9 @@ fn structure(members: &[Member<MemberValue>]) -> Result<Value> {
     ))
 }
 
-/// The objects `objects` as Entity identifiers.
-fn object_list(objects: &[&str]) -> Result<Vec<EntityId>> {
-    let mut identifiers = Vec::with_capacity(objects.len());
-    for object in objects {
-        identifiers.push(object.parse()?);
-    }
-    Ok(identifiers)
+/// The objects `objects` as Entity identifiers, `ids` identifying the Entity at each position.
+fn object_list(objects: &[DrawnObject], ids: &[EntityId]) -> Result<Vec<EntityId>> {
+    objects.iter().map(|object| object.id(ids)).collect()
 }
 
 /// The number `value` as a Value.

@@ -7,7 +7,9 @@
 
 use crate::{
     broker::BrokerClient,
-    filter_parity::{Filter, LabelledFilter, ParityCase, drawn_ids, expect_agreement, expect_alike},
+    drawn_agreement::{DrawnWrites, LabelledFilter, drawn_ids, expect_agreement},
+    drawn_selection::Selections,
+    filter_parity::{Filter, ParityCase, expect_alike},
     namespace::Namespace,
     q_generation::GeneratedCase,
 };
@@ -82,38 +84,48 @@ pub async fn expect_query_and_subscription_alike(
     expect_alike(broker, namespace, entity_type, entities, &parity_cases).await
 }
 
-/// Creates the Entities the case `seed` drew, of a type of `namespace`, and expects Query Entities and a Subscription
-/// with each filter it drew to select the same Entities, whichever those are.
+/// Creates the Entities the case `seed` drew, of a type of `namespace`, then changes each of them, and expects Query
+/// Entities and a Subscription with each filter it drew to select the same Entities after each round of writes,
+/// whichever those are. Answers what Query Entities selected in each round.
 ///
-/// A failure names the seed, the filter and the request members it was asked with, and the drawn Attributes of each
-/// Entity only one of the two selected, which is what a fixed corpus case needs to keep the disagreement covered.
+/// A filter's `q` names the drawn Entities and the case's type by the identifiers and the type of `namespace`, and a
+/// filter reading through a Relationship is asked of Query Entities with `join` and `joinLevel`. A failure names the
+/// seed, the filter as asked with its request members and geoquery, and the drawn Attributes of each Entity only one
+/// of the two selected, which is what a fixed corpus case needs to keep the disagreement covered.
 ///
 /// # Errors
 ///
 /// Fails when a value cannot be built, a filter is not a query, a request is refused or the sink cannot be read.
-pub async fn expect_generated_case_to_agree(broker: &BrokerClient, namespace: &Namespace, seed: u64, case: &GeneratedCase) -> Result<()> {
+pub async fn expect_generated_case_to_agree(broker: &BrokerClient, namespace: &Namespace, seed: u64, case: &GeneratedCase) -> Result<Selections> {
     let entity_type = namespace.entity_type("Drawn")?;
     let dataset = namespace.dataset_id("Dataset", 1)?;
-    let documents = case.documents(&entity_type, &dataset, &drawn_ids(namespace, case.entity_count())?)?;
+    let ids = drawn_ids(namespace, case.entity_count())?;
+    let documents = case.documents(&entity_type, &dataset, &ids)?;
+    let changes = case.changes(&dataset, &ids)?;
     let mut filters = Vec::with_capacity(case.filters().len());
     for filter in case.filters() {
+        let q = filter.resolved_q(&ids, &entity_type)?;
+        let geo = filter.geo.map_or_else(String::new, |part| format!(" geoQ={part}"));
         filters.push(LabelledFilter {
             label: format!(
-                "seed {seed}: q={} jsonKeys={} expandValues={}",
-                filter.q,
+                "seed {seed}: q={q} jsonKeys={} expandValues={}{geo}",
                 filter.json_keys.join(","),
                 filter.expand_values.join(",")
             ),
             filter: Filter {
-                q: Some(filter.q.parse::<Query>()?),
-                geo_q: None,
+                q: Some(q.parse::<Query>()?),
+                geo_q: filter.geo_query()?,
                 request: QRequest {
                     expand_values: &filter.expand_values,
                     json_keys: &filter.json_keys,
-                    traversal: Traversal::Local,
+                    traversal: filter.traversal,
                 },
             },
         });
     }
-    expect_agreement(broker, namespace, &entity_type, &documents, &filters, |position| case.described(position)).await
+    let writes = DrawnWrites {
+        entities: &documents,
+        changes: &changes,
+    };
+    expect_agreement(broker, namespace, &entity_type, writes, &filters, |position| case.described(position)).await
 }

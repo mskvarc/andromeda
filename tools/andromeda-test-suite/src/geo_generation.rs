@@ -1,104 +1,33 @@
 //! Entities and geoqueries drawn from a seed, for a differential of Query Entities against Subscriptions.
 //!
-//! The fixed geoquery corpora state what each of their geoqueries selects. A generated case states nothing. It locates Entities at geometries of a small pool, asks geoqueries whose reference geometry comes from the same pool, and expects Query Entities and a Subscription with each geoquery to select the same Entities, whatever those are. The pool holds points, lines and polygons on both sides of the antimeridian, a line and a polygon whose edges cross it, points on a vertex and on an edge of a polygon, and polygons that overlap, so each relation of clause 4.10 holds for some Entities of a case and fails for others. Every seed draws the same case on every run.
+//! The fixed geoquery corpora state what each of their geoqueries selects. A generated case states nothing. It locates Entities at geometries of a small pool, asks geoqueries whose reference geometry is drawn for its relation from the same pool or from the geometries the Entities of the case hold, and expects Query Entities and a Subscription with each geoquery to select the same Entities, whatever those are. The pool holds points, lines and polygons on both sides of the antimeridian, a line and a polygon whose edges cross it, points on a vertex and on an edge of a polygon, and polygons that overlap, in regions far apart and at several distances within a region, so each relation of clause 4.10 holds for some Entities of a case and fails for others. Every seed draws the same case on every run.
 //!
-//! An Entity has no `location`, one at a geometry, one only in a dataset, or one of each, and may have a second `GeoProperty` `area`. A geoquery is `near` with a maximum or a minimum distance, or one of the other six relations, applied to `location` or, with `geoproperty`, to `area`.
+//! An Entity has no `location`, one at a geometry, one only in a dataset, or one of each, and may have a second `GeoProperty` `area`; no two Entities of a case are created at the same `location` geometry while the pool lasts. A second write moves its default `location` instance, and its `area` when it has one, to a geometry of the same region, and adds the Property `moved`, so every Entity raises `attributeCreated`, a default notification trigger (Table 5.2.12-1). The two executions are compared after the Entities are created and again after they are moved. A geoquery is `near` with a maximum or a minimum distance, or one of the other six relations, applied to `location` or, with `geoproperty`, to `area`. No two geoqueries of a case reach the same way from the same region under the same `GeoProperty`, since they would most often select the same Entities.
+
+pub mod drawn_reference;
+pub mod drawn_relation;
+pub mod pooled_geometry;
 
 use crate::{
-    geometry_round_trip::{line, polygon, rectangle},
+    geo_generation::{
+        drawn_reference::drawn_reference,
+        drawn_relation::{DrawnRelation, Reach, drawn_relation, geo_query},
+        pooled_geometry::{PooledGeometry, Region},
+    },
     seeded_draw::drawn_from_seed,
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    model::{
-        DatasetId,
-        Entity,
-        EntityId,
-        EntityTypeName,
-        GeoProperty,
-        Input,
-        geometry::{Position, Shape},
-    },
-    query::geoquery::{self, GeoQuery},
+    model::{DatasetId, Entity, EntityFragment, EntityId, EntityTypeName, GeoProperty, Input},
+    query::geoquery::GeoQuery,
 };
 use proptest::{
     collection::vec,
     prelude::{BoxedStrategy, Just, Strategy, prop_oneof},
     sample::select,
 };
-use strum::{EnumIter, IntoEnumIterator};
-
-/// The distances, in metres, a `near` geoquery is drawn with.
-const DISTANCES: [u32; 3] = [1000, 600_000, 2_000_000];
-
-/// The geometries an Entity is located at and a geoquery refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
-pub enum PooledGeometry {
-    /// The Point (0, 0), a vertex of the square (0, 0) to (10, 10).
-    Origin,
-    /// The Point (5, 5), inside the squares around the origin and a vertex of the square (5, 5) to (15, 15).
-    Inside,
-    /// The Point (5, 0), on the south edge of the square (0, 0) to (10, 10), which follows the equator.
-    OnEdge,
-    /// The Point (180, 0), on the antimeridian.
-    Antimeridian,
-    /// The Point (175, 5), east of the antimeridian.
-    FarEast,
-    /// The Point (-175, -5), west of the antimeridian.
-    FarWest,
-    /// The Point (0, 63), north of the parallel 60 and south of the arc from (-30, 60) to (30, 60), which bows north.
-    UnderTheBow,
-    /// The `LineString` from (0, 0) to (10, 10).
-    Diagonal,
-    /// The `LineString` from (170, 0) to (-170, 0), along the equator across the antimeridian.
-    AcrossTheAntimeridian,
-    /// The `LineString` from (-5, 5) to (5, 5), across the west edge of the square (0, 0) to (10, 10).
-    Crossing,
-    /// The square (0, 0) to (10, 10).
-    Square,
-    /// The square (-10, -10) to (10, 10).
-    WideSquare,
-    /// The square (5, 5) to (15, 15), overlapping the square (0, 0) to (10, 10).
-    OverlappingSquare,
-    /// The polygon (170, -10), (-170, -10), (-170, 10), (170, 10), 20 degrees wide around the antimeridian.
-    AroundTheAntimeridian,
-    /// The rectangle (-30, 50) to (30, 60).
-    Bowed,
-}
-
-impl PooledGeometry {
-    /// The geometry as a shape.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the shape does not build.
-    pub fn shape(self) -> Result<Shape> {
-        Ok(match self {
-            PooledGeometry::Origin => point(0.0, 0.0)?,
-            PooledGeometry::Inside => point(5.0, 5.0)?,
-            PooledGeometry::OnEdge => point(5.0, 0.0)?,
-            PooledGeometry::Antimeridian => point(180.0, 0.0)?,
-            PooledGeometry::FarEast => point(175.0, 5.0)?,
-            PooledGeometry::FarWest => point(-175.0, -5.0)?,
-            PooledGeometry::UnderTheBow => point(0.0, 63.0)?,
-            PooledGeometry::Diagonal => Shape::LineString(line(&[(0.0, 0.0), (10.0, 10.0)])?),
-            PooledGeometry::AcrossTheAntimeridian => Shape::LineString(line(&[(170.0, 0.0), (-170.0, 0.0)])?),
-            PooledGeometry::Crossing => Shape::LineString(line(&[(-5.0, 5.0), (5.0, 5.0)])?),
-            PooledGeometry::Square => rectangle(0.0, 0.0, 10.0, 10.0)?,
-            PooledGeometry::WideSquare => rectangle(-10.0, -10.0, 10.0, 10.0)?,
-            PooledGeometry::OverlappingSquare => rectangle(5.0, 5.0, 15.0, 15.0)?,
-            PooledGeometry::AroundTheAntimeridian => {
-                Shape::Polygon(polygon(&[&[(170.0, -10.0), (-170.0, -10.0), (-170.0, 10.0), (170.0, 10.0), (170.0, -10.0)]])?)
-            }
-            PooledGeometry::Bowed => rectangle(-30.0, 50.0, 30.0, 60.0)?,
-        })
-    }
-}
-
-/// The Point at `longitude` and `latitude`.
-fn point(longitude: f64, latitude: f64) -> Result<Shape> {
-    Ok(Shape::Point(Position::try_new(longitude, latitude)?))
-}
+use std::sync::Arc;
+use strum::IntoEnumIterator;
 
 /// Where a drawn Entity's `location` is.
 #[derive(Debug, Clone, Copy)]
@@ -120,31 +49,21 @@ pub struct DrawnPlace {
     location: DrawnLocation,
     /// The geometry of its `GeoProperty` `area`, when it has one.
     area: Option<PooledGeometry>,
+    /// Where its second write moves it.
+    moved: DrawnMove,
 }
 
-/// The relation a drawn geoquery tests.
+/// Where the second write of a drawn Entity moves it.
 #[derive(Debug, Clone, Copy)]
-pub enum DrawnRelation {
-    /// `near;maxDistance==` this many metres.
-    NearMax(u32),
-    /// `near;minDistance==` this many metres.
-    NearMin(u32),
-    /// `within`.
-    Within,
-    /// `contains`.
-    Contains,
-    /// `intersects`.
-    Intersects,
-    /// `equals`.
-    Equals,
-    /// `disjoint`.
-    Disjoint,
-    /// `overlaps`.
-    Overlaps,
+pub struct DrawnMove {
+    /// The geometry of the default `location` instance it writes.
+    location: PooledGeometry,
+    /// The geometry of the `area` it writes, when it writes one.
+    area: Option<PooledGeometry>,
 }
 
 /// The `GeoProperty` a drawn geoquery is applied to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawnTarget {
     /// `location`, named by no `geoproperty`.
     Location,
@@ -152,8 +71,31 @@ pub enum DrawnTarget {
     Area,
 }
 
+impl DrawnTarget {
+    /// The name `geoproperty` gives, None for `location`, which a geoquery naming none is applied to.
+    const fn geoproperty(self) -> Option<&'static str> {
+        match self {
+            DrawnTarget::Location => None,
+            DrawnTarget::Area => Some("area"),
+        }
+    }
+}
+
+/// What two geoqueries of one case share when they most likely select the same Entities. The Entities of a region
+/// lie close together and apart from the rest, so a geoquery selects much the same of them, or leaves them out, from
+/// any reference geometry of their region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Footprint {
+    /// Which Entities the relation selects, measured from the reference geometry.
+    reach: Reach,
+    /// The region of the reference geometry.
+    region: Region,
+    /// The `GeoProperty` it is applied to.
+    target: DrawnTarget,
+}
+
 /// One drawn geoquery.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DrawnGeoQuery {
     /// Its relation.
     pub relation: DrawnRelation,
@@ -164,63 +106,139 @@ pub struct DrawnGeoQuery {
 }
 
 impl DrawnGeoQuery {
+    /// The footprint of the geoquery.
+    const fn footprint(self) -> Footprint {
+        Footprint {
+            reach: self.relation.reach(),
+            region: self.geometry.region(),
+            target: self.target,
+        }
+    }
+
     /// The geoquery as a client asks it.
     ///
     /// # Errors
     ///
     /// Fails when the reference geometry or the geoquery does not build.
     pub fn geo_query(self) -> Result<GeoQuery> {
-        let geometry = self.geometry.shape()?;
-        let builder = match self.relation {
-            DrawnRelation::NearMax(metres) => geoquery::near_max(metres, geometry),
-            DrawnRelation::NearMin(metres) => geoquery::near_min(metres, geometry),
-            DrawnRelation::Within => geoquery::within(geometry),
-            DrawnRelation::Contains => geoquery::contains(geometry),
-            DrawnRelation::Intersects => geoquery::intersects(geometry),
-            DrawnRelation::Equals => geoquery::equals(geometry),
-            DrawnRelation::Disjoint => geoquery::disjoint(geometry),
-            DrawnRelation::Overlaps => geoquery::overlaps(geometry),
+        geo_query(self.relation, self.geometry, self.target.geoproperty())
+    }
+}
+
+impl DrawnPlace {
+    /// Every geometry the Entity holds under `target` after it is created or after it is moved, but the second
+    /// `location` instance of an Entity holding two, which a geoquery reaching from it may not tell apart from the
+    /// Entities around it, since the other instance can still meet the relation.
+    fn geometries(&self, target: DrawnTarget) -> impl Iterator<Item = PooledGeometry> {
+        let held = match target {
+            DrawnTarget::Location => {
+                let created = match self.location {
+                    DrawnLocation::Nowhere => None,
+                    DrawnLocation::Default(geometry) | DrawnLocation::InDataset(geometry) | DrawnLocation::Both(geometry, _) => Some(geometry),
+                };
+                [created, Some(self.moved.location)]
+            }
+            DrawnTarget::Area => [self.area, self.moved.area],
         };
-        let builder = match self.target {
-            DrawnTarget::Location => builder,
-            DrawnTarget::Area => builder.geoproperty("area"),
+        held.into_iter().flatten()
+    }
+
+    /// The geometry the Entity holds under `target` after it is created and still after it is moved, when it holds
+    /// one.
+    fn steady(self, target: DrawnTarget) -> Option<PooledGeometry> {
+        let (created, moved) = match target {
+            DrawnTarget::Location => match self.location {
+                DrawnLocation::Nowhere => (None, Some(self.moved.location)),
+                DrawnLocation::Default(geometry) | DrawnLocation::InDataset(geometry) | DrawnLocation::Both(geometry, _) => {
+                    (Some(geometry), Some(self.moved.location))
+                }
+            },
+            DrawnTarget::Area => (self.area, self.moved.area),
         };
-        Ok(builder.build()?)
+        created.filter(|geometry| moved == Some(*geometry))
     }
 }
 
 /// A geometry of the pool.
-fn pooled() -> BoxedStrategy<PooledGeometry> {
+pub fn pooled() -> BoxedStrategy<PooledGeometry> {
     select(PooledGeometry::iter().collect::<Vec<_>>()).boxed()
 }
 
-/// The `GeoProperty` Attributes of an Entity.
-fn drawn_place() -> BoxedStrategy<DrawnPlace> {
-    let location = prop_oneof![
-        1 => Just(DrawnLocation::Nowhere),
-        6 => pooled().prop_map(DrawnLocation::Default),
-        1 => pooled().prop_map(DrawnLocation::InDataset),
-        1 => (pooled(), pooled()).prop_map(|(default, in_dataset)| DrawnLocation::Both(default, in_dataset)),
-    ];
-    let area = prop_oneof![2 => Just(None), 1 => pooled().prop_map(Some)];
-    (location, area).prop_map(|(location, area)| DrawnPlace { location, area }).boxed()
+/// A geometry of the pool in the region of `geometry`, `geometry` among them.
+fn nearby(geometry: PooledGeometry) -> BoxedStrategy<PooledGeometry> {
+    select(PooledGeometry::iter().filter(|other| other.region() == geometry.region()).collect::<Vec<_>>()).boxed()
 }
 
-/// A geoquery.
-fn drawn_geo_query() -> BoxedStrategy<DrawnGeoQuery> {
-    let relation = prop_oneof![
-        select(&DISTANCES[..]).prop_map(DrawnRelation::NearMax),
-        select(&DISTANCES[..]).prop_map(DrawnRelation::NearMin),
-        Just(DrawnRelation::Within),
-        Just(DrawnRelation::Contains),
-        Just(DrawnRelation::Intersects),
-        Just(DrawnRelation::Equals),
-        Just(DrawnRelation::Disjoint),
-        Just(DrawnRelation::Overlaps),
+/// The `GeoProperty` Attributes of an Entity whose `location` is created at `at`, when it has one. Its second write
+/// moves its `location`, and its `area` when it has one, to a geometry of the same region, so that a region holds the
+/// same Entities after both writes and a geoquery reaching from it tells them apart from the rest in both rounds.
+fn drawn_place(at: PooledGeometry) -> BoxedStrategy<DrawnPlace> {
+    let location = prop_oneof![
+        1 => Just(DrawnLocation::Nowhere),
+        6 => Just(DrawnLocation::Default(at)),
+        1 => Just(DrawnLocation::InDataset(at)),
+        1 => pooled().prop_map(move |in_dataset| DrawnLocation::Both(at, in_dataset)),
     ];
+    let area = prop_oneof![2 => Just(None), 1 => pooled().prop_map(Some)];
+    (location, area, nearby(at))
+        .prop_flat_map(|(location, area, moved_location)| {
+            let moved_area = match area {
+                Some(created) => nearby(created).prop_map(Some).boxed(),
+                None => Just(None).boxed(),
+            };
+            moved_area.prop_map(move |moved_area| DrawnPlace {
+                location,
+                area,
+                moved: DrawnMove {
+                    location: moved_location,
+                    area: moved_area,
+                },
+            })
+        })
+        .boxed()
+}
+
+/// The `GeoProperty` Attributes of `entities` Entities. While the pool lasts, no two Entities are created at the same
+/// `location` geometry, so that a geoquery tells the Entities its reference geometry relates to apart from their
+/// neighbours.
+fn drawn_places(entities: usize) -> BoxedStrategy<Vec<DrawnPlace>> {
+    Just(PooledGeometry::iter().collect::<Vec<_>>())
+        .prop_shuffle()
+        .prop_flat_map(move |created| created.into_iter().cycle().take(entities).map(drawn_place).collect::<Vec<_>>())
+        .boxed()
+}
+
+/// The geometries the Entities of a case hold under one `GeoProperty`.
+#[derive(Debug, Clone)]
+struct HeldGeometries {
+    /// Every geometry an Entity holds after its creation or after its move.
+    held: Vec<PooledGeometry>,
+    /// Every geometry an Entity holds after both.
+    steady: Vec<PooledGeometry>,
+}
+
+impl HeldGeometries {
+    /// The geometries `places` hold under `target`.
+    fn of(places: &[DrawnPlace], target: DrawnTarget) -> HeldGeometries {
+        HeldGeometries {
+            held: places.iter().flat_map(|place| place.geometries(target)).collect(),
+            steady: places.iter().filter_map(|place| place.steady(target)).collect(),
+        }
+    }
+}
+
+/// A geoquery over Entities that hold `location` and `area` under those names, its reference geometry drawn among
+/// those of the `GeoProperty` it is applied to.
+fn drawn_geo_query(location: Arc<HeldGeometries>, area: Arc<HeldGeometries>) -> BoxedStrategy<DrawnGeoQuery> {
     let target = prop_oneof![3 => Just(DrawnTarget::Location), 1 => Just(DrawnTarget::Area)];
-    (relation, pooled(), target)
-        .prop_map(|(relation, geometry, target)| DrawnGeoQuery { relation, geometry, target })
+    (drawn_relation(), target)
+        .prop_flat_map(move |(relation, target)| {
+            let geometries = match target {
+                DrawnTarget::Location => &location,
+                DrawnTarget::Area => &area,
+            };
+            drawn_reference(relation, &geometries.held, &geometries.steady).prop_map(move |geometry| DrawnGeoQuery { relation, geometry, target })
+        })
         .boxed()
 }
 
@@ -234,14 +252,32 @@ pub struct GeneratedGeoCase {
 }
 
 impl GeneratedGeoCase {
-    /// The case `seed` draws, of `entities` Entities and `queries` geoqueries.
+    /// The case `seed` draws, of `entities` Entities and `queries` geoqueries: of eight times as many drawn, the first
+    /// `queries` whose footprint differs from that of every geoquery kept before them.
     ///
     /// # Errors
     ///
-    /// Fails when the generator rejects its draw.
+    /// Fails when the generator rejects its draw, or fewer than `queries` of the geoqueries drawn differ in footprint.
     pub fn drawn(seed: u64, entities: usize, queries: usize) -> Result<GeneratedGeoCase> {
-        let (places, queries) = drawn_from_seed(seed, &(vec(drawn_place(), entities), vec(drawn_geo_query(), queries)))?;
-        Ok(GeneratedGeoCase { places, queries })
+        let strategy = drawn_places(entities).prop_flat_map(move |places| {
+            let location = Arc::new(HeldGeometries::of(&places, DrawnTarget::Location));
+            let area = Arc::new(HeldGeometries::of(&places, DrawnTarget::Area));
+            (Just(places), vec(drawn_geo_query(location, area), queries * 8))
+        });
+        let (places, candidates) = drawn_from_seed(seed, &strategy)?;
+        let mut distinct: Vec<DrawnGeoQuery> = Vec::with_capacity(queries);
+        for candidate in candidates {
+            if distinct.len() < queries && distinct.iter().all(|kept| kept.footprint() != candidate.footprint()) {
+                distinct.push(candidate);
+            }
+        }
+        if distinct.len() < queries {
+            fail!(
+                "seed {seed} drew {} geoqueries of distinct footprints, fewer than the {queries} its case asks",
+                distinct.len()
+            )?;
+        }
+        Ok(GeneratedGeoCase { places, queries: distinct })
     }
 
     /// How many Entities the case holds.
@@ -256,7 +292,8 @@ impl GeneratedGeoCase {
         &self.queries
     }
 
-    /// The `GeoProperty` Attributes of the Entity at `position`, as the generator drew them, for a failure to name.
+    /// The `GeoProperty` Attributes of the Entity at `position` and where it is moved, as the generator drew them, for a
+    /// failure to name.
     #[must_use]
     pub fn described(&self, position: usize) -> Option<String> {
         self.places.get(position).map(|place| format!("{place:?}"))
@@ -291,13 +328,39 @@ impl GeneratedGeoCase {
         }
         Ok(documents)
     }
+
+    /// The second write of each Entity, at its position, as the fragment Append Entity Attributes takes.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a geometry or fragment does not build.
+    pub fn changes(&self) -> Result<Vec<EntityFragment>> {
+        let mut changes = Vec::with_capacity(self.places.len());
+        for place in &self.places {
+            let builder = EntityFragment::builder()
+                .geo_property("location", place.moved.location.shape()?)
+                .property("moved", 1);
+            let builder = match place.moved.area {
+                Some(area) => builder.geo_property("area", area.shape()?),
+                None => builder,
+            };
+            changes.push(builder.build()?);
+        }
+        Ok(changes)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::geo_generation::{DrawnRelation, GeneratedGeoCase, PooledGeometry};
+    use crate::geo_generation::{
+        DrawnLocation,
+        DrawnTarget,
+        GeneratedGeoCase,
+        drawn_relation::DrawnRelation,
+        pooled_geometry::{Outline, PooledGeometry},
+    };
     use googletest::prelude::*;
-    use ngsi_ld::model::{DatasetId, EntityId, EntityTypeName};
+    use ngsi_ld::model::{DatasetId, EntityId, EntityTypeName, geometry::Shape};
     use std::collections::BTreeSet;
     use strum::IntoEnumIterator;
 
@@ -319,14 +382,73 @@ mod tests {
     }
 
     #[gtest]
-    fn every_pooled_geometry_builds() {
+    fn every_pooled_geometry_builds_as_the_type_its_outline_names() -> Result<()> {
         for geometry in PooledGeometry::iter() {
-            expect_that!(geometry.shape(), ok(anything()), "{geometry:?}");
+            let built = matches!(
+                (geometry.outline(), geometry.shape()?),
+                (Outline::Point(..), Shape::Point(_)) | (Outline::LineString(_), Shape::LineString(_)) | (Outline::Polygon(_), Shape::Polygon(_))
+            );
+            expect_true!(built, "{geometry:?}");
         }
+        Ok(())
     }
 
     #[gtest]
-    fn the_suite_seeds_ask_every_relation_and_every_drawn_query_and_entity_builds() -> Result<()> {
+    fn at_least_a_third_of_the_overlaps_geoqueries_refer_to_a_geometry_overlapping_one_an_entity_holds() -> Result<()> {
+        let mut overlaps = 0_usize;
+        let mut partnered = 0_usize;
+        for seed in 0..SEEDS {
+            let case = GeneratedGeoCase::drawn(seed, 12, 24)?;
+            for query in case.queries().iter().filter(|query| query.relation == DrawnRelation::Overlaps) {
+                let mut held = case.places.iter().flat_map(|place| place.geometries(query.target));
+                overlaps += 1;
+                partnered += usize::from(held.any(|geometry| geometry.overlapped() == Some(query.geometry)));
+            }
+        }
+        verify_that!(partnered * 3, ge(overlaps))
+    }
+
+    #[gtest]
+    fn no_two_geoqueries_of_a_suite_case_share_a_footprint() -> Result<()> {
+        for seed in 0..SEEDS {
+            let case = GeneratedGeoCase::drawn(seed, 12, 24)?;
+            for (position, query) in case.queries().iter().enumerate() {
+                let shared = case.queries().iter().take(position).any(|earlier| earlier.footprint() == query.footprint());
+                expect_false!(shared, "seed {seed}: {query:?}");
+            }
+        }
+        Ok(())
+    }
+
+    #[gtest]
+    fn the_entities_of_a_suite_case_are_created_apart_and_moved_within_their_region() -> Result<()> {
+        for seed in 0..SEEDS {
+            let case = GeneratedGeoCase::drawn(seed, 12, 24)?;
+            let created: Vec<PooledGeometry> = case
+                .places
+                .iter()
+                .filter_map(|place| match place.location {
+                    DrawnLocation::Nowhere => None,
+                    DrawnLocation::Default(geometry) | DrawnLocation::InDataset(geometry) | DrawnLocation::Both(geometry, _) => Some(geometry),
+                })
+                .collect();
+            for (position, geometry) in created.iter().enumerate() {
+                expect_false!(
+                    created.iter().take(position).any(|earlier| earlier == geometry),
+                    "seed {seed}: {geometry:?} twice"
+                );
+            }
+            for place in &case.places {
+                let mut regions = place.geometries(DrawnTarget::Location).map(PooledGeometry::region);
+                let first = regions.next();
+                expect_true!(regions.all(|region| Some(region) == first), "seed {seed}: {place:?}");
+            }
+        }
+        Ok(())
+    }
+
+    #[gtest]
+    fn the_suite_seeds_ask_every_relation_and_every_drawn_query_entity_and_move_builds() -> Result<()> {
         let entity_type: EntityTypeName = "Drawn".parse()?;
         let dataset: DatasetId = "urn:ngsi-ld:Dataset:drawn".parse()?;
         let ids = (0..12)
@@ -340,6 +462,7 @@ mod tests {
                 expect_that!(query.geo_query(), ok(anything()), "seed {seed}: {query:?}");
             }
             expect_that!(case.documents(&entity_type, &dataset, &ids), ok(len(eq(12))), "seed {seed}");
+            expect_that!(case.changes(), ok(len(eq(12))), "seed {seed}");
         }
         verify_that!(
             relations,
