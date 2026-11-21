@@ -46,7 +46,7 @@ runs:
             packages=(andromeda)
             tested=false
             compiles=(src/)
-            paths=(migrations/ docker/images/andromeda/ LICENSE.md NOTICE.md)
+            paths=(migrations/ docker/images/andromeda/ LICENSE.md NOTICE.md about.toml)
             build+=(.github/actions/keyed-broker-image/action.yaml .github/actions/broker-image/action.yaml)
             ;;
           runner)

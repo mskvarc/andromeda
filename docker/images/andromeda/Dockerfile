@@ -58,6 +58,23 @@ RUN set -eux; \
     install -m 0755 "/tmp/${release}/cargo-auditable" /usr/local/bin/cargo-auditable; \
     rm -rf /tmp/cargo-auditable.tar.xz "/tmp/${release}"
 
+# Writes the licence texts of the crates the binary links, which the image ships beside its own notice.
+ARG CARGO_ABOUT_VERSION=0.9.3
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) sha256=3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4 ;; \
+        aarch64) sha256=eb4d9ff6ebd2518152a8308729431a04b3836e71d2bd5ead7aea69f91a71162e ;; \
+        *) echo "no pinned cargo-about checksum for $arch" >&2; exit 1 ;; \
+    esac; \
+    release="cargo-about-${CARGO_ABOUT_VERSION}-${arch}-unknown-linux-musl"; \
+    curl -fsSL -o /tmp/cargo-about.tar.gz \
+        "https://github.com/EmbarkStudios/cargo-about/releases/download/${CARGO_ABOUT_VERSION}/${release}.tar.gz"; \
+    echo "${sha256}  /tmp/cargo-about.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/cargo-about.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/${release}/cargo-about" /usr/local/bin/cargo-about; \
+    rm -rf /tmp/cargo-about.tar.gz "/tmp/${release}"
+
 # cc follows RUSTC_WRAPPER; CMake launchers cover aws-lc-sys; sccache cannot cache incremental. cargo auditable runs as
 # the workspace wrapper inside sccache, and sccache caches a wrapped compile only when the wrapper's first argument is
 # the bare name rustc, which cargo passes only when RUSTC names it so.
@@ -76,6 +93,10 @@ RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
     with-sccache cargo chef cook --profile dist --locked --recipe-path recipe.json
 
+# cargo-about reads the metadata of every locked package, every platform's included, while the build downloads only the
+# packages of its own.
+RUN cargo fetch --locked
+
 COPY . .
 # The binary moves out and the target directory goes in the same layer, so the layer cache keeps the binary alone.
 RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
@@ -85,6 +106,25 @@ RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     && install -D -m 0755 target/dist/andromeda /dist/andromeda \
     && rm -rf target
 
+# The licence of every crate the binary links, for the platform it is built for, read offline from the sources the build
+# fetched. cargo-about collects no NOTICE file, which Apache-2.0 asks to be kept with the binary, so each one a linked
+# crate ships is appended.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN set -eu; \
+    target="$(uname -m)-unknown-linux-gnu"; \
+    cargo about generate --frozen --fail --target "$target" \
+        --output-file /dist/third-party-licenses.md docker/images/andromeda/third-party-licenses.hbs; \
+    cargo tree --frozen --package andromeda --edges normal --target "$target" --prefix none --format '{p}' \
+        | cut -d ' ' -f 1,2 | sort -u \
+        | while read -r name version; do \
+            for notice in "${CARGO_HOME}"/registry/src/*/"${name}-${version#v}"/NOTICE*; do \
+                [ -f "$notice" ] || continue; \
+                printf '### %s %s\n\n~~~text\n' "$name" "${version#v}"; \
+                cat "$notice"; \
+                printf '\n~~~\n\n'; \
+            done; \
+        done >> /dist/third-party-licenses.md
+
 # Owned by the broker's user in the runtime image, which has no shell to create them.
 RUN mkdir -p /rootfs/etc/andromeda /rootfs/var/lib/andromeda
 
@@ -93,6 +133,7 @@ FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384def
 
 COPY --from=builder --chown=10001:10001 /rootfs/ /
 COPY --from=builder /dist/andromeda /usr/local/bin/andromeda
+COPY --from=builder /dist/third-party-licenses.md /usr/share/doc/andromeda/
 
 COPY LICENSE.md NOTICE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md crates/andromeda-http-headers/LICENSE-MIT.md /usr/share/doc/andromeda/
 
@@ -112,7 +153,7 @@ LABEL org.opencontainers.image.title="Andromeda" \
       org.opencontainers.image.description="NGSI-LD context broker written in Rust. Implements the ETSI GS CIM 009 v1.9.1 API, from entities and subscriptions to temporal history and federation, and checks every request against the semantics of the standard. Multi-tenant on PostgreSQL." \
       org.opencontainers.image.url="https://andromeda.skvarc.com" \
       org.opencontainers.image.documentation="https://andromeda.skvarc.com/docs/getting-started/installation/docker" \
-      org.opencontainers.image.licenses="EUPL-1.2 AND MIT AND BSD-3-Clause AND W3C-20150513" \
+      org.opencontainers.image.licenses="EUPL-1.2" \
       org.opencontainers.image.authors="Matej Škvarč <matej@skvarc.com>" \
       org.opencontainers.image.vendor="Matej Škvarč"
 
