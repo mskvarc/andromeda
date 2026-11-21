@@ -127,6 +127,19 @@ mod tests {
         assert!(delivery_concurrency(&config).is_ok());
     }
 
+    /// The waits between the 18 shipped attempts are 5, 10, 20, 40, 80 and
+    /// 160 s, then eleven at the 5 min ceiling: 315 s + 3300 s.
+    #[test]
+    fn the_shipped_attempts_retry_a_failing_delivery_for_about_an_hour() {
+        let config = DeliveryConfig::default();
+        let schedule = retry_schedule(&config).expect("the shipped retry schedule");
+        let attempts = attempt_ceiling(&config).expect("the shipped attempt ceiling").attempts();
+        let window: Duration = (0..attempts.saturating_sub(1))
+            .map(|count| schedule.step(count).expect("a recorded attempt count").duration())
+            .sum();
+        pretty_assertions::assert_eq!(window, Duration::from_secs(3_615));
+    }
+
     /// The configuration refuses a delivery value past its declared ceiling,
     /// so every value it admits must be one the delivery layer can hold.
     #[test]

@@ -27,12 +27,16 @@ pub const MAX_ERROR_LENGTH_CEILING: u32 = 2_048;
 pub const MAX_DELIVERY_ATTEMPTS_CEILING: u32 = 2_147_483_647;
 
 /// The longest claim `notifications.delivery.queue.lease_timeout` may hold:
-/// one day, the longest lease term the store accepts.
+/// one day. The bound is policy, not a limit of the store: a longer lease
+/// strands a crashed worker's deliveries for longer than any attempt can
+/// justify.
 pub const MAX_DELIVERY_LEASE: Duration = Duration::from_hours(24);
 
 /// The longest wait `notifications.delivery.queue.max_retry_interval` may
-/// grow a retry to: one day, the longest retry step the store adds to its
-/// clock.
+/// grow a retry to: one day. The bound is policy, not a limit of the store,
+/// which adds far longer steps to its clock. The longest step is also the
+/// longest a held Subscription waits for its next probe, so a step past a day
+/// only delays the notifications of an endpoint that has recovered.
 pub const MAX_DELIVERY_RETRY_INTERVAL: Duration = Duration::from_hours(24);
 
 /// How notifications are delivered to HTTP and MQTT subscribers.
@@ -174,8 +178,14 @@ pub struct DeliveryConfig {
     )]
     pub max_mqtt_packet: MqttPacketLimit,
     /// The attempts a queued delivery gets before it is dead-lettered.
+    ///
+    /// While an endpoint fails, only the probe of its held Subscription spends
+    /// attempts, so the ceiling is how long the oldest notification survives
+    /// an outage, and how long a notification the endpoint keeps failing holds
+    /// up the ones queued after it. At the default retry delays (5 s doubling
+    /// to 5 min), 18 attempts span 3615 s.
     #[schemars(
-        description = "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived."
+        description = "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived. While an endpoint keeps failing, the other notifications of its Subscription wait behind the one being retried and spend no attempts. This therefore sets how long an outage the oldest notification survives, and how long a notification the endpoint keeps answering with a server error holds up the ones queued after it. At the default retry delays, 18 attempts span about an hour."
     )]
     pub max_attempts: NonZeroU32,
     /// How the queue is polled, claimed and retried. A delivery is retried on
@@ -201,7 +211,7 @@ impl Default for DeliveryConfig {
             denied_addresses: Vec::new(),
             max_http_body: NotificationBodyLimit::DEFAULT,
             max_mqtt_packet: MqttPacketLimit::DEFAULT,
-            max_attempts: NonZeroU32::MIN.saturating_add(4),
+            max_attempts: NonZeroU32::MIN.saturating_add(17),
             queue: DurableQueue {
                 retry_interval: HumanDuration::from_secs(5),
                 ..DurableQueue::default()

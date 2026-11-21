@@ -7,8 +7,13 @@
 //! A wait is a step, not an instant. The queue adds it to its own clock when
 //! it records the failure, the clock every claim compares a due instant with,
 //! so a broker whose clock differs from the store's neither delays a retry nor
-//! hastens it. Every step is therefore one the store can add to any instant it
-//! holds: a schedule growing past [`DeliveryBackoff::MAX_STEP`] is refused.
+//! hastens it.
+//!
+//! A schedule growing past [`DeliveryBackoff::MAX_STEP`] is refused. The store
+//! adds far longer steps to its clock, so the bound is policy: the longest
+//! step is also the longest a held Subscription waits for its next probe, and
+//! a step past a day only delays the notifications of an endpoint that has
+//! recovered.
 
 use andromeda_configuration::human_duration::HumanDuration;
 use andromeda_retry::{
@@ -18,7 +23,7 @@ use andromeda_retry::{
 use std::time::Duration;
 use thiserror::Error;
 
-/// A retry schedule whose steps the delivery queue cannot add to its clock.
+/// A retry schedule growing past the longest step a failed delivery waits.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum DeliveryBackoffError {
     /// The longest delay of the schedule exceeds [`DeliveryBackoff::MAX_STEP`].
