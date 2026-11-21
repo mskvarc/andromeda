@@ -58,7 +58,15 @@ Each statement says `vulnerable_code_not_in_execute_path`, since the crate is li
 
 ## rustls-pemfile 2.2.0
 
-RUSTSEC-2025-0134 reports that the crate is unmaintained, not a vulnerability. rumqttc is the only crate that links it, and it calls it only in its `TlsConfiguration::Simple` branch (`src/tls.rs:71` of rumqttc 0.25.1) to read certificate files. The broker always passes `TlsConfiguration::Rustls`, so that branch never runs. Even there the certificates would be checked by rustls 0.23. GitHub's advisory database has no entry for it, so scanners don't report it and it has no VEX statement.
+RUSTSEC-2025-0134 reports that the crate is unmaintained, not a vulnerability. rumqttc is the only crate that links it, and it calls it only in its `TlsConfiguration::Simple` branch (`src/tls.rs:71` of rumqttc 0.25.1) to read certificate files. The broker always passes `TlsConfiguration::Rustls`, so that branch never runs. Even there the certificates would be checked by rustls 0.23. Its statement says `vulnerable_code_not_in_execute_path`, so it names rumqttc 0.25.1 like the rustls-webpki ones. GitHub's advisory database has no entry for it, but scanners that read the Rust advisory database report it.
+
+## Unmaintained crates
+
+RUSTSEC-2024-0370, RUSTSEC-2026-0542 and RUSTSEC-2026-0543 report that proc-macro-error 1.0.4, humantime 2.4.0 and chrono 0.4.45 are unmaintained. None of them reports a vulnerability, so their statements say `vulnerable_code_not_present`. That ruling doesn't rest on what the crates linking them call, so the statements name none of those crates, and a dependency update calls for no new proof.
+
+- **proc-macro-error.** Only the procedural macros of static-automata-macros, static-regular-grammar and str-newtype-derive use it, so it runs inside the compiler and none of its code is in the binary. The newest releases of static-automata-macros (1.1.0) and static-regular-grammar (2.0.2) still depend on it.
+- **humantime.** The advisory counts it as unmaintained because it wraps chrono. No maintained release exists.
+- **chrono.** No maintained release exists.
 
 ## Redoing a proof
 
@@ -67,4 +75,4 @@ When the gate reports that a crate linking an affected version isn't named in a 
 1. Run the `cargo tree -i` command above for both targets with the affected crate and version, and add `-e features` to see which feature pulls it in.
 2. Search the new dependent's source, under the cargo registry, for the affected crate's library name. Note every function it calls and every value of the crate's types it makes. Calls into the code an advisory names mean the ruling doesn't hold, and the advisory has to be fixed rather than ignored.
 3. Check that the broker's own TLS paths above still run on a fixed version.
-4. Name the crate and its version in the ignore's reason in `deny.toml`, copy the reason into the impact statement word for word, raise the document's `version` and set its `timestamp`. Update this page.
+4. Name the crate and its version in the ignore's reason in `deny.toml`, and copy the reason word for word into the impact statement of each of the advisory's statements. Set the `timestamp` of each of those statements and the document's `last_updated`, and raise the document's `version`. Update this page.

@@ -3,8 +3,63 @@
   "@id": "https://github.com/mskvarc/andromeda/blob/main/.vex/andromeda.openvex.json",
   "author": "Andromeda",
   "timestamp": "2026-11-21T19:47:08Z",
-  "version": 2,
+  "last_updated": "2026-11-21T21:25:24Z",
+  "version": 3,
   "statements": [
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2024-0370"
+      },
+      "timestamp": "2026-11-21T21:25:24Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/proc-macro-error@1.0.4"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/proc-macro-error@1.0.4"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "proc-macro-error 1.0.4 is unmaintained, which the advisory reports in place of a vulnerability. Only the procedural macros of static-automata-macros, static-regular-grammar and str-newtype-derive use it, so it runs while the broker compiles and none of its code is in the binary. The newest releases of static-automata-macros and static-regular-grammar still depend on it."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2025-0134"
+      },
+      "timestamp": "2026-11-21T21:25:24Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-pemfile@2.2.0"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-pemfile@2.2.0"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-pemfile 2.2.0 is unmaintained, which the advisory reports in place of a vulnerability. rumqttc 0.25.1, the only crate linking it, calls it only to read certificate files for a TlsConfiguration::Simple, and the broker never builds one, handing rumqttc a ready rustls client configuration instead."
+    },
     {
       "vulnerability": {
         "name": "RUSTSEC-2026-0049",
@@ -13,9 +68,80 @@
           "GHSA-pwjx-qhcg-rvj4"
         ]
       },
+      "timestamp": "2026-11-21T19:47:08Z",
       "products": [
         {
           "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 compares only the first CRL distribution point of a certificate when it checks revocation, so a revoked certificate can pass when unknown revocation status is allowed. The broker never runs that check. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which is patched, and with no revocation lists."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-93602",
+        "aliases": [
+          "RUSTSEC-2026-0049",
+          "GHSA-pwjx-qhcg-rvj4"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 compares only the first CRL distribution point of a certificate when it checks revocation, so a revoked certificate can pass when unknown revocation status is allowed. The broker never runs that check. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which is patched, and with no revocation lists."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-pwjx-qhcg-rvj4",
+        "aliases": [
+          "RUSTSEC-2026-0049",
+          "CVE-2026-93602"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
           "subcomponents": [
             {
               "@id": "pkg:cargo/rustls-webpki@0.102.8"
@@ -35,9 +161,80 @@
           "GHSA-965h-392x-2mh5"
         ]
       },
+      "timestamp": "2026-11-21T19:47:08Z",
       "products": [
         {
           "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 ignores name constraints on URI names when it verifies a certificate path, so a misissued certificate can pass a constraint it breaks. The broker never runs that verification. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which rejects URI name constraints."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-93600",
+        "aliases": [
+          "RUSTSEC-2026-0098",
+          "GHSA-965h-392x-2mh5"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 ignores name constraints on URI names when it verifies a certificate path, so a misissued certificate can pass a constraint it breaks. The broker never runs that verification. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which rejects URI name constraints."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-965h-392x-2mh5",
+        "aliases": [
+          "RUSTSEC-2026-0098",
+          "CVE-2026-93600"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
           "subcomponents": [
             {
               "@id": "pkg:cargo/rustls-webpki@0.102.8"
@@ -57,9 +254,80 @@
           "GHSA-xgp8-3hg3-c2mh"
         ]
       },
+      "timestamp": "2026-11-21T19:47:08Z",
       "products": [
         {
           "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 accepts a certificate for a wildcard DNS name under a permitted name constraint the wildcard reaches past when it verifies a certificate path. The broker never runs that verification. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which is patched."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-93601",
+        "aliases": [
+          "RUSTSEC-2026-0099",
+          "GHSA-xgp8-3hg3-c2mh"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 accepts a certificate for a wildcard DNS name under a permitted name constraint the wildcard reaches past when it verifies a certificate path. The broker never runs that verification. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which is patched."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-xgp8-3hg3-c2mh",
+        "aliases": [
+          "RUSTSEC-2026-0099",
+          "CVE-2026-93601"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
           "subcomponents": [
             {
               "@id": "pkg:cargo/rustls-webpki@0.102.8"
@@ -79,9 +347,80 @@
           "GHSA-82j2-j2ch-gfr8"
         ]
       },
+      "timestamp": "2026-11-21T19:47:08Z",
       "products": [
         {
           "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 panics when it parses a certificate revocation list whose issuing distribution point holds an empty onlySomeReasons bit string. The broker parses no revocation lists. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker's certificate checks run on rustls-webpki 0.103.17, which is patched, with no revocation lists."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-93599",
+        "aliases": [
+          "RUSTSEC-2026-0104",
+          "GHSA-82j2-j2ch-gfr8"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 panics when it parses a certificate revocation list whose issuing distribution point holds an empty onlySomeReasons bit string. The broker parses no revocation lists. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker's certificate checks run on rustls-webpki 0.103.17, which is patched, with no revocation lists."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-82j2-j2ch-gfr8",
+        "aliases": [
+          "RUSTSEC-2026-0104",
+          "CVE-2026-93599"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
           "subcomponents": [
             {
               "@id": "pkg:cargo/rustls-webpki@0.102.8"
@@ -100,9 +439,18 @@
           "CVE-2026-111943"
         ]
       },
+      "timestamp": "2026-11-21T19:47:08Z",
       "products": [
         {
           "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
           "subcomponents": [
             {
               "@id": "pkg:cargo/rustls-webpki@0.102.8"
@@ -113,6 +461,90 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "rustls-webpki 0.102 accepts certificate paths through the distrusted emSign intermediates, whose private keys are public, when its trust anchors lead to them. The broker never verifies a path with it. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which rejects those intermediates."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-111943",
+        "aliases": [
+          "RUSTSEC-2026-0382"
+        ]
+      },
+      "timestamp": "2026-11-21T19:47:08Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/rustls-webpki@0.102.8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "rustls-webpki 0.102 accepts certificate paths through the distrusted emSign intermediates, whose private keys are public, when its trust anchors lead to them. The broker never verifies a path with it. rumqttc 0.25.1, the only crate linking rustls-webpki 0.102, names it only as the type of an error variant that nothing constructs and calls none of its functions, and the broker verifies every certificate with rustls-webpki 0.103.17, which rejects those intermediates."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0542"
+      },
+      "timestamp": "2026-11-21T21:25:24Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/humantime@2.4.0"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/humantime@2.4.0"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "humantime 2.4.0 is unmaintained, which the advisory reports in place of a vulnerability, on the grounds that it wraps chrono. No maintained release exists, and jiff's friendly duration format replaces it."
+    },
+    {
+      "vulnerability": {
+        "name": "RUSTSEC-2026-0543"
+      },
+      "timestamp": "2026-11-21T21:25:24Z",
+      "products": [
+        {
+          "@id": "pkg:oci/andromeda?repository_url=ghcr.io/mskvarc/andromeda",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/chrono@0.4.45"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:docker/mskvarc/andromeda?repository_url=ghcr.io",
+          "subcomponents": [
+            {
+              "@id": "pkg:cargo/chrono@0.4.45"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "chrono 0.4.45 is unmaintained, which the advisory reports in place of a vulnerability. No maintained release exists, and the broker's time handling moves to jiff."
     }
   ]
 }

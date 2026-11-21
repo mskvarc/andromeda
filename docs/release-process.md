@@ -46,7 +46,7 @@ To keep a commit out of the changelog, such as a change and its revert in the sa
 
 The broker binary carries its own dependency tree, which `cargo auditable` embeds when the image is built, so an SBOM generator or a scanner sees every crate the image ships. The release attests build provenance and the OpenVEX document `.vex/andromeda.openvex.json` to the image's manifest list. It generates an SPDX SBOM of each platform image from that image's own digest, because a manifest list resolves to the platform of whoever pulls it, and attests each SBOM to its platform image and to the manifest list. A lookup by tag reaches the manifest list and finds both SBOMs, and a lookup by a platform image's digest finds that image's SBOM. The VEX document is attested to each platform image as well, because a scanner may look attestations up by the digest of the platform image it pulled.
 
-The VEX document tells scanners which advisories don't affect the image. Each statement repeats a ruling of `deny.toml`. Its advisory is one `deny.toml` ignores, its impact statement is the reason the ignore gives, the crate it names is at a version `Cargo.lock` holds, and every crate linking that version is named in it. The gate `advisory_rulings` checks all four, so a ruling can't change in one file and stay the same in the other, and a new crate linking the affected version calls for a new proof. [Advisory rulings](advisory-rulings.md) holds the proofs. A statement's product is `pkg:oci/andromeda?repository_url=ghcr.io/<owner>/andromeda` with no version, which covers every digest of the image. `<owner>` is the owner of the repository `[workspace.package]` names, and the gate refuses any other product, because a scanner names a pulled image this way and a statement for any other name matches nothing. [Dependencies](contributing/dependencies.md#ignoring-an-advisory) says when an ignore needs a statement.
+The VEX document tells scanners which advisories don't affect the image. It rules on every advisory `deny.toml` ignores, once under each of the advisory's identifiers, with the ignore's reason as the impact statement, and the gate `advisory_rulings` holds the two files in step, as [Dependencies](contributing/dependencies.md#ignoring-an-advisory) describes. [Advisory rulings](advisory-rulings.md) holds the proofs. Each statement names the image as `pkg:oci/andromeda?repository_url=ghcr.io/<owner>/andromeda` and as `pkg:docker/<owner>/andromeda?repository_url=ghcr.io`, both with no version, which covers every digest of the image in either form a scanner names a pulled image by. `<owner>` is the owner of the repository `[workspace.package]` names, and the gate refuses any other product, because a statement for any other name matches nothing.
 
 An advisory published after a release gets a new VEX attestation on the image that release published.
 
@@ -56,16 +56,20 @@ An advisory published after a release gets a new VEX attestation on the image th
 
 This works for releases cut after VEX attestations were introduced. `v1.0.0` predates them, so its tag holds neither the `vex` workflow nor the document, and its binary carries no dependency tree, which leaves a scanner no crate of it to report.
 
-Each attestation carries the whole document. Trivy reads only the first OpenVEX attestation the registry lists for a digest, which may still be the older one. The release asset always holds the newest document, so a scanner given it with `--vex` sees every statement, as in `trivy image --vex andromeda-vX.Y.Z.openvex.json ghcr.io/<owner>/andromeda:X.Y.Z`.
+Each attestation carries the whole document. Trivy reads only the first OpenVEX attestation the registry lists for a digest, which may still be the older one. Docker Scout and Grype don't read the attestation at all. The release asset always holds the newest document, so a scanner given it sees every statement, as in `trivy image --vex andromeda-vX.Y.Z.openvex.json ghcr.io/<owner>/andromeda:X.Y.Z`.
 
-To check that scanners honour the document, scan each platform image once after a release.
+To check that scanners honour the document, scan each platform image once after a release, with the release asset saved in the current directory for Docker Scout and Grype. Docker Scout trusts only VEX documents written by Docker unless `--vex-author` names the author, which is `Andromeda`, written exactly so.
 
 ```
 trivy image --vex oci --show-suppressed --platform linux/amd64 ghcr.io/<owner>/andromeda:X.Y.Z
 trivy image --vex oci --show-suppressed --platform linux/arm64 ghcr.io/<owner>/andromeda:X.Y.Z
+docker scout cves --platform linux/amd64 --vex-author Andromeda --vex-location . registry://ghcr.io/<owner>/andromeda:X.Y.Z
+docker scout cves --platform linux/arm64 --vex-author Andromeda --vex-location . registry://ghcr.io/<owner>/andromeda:X.Y.Z
+grype registry:ghcr.io/<owner>/andromeda:X.Y.Z --platform linux/amd64 --vex andromeda-vX.Y.Z.openvex.json
+grype registry:ghcr.io/<owner>/andromeda:X.Y.Z --platform linux/arm64 --vex andromeda-vX.Y.Z.openvex.json
 ```
 
-Trivy takes Rust advisories from GitHub's advisory database alone. It reports each under its CVE id when the database records one and under its GitHub id otherwise, and a statement carries both as aliases. Every advisory with a statement that the database lists appears among the suppressed findings and none among the vulnerabilities. RUSTSEC-2026-0382 has no entry there yet, so it appears in neither list, and its statement is in place for when the entry appears.
+Trivy and Grype take Rust advisories from GitHub's advisory database alone, and report each under its CVE id when the database records one and under its GitHub id otherwise. Docker Scout reads the Rust advisory database too. It reports the rustls-webpki advisories under their CVE ids, the ones GitHub's database lists under their GitHub ids as well, and the unmaintained crates under their RustSec ids. Each of those identifiers names a statement of its own, since Docker Scout matches a statement by its name alone. Trivy lists every advisory with a statement among the suppressed findings and none among the vulnerabilities, and Docker Scout and Grype leave them out. RUSTSEC-2026-0382 and the unmaintained crates have no entry in GitHub's database, so Trivy and Grype report none of them, and their statements serve Docker Scout. osv-scanner reports every advisory as well, but it reads no VEX document, so it shows all of them.
 
 ## What the release checks
 

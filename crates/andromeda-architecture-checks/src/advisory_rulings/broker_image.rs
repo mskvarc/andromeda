@@ -1,16 +1,20 @@
-//! The broker image as a scanner names it, the product every VEX statement
-//! has to name for a scanner to apply it.
+//! The broker image as scanners name it, the products every VEX statement
+//! has to name for every scanner to apply it.
 //!
 //! The release publishes the image to the GitHub container registry under the
-//! owner of the source repository, as `ghcr.io/<owner>/andromeda`. A scanner
-//! names a pulled image by the last segment of its repository, with the whole
-//! repository as the `repository_url` qualifier and the digest as the version,
-//! and a statement applies when its product names the same image with a subset
-//! of those qualifiers. A product without a version covers every digest; one
-//! naming another repository or image matches nothing.
+//! owner of the source repository, as `ghcr.io/<owner>/andromeda`. Scanners
+//! name a pulled image in one of two package URL forms. The `oci` form names
+//! it by the last segment of its repository, with the whole repository as the
+//! `repository_url` qualifier. The `docker` form names it by its owner and
+//! name, with the registry as the `repository_url` qualifier. Either carries
+//! the digest as the version, and a scanner applies a statement when one of its
+//! products names the same image in the scanner's form with a subset of those
+//! qualifiers. A product without a version covers every digest; one naming
+//! another repository or image matches nothing.
 
 use packageurl::PackageUrl;
 use std::str::FromStr;
+use strum::EnumIter;
 use toml_edit::DocumentMut;
 use url::Url;
 
@@ -21,23 +25,40 @@ const IMAGE_REGISTRY: &str = "ghcr.io";
 const SOURCE_HOST: &str = "github.com";
 
 /// The name the broker image is published under, which is also the name of its
-/// package URL.
+/// package URLs.
 const IMAGE_NAME: &str = "andromeda";
 
 /// The package URL type of an OCI image.
-const IMAGE_TYPE: &str = "oci";
+const OCI_TYPE: &str = "oci";
 
-/// The package URL qualifier naming the repository an image is pulled from.
+/// The package URL type of a Docker image.
+const DOCKER_TYPE: &str = "docker";
+
+/// The package URL qualifier naming where an image is pulled from.
 const REPOSITORY_QUALIFIER: &str = "repository_url";
 
-/// The broker image's repository, and the package URL that names every digest
-/// of it.
+/// A package URL form scanners name the broker image in. A scanner matches
+/// statements by one form alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, EnumIter)]
+pub(crate) enum ImageForm {
+    /// `pkg:oci/andromeda?repository_url=ghcr.io/<owner>/andromeda`.
+    Oci,
+    /// `pkg:docker/<owner>/andromeda?repository_url=ghcr.io`.
+    Docker,
+}
+
+/// The broker image's owner and repository, and the package URLs that name
+/// every digest of it.
 #[derive(Debug)]
 pub(crate) struct BrokerImage {
+    /// The owner the image is published under, in lowercase.
+    owner: String,
     /// The repository the image is pulled from, `ghcr.io/<owner>/andromeda`.
     repository: String,
-    /// The package URL naming every digest of the image.
-    purl: String,
+    /// The `oci` package URL naming every digest of the image.
+    oci: String,
+    /// The `docker` package URL naming every digest of the image.
+    docker: String,
 }
 
 impl BrokerImage {
@@ -49,35 +70,47 @@ impl BrokerImage {
         let url = Url::parse(repository).ok().filter(|url| url.host_str() == Some(SOURCE_HOST))?;
         let owner = url.path_segments()?.next().filter(|owner| !owner.is_empty())?.to_lowercase();
         let repository = format!("{IMAGE_REGISTRY}/{owner}/{IMAGE_NAME}");
-        let purl = format!("pkg:{IMAGE_TYPE}/{IMAGE_NAME}?{REPOSITORY_QUALIFIER}={repository}");
-        Some(BrokerImage { repository, purl })
-    }
-
-    /// The package URL naming every digest of the image.
-    pub(crate) fn purl(&self) -> &str {
-        &self.purl
-    }
-
-    /// Whether the package URL `id` names every digest of the image, as an
-    /// `oci` package URL of its name and repository with no version. Further
-    /// qualifiers, such as an architecture, narrow the product and are allowed.
-    pub(crate) fn is_named_by(&self, id: &str) -> bool {
-        PackageUrl::from_str(id).is_ok_and(|purl| {
-            purl.ty() == IMAGE_TYPE
-                && purl.namespace().is_none()
-                && purl.name() == IMAGE_NAME
-                && purl.version().is_none()
-                && purl
-                    .qualifiers()
-                    .get(REPOSITORY_QUALIFIER)
-                    .is_some_and(|repository| *repository == self.repository)
+        let oci = format!("pkg:{OCI_TYPE}/{IMAGE_NAME}?{REPOSITORY_QUALIFIER}={repository}");
+        let docker = format!("pkg:{DOCKER_TYPE}/{owner}/{IMAGE_NAME}?{REPOSITORY_QUALIFIER}={IMAGE_REGISTRY}");
+        Some(BrokerImage {
+            owner,
+            repository,
+            oci,
+            docker,
         })
+    }
+
+    /// The package URL in `form` naming every digest of the image.
+    pub(crate) fn purl(&self, form: ImageForm) -> &str {
+        match form {
+            ImageForm::Oci => &self.oci,
+            ImageForm::Docker => &self.docker,
+        }
+    }
+
+    /// The form in which the package URL `id` names every digest of the image,
+    /// with no version: an `oci` package URL of its name and repository, or a
+    /// `docker` one of its owner and name in its registry. `None` when `id`
+    /// names neither. Further qualifiers, such as an architecture, narrow the
+    /// product and are allowed.
+    pub(crate) fn form_named_by(&self, id: &str) -> Option<ImageForm> {
+        let purl = PackageUrl::from_str(id)
+            .ok()
+            .filter(|purl| purl.name() == IMAGE_NAME && purl.version().is_none())?;
+        let pulled_from = purl.qualifiers().get(REPOSITORY_QUALIFIER)?;
+        if purl.ty() == OCI_TYPE && purl.namespace().is_none() && *pulled_from == self.repository {
+            Some(ImageForm::Oci)
+        } else if purl.ty() == DOCKER_TYPE && purl.namespace() == Some(self.owner.as_str()) && *pulled_from == IMAGE_REGISTRY {
+            Some(ImageForm::Docker)
+        } else {
+            None
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::advisory_rulings::broker_image::BrokerImage;
+    use crate::advisory_rulings::broker_image::{BrokerImage, ImageForm};
     use pretty_assertions::assert_eq;
     use toml_edit::DocumentMut;
 
@@ -88,7 +121,8 @@ mod tests {
     #[test]
     fn the_image_is_published_under_the_owner_of_the_source_repository() {
         let image = image("[workspace.package]\nrepository = \"https://github.com/Example/andromeda\"\n").unwrap();
-        assert_eq!(image.purl(), "pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda");
+        assert_eq!(image.purl(ImageForm::Oci), "pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda");
+        assert_eq!(image.purl(ImageForm::Docker), "pkg:docker/example/andromeda?repository_url=ghcr.io");
     }
 
     #[test]
@@ -104,21 +138,29 @@ mod tests {
     }
 
     #[test]
-    fn only_a_versionless_package_url_of_the_image_and_its_repository_names_it() {
+    fn only_a_versionless_package_url_of_the_image_in_either_form_names_it() {
         let image = image("[workspace.package]\nrepository = \"https://github.com/example/andromeda\"\n").unwrap();
-        for (id, names) in [
-            ("pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda", true),
-            ("pkg:oci/andromeda?repository_url=ghcr.io%2Fexample%2Fandromeda", true),
-            ("pkg:oci/andromeda?arch=amd64&repository_url=ghcr.io/example/andromeda", true),
-            ("pkg:oci/andromedaa?repository_url=ghcr.io/example/andromeda", false),
-            ("pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda", false),
-            ("pkg:oci/andromeda?repository_url=docker.io/example/andromeda", false),
-            ("pkg:oci/andromeda", false),
-            ("pkg:oci/andromeda@sha256:0123?repository_url=ghcr.io/example/andromeda", false),
-            ("pkg:docker/andromeda?repository_url=ghcr.io/example/andromeda", false),
-            ("ghcr.io/example/andromeda", false),
+        for (id, form) in [
+            ("pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda", Some(ImageForm::Oci)),
+            ("pkg:oci/andromeda?repository_url=ghcr.io%2Fexample%2Fandromeda", Some(ImageForm::Oci)),
+            ("pkg:oci/andromeda?arch=amd64&repository_url=ghcr.io/example/andromeda", Some(ImageForm::Oci)),
+            ("pkg:docker/example/andromeda?repository_url=ghcr.io", Some(ImageForm::Docker)),
+            ("pkg:docker/example/andromeda?arch=arm64&repository_url=ghcr.io", Some(ImageForm::Docker)),
+            ("pkg:oci/andromedaa?repository_url=ghcr.io/example/andromeda", None),
+            ("pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda", None),
+            ("pkg:oci/andromeda?repository_url=docker.io/example/andromeda", None),
+            ("pkg:oci/andromeda", None),
+            ("pkg:oci/andromeda@sha256:0123?repository_url=ghcr.io/example/andromeda", None),
+            ("pkg:oci/example/andromeda?repository_url=ghcr.io/example/andromeda", None),
+            ("pkg:docker/andromeda?repository_url=ghcr.io/example/andromeda", None),
+            ("pkg:docker/other/andromeda?repository_url=ghcr.io", None),
+            ("pkg:docker/example/andromeda", None),
+            ("pkg:docker/example/andromeda?repository_url=docker.io", None),
+            ("pkg:docker/example/andromeda@probe?repository_url=ghcr.io", None),
+            ("pkg:docker/ghcr.io/example/andromeda", None),
+            ("ghcr.io/example/andromeda", None),
         ] {
-            assert_eq!(image.is_named_by(id), names, "{id}");
+            assert_eq!(image.form_named_by(id), form, "{id}");
         }
     }
 }

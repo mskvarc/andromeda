@@ -14,9 +14,13 @@ use toml_edit::DocumentMut;
 
 const ADVISORY: &str = "RUSTSEC-2026-0104";
 
+const ALIAS: &str = "GHSA-82j2-j2ch-gfr8";
+
 const REASON: &str = "rustls-webpki 0.102 panics parsing a revocation list, which rumqttc 0.25.1, the only crate linking it, never calls";
 
-const IMAGE: &str = "pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda";
+const OCI: &str = "pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda";
+
+const DOCKER: &str = "pkg:docker/example/andromeda?repository_url=ghcr.io";
 
 const CRATE: &str = "pkg:cargo/rustls-webpki@0.102.8";
 
@@ -24,8 +28,12 @@ const MANIFEST: &str = "[workspace.package]\nrepository = \"https://github.com/e
 
 fn ruling() -> Value {
     json!({
-        "vulnerability": { "name": ADVISORY, "aliases": ["GHSA-82j2-j2ch-gfr8"] },
-        "products": [{ "@id": IMAGE, "subcomponents": [{ "@id": CRATE }] }],
+        "vulnerability": { "name": ADVISORY },
+        "timestamp": "2026-11-21T19:47:08Z",
+        "products": [
+            { "@id": OCI, "subcomponents": [{ "@id": CRATE }] },
+            { "@id": DOCKER, "subcomponents": [{ "@id": CRATE }] },
+        ],
         "status": "not_affected",
         "justification": "vulnerable_code_not_in_execute_path",
         "impact_statement": REASON,
@@ -94,9 +102,26 @@ fn ruling_without(member: &str) -> Value {
     statement
 }
 
-fn ruling_naming(product: &str, subcomponents: &[&str]) -> Value {
-    let subcomponents: Vec<Value> = subcomponents.iter().map(|id| json!({ "@id": id })).collect();
-    ruling_with("products", json!([{ "@id": product, "subcomponents": subcomponents }]))
+/// The ruling named `name`, listing `aliases`.
+fn ruling_named(name: &str, aliases: &[&str]) -> Value {
+    ruling_with("vulnerability", json!({ "name": name, "aliases": aliases }))
+}
+
+/// The ruling with `products`, each a package URL and the crates inside it.
+fn ruling_naming(products: &[(&str, &[&str])]) -> Value {
+    let products: Vec<Value> = products
+        .iter()
+        .map(|(product, subcomponents)| {
+            let subcomponents: Vec<Value> = subcomponents.iter().map(|id| json!({ "@id": id })).collect();
+            json!({ "@id": product, "subcomponents": subcomponents })
+        })
+        .collect();
+    ruling_with("products", json!(products))
+}
+
+/// The ruling with `subcomponents` inside both forms of the image.
+fn ruling_naming_crates(subcomponents: &[&str]) -> Value {
+    ruling_naming(&[(OCI, subcomponents), (DOCKER, subcomponents)])
 }
 
 #[test]
@@ -105,10 +130,30 @@ fn a_statement_repeating_an_ignore_for_a_locked_crate_agrees() {
 }
 
 #[test]
-fn an_ignore_without_a_statement_agrees() {
+fn statements_under_every_identifier_of_an_ignored_advisory_agree() {
+    let statements = [ruling_named(ADVISORY, &[ALIAS]), ruling_named(ALIAS, &[ADVISORY])];
+    assert_eq!(disagreements(&parsed(&statements), &ignores(), &locked(), &image()), Vec::<Disagreement>::new());
+}
+
+#[test]
+fn an_ignore_without_a_statement_disagrees() {
     let mut ignores = ignores();
     ignores.insert("RUSTSEC-2024-0370".to_owned(), Some("build-time only".to_owned()));
-    assert_eq!(disagreements(&parsed(&[ruling()]), &ignores, &locked(), &image()), Vec::<Disagreement>::new());
+    assert_eq!(
+        disagreements(&parsed(&[ruling()]), &ignores, &locked(), &image()),
+        [Disagreement::IgnoreWithoutStatement { advisory: "RUSTSEC-2024-0370" }]
+    );
+}
+
+#[test]
+fn an_ignore_only_an_alias_names_is_reported_as_the_alias_without_a_statement() {
+    assert_eq!(
+        disagreements(&parsed(&[ruling_named(ALIAS, &[ADVISORY])]), &ignores(), &locked(), &image()),
+        [Disagreement::AliasWithoutStatement {
+            advisory: ALIAS,
+            alias: ADVISORY
+        }]
+    );
 }
 
 #[test]
@@ -124,7 +169,10 @@ fn a_statement_for_an_advisory_ignored_without_a_reason_disagrees() {
     let ignores = BTreeMap::from([(ADVISORY.to_owned(), None)]);
     assert_eq!(
         disagreements(&parsed(&[ruling()]), &ignores, &locked(), &image()),
-        [Disagreement::IgnoredWithoutReason { advisory: ADVISORY }]
+        [Disagreement::IgnoredWithoutReason {
+            advisory: ADVISORY,
+            ignored: ADVISORY
+        }]
     );
 }
 
@@ -133,7 +181,23 @@ fn an_impact_statement_other_than_the_ignore_reason_disagrees() {
     let statement = ruling_with("impact_statement", json!("rustls-webpki 0.102 is linked by rumqttc 0.25.1 alone"));
     assert_eq!(
         disagreements(&parsed(&[statement]), &ignores(), &locked(), &image()),
-        [Disagreement::ImpactDiffers { advisory: ADVISORY }]
+        [Disagreement::ImpactDiffers {
+            advisory: ADVISORY,
+            ignored: ADVISORY
+        }]
+    );
+}
+
+#[test]
+fn an_impact_statement_other_than_the_reason_the_alias_is_ignored_for_disagrees() {
+    let mut aliased = ruling_named(ALIAS, &[ADVISORY]);
+    aliased["impact_statement"] = json!("rustls-webpki 0.102 is linked by rumqttc 0.25.1 alone");
+    assert_eq!(
+        disagreements(&parsed(&[ruling_named(ADVISORY, &[ALIAS]), aliased]), &ignores(), &locked(), &image()),
+        [Disagreement::ImpactDiffers {
+            advisory: ALIAS,
+            ignored: ADVISORY
+        }]
     );
 }
 
@@ -142,7 +206,10 @@ fn a_statement_without_an_impact_statement_disagrees() {
     assert_eq!(
         disagreements(&parsed(&[ruling_without("impact_statement")]), &ignores(), &locked(), &image()),
         [
-            Disagreement::ImpactDiffers { advisory: ADVISORY },
+            Disagreement::ImpactDiffers {
+                advisory: ADVISORY,
+                ignored: ADVISORY
+            },
             Disagreement::DependentUnnamed {
                 advisory: ADVISORY,
                 subcomponent: CRATE,
@@ -159,6 +226,63 @@ fn a_second_statement_for_one_advisory_disagrees() {
         disagreements(&parsed(&[ruling(), ruling()]), &ignores(), &locked(), &image()),
         [Disagreement::Repeated { advisory: ADVISORY }]
     );
+}
+
+#[test]
+fn an_alias_without_a_statement_of_its_own_disagrees() {
+    assert_eq!(
+        disagreements(&parsed(&[ruling_named(ADVISORY, &[ALIAS])]), &ignores(), &locked(), &image()),
+        [Disagreement::AliasWithoutStatement {
+            advisory: ADVISORY,
+            alias: ALIAS
+        }]
+    );
+}
+
+#[test]
+fn statements_of_one_advisory_listing_other_identifiers_disagree() {
+    let other = "CVE-2026-93599";
+    let statements = [ruling_named(ADVISORY, &[ALIAS, other]), ruling_named(ALIAS, &[ADVISORY])];
+    assert_eq!(
+        disagreements(&parsed(&statements), &ignores(), &locked(), &image()),
+        [
+            Disagreement::AliasesDiffer {
+                advisory: ADVISORY,
+                alias: ALIAS
+            },
+            Disagreement::AliasWithoutStatement {
+                advisory: ADVISORY,
+                alias: other
+            },
+            Disagreement::AliasesDiffer {
+                advisory: ALIAS,
+                alias: ADVISORY
+            },
+        ]
+    );
+}
+
+#[test]
+fn statements_of_one_advisory_ruling_otherwise_disagree() {
+    let mut justified_otherwise = ruling_named(ALIAS, &[ADVISORY]);
+    justified_otherwise["justification"] = json!("vulnerable_code_cannot_be_controlled_by_adversary");
+    let mut crated_otherwise = ruling_named(ALIAS, &[ADVISORY]);
+    crated_otherwise["products"] = ruling_naming_crates(&[CRATE, "pkg:cargo/rustls-webpki@0.103.17"])["products"].clone();
+    for aliased in [justified_otherwise, crated_otherwise] {
+        assert_eq!(
+            disagreements(&parsed(&[ruling_named(ADVISORY, &[ALIAS]), aliased]), &ignores(), &locked(), &image()),
+            [
+                Disagreement::AliasRulesOtherwise {
+                    advisory: ADVISORY,
+                    alias: ALIAS
+                },
+                Disagreement::AliasRulesOtherwise {
+                    advisory: ALIAS,
+                    alias: ADVISORY
+                },
+            ]
+        );
+    }
 }
 
 #[test]
@@ -184,8 +308,20 @@ fn a_statement_without_a_justification_disagrees() {
 }
 
 #[test]
-fn a_status_or_justification_the_specification_does_not_define_does_not_parse() {
-    for statement in [ruling_with("status", json!("not-affected")), ruling_with("justification", json!("unreachable"))] {
+fn a_statement_without_a_timestamp_of_its_own_disagrees() {
+    assert_eq!(
+        disagreements(&parsed(&[ruling_without("timestamp")]), &ignores(), &locked(), &image()),
+        [Disagreement::Undated { advisory: ADVISORY }],
+    );
+}
+
+#[test]
+fn a_status_justification_or_timestamp_the_specification_does_not_define_does_not_parse() {
+    for statement in [
+        ruling_with("status", json!("not-affected")),
+        ruling_with("justification", json!("unreachable")),
+        ruling_with("timestamp", json!("21 November 2026")),
+    ] {
         assert!(serde_json::from_value::<VexDocument>(document(&[statement])).is_err());
     }
 }
@@ -207,14 +343,33 @@ fn a_product_that_is_not_every_digest_of_the_broker_image_disagrees() {
         "pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda",
         "pkg:oci/andromeda?repository_url=docker.io/example/andromeda",
         "pkg:docker/andromeda?repository_url=ghcr.io/example/andromeda",
+        "pkg:docker/other/andromeda?repository_url=ghcr.io",
+        "pkg:docker/example/andromeda",
+        "pkg:docker/example/andromeda@1.0.0?repository_url=ghcr.io",
+        "pkg:docker/ghcr.io/example/andromeda",
         "ghcr.io/example/andromeda",
     ] {
+        let statement = ruling_naming(&[(OCI, &[CRATE]), (DOCKER, &[CRATE]), (product, &[CRATE])]);
         assert_eq!(
-            disagreements(&parsed(&[ruling_naming(product, &[CRATE])]), &ignores(), &locked(), &image()),
+            disagreements(&parsed(&[statement]), &ignores(), &locked(), &image()),
             [Disagreement::ProductNotImage {
                 advisory: ADVISORY,
                 product,
-                image: IMAGE,
+                oci: OCI,
+                docker: DOCKER,
+            }],
+        );
+    }
+}
+
+#[test]
+fn a_statement_naming_the_broker_image_in_one_form_alone_disagrees() {
+    for (named, missing) in [(OCI, DOCKER), (DOCKER, OCI)] {
+        assert_eq!(
+            disagreements(&parsed(&[ruling_naming(&[(named, &[CRATE])])]), &ignores(), &locked(), &image()),
+            [Disagreement::ImageFormMissing {
+                advisory: ADVISORY,
+                form: missing
             }],
         );
     }
@@ -222,22 +377,25 @@ fn a_product_that_is_not_every_digest_of_the_broker_image_disagrees() {
 
 #[test]
 fn a_product_without_a_crate_inside_it_disagrees() {
-    for statement in [ruling_naming(IMAGE, &[]), ruling_with("products", json!([{ "@id": IMAGE }]))] {
+    for statement in [
+        ruling_naming(&[(OCI, &[]), (DOCKER, &[CRATE])]),
+        ruling_with("products", json!([{ "@id": OCI }, { "@id": DOCKER, "subcomponents": [{ "@id": CRATE }] }])),
+    ] {
         assert_eq!(
             disagreements(&parsed(&[statement]), &ignores(), &locked(), &image()),
             [Disagreement::NoSubcomponent {
                 advisory: ADVISORY,
-                product: IMAGE
+                product: OCI
             }],
         );
     }
 }
 
 #[test]
-fn a_subcomponent_that_is_no_crate_at_one_version_disagrees() {
+fn a_subcomponent_that_is_no_crate_at_one_version_disagrees_once() {
     let subcomponents = ["pkg:cargo/rustls-webpki", "pkg:npm/rustls-webpki@0.102.8", "rustls-webpki 0.102.8"];
     assert_eq!(
-        disagreements(&parsed(&[ruling_naming(IMAGE, &subcomponents)]), &ignores(), &locked(), &image()),
+        disagreements(&parsed(&[ruling_naming_crates(&subcomponents)]), &ignores(), &locked(), &image()),
         subcomponents.map(|subcomponent| Disagreement::SubcomponentNotCrate {
             advisory: ADVISORY,
             subcomponent
@@ -246,10 +404,10 @@ fn a_subcomponent_that_is_no_crate_at_one_version_disagrees() {
 }
 
 #[test]
-fn a_crate_version_the_lockfile_does_not_hold_disagrees() {
+fn a_crate_version_the_lockfile_does_not_hold_disagrees_once() {
     let subcomponents = ["pkg:cargo/rustls-webpki@0.102.9", "pkg:cargo/webpki@0.102.8"];
     assert_eq!(
-        disagreements(&parsed(&[ruling_naming(IMAGE, &subcomponents)]), &ignores(), &locked(), &image()),
+        disagreements(&parsed(&[ruling_naming_crates(&subcomponents)]), &ignores(), &locked(), &image()),
         subcomponents.map(|subcomponent| Disagreement::NotLocked {
             advisory: ADVISORY,
             subcomponent
@@ -258,16 +416,20 @@ fn a_crate_version_the_lockfile_does_not_hold_disagrees() {
 }
 
 #[test]
-fn a_crate_linking_the_crate_version_that_the_impact_statement_does_not_name_disagrees() {
-    assert_eq!(
-        disagreements(&parsed(&[ruling()]), &ignores(), &locked_with(&[("reqwest", "0.13.5")]), &image()),
-        [Disagreement::DependentUnnamed {
-            advisory: ADVISORY,
-            subcomponent: CRATE,
-            dependent: "reqwest",
-            version: "0.13.5",
-        }],
-    );
+fn a_crate_linking_the_crate_version_that_a_ruling_on_its_callers_does_not_name_disagrees() {
+    for justification in ["vulnerable_code_not_in_execute_path", "vulnerable_code_cannot_be_controlled_by_adversary"] {
+        let statement = ruling_with("justification", json!(justification));
+        assert_eq!(
+            disagreements(&parsed(&[statement]), &ignores(), &locked_with(&[("reqwest", "0.13.5")]), &image()),
+            [Disagreement::DependentUnnamed {
+                advisory: ADVISORY,
+                subcomponent: CRATE,
+                dependent: "reqwest",
+                version: "0.13.5",
+            }],
+            "{justification}"
+        );
+    }
 }
 
 #[test]
@@ -279,6 +441,18 @@ fn a_crate_linking_the_crate_version_that_the_impact_statement_names_agrees() {
         disagreements(&parsed(&[statement]), &ignores, &locked_with(&[("reqwest", "0.13.5")]), &image()),
         Vec::<Disagreement>::new()
     );
+}
+
+#[test]
+fn a_ruling_resting_on_the_crate_itself_needs_no_linking_crate_named() {
+    for justification in ["component_not_present", "vulnerable_code_not_present", "inline_mitigations_already_exist"] {
+        let statement = ruling_with("justification", json!(justification));
+        assert_eq!(
+            disagreements(&parsed(&[statement]), &ignores(), &locked_with(&[("reqwest", "0.13.5")]), &image()),
+            Vec::<Disagreement>::new(),
+            "{justification}"
+        );
+    }
 }
 
 #[test]
@@ -298,12 +472,14 @@ fn a_crate_version_is_named_only_as_whole_words() {
 }
 
 #[test]
-fn disagreements_are_listed_in_statement_order() {
+fn disagreements_are_listed_in_statement_order_before_the_ignores_no_statement_names() {
     let other = "RUSTSEC-2026-0049";
     let mut statement = ruling_with("status", json!("affected"));
     statement["vulnerability"]["name"] = json!(other);
+    let mut ignores = ignores();
+    ignores.insert("RUSTSEC-2024-0370".to_owned(), Some("build-time only".to_owned()));
     assert_eq!(
-        disagreements(&parsed(&[statement, ruling_without("justification")]), &ignores(), &locked(), &image()),
+        disagreements(&parsed(&[statement, ruling_without("justification")]), &ignores, &locked(), &image()),
         [
             Disagreement::NotIgnored { advisory: other },
             Disagreement::NotNotAffected {
@@ -311,6 +487,7 @@ fn disagreements_are_listed_in_statement_order() {
                 status: Status::Affected,
             },
             Disagreement::Unjustified { advisory: ADVISORY },
+            Disagreement::IgnoreWithoutStatement { advisory: "RUSTSEC-2024-0370" },
         ],
     );
 }
@@ -357,10 +534,10 @@ fn a_workspace_without_a_vex_document_fails() {
 
 #[test]
 #[should_panic(
-    expected = "the VEX statement of RUSTSEC-2026-0104 names pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda, but a scanner matches every digest of the broker image only as pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda"
+    expected = "the VEX statement of RUSTSEC-2026-0104 names pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda, but scanners match every digest of the broker image only as pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda or pkg:docker/example/andromeda?repository_url=ghcr.io"
 )]
 fn a_workspace_whose_statement_names_another_owner_fails() {
-    let statement = ruling_naming("pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda", &[CRATE]);
+    let statement = ruling_naming(&[("pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda", &[CRATE]), (DOCKER, &[CRATE])]);
     assert_vex_statements_repeat_advisory_rulings(&scratch_workspace("owner", "0.102.8", Some(&[statement])));
 }
 
@@ -373,4 +550,10 @@ fn a_workspace_whose_lockfile_moved_the_linking_crate_fails() {
     let lockfile = fs::read_to_string(format!("{root}/Cargo.lock")).unwrap();
     fs::write(format!("{root}/Cargo.lock"), lockfile.replace("0.25.1", "0.25.2")).unwrap();
     assert_vex_statements_repeat_advisory_rulings(&root);
+}
+
+#[test]
+#[should_panic(expected = "deny.toml ignores RUSTSEC-2026-0104, but no VEX statement names it")]
+fn a_workspace_whose_ignore_has_no_statement_fails() {
+    assert_vex_statements_repeat_advisory_rulings(&scratch_workspace("unstated", "0.102.8", Some(&[])));
 }
