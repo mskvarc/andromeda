@@ -116,6 +116,12 @@ macro_rules! workspace_architecture {
                 $crate::toolchain_pin::assert_images_build_from_the_pinned_toolchain(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Every VEX statement repeats an advisory ruling of `deny.toml` for a crate version the lockfile holds.
+            #[test]
+            fn vex_statements_repeat_the_advisory_rulings() {
+                $crate::advisory_rulings::assert_vex_statements_repeat_advisory_rulings(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Every checked-in snapshot is taken by a test of its crate.
             #[test]
             fn every_snapshot_is_taken_by_a_test() {

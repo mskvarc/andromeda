@@ -1,6 +1,6 @@
 # Release process
 
-A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alpha.N`, `-beta.N` or `-rc.N` for a pre-release. The `release` workflow then publishes the signed broker image and a GitHub release with the configuration schema and descriptor attached. Before it builds anything, it refuses a tag whose commit has no passing `ci-ok` check, and a tag whose migrations break the seal. The arm64 image it publishes is the one `ci` built for the tagged commit and ran the suite trees against. The amd64 image is the one `ci` built from the same broker inputs, so a release compiles nothing when both exist, and builds the amd64 image only when `ci` has none. The seal check takes the SQL tool as the `sql` job of `ci` last compiled it on `main`. `prune-ci-images` deletes the commit's `broker-<sha>` tag 30 days after `ci` made it unless the commit is still the head of `main`, so any other commit older than that has to go through `ci` again before it can be tagged. When its broker image still exists, `ci` only tags it again.
+A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alpha.N`, `-beta.N` or `-rc.N` for a pre-release. The `release` workflow then publishes the signed broker image with its provenance, SBOM and VEX attestations, and a GitHub release with the configuration schema and descriptor attached. Before it builds anything, it refuses a tag whose commit has no passing `ci-ok` check, and a tag whose migrations break the seal. The arm64 image it publishes is the one `ci` built for the tagged commit and ran the suite trees against. The amd64 image is the one `ci` built from the same broker inputs, so a release compiles nothing when both exist, and builds the amd64 image only when `ci` has none. The seal check takes the SQL tool as the `sql` job of `ci` last compiled it on `main`. `prune-ci-images` deletes the commit's `broker-<sha>` tag 30 days after `ci` made it unless the commit is still the head of `main`, so any other commit older than that has to go through `ci` again before it can be tagged. When its broker image still exists, `ci` only tags it again.
 
 ## Stable release
 
@@ -41,6 +41,31 @@ GIT_CLIFF_TAG=vX.Y.Z git cliff "$(git describe --tags --abbrev=0 --match 'v[0-9]
 ```
 
 To keep a commit out of the changelog, such as a change and its revert in the same release, add its full hash to `.cliffignore` at the root of the repository, one hash per line.
+
+## Advisories in the image
+
+The broker binary carries its own dependency tree, which `cargo auditable` embeds when the image is built, so an SBOM generator or a scanner sees every crate the image ships. The release attests build provenance, an SPDX SBOM and the OpenVEX document `.vex/andromeda.openvex.json` to the image's manifest list. The VEX document is attested to each platform image as well, because a scanner may look attestations up by the digest of the platform image it pulled.
+
+The VEX document tells scanners which advisories don't affect the image. Each statement repeats a ruling of `deny.toml`. Its advisory is one `deny.toml` ignores, its impact statement is the reason the ignore gives, the crate it names is at a version `Cargo.lock` holds, and every crate linking that version is named in it. The gate `advisory_rulings` checks all four, so a ruling can't change in one file and stay the same in the other, and a new crate linking the affected version calls for a new proof. [Advisory rulings](advisory-rulings.md) holds the proofs. A statement's product is `pkg:oci/andromeda?repository_url=ghcr.io/<owner>/andromeda` with no version, which covers every digest of the image. `<owner>` is the owner of the repository `[workspace.package]` names, and the gate refuses any other product, because a scanner names a pulled image this way and a statement for any other name matches nothing. [Dependencies](contributing/dependencies.md#ignoring-an-advisory) says when an ignore needs a statement.
+
+An advisory published after a release gets a new VEX attestation on the image that release published.
+
+1. On a branch off the release's tag, add the ignore and the statement, so the gate checks the statement against the lockfile the release shipped. When `main` still links the same crate version, add both to `main` too.
+2. Start `ci` by hand on the branch and let it pass.
+3. Start the `vex` workflow on the branch with the release's version, such as `1.0.0`. It refuses a commit without a passing `ci-ok` check, and attests the branch's document to the release's manifest list and to both platform images.
+
+This works for releases cut after VEX attestations were introduced. `v1.0.0` predates them, so its tag holds neither the `vex` workflow nor the document, and its binary carries no dependency tree, which leaves a scanner no crate of it to report.
+
+Each attestation carries the whole document. Trivy reads only the first OpenVEX attestation the registry lists for a digest, which may still be the older one, so a scanner that misses the newest statement can be given the document from the repository with `--vex`.
+
+To check that scanners honour the document, scan each platform image once after a release.
+
+```
+trivy image --vex oci --show-suppressed --platform linux/amd64 ghcr.io/<owner>/andromeda:X.Y.Z
+trivy image --vex oci --show-suppressed --platform linux/arm64 ghcr.io/<owner>/andromeda:X.Y.Z
+```
+
+Trivy takes Rust advisories from GitHub's advisory database alone. It reports each under its CVE id when the database records one and under its GitHub id otherwise, and a statement carries both as aliases. Every advisory with a statement that the database lists appears among the suppressed findings and none among the vulnerabilities. RUSTSEC-2026-0382 has no entry there yet, so it appears in neither list, and its statement is in place for when the entry appears.
 
 ## What the release checks
 

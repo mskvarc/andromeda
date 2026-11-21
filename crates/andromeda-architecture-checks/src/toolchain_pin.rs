@@ -8,9 +8,11 @@
 //! build. The gate holds the tags and the pin together, so they move in one
 //! change or not at all.
 
-use crate::source_scan::file_paths;
-use std::{fs, path::Path};
-use toml_edit::DocumentMut;
+use crate::{
+    source_scan::file_paths,
+    workspace_file::{read_toml_document, read_workspace_file},
+};
+use std::path::Path;
 
 /// The file that pins the workspace toolchain, relative to the workspace root.
 const TOOLCHAIN_FILE: &str = "rust-toolchain.toml";
@@ -42,13 +44,12 @@ pub fn assert_images_build_from_the_pinned_toolchain(workspace_root: &str) {
             .flat_map(|directory| file_paths(&root.join(directory), is_dockerfile))
         {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-            match fs::read_to_string(&path) {
-                Ok(dockerfile) => violations.extend(
+            if let Some(dockerfile) = read_workspace_file(root, &relative, &mut violations) {
+                violations.extend(
                     base_toolchains(&dockerfile)
                         .filter(|base| *base != channel)
                         .map(|base| format!("{relative} builds from rust:{base}, but {TOOLCHAIN_FILE} pins {channel}")),
-                ),
-                Err(error) => violations.push(format!("{relative} could not be read: {error}")),
+                );
             }
         }
     }
@@ -58,20 +59,7 @@ pub fn assert_images_build_from_the_pinned_toolchain(workspace_root: &str) {
 /// The channel `rust-toolchain.toml` pins, or `None` with the reason recorded in
 /// `violations`.
 fn pinned_channel(root: &Path, violations: &mut Vec<String>) -> Option<String> {
-    let text = match fs::read_to_string(root.join(TOOLCHAIN_FILE)) {
-        Ok(text) => text,
-        Err(error) => {
-            violations.push(format!("{TOOLCHAIN_FILE} could not be read: {error}"));
-            return None;
-        }
-    };
-    let document = match text.parse::<DocumentMut>() {
-        Ok(document) => document,
-        Err(error) => {
-            violations.push(format!("{TOOLCHAIN_FILE} does not parse as TOML: {error}"));
-            return None;
-        }
-    };
+    let document = read_toml_document(root, TOOLCHAIN_FILE, violations)?;
     let channel = document
         .get("toolchain")
         .and_then(|table| table.get("channel"))

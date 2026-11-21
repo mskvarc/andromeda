@@ -6,6 +6,7 @@
 //! The exported declarative macros generate the caller-side tests, so failures
 //! continue to identify the crate that broke its boundary.
 
+pub mod advisory_rulings;
 pub mod architecture;
 pub mod comment_hygiene;
 mod comment_lexer;
@@ -39,6 +40,7 @@ pub mod time_handling;
 pub mod toolchain_pin;
 pub mod type_erased_error;
 pub mod untyped_json;
+mod workspace_file;
 mod workspace_manifest;
 
 /// Declarative macros that generate caller-side architecture tests.

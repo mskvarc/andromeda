@@ -1,0 +1,58 @@
+name: VEX attestation
+description: Attests the broker image's OpenVEX document, from the checkout, to a published image's index and to each of its platform images, and pushes the attestations to the registry. The job checks out the commit, logs in to the registry and holds attestations, id-token and packages write permission.
+
+inputs:
+  image:
+    description: The image's repository, without a tag, such as ghcr.io/<owner>/andromeda.
+    required: true
+  digest:
+    description: The digest of the image's index.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # A scanner may look the attestations up by the digest it pulled, which is a platform image's rather than the
+    # index's, so each of the three digests gets one.
+    - name: Resolve the platform image digests
+      id: platforms
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DIGEST: ${{ inputs.digest }}
+      run: |
+        set -euo pipefail
+        index="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --raw)"
+        for architecture in amd64 arm64; do
+          digest="$(jq -er --arg architecture "$architecture" '
+            [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture) | .digest]
+            | if length == 1 then .[0] else error("the index holds no single linux/\($architecture) image") end' <<< "$index")"
+          echo "${architecture}=${digest}" >> "$GITHUB_OUTPUT"
+        done
+
+    - name: Attest the index
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ inputs.digest }}
+        predicate-type: https://openvex.dev/ns/v0.2.0
+        predicate-path: .vex/andromeda.openvex.json
+        push-to-registry: true
+
+    - name: Attest the linux/amd64 image
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ steps.platforms.outputs.amd64 }}
+        predicate-type: https://openvex.dev/ns/v0.2.0
+        predicate-path: .vex/andromeda.openvex.json
+        push-to-registry: true
+
+    - name: Attest the linux/arm64 image
+      uses: actions/attest@v4
+      with:
+        subject-name: ${{ inputs.image }}
+        subject-digest: ${{ steps.platforms.outputs.arm64 }}
+        predicate-type: https://openvex.dev/ns/v0.2.0
+        predicate-path: .vex/andromeda.openvex.json
+        push-to-registry: true
