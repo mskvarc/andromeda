@@ -29,10 +29,10 @@ runs:
     # The inputs are the sources of the packages the image compiles and of every workspace crate it compiles through
     # normal and build dependencies, and through the development dependencies of a package whose tests it compiles,
     # the manifest of every workspace package, the lockfile, the toolchain and build configuration, and the image's own
-    # paths: its image definition, the migrations it embeds, and for the broker the licence files it copies. A package
-    # counts only the directories the image compiles from it, and every other crate leaves out its tests, benches and
-    # examples, which the image never compiles. The actions that build the image are inputs of the key but not of the
-    # context: they set the platform, the target and the labels, and assemble the context.
+    # paths: its image definition, the migrations it embeds, and for the broker the licence and notice files it copies.
+    # A package counts only the directories the image compiles from it, and every other crate leaves out its tests,
+    # benches and examples, which the image never compiles. The actions that build the image are inputs of the key but
+    # not of the context: they set the platform, the target and the labels, and assemble the context.
     - name: Compute the key and assemble the context
       id: inputs
       shell: bash
@@ -46,7 +46,7 @@ runs:
             packages=(andromeda)
             tested=false
             compiles=(src/)
-            paths=(migrations/ docker/images/andromeda/ LICENSE.md)
+            paths=(migrations/ docker/images/andromeda/ LICENSE.md NOTICE.md)
             build+=(.github/actions/keyed-broker-image/action.yaml .github/actions/broker-image/action.yaml)
             ;;
           runner)
