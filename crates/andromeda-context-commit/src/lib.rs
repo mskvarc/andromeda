@@ -59,8 +59,6 @@ pub mod submission_refusal;
 pub mod subscription_key;
 /// Subscriptions a committing write matched.
 pub mod subscription_match;
-/// The process-wide clock broker-minted version-7 identities come from.
-mod uuid_v7_clock;
 /// The identity of one atomic broker write.
 pub mod write_id;
 /// The position of one consequence inside its atomic write.

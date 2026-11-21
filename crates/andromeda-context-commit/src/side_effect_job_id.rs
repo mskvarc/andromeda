@@ -1,6 +1,5 @@
 //! The identity of one durable side-effect job.
 
-use crate::uuid_v7_clock;
 use derive_more::Display;
 use uuid::Uuid;
 
@@ -22,7 +21,7 @@ impl SideEffectJobId {
     /// Mint the identity of a job that is about to be enqueued.
     #[must_use]
     pub fn mint() -> SideEffectJobId {
-        SideEffectJobId(uuid_v7_clock::mint())
+        SideEffectJobId(Uuid::now_v7())
     }
 
     /// Reconstruct the identity of a job read back from the queue.
