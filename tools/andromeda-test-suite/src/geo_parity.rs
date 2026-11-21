@@ -3,11 +3,13 @@
 //! Clause 4.10 gives a geoquery one meaning wherever a broker evaluates it, and a broker may evaluate it in more than
 //! one place: in its store for a query, and over the Entity a write produced for a Subscription. A corpus states once
 //! which Entities each geoquery selects and expects both answers to be exactly those, so neither reading can drift
-//! from the clause without the other noticing.
+//! from the clause without the other noticing. A generated case states no answer and expects the two answers to
+//! agree.
 
 use crate::{
     broker::BrokerClient,
-    filter_parity::{Filter, ParityCase, expect_alike},
+    filter_parity::{Filter, LabelledFilter, ParityCase, drawn_ids, expect_agreement, expect_alike},
+    geo_generation::GeneratedGeoCase,
     namespace::Namespace,
     q_parity::QRequest,
 };
@@ -55,4 +57,31 @@ pub async fn expect_geo_query_and_subscription_alike(
         })
         .collect();
     expect_alike(broker, namespace, entity_type, entities, &parity_cases).await
+}
+
+/// Creates the Entities the case `seed` drew, of a type of `namespace`, and expects Query Entities and a Subscription
+/// with each geoquery it drew as `geoQ` to select the same Entities, whichever those are.
+///
+/// A failure names the seed and the drawn geoquery, and the drawn `GeoProperty` Attributes of each Entity only one of
+/// the two selected, which is what a fixed corpus case needs to keep the disagreement covered.
+///
+/// # Errors
+///
+/// Fails when a geometry cannot be built, a request is refused or the sink cannot be read.
+pub async fn expect_generated_geo_case_to_agree(broker: &BrokerClient, namespace: &Namespace, seed: u64, case: &GeneratedGeoCase) -> Result<()> {
+    let entity_type = namespace.entity_type("Drawn")?;
+    let dataset = namespace.dataset_id("Dataset", 1)?;
+    let documents = case.documents(&entity_type, &dataset, &drawn_ids(namespace, case.entity_count())?)?;
+    let mut filters = Vec::with_capacity(case.queries().len());
+    for query in case.queries() {
+        filters.push(LabelledFilter {
+            label: format!("seed {seed}: {query:?}"),
+            filter: Filter {
+                q: None,
+                geo_q: Some(query.geo_query()?),
+                request: QRequest::PLAIN,
+            },
+        });
+    }
+    expect_agreement(broker, namespace, &entity_type, &documents, &filters, |position| case.described(position)).await
 }
