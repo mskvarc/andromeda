@@ -62,7 +62,7 @@ impl RenderingRevision {
 
 impl PortablePattern {
     /// The revision of the rendering this build performs.
-    pub const RENDERING_REVISION: RenderingRevision = RenderingRevision(1);
+    pub const RENDERING_REVISION: RenderingRevision = RenderingRevision(2);
 
     /// Render the intermediate representation the `regex` crate compiled.
     ///
@@ -423,6 +423,14 @@ mod tests {
         assert_eq!(portable("ab|cd"), "(?:ab|cd)");
     }
 
+    /// The translation lifts the literal every branch begins with out of the
+    /// alternation, and keeps a repetition every branch begins with inside
+    /// each branch.
+    #[test]
+    fn only_a_literal_prefix_is_lifted_out_of_an_alternation() {
+        assert_eq!(portable("ab*b|ab*c"), "a(?:b*b|b*c)");
+    }
+
     /// `.` holds every character, U+0000 included, which PostgreSQL text cannot
     /// carry; it is written as `.`, which PostgreSQL's default mode lets match a
     /// newline too.
@@ -474,15 +482,16 @@ mod tests {
         lines.next()?.strip_prefix("version = \"")?.strip_suffix('"')
     }
 
-    /// Revision 1 was rendered from `regex-syntax` 0.8.11 (Unicode 16.0 case
-    /// folding and properties). Moving the lock to another version fails here
-    /// until the revision is bumped with it, so stored restatements are rendered
-    /// again.
+    /// Revision 2 renders from `regex-syntax` 0.8.12 (Unicode 16.0 case folding
+    /// and properties), which lifts only literals, classes and look-arounds out
+    /// of the branches of an alternation. Moving the lock to another version
+    /// fails here until the revision is bumped with it, so stored restatements
+    /// are rendered again.
     #[test]
     fn the_rendering_revision_is_pinned_to_the_locked_regex_syntax() {
         assert_eq!(
             (PortablePattern::RENDERING_REVISION, locked_version(CARGO_LOCK, "regex-syntax")),
-            (RenderingRevision(1), Some("0.8.11")),
+            (RenderingRevision(2), Some("0.8.12")),
             "a regex-syntax upgrade can change the case-fold sets and the shorthand classes: bump RENDERING_REVISION and this pin together"
         );
     }
