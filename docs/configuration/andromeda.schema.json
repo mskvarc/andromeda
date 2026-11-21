@@ -1941,7 +1941,7 @@
               }
             },
             "max_attempts": {
-              "description": "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived.",
+              "description": "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived. While an endpoint keeps failing, the other notifications of its Subscription wait behind the one being retried and spend no attempts. This therefore sets how long an outage the oldest notification survives, and how long a notification the endpoint keeps answering with a server error holds up the ones queued after it. At the default retry delays, 18 attempts span about an hour.",
               "type": "integer",
               "format": "uint32",
               "minimum": 1

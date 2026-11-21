@@ -832,6 +832,7 @@ mod tests {
             request_timeout: HumanDuration::from_secs(10),
             max_concurrent: NonZeroU32::new(concurrent).expect("a positive bound"),
             max_error_length: NonZeroU32::new(8).expect("a positive bound"),
+            max_attempts: NonZeroU32::new(5).expect("a positive ceiling"),
             ..DeliveryConfig::default()
         };
         config.queue.retry_interval = HumanDuration::from_secs(5);

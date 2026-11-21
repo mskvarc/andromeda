@@ -34,8 +34,9 @@ const DELIVERY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// A stopping tenant's evaluation gets at least one delivery deadline, or a
 /// notification in flight would be cut off by the stop it ought to finish
 /// before.
-/// The ceilings are what the delivery store and the MQTT protocol hold, and
-/// the most slots one delivery pass may keep in flight.
+/// The count and size ceilings are what the delivery store and the MQTT
+/// protocol hold, and the most slots one delivery pass may keep in flight;
+/// the lease and the longest retry step are bounded at a day by policy.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [Rule::Positive(ConfigKey::NotificationsDeliveryRequestTimeout)]
         .into_iter()
