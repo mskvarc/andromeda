@@ -68,7 +68,7 @@ pub(crate) async fn create(
 }
 
 /// Retrieve Context Source Registration (clause 5.10.1), rendered with the
-/// request's `options`, `pick`, `omit` and `lang`.
+/// request's `options` and `lang`.
 pub(crate) async fn get(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
@@ -81,8 +81,6 @@ pub(crate) async fn get(
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
     let rendered = RegistrationRenderer::new(&registration)
         .with_sys_attrs(params.parse_options().with_registration_instance(&uri)?.sys_attrs)
-        .with_pick(params.pick.as_deref())
-        .with_omit(params.omit.as_deref())
         .with_language_filter(params.lang.as_ref())
         .render()
         .with_registration_instance(&uri)?;
@@ -149,8 +147,6 @@ pub(crate) async fn query(
         .map(|registration| {
             RegistrationRenderer::new(registration)
                 .with_sys_attrs(options.sys_attrs)
-                .with_pick(params.pick.as_deref())
-                .with_omit(params.omit.as_deref())
                 .with_language_filter(language_filter)
                 .render()
         })
