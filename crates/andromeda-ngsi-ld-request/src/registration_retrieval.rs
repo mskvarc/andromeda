@@ -1,11 +1,15 @@
 //! The parameters of Retrieve Context Source Registration (clause 5.10.1).
 //!
-//! Table 6.9.3.1-1 defines no URL parameter for the operation. Clause 6.3.11
-//! gives every GET under `/csourceRegistrations/` the `options` parameter, and
-//! the one registration is shaped by the clause 4.15 language filter as each
-//! registration of a discovery is. Anything else, the discovery's selectors,
-//! its paging and the clause 4.21 `pick` and `omit` included, is a parameter
-//! the operation does not define: the clause 6.3.20 `InvalidRequest`.
+//! Table 6.9.3.1-1 defines no URL parameter for the operation, and clause
+//! 5.10.1.3 gives it the registration identifier as its only input. Clause
+//! 6.3.11 gives every GET under `/csourceRegistrations/` the `options`
+//! parameter, so `options` is the one parameter it takes. Anything else, the
+//! discovery's selectors, its paging, the clause 4.21 `pick` and `omit` and
+//! the clause 4.15 `lang` included, is a parameter the operation does not
+//! define: the clause 6.3.20 `InvalidRequest`. Clause 4.15 converts the
+//! `LanguageProperty` Attributes of Entities, and Table 5.2.9-1 defines no
+//! `LanguageProperty` member, so `lang` has nothing on a registration to act
+//! on.
 
 use crate::{
     error::ParameterError,
@@ -14,21 +18,17 @@ use crate::{
     query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
-use andromeda_http_headers::language::LanguageFilter;
 use serde::Deserialize;
 
 /// Query parameters of Retrieve Context Source Registration.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegistrationRetrieveParams {
-    /// Clause 4.15 natural-language selection preferences (`lang`).
-    #[serde(default)]
-    pub lang: Option<LanguageFilter>,
     /// The system-attribute selection (clause 6.3.11 `options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
 
-query_parameter_set!(RegistrationRetrieveParams { Lang, Options });
+query_parameter_set!(RegistrationRetrieveParams { Options });
 
 impl RegistrationRetrieveParams {
     /// The system-attribute selection the `options` parameter made.
@@ -52,10 +52,23 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn options_and_lang_are_read() {
-        let params: RegistrationRetrieveParams = serde_urlencoded::from_str("options=sysAttrs&lang=en").expect("parses");
+    fn options_sys_attrs_is_read() {
+        let params: RegistrationRetrieveParams = serde_urlencoded::from_str("options=sysAttrs").expect("parses");
         assert_eq!(params.parse_options().expect("a supported options value").sys_attrs, SysAttrsInclusion::Include);
-        assert!(params.lang.is_some());
+    }
+
+    /// Table 6.9.3.1-1 defines no `lang` for retrieval and clause 6.3.11
+    /// grants only `options`, so `lang` is a parameter the operation does not
+    /// define (clause 6.3.20), with `options=sysAttrs` beside it or without.
+    #[test]
+    fn lang_is_unknown() {
+        for query in ["lang=en", "lang=*", "options=sysAttrs&lang=en"] {
+            let message = serde_urlencoded::from_str::<RegistrationRetrieveParams>(query)
+                .expect_err("refused")
+                .to_string();
+            assert!(message.contains("unknown field"), "{query}: {message}");
+        }
+        assert!(!RegistrationRetrieveParams::defines(QueryParameter::Lang));
     }
 
     /// Table 6.9.3.1-1 defines no `pick` or `omit` for retrieval, and clause
