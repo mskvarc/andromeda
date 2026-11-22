@@ -4,6 +4,8 @@
 //! subscriptions and events its matches must equal a full scan with
 //! [`matches_subscription`], its funnel must shrink monotonically, and an
 //! index that had entries removed must behave like one rebuilt from scratch.
+//! Beside them, examples pin how many Subscriptions on a type expression one
+//! change routes.
 
 use crate::{
     candidate_index::CandidateIndex,
@@ -48,12 +50,18 @@ const TYPES: [&str; 3] = ["https://example.com/Building", "https://example.com/V
 const ATTRIBUTES: [&str; 3] = ["https://example.com/temperature", "https://example.com/speed", "https://example.com/name"];
 const ID_PATTERNS: [&str; 2] = ["^urn:ngsi-ld:E:1$", "urn:ngsi-ld:E:.*"];
 
+/// The position of the Building type in [`TYPES`].
+const BUILDING: usize = 0;
+/// The position of the Vehicle type in [`TYPES`].
+const VEHICLE: usize = 1;
+/// The position of the Sensor type in [`TYPES`].
+const SENSOR: usize = 2;
+
 #[derive(Debug, Clone)]
 enum TypeDesc {
     Wildcard,
-    Single(usize),
-    Or(usize, usize),
-    And(usize, usize),
+    /// The disjunction of these conjunctions of positions in [`TYPES`].
+    Alternatives(Vec<Vec<usize>>),
 }
 
 #[derive(Debug, Clone)]
@@ -78,12 +86,13 @@ struct EventDesc {
     instances: Vec<(usize, AttributeChangeKind)>,
 }
 
+/// The wildcard, or one to three alternatives of one or two types each: a
+/// single type, a disjunction, a conjunction and every mix of them clause 4.17
+/// writes.
 fn type_desc() -> impl Strategy<Value = TypeDesc> {
     prop_oneof![
-        Just(TypeDesc::Wildcard),
-        (0..TYPES.len()).prop_map(TypeDesc::Single),
-        (0..TYPES.len(), 0..TYPES.len()).prop_map(|(left, right)| TypeDesc::Or(left, right)),
-        (0..TYPES.len(), 0..TYPES.len()).prop_map(|(left, right)| TypeDesc::And(left, right)),
+        1 => Just(TypeDesc::Wildcard),
+        4 => vec(vec(0..TYPES.len(), 1..=2), 1..=3).prop_map(TypeDesc::Alternatives),
     ]
 }
 
@@ -133,9 +142,14 @@ fn entity_uri(index: usize) -> Result<Identifier, SubscriptionError> {
 fn type_selection_text(desc: &TypeDesc) -> String {
     match desc {
         TypeDesc::Wildcard => "*".to_owned(),
-        TypeDesc::Single(index) => TYPES[*index].to_owned(),
-        TypeDesc::Or(left, right) => format!("{}|{}", TYPES[*left], TYPES[*right]),
-        TypeDesc::And(left, right) => format!("({};{})", TYPES[*left], TYPES[*right]),
+        TypeDesc::Alternatives(alternatives) => alternatives
+            .iter()
+            .map(|conjunction| match conjunction.as_slice() {
+                [only] => TYPES[*only].to_owned(),
+                several => format!("({})", several.iter().map(|index| TYPES[*index]).collect::<Vec<_>>().join(";")),
+            })
+            .collect::<Vec<_>>()
+            .join("|"),
     }
 }
 
@@ -313,4 +327,68 @@ proptest! {
             prop_assert_eq!(from_pruned.funnel, from_rebuilt.funnel);
         }
     }
+}
+
+/// An index of `count` Subscriptions, each with the one selector
+/// `type_selection` and notified of creations.
+fn index_on(type_selection: &TypeDesc, count: usize) -> Result<CandidateIndex, SubscriptionError> {
+    let mut index = CandidateIndex::default();
+    for ordinal in 0..count {
+        let desc = SubscriptionDesc {
+            selectors: vec![SelectorDesc {
+                type_selection: type_selection.clone(),
+                id: None,
+                id_pattern: None,
+            }],
+            triggers: vec![NotificationTrigger::EntityCreated],
+            watched: None,
+        };
+        index.insert(Arc::new(build_subscription(ordinal, &desc)?));
+    }
+    Ok(index)
+}
+
+/// The routed and the matched count of the creation of an Entity of `types`.
+fn routed_and_matched(index: &CandidateIndex, types: &[usize]) -> Result<(usize, usize), SubscriptionError> {
+    let event = build_event(&EventDesc {
+        types: types.to_vec(),
+        id: 0,
+        lifecycle: EntityLifecycle::Created,
+        instances: Vec::new(),
+    })?;
+    let funnel = index.find_matching(&event).funnel;
+    Ok((funnel.routed, funnel.matched))
+}
+
+/// Clause 4.17: `Building|Sensor` selects an Entity carrying either type, so a
+/// change of a Vehicle routes none of the Subscriptions and a change of either
+/// type routes and matches every one.
+#[test]
+fn a_disjunction_routes_only_the_changes_of_its_types() -> Result<(), SubscriptionError> {
+    let index = index_on(&TypeDesc::Alternatives(vec![vec![BUILDING], vec![SENSOR]]), 1000)?;
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[VEHICLE])?, (0, 0));
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[BUILDING])?, (1000, 1000));
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[SENSOR])?, (1000, 1000));
+    Ok(())
+}
+
+/// Clause 4.17: `(Building;Sensor)` selects an Entity carrying both types. The
+/// index routes a change of a Building, which may carry both, and the matcher
+/// alone rejects a Building that is no Sensor.
+#[test]
+fn a_conjunction_is_routed_by_one_of_its_types_and_decided_by_the_matcher() -> Result<(), SubscriptionError> {
+    let index = index_on(&TypeDesc::Alternatives(vec![vec![BUILDING, SENSOR]]), 1)?;
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[BUILDING])?, (1, 0));
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[BUILDING, SENSOR])?, (1, 1));
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[SENSOR, VEHICLE])?, (0, 0));
+    Ok(())
+}
+
+/// Clause 4.17: `*` selects every entity type, so every change routes it.
+#[test]
+fn the_wildcard_type_routes_every_change() -> Result<(), SubscriptionError> {
+    let index = index_on(&TypeDesc::Wildcard, 1)?;
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[VEHICLE])?, (1, 1));
+    pretty_assertions::assert_eq!(routed_and_matched(&index, &[])?, (1, 1));
+    Ok(())
 }

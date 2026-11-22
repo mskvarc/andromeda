@@ -336,10 +336,10 @@ impl SubscriptionCache {
         self.len(target) == 0
     }
 
-    /// Index the geoQ of a live-branch subscription under every type its
-    /// selectors name, and under the wildcard partition when a selector names
-    /// none or a boolean type selection; a Snapshot branch, no geoQ or a
-    /// geometry without a bounding rectangle indexes nothing.
+    /// Index the geoQ of a live-branch subscription under the covering types
+    /// of its selectors, and under the wildcard partition when it has no
+    /// selector or a selector of the wildcard type; a Snapshot branch, no geoQ
+    /// or a geometry without a bounding rectangle indexes nothing.
     fn spatial_insert(&self, target: &ContextTarget, compiled: &CompiledSubscription) {
         if target.snapshot().is_some() {
             return;
@@ -356,20 +356,24 @@ impl SubscriptionCache {
             return;
         };
 
-        // A concretely-typed selector indexes under every type it names. A
-        // subscription with no selectors matches every type, and a selector
-        // whose type is a boolean expression matches types the per-type
-        // partitioning cannot enumerate; both are indexed under the wildcard
-        // partition (shared with the notification worker) so the subscription
-        // is still reached and the residual filter re-checks the real selector.
-        // A selector mixing a concrete and a boolean type therefore gets both a
-        // concrete entry and a wildcard one, rather than losing the boolean arm.
+        // A selector indexes under its covering types, one type of each
+        // alternative of its type selection (clause 4.17), one of which every
+        // Entity it selects carries, and the residual filter re-checks the
+        // real selector. A subscription with no selectors, or a selector of
+        // the wildcard type, matches every type and is indexed under the
+        // wildcard partition (shared with the notification worker), so it is
+        // still reached.
         let mut needs_wildcard = compiled.selectors.is_empty();
+        let mut covering = Vec::new();
         for selector in &compiled.selectors {
-            let Some(type_name) = selector.type_.as_single_type() else {
-                needs_wildcard = true;
-                continue;
-            };
+            match selector.type_.covering_types() {
+                Some(types) => covering.extend(types),
+                None => needs_wildcard = true,
+            }
+        }
+        covering.sort_unstable();
+        covering.dedup();
+        for type_name in covering {
             if let Ok(type_iri) = IriBuf::new(type_name.as_str().to_owned()) {
                 let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone());
                 self.spatial.insert(key, entry.clone());

@@ -39,7 +39,8 @@ pub struct CandidateIndex {
     entries: FxHashMap<SubscriptionKey, Arc<CompiledSubscription>>,
     /// The key of each subscription in force, by identifier.
     keys_by_id: HashMap<Identifier, SubscriptionKey>,
-    /// Selectors naming a concrete entity type, by that type.
+    /// Selectors filed under an entity type their type selection is covered
+    /// by, by that type.
     by_type: HashMap<EntityTypeIri, FxHashSet<SelectorRef>>,
     /// Selectors naming an entity id, by that id.
     by_entity_id: HashMap<Identifier, FxHashSet<SelectorRef>>,

@@ -88,15 +88,27 @@ impl<S: NameStage> TypeSelection<S> {
     }
 
     /// The single type this selection selects, when it selects exactly one.
-    ///
-    /// A caller that indexes subscriptions by type can only do so for a leaf;
-    /// a boolean combination has no single key to file it under, and the
-    /// wildcard names none.
+    /// The wildcard and a boolean combination name none.
     #[must_use]
     pub const fn as_single_type(&self) -> Option<&S::EntityType> {
         match self {
             TypeSelection::Wildcard => None,
             TypeSelection::Alternatives(alternatives) => alternatives.as_single_type(),
+        }
+    }
+
+    /// Types of which every Entity the selection selects carries one, each
+    /// once ([`TypeAlternatives::covering_types`]), `None` for the wildcard,
+    /// which selects Entities of every type.
+    ///
+    /// A caller that indexes subscriptions by type files a selection under
+    /// these: a single type under itself, and a boolean combination under one
+    /// type of each of its alternatives.
+    #[must_use]
+    pub fn covering_types(&self) -> Option<Vec<&S::EntityType>> {
+        match self {
+            TypeSelection::Wildcard => None,
+            TypeSelection::Alternatives(alternatives) => Some(alternatives.covering_types()),
         }
     }
 
@@ -410,6 +422,19 @@ mod tests {
         assert_eq!(written("A,B").as_single_type(), None);
         assert_eq!(written("(A;B)").as_single_type(), None);
         assert_eq!(TypeSelection::<Written>::Wildcard.as_single_type(), None);
+    }
+
+    #[test]
+    fn a_selection_is_covered_by_one_type_of_each_alternative_and_the_wildcard_by_none() {
+        let covering = |text: &str| {
+            written(text)
+                .covering_types()
+                .map(|types| types.into_iter().map(|entity_type| entity_type.as_str().to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(covering("Building"), Some(vec!["Building".to_owned()]));
+        assert_eq!(covering("Building|Tower"), Some(vec!["Building".to_owned(), "Tower".to_owned()]));
+        assert_eq!(covering("(Home;Vehicle)"), Some(vec!["Home".to_owned()]));
+        assert_eq!(TypeSelection::<Written>::Wildcard.covering_types(), None);
     }
 
     #[test]
