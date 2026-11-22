@@ -24,6 +24,8 @@ mod n_csr_qry_3050;
 mod n_csr_qry_3060;
 mod n_csr_qry_3080;
 mod n_csr_qry_4001;
+mod n_csr_qry_6608;
+mod n_csr_qry_6609;
 mod n_csr_qry_8001;
 mod n_csr_qry_8002;
 mod n_csr_qry_8003;

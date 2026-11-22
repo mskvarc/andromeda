@@ -8,8 +8,6 @@ mod n_csr_qry_6603;
 mod n_csr_qry_6604;
 mod n_csr_qry_6605;
 mod n_csr_qry_6606;
-mod n_csr_qry_6608;
-mod n_csr_qry_6609;
 mod n_csr_qry_7600;
 mod n_csr_qry_7601;
 mod n_csr_qry_7602;
