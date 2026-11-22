@@ -89,6 +89,7 @@ const fn scope_query_error_type(error: &ScopeQueryError) -> NgsiLdErrorType {
         | ScopeQueryError::LevelTooLong { .. }
         | ScopeQueryError::InvalidLevel
         | ScopeQueryError::MultiLevelNotLast
+        | ScopeQueryError::AnyScopeNotAlone
         | ScopeQueryError::UngroupedConjunction
         | ScopeQueryError::NestedGroup
         | ScopeQueryError::UnclosedGroup

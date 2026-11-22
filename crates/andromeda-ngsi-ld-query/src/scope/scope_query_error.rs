@@ -22,6 +22,10 @@ pub enum ScopeQueryError {
     /// The `#` wildcard stands anywhere but last.
     #[error("invalid scopeQ pattern: the # wildcard may only end a scope pattern")]
     MultiLevelNotLast,
+    /// A bare `/#` stands beside another alternative or inside a group;
+    /// clause 4.19 admits it only as the whole expression, `ScopesQ =/ "/" "#"`.
+    #[error("invalid scopeQ pattern: /# may only stand as the whole scope query")]
+    AnyScopeNotAlone,
     /// Two requirements are conjoined outside parentheses; clause 4.19 admits a
     /// conjunction only as `(ScopeQ;ScopeQ)`.
     #[error("invalid scopeQ pattern: a conjunction of scopes must be parenthesised")]

@@ -118,6 +118,16 @@ impl ScopePattern {
     }
 }
 
+/// Whether `raw` spells the bare `/#` of `ScopesQ =/ "/" "#"`, which names no
+/// level and matches any non-empty scope.
+///
+/// It reads `raw` as [`ScopePattern::from_str`] does, trimmed and split by
+/// [`split_levels`], so it holds exactly for the text that parses to a
+/// pattern of the one segment `#`.
+pub(crate) fn spells_any_scope(raw: &str) -> bool {
+    split_levels(raw.trim()).eq([MULTI_LEVEL_TOKEN])
+}
+
 impl FromStr for ScopePattern {
     type Err = ScopeQueryError;
 

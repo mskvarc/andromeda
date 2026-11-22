@@ -17,9 +17,12 @@ const REQUIREMENT_SEPARATOR: char = ';';
 /// The clause 4.19 grammar is a disjunction (`,` or `|`) of alternatives, each
 /// either one pattern or a parenthesised conjunction (`;`) of patterns:
 /// `ScopesQ = OrScopeQ *(orOp OrScopeQ)`, `OrScopeQ = "(" ScopeQ *(andOp
-/// ScopeQ) ")" / ScopeQ`. It is already in disjunctive normal form, so every
-/// rendering walks one list of alternatives, and a malformed expression is a
-/// rejected request rather than an `lquery` cast that fails inside PostgreSQL.
+/// ScopeQ) ")" / ScopeQ`, every pattern optionally ending in `/#`. The bare
+/// `/#` is an expression of its own, `ScopesQ =/ "/" "#"`, held as the one
+/// alternative of the one pattern `#`. It is already in disjunctive normal
+/// form, so every rendering walks one list of alternatives, and a malformed
+/// expression is a rejected request rather than an `lquery` cast that fails
+/// inside PostgreSQL.
 ///
 /// The wire form is the clause 4.19 expression, so a Subscription or Snapshot
 /// query that stores one gives back an equivalent expression.
@@ -27,7 +30,8 @@ const REQUIREMENT_SEPARATOR: char = ';';
 #[serde(try_from = "String", into = "String")]
 pub struct ScopeQuery {
     /// The alternatives in disjunctive normal form; at least one, each a
-    /// non-empty conjunction of patterns.
+    /// non-empty conjunction of patterns. A pattern of the one segment `#`
+    /// stands only as the one pattern of the one alternative.
     alternatives: Vec<Vec<ScopePattern>>,
 }
 
@@ -52,8 +56,9 @@ impl FromStr for ScopeQuery {
     ///
     /// Returns [`ScopeQueryError`] when the expression is
     /// unbalanced, ends on an operator, conjoins outside parentheses, nests a
-    /// group or a disjunction inside one, or contains a pattern outside the
-    /// clause 4.19 grammar.
+    /// group or a disjunction inside one, holds a bare `/#` beside another
+    /// alternative or inside a group, or contains a pattern outside the clause
+    /// 4.19 grammar.
     fn from_str(raw: &str) -> Result<ScopeQuery, ScopeQueryError> {
         parser::parse(raw).map(|alternatives| ScopeQuery { alternatives })
     }
@@ -227,5 +232,23 @@ mod tests {
     fn a_malformed_scope_query_is_rejected_when_the_resource_is_deserialized() {
         // Clause 4.19 admits `#` only as the last segment.
         assert!(serde_json::from_str::<ScopeQuery>("\"/A/#/C\"").is_err());
+    }
+
+    /// Clause 4.19 `ScopesQ =/ "/" "#"`: a stored or posted expression holding
+    /// the bare `/#` beside another Scope is refused like a request is.
+    #[test]
+    fn a_bare_any_scope_beside_another_scope_is_rejected_when_the_resource_is_deserialized() {
+        for json in ["\"/#,/A\"", "\"(/#;/A)\"", "\"(/#;/A),/B\""] {
+            assert!(serde_json::from_str::<ScopeQuery>(json).is_err(), "{json}");
+        }
+        let query = serde_json::from_str::<ScopeQuery>("\"/#\"").expect("deserialises");
+        pretty_assertions::assert_eq!(query.to_string(), "/#");
+    }
+
+    #[test]
+    fn a_group_of_patterns_ending_in_the_multi_level_wildcard_round_trips() {
+        for raw in ["(/Madrid/#;/CompanyA)", "(/Madrid/#;/CompanyA),/CompanyB", "(/A/+/#;/B/#)"] {
+            pretty_assertions::assert_eq!(raw.parse::<ScopeQuery>().expect("valid scope query").to_string(), raw);
+        }
     }
 }

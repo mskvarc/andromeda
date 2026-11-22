@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::Invali
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_snapshot::error::SnapshotError;
+use andromeda_subscription::error::SubscriptionError;
 use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
 use andromeda_tenancy::error::TenancyError;
 use andromeda_upgrade_tests::upgrade_database_error::{UpgradeDatabaseError, UpgradeServerError};
@@ -53,6 +54,9 @@ pub(crate) enum UpgradeTestError {
     /// The broker's redirect ledger refused a step.
     #[error("the redirect ledger failed")]
     Forwarding(#[from] SubscriptionForwardingError),
+    /// The broker's Subscription store cannot read a stored Subscription.
+    #[error("the subscription store failed")]
+    Subscription(#[from] SubscriptionError),
     /// A URL the test names is not one.
     #[error("a URL could not be read")]
     Url(#[from] url::ParseError),
