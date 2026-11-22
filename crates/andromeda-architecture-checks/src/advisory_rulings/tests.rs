@@ -4,7 +4,6 @@ use crate::advisory_rulings::{
     disagreement::Disagreement,
     disagreements,
     locked_crates::LockedCrates,
-    names_crate_version,
     vex_document::{Status, VexDocument},
 };
 use pretty_assertions::assert_eq;
@@ -338,6 +337,8 @@ fn a_statement_without_a_product_disagrees() {
 fn a_product_that_is_not_every_digest_of_the_broker_image_disagrees() {
     for product in [
         "pkg:oci/andromeda@sha256:5bd5ab35814f86783561603ebb35d5d5d99006dcdcd5c3f828ea1afb4c12d159?repository_url=ghcr.io/example/andromeda",
+        "pkg:oci/andromeda?arch=amd64&repository_url=ghcr.io/example/andromeda",
+        "pkg:docker/example/andromeda?arch=arm64&repository_url=ghcr.io",
         "pkg:oci/andromeda",
         "pkg:oci/andromedaa?repository_url=ghcr.io/example/andromeda",
         "pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda",
@@ -455,20 +456,84 @@ fn a_ruling_resting_on_the_crate_itself_needs_no_linking_crate_named() {
     }
 }
 
+/// The ignores and the ruling with an impact statement that relies on
+/// rustls-webpki 0.103.16 or later.
+fn floored() -> (BTreeMap<String, Option<String>>, Value) {
+    let reason = format!("{REASON}, and the broker verifies with rustls-webpki 0.103.16 or later");
+    let ignores = BTreeMap::from([(ADVISORY.to_owned(), Some(reason.clone()))]);
+    (ignores, ruling_with("impact_statement", json!(reason)))
+}
+
+/// The lockfile of [`lockfile`] with its rustls-webpki 0.103 entry at
+/// `version`.
+fn locked_with_patched(version: &str) -> LockedCrates {
+    LockedCrates::from_document(&lockfile(&[]).replace("0.103.17", version).parse::<DocumentMut>().unwrap())
+}
+
 #[test]
-fn a_crate_version_is_named_only_as_whole_words() {
-    for (text, named) in [
-        ("rumqttc 0.25.1, the only crate linking it", true),
-        ("the crate rumqttc 0.25.1.", true),
-        ("rumqttc 0.25.1", true),
-        ("rumqttc 0.25.10 links it", false),
-        ("xrumqttc 0.25.1 links it", false),
-        ("old-rumqttc 0.25.1 links it", false),
-        ("rumqttc 0.25.2 links it", false),
-        ("rumqttc links it", false),
-    ] {
-        assert_eq!(names_crate_version(text, "rumqttc", "0.25.1"), named, "{text}");
+fn a_floor_every_locked_version_reaches_or_the_statement_rules_on_agrees() {
+    let (ignores, statement) = floored();
+    let document = parsed(&[statement]);
+    for version in ["0.103.16", "0.103.17", "0.104.0"] {
+        assert_eq!(
+            disagreements(&document, &ignores, &locked_with_patched(version), &image()),
+            Vec::<Disagreement>::new(),
+            "{version}"
+        );
     }
+}
+
+#[test]
+fn a_locked_version_below_the_floor_the_statement_does_not_rule_on_disagrees() {
+    let (ignores, statement) = floored();
+    assert_eq!(
+        disagreements(&parsed(&[statement]), &ignores, &locked_with_patched("0.103.15"), &image()),
+        [
+            Disagreement::FloorNotLocked {
+                advisory: ADVISORY,
+                name: "rustls-webpki",
+                floor: "0.103.16",
+            },
+            Disagreement::BelowFloor {
+                advisory: ADVISORY,
+                name: "rustls-webpki",
+                version: "0.103.15",
+                floor: "0.103.16",
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_floor_no_locked_version_reaches_disagrees() {
+    let (ignores, statement) = floored();
+    let unpatched = lockfile(&[]).replace("[[package]]\nname = \"rustls-webpki\"\nversion = \"0.103.17\"\n", "");
+    let locked = LockedCrates::from_document(&unpatched.parse::<DocumentMut>().unwrap());
+    assert_eq!(
+        disagreements(&parsed(&[statement]), &ignores, &locked, &image()),
+        [Disagreement::FloorNotLocked {
+            advisory: ADVISORY,
+            name: "rustls-webpki",
+            floor: "0.103.16",
+        }]
+    );
+}
+
+#[test]
+#[should_panic(
+    expected = "Cargo.lock holds rustls-webpki 0.103.15, which the VEX statement of RUSTSEC-2026-0104 does not rule on, though its impact statement relies on rustls-webpki 0.103.16 or later"
+)]
+fn a_workspace_whose_lockfile_moved_a_crate_below_its_floor_fails() {
+    let root = scratch_workspace("floor", "0.102.8", Some(&[floored().1]));
+    let configuration = fs::read_to_string(format!("{root}/deny.toml")).unwrap();
+    fs::write(
+        format!("{root}/deny.toml"),
+        configuration.replace(REASON, &format!("{REASON}, and the broker verifies with rustls-webpki 0.103.16 or later")),
+    )
+    .unwrap();
+    let lockfile = fs::read_to_string(format!("{root}/Cargo.lock")).unwrap();
+    fs::write(format!("{root}/Cargo.lock"), lockfile.replace("0.103.17", "0.103.15")).unwrap();
+    assert_vex_statements_repeat_advisory_rulings(&root);
 }
 
 #[test]

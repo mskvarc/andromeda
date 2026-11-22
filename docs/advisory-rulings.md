@@ -1,10 +1,10 @@
 # Advisory rulings
 
-`deny.toml` ignores some advisories because they can't affect the broker, and `.vex/andromeda.openvex.json` tells scanners the same thing. This page holds the proof behind each such ruling. The proof reads source code, so it holds for the lockfile it was made against, which locks rumqttc 0.25.1, rustls-webpki 0.102.8 and rustls-webpki 0.103.17. The gate `advisory_rulings` fails once the lockfile adds a crate that links an affected version, or moves one to another version, and that is when the proof has to be redone, as [Redoing a proof](#redoing-a-proof) describes.
+`deny.toml` ignores some advisories because they can't affect the broker, and `.vex/andromeda.openvex.json` tells scanners the same thing. This page holds the proof behind each such ruling. The proof reads source code, so it holds for the lockfile it was made against, which locks rumqttc 0.25.1, rustls-webpki 0.102.8 and rustls-webpki 0.103.17. The gate `advisory_rulings` fails once the lockfile adds a crate that links an affected version, or moves one to another version, and that is when the proof has to be redone, as [Redoing a proof](#redoing-a-proof) describes. It also fails once the lockfile holds a rustls-webpki other than 0.102.8 below 0.103.16, because the ignores cover every version of the crate.
 
 ## rustls-webpki 0.102
 
-Five advisories concern rustls-webpki 0.102.8, and none of them affects the broker, because no code in the broker ever runs rustls-webpki 0.102. Every certificate the broker checks goes through rustls 0.23 and rustls-webpki 0.103.17, which carries the fix for all five.
+Five advisories concern rustls-webpki 0.102.8, and none of them affects the broker, because no code in the broker ever runs rustls-webpki 0.102. Every certificate the broker checks goes through rustls 0.23 and rustls-webpki 0.103, at 0.103.16 or later, the first release that carries the fix for all five.
 
 ### What links it
 
@@ -62,7 +62,7 @@ RUSTSEC-2025-0134 reports that the crate is unmaintained, not a vulnerability. r
 
 ## Unmaintained crates
 
-RUSTSEC-2024-0370, RUSTSEC-2026-0542 and RUSTSEC-2026-0543 report that proc-macro-error 1.0.4, humantime 2.4.0 and chrono 0.4.45 are unmaintained. None of them reports a vulnerability, so their statements say `vulnerable_code_not_present`. That ruling doesn't rest on what the crates linking them call, so the statements name none of those crates, and a dependency update calls for no new proof.
+RUSTSEC-2024-0370, RUSTSEC-2026-0542 and RUSTSEC-2026-0543 report that proc-macro-error 1.0.4, humantime 2.4.0 and chrono 0.4.45 are unmaintained. None of them reports a vulnerability. The statements of humantime and chrono say `vulnerable_code_not_present`, and the one of proc-macro-error says `component_not_present`, because none of its code is in the binary. Neither ruling rests on what the crates linking them call, so the statements name none of those crates, and a dependency update calls for no new proof.
 
 - **proc-macro-error.** Only the procedural macros of static-automata-macros, static-regular-grammar and str-newtype-derive use it, so it runs inside the compiler and none of its code is in the binary. The newest releases of static-automata-macros (1.1.0) and static-regular-grammar (2.0.2) still depend on it.
 - **humantime.** The advisory counts it as unmaintained because it wraps chrono. No maintained release exists.

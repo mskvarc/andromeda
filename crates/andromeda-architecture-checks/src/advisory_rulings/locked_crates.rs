@@ -58,6 +58,14 @@ impl LockedCrates {
         self.packages.iter().any(|package| package.name == name && package.version == version)
     }
 
+    /// Every version of `name` the lockfile holds, in lockfile order.
+    pub(crate) fn versions<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
+        self.packages
+            .iter()
+            .filter(move |package| package.name == name)
+            .map(|package| package.version.as_str())
+    }
+
     /// Every package that depends on `name` at `version`, which the lockfile
     /// holds.
     pub(crate) fn dependents<'a>(&'a self, name: &str, version: &str) -> impl Iterator<Item = &'a LockedPackage> {
@@ -123,9 +131,17 @@ mod tests {
     }
 
     #[test]
+    fn every_version_of_a_crate_is_listed_in_lockfile_order() {
+        assert_eq!(locked().versions("rustls-webpki").collect::<Vec<_>>(), ["0.102.8", "0.103.17"]);
+        assert_eq!(locked().versions("rumqttc").collect::<Vec<_>>(), ["0.25.1"]);
+        assert_eq!(locked().versions("webpki").count(), 0);
+    }
+
+    #[test]
     fn a_lockfile_without_packages_holds_nothing() {
         let locked = LockedCrates::from_document(&"version = 4\n".parse::<DocumentMut>().unwrap());
         assert!(!locked.holds("rustls-webpki", "0.102.8"));
         assert_eq!(locked.dependents("rustls-webpki", "0.102.8").count(), 0);
+        assert_eq!(locked.versions("rustls-webpki").count(), 0);
     }
 }
