@@ -13,7 +13,7 @@ use andromeda_upgrade_tests::{
     upgrade_database::UpgradeDatabase,
 };
 use sea_query::{Expr, ExprTrait, Order, Query};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::PgPool;
 
 /// When every seeded Snapshot was created.
@@ -61,6 +61,22 @@ pub(crate) async fn insert_v1_0_0_snapshot(database: &UpgradeDatabase, id: &str,
     let key = SnapshotKey::try_from(raw_key)?;
     database.build_branch_schema(key, branch, V1_0_0_LAST_MIGRATION).await?;
     Ok(key)
+}
+
+/// Stores `queries` and `temporal_queries`, each a JSON array of clause 5.2.23
+/// Queries, as the queries and the temporal queries v1.0.0 captured the
+/// Snapshot `id` by.
+pub(crate) async fn store_v1_0_0_snapshot_queries(pool: &PgPool, id: &str, queries: &Value, temporal_queries: &Value) -> Result<(), UpgradeTestError> {
+    let update = Query::update()
+        .table(name("snapshots"))
+        .values([
+            (name("snapshot_queries"), json_document(queries)),
+            (name("snapshot_temporal_queries"), json_document(temporal_queries)),
+        ])
+        .and_where(Expr::col(name("id")).eq(id))
+        .to_owned();
+    update.to_query().execute(pool).await?;
+    Ok(())
 }
 
 /// The key of the Snapshot `id`.

@@ -2,7 +2,6 @@
 //! what this build stores for each kind and reads back, and the companions
 //! and copies it placed, which owe the receiver this build serves.
 
-mod bare_any_scope;
 mod csource_dataset_ids;
 mod quoted_pattern;
 mod receiver_redirects;

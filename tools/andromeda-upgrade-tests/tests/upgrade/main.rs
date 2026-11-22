@@ -16,6 +16,8 @@ mod lockstep;
 #[cfg(test)]
 mod registration;
 #[cfg(test)]
+mod scope_query;
+#[cfg(test)]
 mod seal;
 #[cfg(test)]
 mod subscription;
