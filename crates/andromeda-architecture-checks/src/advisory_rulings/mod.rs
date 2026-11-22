@@ -20,7 +20,11 @@
 //! crate's code never runs, or runs only on input no adversary controls, rests
 //! on what the crates linking it call, so its impact statement names each of
 //! them with its version, and the gate fails once the lockfile adds or moves
-//! one, because the ruling then has to be proven again for it. Each statement
+//! one, because the ruling then has to be proven again for it. A ruling that
+//! relies on a fixed release of a crate the broker uses names it as
+//! `<name> <version> or later`. An ignore covers every version of the crate,
+//! so the gate fails once the lockfile holds no version that high, or one
+//! below it that no statement of the advisory rules on. Each statement
 //! names the broker image in every form scanners match every digest of it by,
 //! under the owner of the workspace's repository, and carries its own
 //! timestamp, so a later change elsewhere in the document leaves its date as
@@ -29,6 +33,7 @@
 mod advisory_ignores;
 mod broker_image;
 mod disagreement;
+mod impact_text;
 mod locked_crates;
 mod vex_document;
 
@@ -37,6 +42,7 @@ use crate::{
         advisory_ignores::advisory_ignores,
         broker_image::{BrokerImage, ImageForm},
         disagreement::Disagreement,
+        impact_text::{names_crate_version, version_floors},
         locked_crates::LockedCrates,
         vex_document::{Justification, Statement, Status, VexDocument},
     },
@@ -144,6 +150,7 @@ fn disagreements<'a>(
             .chain(alias_disagreements(statement, &named))
             .chain(product_disagreements(statement, image))
             .chain(crate_disagreements(statement, locked))
+            .chain(floor_disagreements(statement, locked))
     });
     let unstated = ignores
         .keys()
@@ -291,14 +298,40 @@ fn subcomponent_disagreements<'a>(statement: &'a Statement, subcomponent: &'a st
         .collect()
 }
 
-/// Whether `text` names the crate `name` at `version` as the words
-/// `<name> <version>`, with neither run on into a longer name or version.
-fn names_crate_version(text: &str, name: &str, version: &str) -> bool {
-    let words = format!("{name} {version}");
-    text.match_indices(&words).any(|(start, _)| {
-        let before = text[..start].chars().next_back();
-        let after = text[start + words.len()..].chars().next();
-        !before.is_some_and(|character| character.is_alphanumeric() || character == '-' || character == '_') && !after.is_some_and(char::is_alphanumeric)
+/// How the crate versions `locked` holds disagree with each version floor the
+/// impact statement of `statement` relies on: no locked version of the crate
+/// reaches the floor, or one below it is no crate version the statement rules
+/// on.
+fn floor_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+    let advisory = statement.vulnerability.name.as_str();
+    version_floors(statement.impact.as_deref().unwrap_or_default())
+        .into_iter()
+        .flat_map(|floor| {
+            let unreached = (!locked.versions(floor.name).any(|version| floor.admits(version))).then_some(Disagreement::FloorNotLocked {
+                advisory,
+                name: floor.name,
+                floor: floor.spelt,
+            });
+            let unruled = locked
+                .versions(floor.name)
+                .filter(|version| !floor.admits(version) && !rules_on(statement, floor.name, version))
+                .map(|version| Disagreement::BelowFloor {
+                    advisory,
+                    name: floor.name,
+                    version,
+                    floor: floor.spelt,
+                })
+                .collect::<Vec<_>>();
+            unreached.into_iter().chain(unruled)
+        })
+        .collect()
+}
+
+/// Whether `statement` names the crate `name` at `version` inside any of its
+/// products.
+fn rules_on(statement: &Statement, name: &str, version: &str) -> bool {
+    statement.subcomponents().into_iter().any(|subcomponent| {
+        PackageUrl::from_str(subcomponent).is_ok_and(|purl| purl.ty() == CRATE_TYPE && purl.name() == name && purl.version() == Some(version))
     })
 }
 

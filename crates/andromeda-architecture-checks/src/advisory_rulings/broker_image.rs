@@ -9,8 +9,10 @@
 //! name, with the registry as the `repository_url` qualifier. Either carries
 //! the digest as the version, and a scanner applies a statement when one of its
 //! products names the same image in the scanner's form with a subset of those
-//! qualifiers. A product without a version covers every digest; one naming
-//! another repository or image matches nothing.
+//! qualifiers. A product with no version and no qualifier but `repository_url`
+//! covers every digest. A further qualifier, such as `arch`, narrows it to the
+//! digests a scanner names with that qualifier, and a product naming another
+//! repository or image matches nothing.
 
 use packageurl::PackageUrl;
 use std::str::FromStr;
@@ -89,14 +91,14 @@ impl BrokerImage {
     }
 
     /// The form in which the package URL `id` names every digest of the image,
-    /// with no version: an `oci` package URL of its name and repository, or a
-    /// `docker` one of its owner and name in its registry. `None` when `id`
-    /// names neither. Further qualifiers, such as an architecture, narrow the
-    /// product and are allowed.
+    /// with no version and no qualifier but `repository_url`: an `oci` package
+    /// URL of its name and repository, or a `docker` one of its owner and name
+    /// in its registry. `None` when `id` names neither, or narrows the image to
+    /// some of its digests with a further qualifier, such as an architecture.
     pub(crate) fn form_named_by(&self, id: &str) -> Option<ImageForm> {
-        let purl = PackageUrl::from_str(id)
-            .ok()
-            .filter(|purl| purl.name() == IMAGE_NAME && purl.version().is_none())?;
+        let purl = PackageUrl::from_str(id).ok().filter(|purl| {
+            purl.name() == IMAGE_NAME && purl.version().is_none() && purl.qualifiers().keys().all(|qualifier| *qualifier == REPOSITORY_QUALIFIER)
+        })?;
         let pulled_from = purl.qualifiers().get(REPOSITORY_QUALIFIER)?;
         if purl.ty() == OCI_TYPE && purl.namespace().is_none() && *pulled_from == self.repository {
             Some(ImageForm::Oci)
@@ -138,14 +140,15 @@ mod tests {
     }
 
     #[test]
-    fn only_a_versionless_package_url_of_the_image_in_either_form_names_it() {
+    fn only_a_package_url_of_the_image_without_a_version_or_a_narrowing_qualifier_names_it() {
         let image = image("[workspace.package]\nrepository = \"https://github.com/example/andromeda\"\n").unwrap();
         for (id, form) in [
             ("pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda", Some(ImageForm::Oci)),
             ("pkg:oci/andromeda?repository_url=ghcr.io%2Fexample%2Fandromeda", Some(ImageForm::Oci)),
-            ("pkg:oci/andromeda?arch=amd64&repository_url=ghcr.io/example/andromeda", Some(ImageForm::Oci)),
             ("pkg:docker/example/andromeda?repository_url=ghcr.io", Some(ImageForm::Docker)),
-            ("pkg:docker/example/andromeda?arch=arm64&repository_url=ghcr.io", Some(ImageForm::Docker)),
+            ("pkg:oci/andromeda?arch=amd64&repository_url=ghcr.io/example/andromeda", None),
+            ("pkg:oci/andromeda?repository_url=ghcr.io/example/andromeda&tag=1.0.0", None),
+            ("pkg:docker/example/andromeda?arch=arm64&repository_url=ghcr.io", None),
             ("pkg:oci/andromedaa?repository_url=ghcr.io/example/andromeda", None),
             ("pkg:oci/andromeda?repository_url=ghcr.io/other/andromeda", None),
             ("pkg:oci/andromeda?repository_url=docker.io/example/andromeda", None),

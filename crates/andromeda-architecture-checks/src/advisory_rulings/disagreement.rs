@@ -162,4 +162,33 @@ pub(crate) enum Disagreement<'a> {
         /// The subcomponent's package URL as the statement spells it.
         subcomponent: &'a str,
     },
+    /// The impact statement relies on a crate at a version or later, and the
+    /// lockfile holds no version of it that high.
+    #[strum(to_string = "the impact statement of {advisory} relies on {name} {floor} or later, but Cargo.lock holds no {name} at or above {floor}")]
+    FloorNotLocked {
+        /// The statement's advisory.
+        advisory: &'a str,
+        /// The crate the impact statement names.
+        name: &'a str,
+        /// The oldest version it relies on, as the impact statement spells it.
+        floor: &'a str,
+    },
+    /// The lockfile holds a version of a crate below the one the impact
+    /// statement relies on, and the statement does not rule on it. The
+    /// advisory's ignore covers every version, so cargo-deny reports nothing
+    /// for it either.
+    #[strum(
+        to_string = "Cargo.lock holds {name} {version}, which the VEX statement of {advisory} does not rule on, though its impact statement relies on {name} {floor} or later and the ignore of the advisory covers every version"
+    )]
+    BelowFloor {
+        /// The statement's advisory.
+        advisory: &'a str,
+        /// The crate the impact statement names.
+        name: &'a str,
+        /// The locked version below the floor.
+        version: &'a str,
+        /// The oldest version the impact statement relies on, as it spells
+        /// it.
+        floor: &'a str,
+    },
 }

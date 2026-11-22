@@ -105,6 +105,7 @@ dependencies = [
  "pretty_assertions",
  "proc-macro2",
  "quote",
+ "semver",
  "serde",
  "serde_json",
  "strum",
