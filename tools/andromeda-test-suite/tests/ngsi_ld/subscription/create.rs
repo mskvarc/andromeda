@@ -3,6 +3,7 @@
 mod n_sub_cre_0001;
 mod n_sub_cre_0004;
 mod n_sub_cre_0005;
+mod n_sub_cre_0006;
 mod n_sub_cre_2001;
 mod n_sub_cre_2302;
 mod n_sub_cre_3040;
@@ -11,6 +12,7 @@ mod n_sub_cre_3060;
 mod n_sub_cre_4001;
 mod n_sub_cre_4002;
 mod n_sub_cre_4004;
+mod n_sub_cre_4005;
 mod n_sub_cre_8003;
 mod n_sub_cre_8004;
 mod n_sub_cre_8005;

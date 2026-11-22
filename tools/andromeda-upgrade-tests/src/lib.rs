@@ -32,6 +32,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-json-literal",
         "andromeda-ngsi-ld-model",
         "andromeda-postgresql-attribute-instance",
+        "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-store",
         "andromeda-snapshot",

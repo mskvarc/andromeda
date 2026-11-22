@@ -2560,6 +2560,7 @@ dependencies = [
  "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
  "andromeda-postgresql-context-store",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-pool",
  "andromeda-postgresql-seaquery",
  "andromeda-postgresql-temporal-store",

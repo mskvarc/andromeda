@@ -315,9 +315,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "/#;"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/A]"
   refused InvalidLevel
   variant InvalidLevel
@@ -458,8 +458,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant MissingPattern
   detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
 "(#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
-  written "/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(|)"
   refused MissingPattern
   variant MissingPattern
@@ -757,27 +758,29 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/# ; Madrid/+ ; /Madrid/x-y/+/#),x-y/x-y"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/# ; Madrid/+ ; /Madrid/x-y/+/#),x-y/x-y/"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/# ; Madrid/+ ; 9/Madrid/x-y/+/#),x-y/x-y"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t),(/A/+/# ;/# )| Madrid, /Madrid/+ "
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A")), SingleLevel, MultiLevel]), ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid"))])], [ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel])]] }
-  written "/#,(/A/+/#;/#),/Madrid,/Madrid/+", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t),(/A/+/# ;/# )|Madrid, /Madrid/+ "
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A")), SingleLevel, MultiLevel]), ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid"))])], [ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel])]] }
-  written "/#,(/A/+/#;/#),/Madrid,/Madrid/+", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t),(/A/+/# ;/# >)| Madrid, /Madrid/+ "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/A/+ ,(/Madrid;/x-y/b_1/#\t; /b_1/+/b_1\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -827,17 +830,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/# ; /b_1 )|(\tMadrid/x-y/A\t)|\t/+/#|\t/b_1/#"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/# ; /b_1 )|(\tMadrid/x-y/\t)|\t/+/#|\t/b_1/#"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/# ; /b_1 )|(\tMadrid/x-y/A\t)|!\t/+/#|\t/b_1/#"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\tb_1\t, x-y/Madrid/#, x-y/A/#,/#"
   refused InvalidLevel
   variant InvalidLevel
@@ -1022,17 +1025,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("éA"))])]] }
   written "/éA", read back to the same tree
 "(/# ;Madrid/+/x-y),/A/#|(\t+/A/+)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(é/# ;Madrid/+/x-y),/A/#|(\t+/A/+)"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/# ;Madrid+/x-y),/A/#|(\t+/A/+)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "b_1/b_1/x-y |( x-y/Madrid/x-y/#\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -1103,20 +1106,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\t/#,( x-y/# ;\t/+\t; /#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/#-( x-y/# ;\t/+\t; /#)"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\t/#,( x-y/# ;\t/+\t; /#"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\tMadrid/+/+/#\t),(/# )"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel])]] }
-  written "/Madrid/+/+/#,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 ".\tMadrid/+/+/#\t),(/# )"
   refused InvalidLevel
   variant InvalidLevel
@@ -1149,17 +1153,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "( /#\t;\t/x-y/Madrid/A\t)|( /+/x-y/Madrid/# ;Madrid/x-y ;\t/A/#\t),/x-y/+ ,( x-y/b_1/b_1/# ;\t/+/x-y;/x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( \"/#\t;\t/x-y/Madrid/A\t)|( /+/x-y/Madrid/# ;Madrid/x-y ;\t/A/#\t),/x-y/+ ,( x-y/b_1/b_1/# ;\t/+/x-y;/x-y )"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "( /#\t;\t/x-y/Madrid/A\t)|. /+/x-y/Madrid/# ;Madrid/x-y ;\t/A/#\t),/x-y/+ ,( x-y/b_1/b_1/# ;\t/+/x-y;/x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/+/+/x-y/#; Madrid/# ;Madrid/b_1\t),(\t/Madrid/x-y/# )"
   refused InvalidLevel
   variant InvalidLevel
@@ -1185,17 +1189,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/#;\tx-y/x-y/Madrid),(\t/b_1/Madrid/+)|( Madrid/+/A/#\t;\t/+/Madrid ;/A\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/#;\tx-y/x-y/Madrid),(\t/b_1/Madrid/+)|( Madri>d/+/A/#\t;\t/+/Madrid ;/A\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/#;\tx-y/x-y/Madrid),(\tZ/b_1/Madrid/+)|( Madrid/+/A/#\t;\t/+/Madrid ;/A\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " /+ ,/x-y/#| /x-y/x-y\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -1209,8 +1213,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "b_1/A/#,(b_1 ; /#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("A")), MultiLevel])], [ScopePattern([Label(ScopeLabel("b_1"))]), ScopePattern([MultiLevel])]] }
-  written "/b_1/A/#,(/b_1;/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "b_\\/A/#,(b_1 ; /#)"
   refused InvalidLevel
   variant InvalidLevel
@@ -1265,17 +1270,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel, Label(ScopeLabel("b_1A"))])]] }
   written "/+/b_1A", read back to the same tree
 " /#|( b_1; /x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " /#|( b_1; /x-y :)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " /#|( b_1+; /x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " /x-y/Madrid/b_1/#,( A/A/x-y/#;\tx-y/x-y/Madrid/#),(\t/b_1/#\t;A/A/Madrid/#)"
   refused InvalidLevel
   variant InvalidLevel
@@ -1503,20 +1508,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
   written "/#", read back to the same tree
 "(\t/A/A ;/# ; Madrid ),/x-y/A\t,(\t/b_1/A/x-y/#;+;+/Madrid/#\t),(Madrid/x-y/Madrid/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/A/A ;/# ; Madrid )]/x-y/A\t,(\t/b_1/A/x-y/#;+;+/Madrid/#\t),(Madrid/x-y/Madrid/#)"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/A/A ;/#  Madrid ),/x-y/A\t,(\t/b_1/A/x-y/#;+;+/Madrid/#\t),(Madrid/x-y/Madrid/#)"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/Madrid/#; A/#;\tMadrid/+/+/#)|/#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), MultiLevel]), ScopePattern([Label(ScopeLabel("A")), MultiLevel]), ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel])]] }
-  written "(/Madrid/#;/A/#;/Madrid/+/+/#),/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/Madrid/#; A/#;\tMadrid/+/+/#)|,/#"
   refused MissingPattern
   variant MissingPattern
@@ -1550,8 +1556,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/+/#\t; /# )"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel, MultiLevel]), ScopePattern([MultiLevel])]] }
-  written "(/+/#;/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/+/#\t; /# >)"
   refused InvalidLevel
   variant InvalidLevel
@@ -1701,17 +1708,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\t/Madrid,\t/#\t|/Madrid/x-y\t|/b_1/x-y "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/Madr,id,\t/#\t|/Madrid/x-y\t|/b_1/x-y "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/Madrid,\t/#\t|/Madrid/x-y\t/b_1/x-y "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( +/A/# ;\t/x-y\t;\t/A/b_1/#)|(+/b_1/Madrid\t;x-y\t),(\tx-y/A/+/#\t),\t/+/x-y/# "
   refused InvalidLevel
   variant InvalidLevel
@@ -1827,16 +1834,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/# ;/Madrid/+/+/# ;+\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel, SingleLevel, MultiLevel]), ScopePattern([SingleLevel])]] }
-  written "(/#;/Madrid/+/+/#;/+)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/# ;/Madrid/+/+/# (+\t)"
-  refused NestedGroup
-  variant NestedGroup
-  detail "invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/# ;/Madrid/+/+/# ;+\\)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " /x-y/+"
   refused InvalidLevel
   variant InvalidLevel
@@ -1888,8 +1896,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([Label(ScopeLabel("A")), MultiLevel])], [ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), SingleLevel])]] }
   written "/A,/A/#,/A/b_1/+", read back to the same tree
 "/A\t, /#|(/A/b_1/+\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), SingleLevel])]] }
-  written "/A,/#,/A/b_1/+", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/A, A/#|(/A/b_1/+\t)"
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([Label(ScopeLabel("A")), MultiLevel])], [ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), SingleLevel])]] }
   written "/A,/A/#,/A/b_1/+", read back to the same tree
@@ -2014,11 +2023,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "/# ,/b_1\t"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("b_1"))])]] }
-  written "/#,/b_1", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/# ,/b1\t"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("b1"))])]] }
-  written "/#,/b1", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "!# ,/b_1\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -2048,26 +2059,29 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\tb_1/+\t,( /#)|Madrid |b_1/#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), SingleLevel])], [ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid"))])], [ScopePattern([Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/b_1/+,/#,/Madrid,/b_1/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "b_1/+\t,( /#)|Madrid |b_1/#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), SingleLevel])], [ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid"))])], [ScopePattern([Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/b_1/+,/#,/Madrid,/b_1/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\tb_1/+\t,( /#)|adrid |b_1/#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), SingleLevel])], [ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("adrid"))])], [ScopePattern([Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/b_1/+,/#,/adrid,/b_1/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t+/Madrid/+ ),(/# ;\tx-y/#\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t+/Madrid/+ ),(/# ;\tx-y|/#\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t+/Madrid/+ ),(/# ;\tx-y0#\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( x-y/Madrid/b_1 ;\t/Madrid/b_1/+;\tx-y),(/+ ;\t/#)|/x-y/A/b_1\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -2091,17 +2105,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_Z1")), Label(ScopeLabel("Madrid")), MultiLevel])], [ScopePattern([Label(ScopeLabel("A"))])]] }
   written "/b_Z1/Madrid/#,/A", read back to the same tree
 "(/#;\t/#\t;b_1/Madrid/#),\tA/#\t,( x-y/# ; /Madrid/A)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/#;:/#\t;b_1/Madrid/#),\tA/#\t,( x-y/# ; /Madrid/A)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/#;\t/#\t;b_1/Marid/#),\tA/#\t,( x-y/# ; /Madrid/A)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/A/x-y/+/#\t|(x-y/+/x-y )"
   refused InvalidLevel
   variant InvalidLevel
@@ -2218,17 +2232,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "( /# ),(\t+/x-y/Madrid/#\t)|(\t+/+;/x-y/x-y/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ),(\t+/x-y/!Madrid/#\t)|(\t+/+;/x-y/x-y/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ),(\t+/x-y/Ma!rid/#\t)|(\t+/+;/x-y/x-y/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " /b_1/b_1 |( A/b_1;/Madrid;\t/A/A/+)|/A/x-y "
   refused InvalidLevel
   variant InvalidLevel
@@ -2266,13 +2280,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/b_1/A/+/#\t),\t/#\t,(/x-y/Madrid/# ; x-y/+\t;x-y/#\t)|(\tx-y/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/b_1/A/+/#\t),\t/#\t,(/x-y/Madrid/# ; x-y/+\t;x-y/#\t)|\tx-y/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/b_1/~A/+/#\t),\t/#\t,(/x-y/Madrid/# ; x-y/+\t;x-y/#\t)|(\tx-y/#)"
   refused InvalidLevel
   variant InvalidLevel
@@ -2325,8 +2339,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\tMadrid/Madrid/# ;/# )"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), Label(ScopeLabel("Madrid")), MultiLevel]), ScopePattern([MultiLevel])]] }
-  written "(/Madrid/Madrid/#;/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\tMadrid/Madri\"/# ;/# )"
   refused InvalidLevel
   variant InvalidLevel
@@ -2347,17 +2362,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/b_1/b_1/+)|\t/#,Madrid/+/x-y/# ,\t/Madrid/Madrid/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/b_1/b_1,+)|\t/#,Madrid/+/x-y/# ,\t/Madrid/Madrid/#\t"
   refused NestedGroup
   variant NestedGroup
   detail "invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;"
 "(\t/b_1/b_1/+)|\t/#,Madrid/+/x-y/# <\t/Madrid/Madrid/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/b_1/Madrid/x-y\t;/Madrid/A/A/#)|(\t/#\t;\t/A/# ),/A/# "
   refused InvalidLevel
   variant InvalidLevel
@@ -2464,8 +2479,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(+\t;/#\t;\t+/+ )"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel]), ScopePattern([MultiLevel]), ScopePattern([SingleLevel, SingleLevel])]] }
-  written "(/+;/#;/+/+)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(+\\\t;/#\t;\t+/+ )"
   refused InvalidLevel
   variant InvalidLevel
@@ -2510,17 +2526,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\t/#\t|\t/Madrid/+|(/x-y/b_1/#;b_1 )|(\t/x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/#\t|\t/Madrid/+|(/x-y/b_1/#;b;_1 )|(\t/x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/#\t|\t/Madrid/+|(/x-y/b1/#;b_1 )|(\t/x-y )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t+/x-y/# ),\t/x-y/#\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -2625,17 +2641,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "/+/b_1/Madrid,(\t/#\t; /+/b_1/A/#; /# )|( x-y/A/A/# ; /#\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/+/b_1/Madrid,(\t/#\t; /+/b_1a/A/#; /# )|( x-y/A/A/# ; /#\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/+/b_1/Madrid,(\t/#\t; /+/b_1/A/#; /# )|( x-y/A/A/# ; /\t)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/b_1/Madrid"
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("Madrid"))])]] }
   written "/b_1/Madrid", read back to the same tree
@@ -2695,28 +2711,29 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/Madrid/+/Madrid/#\t; +/#\t; /# ),(\t/#;\tMadrid/#;\tA/+/+)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel, Label(ScopeLabel("Madrid")), MultiLevel]), ScopePattern([SingleLevel, MultiLevel]), ScopePattern([MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("Madrid")), MultiLevel]), ScopePattern([Label(ScopeLabel("A")), SingleLevel, SingleLevel])]] }
-  written "(/Madrid/+/Madrid/#;/+/#;/#),(/#;/Madrid/#;/A/+/+)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/Madrid/+/Madrid/#\t; +/#\t; /# ),(\t/#;\tMadrid/#;\tA+/+)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/Madrid/+/>Madrid/#\t; +/#\t; /# ),(\t/#;\tMadrid/#;\tA/+/+)"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 " +/Madrid\t| /#, A/x-y/+"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " +/Madrid\t| /#, ]A/x-y/+"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " +/Madri\t| /#, A/x-y/+"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/Madrid/+/# ;\tA;\t/A/+/A\t)"
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel, MultiLevel]), ScopePattern([Label(ScopeLabel("A"))]), ScopePattern([Label(ScopeLabel("A")), SingleLevel, Label(ScopeLabel("A"))])]] }
   written "(/Madrid/+/#;/A;/A/+/A)", read back to the same tree
@@ -2728,12 +2745,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\t/+/+/# ,(\t/#\t;\t/A/b_1/#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/+/+/#,(/#;/A/b_1/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/+/+/# ,(\t/#\t;\t/A/{b_1/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/+/+/#,,(\t/#\t;\t/A/b_1/#)"
   refused MissingPattern
   variant MissingPattern
@@ -2834,13 +2852,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "b_1,\t/#\t,(\t/x-y/A/b_1/#;\t/A\t;\t/#)|+/x-y/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "b_1,\t/#\t,(\t/x-y//b_1/#;\t/A\t;\t/#)|+/x-y/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "_1,\t/#\t,(\t/x-y/A/b_1/#;\t/A\t;\t/#)|+/x-y/#\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -2858,11 +2876,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 " b_1/Madrid/Madrid/#\t, Madrid/b_1/#|(\t/+/+/# )|(\t/#;\t/b_1/#\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("Madrid")), Label(ScopeLabel("Madrid")), MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid")), Label(ScopeLabel("b_1")), MultiLevel])], [ScopePattern([SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/b_1/Madrid/Madrid/#,/Madrid/b_1/#,/+/+/#,(/#;/b_1/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " b_1/Madrid/Madrid/#\t, Madrid/b_1/#|(\t/+/+/# )|(\t#;\t/b_1/#\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("Madrid")), Label(ScopeLabel("Madrid")), MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid")), Label(ScopeLabel("b_1")), MultiLevel])], [ScopePattern([SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/b_1/Madrid/Madrid/#,/Madrid/b_1/#,/+/+/#,(/#;/b_1/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " b_1/Madrid/Madrid/#\t, Madrid/b_1/#|(\t/+/+/# )|\\\t/#;\t/b_1/#\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -2879,26 +2899,29 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(b_1/A/A)|\t/# |( /x-y/x-y/#\t)| /Madrid/b_1/A/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(b_1/A/A)|\t/# |( /x-y/x-y/#\t)| /Madrid/b_1/A/#a\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(b_1/A/A)|\t/# |( /x-yx-y/#\t)| /Madrid/b_1/A/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\tA,/A/b_1/b_1/#,(\t/# ;\t/b_1\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), Label(ScopeLabel("b_1")), MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1"))])]] }
-  written "/A,/A/b_1/b_1/#,(/#;/b_1)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\tA/A/b_1/b_1/#,(\t/# ;\t/b_1\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), Label(ScopeLabel("b_1")), MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1"))])]] }
-  written "/A/A/b_1/b_1/#,(/#;/b_1)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\tA,/A/b_1/b_1/#,(\t/# ;\t/b_1Z)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), Label(ScopeLabel("b_1")), MultiLevel])], [ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1Z"))])]] }
-  written "/A,/A/b_1/b_1/#,(/#;/b_1Z)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "Madrid|( Madrid;x-y/b_1/x-y ; /b_1/#\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -2936,17 +2959,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/# ;/#;+/A/#\t),( /x-y/#\t; /Madrid/+/b_1;\t/A/Madrid ),/A/+/x-y,( b_1/#\t;\t/+/A/Madrid/#\t; +/x-y/Madrid )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/# ;/#;+/A/#\t),( /x-y/#\t; /Madrid/+/b_1;\t/A/Madrid ),/A/+/x-y,( b_1/#\t;\t/-/A/Madrid/#\t; +/x-y/Madrid )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/# ;/#;+/A/#\t),( /x-y/#\t; /Madrid/+/b_1;\tA/Madrid ),/A/+/x-y,( b_1/#\t;\t/+/A/Madrid/#\t; +/x-y/Madrid )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( +/Madrid/b_1/#),( /+/b_1/x-y/#),+ |( /x-y/Madrid\t;/Madrid/x-y/A ;\t+ )"
   refused InvalidLevel
   variant InvalidLevel
@@ -3017,17 +3040,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("Madrid")), Label(ScopeLabel("Ma"))])], [ScopePattern([Label(ScopeLabel("rid"))])]] }
   written "/A/Madrid/Ma,/rid", read back to the same tree
 "(/A/+/#)|\t/#\t|(+/x-y)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/A/+/#)|\t}#\t|(+/x-y)"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/A/+/#)|\t/#\t|(+ax-y)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t+/Madrid/b_1/#\t"
   accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel, Label(ScopeLabel("Madrid")), Label(ScopeLabel("b_1")), MultiLevel])]] }
   written "/+/Madrid/b_1/#", read back to the same tree
@@ -3145,17 +3168,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/#;\tx-y/b_1; /b_1/#),(/b_1/x-y/x-y\t;\t/x-y/A/# ), Madrid/x-y/#\t,/x-y/x-y "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#;\tx-y/b_1; /b_1/#),(/b_1/x-y/xy\t;\t/x-y/A/# ), Madrid/x-y/#\t,/x-y/x-y "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#;\tx-y/b_1;{/b_1/#),(/b_1/x-y/x-y\t;\t/x-y/A/# ), Madrid/x-y/#\t,/x-y/x-y "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\tMadrid/A/#;/A/# )|\t+/x-y/A\t|\t/#\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -3169,14 +3192,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "( /Madrid/+)|(/b_1/A ; /#; /b_1/A/b_1/#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel])], [ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("A"))]), ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/Madrid/+,(/b_1/A;/#;/b_1/A/b_1/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /Madrid/+)|(/b_1/A ; /#; b_1/A/b_1/#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel])], [ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("A"))]), ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/Madrid/+,(/b_1/A;/#;/b_1/A/b_1/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /Madrid/+)|(/b_1/A ; /#; /b1/A/b_1/#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("Madrid")), SingleLevel])], [ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("A"))]), ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("b1")), Label(ScopeLabel("A")), Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "/Madrid/+,(/b_1/A;/#;/b1/A/b_1/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\tx-y/+\t; A/#\t;/+/#)|\tMadrid/#\t"
   refused InvalidLevel
   variant InvalidLevel
@@ -3190,8 +3216,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "( /#)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
-  written "/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(Z /#)"
   refused InvalidLevel
   variant InvalidLevel
@@ -3365,17 +3392,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "+ ,/#,(/A/b_1/+;\t/b_1/x-y ;/#)|(\t/A/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "+ ,/#,(/A/b_1/+;\t/b_1/x>y ;/#)|(\t/A/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "+ ,/#,(/A/b_1/+;\t/b_/x-y ;/#)|(\t/A/#)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( A/Madrid\t)|x-y/x-y/#"
   refused InvalidLevel
   variant InvalidLevel
@@ -3389,17 +3416,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t/#\t),( x-y/#\t)|(/Madrid/#\t;\t/b_1/b_1/A ),(\t/x-y/x-y/A/#; /b_1/A)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t),( x-y/#\t)|(/Madrid/#\t;\t/b_1/b_1}/A ),(\t/x-y/x-y/A/#; /b_1/A)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t),( x-y/#\t)|(/Madrid/#\t;\t/b=1/b_1/A ),(\t/x-y/x-y/A/#; /b_1/A)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/x-y/A/Madrid )|(\tx-y/x-y/#)|+/+ "
   refused InvalidLevel
   variant InvalidLevel
@@ -3460,15 +3487,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant TrailingInput
   detail "invalid scopeQ pattern: the expression continues after it is complete"
 "\t/# ,(\tb_1/b_1/# ;\t/+/+\t;\tMadrid/b_1/Madrid\t)|/#\t"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("b_1")), MultiLevel]), ScopePattern([SingleLevel, SingleLevel]), ScopePattern([Label(ScopeLabel("Madrid")), Label(ScopeLabel("b_1")), Label(ScopeLabel("Madrid"))])], [ScopePattern([MultiLevel])]] }
-  written "/#,(/b_1/b_1/#;/+/+;/Madrid/b_1/Madrid),/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/# ,(\tb_1/b_1/# ;\t/+/+\t-\tMadrid/b_1/Madrid\t)|/#\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/# ,(\tb_1/b_1/# ;\t/+/+\t;\tadrid/b_1/Madrid\t)|/#\t"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("b_1")), MultiLevel]), ScopePattern([SingleLevel, SingleLevel]), ScopePattern([Label(ScopeLabel("adrid")), Label(ScopeLabel("b_1")), Label(ScopeLabel("Madrid"))])], [ScopePattern([MultiLevel])]] }
-  written "/#,(/b_1/b_1/#;/+/+;/adrid/b_1/Madrid),/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t+\t; A/#\t)"
   accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel]), ScopePattern([Label(ScopeLabel("A")), MultiLevel])]] }
   written "(/+;/A/#)", read back to the same tree
@@ -3477,8 +3506,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\t+\t; /#\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel]), ScopePattern([MultiLevel])]] }
-  written "(/+;/#)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(Madrid\t;x-y/b_1\t;A/b_1/x-y/# )"
   refused InvalidLevel
   variant InvalidLevel
@@ -3515,11 +3545,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 " +/+/+/# |( /#\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel, SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel])]] }
-  written "/+/+/+/#,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " +/+/+/#  |( /#\t)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel, SingleLevel, SingleLevel, MultiLevel])], [ScopePattern([MultiLevel])]] }
-  written "/+/+/+/#,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " +/+é/+/# |( /#\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -3535,41 +3567,41 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1é")), SingleLevel])]] }
   written "/b_1é/+", read back to the same tree
 "(/+ ;/b_1/# )|(/#\t;/x-y/#\t;Madrid/b_1/b_1\t)|\t/# | +/# "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/+ ;/b_1/# )|(/#\t;/x-y/#\t{;Madrid/b_1/b_1\t)|\t/# | +/# "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/+ ;/b_1/# )|(/#\t;/x-y/#\t;Madrid/b_1/b_1\t)|\t/# \"| +/# "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t; x-y/A/+; Madrid/#),(x-y/#),\tx-y\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t; x-y/A/+; Madrid/#)(x-y/#),\tx-y\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/#\t; x-y/A/+; Madrid/#),(x-y%/#),\tx-y\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ;\tx-y/b_1/Madrid/# )|\t/+\t|(\t/#\t; +/Madrid/A\t;/b_1/A/#\t)|(\t/x-y ;\tb_1/b_1/b_1/#;+/# )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ;\tx-y/b_1/Madrid/# )|\t/+\t|(\t/#\t; +/Madrid/A\t;/b_19A/#\t)|(\t/x-y ;\tb_1/b_1/b_1/#;+/# )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ;\tx-/b_1/Madrid/# )|\t/+\t|(\t/#\t; +/Madrid/A\t;/b_1/A/#\t)|(\t/x-y ;\tb_1/b_1/b_1/#;+/# )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\tx-y/x-y/Madrid\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -3722,17 +3754,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "\t/#|+/#|(\tb_1/#;\t/A/x-y\t;A/# )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/#|+/#|(\tb_1/#;\t/A/9-y\t;A/# )"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/#|+/#|(\tb_1/#;\t)A/x-y\t;A/# )"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/b_1/Madrid)"
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), Label(ScopeLabel("Madrid"))])]] }
   written "/b_1/Madrid", read back to the same tree
@@ -3745,27 +3777,29 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\tb_1/#;\t/# )|(/Madrid/#\t;\tx-y)"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\tb_1/#;9\t/# )|(/Madrid/#\t;\tx-y)"
   refused InvalidLevel
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(\tb_1/#;\t/# )|(/Madrid/#\t;\tx0y)"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("b_1")), MultiLevel]), ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("Madrid")), MultiLevel]), ScopePattern([Label(ScopeLabel("x0y"))])]] }
-  written "(/b_1/#;/#),(/Madrid/#;/x0y)", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ;A/A/+/#;/+\t)|Madrid/b_1/# "
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel]), ScopePattern([Label(ScopeLabel("A")), Label(ScopeLabel("A")), SingleLevel, MultiLevel]), ScopePattern([SingleLevel])], [ScopePattern([Label(ScopeLabel("Madrid")), Label(ScopeLabel("b_1")), MultiLevel])]] }
-  written "(/#;/A/A/+/#;/+),/Madrid/b_1/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ;A/A/+/#;/+\t)|M]adrid/b_1/# "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( /# ;A//+/#;/+\t)|Madrid/b_1/# "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(\t/A/#; b_1/# ; x-y/Madrid/#\t),\t/Madrid/+/Madrid |/Madrid\t|(/x-y\t)"
   refused InvalidLevel
   variant InvalidLevel
@@ -3968,16 +4002,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "/#|(\t/#)| /b_1\t"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("b_1"))])]] }
-  written "/#,/#,/b_1", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/#|(\t/#)| %b_1\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/#|(\t/[#)| /b_1\t"
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "\t/+/Madrid/+ | A/A/#\t,(\t/Madrid; /x-y/Madrid ;\t/#)"
   refused InvalidLevel
   variant InvalidLevel
@@ -4039,16 +4074,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(/# ),\t/+/A/Madrid/# "
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([SingleLevel, Label(ScopeLabel("A")), Label(ScopeLabel("Madrid")), MultiLevel])]] }
-  written "/#,/+/A/Madrid/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/# ),\t/+/A*/Madrid/# "
-  refused InvalidLevel
-  variant InvalidLevel
-  detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/# (),\t/+/A/Madrid/# "
-  refused NestedGroup
-  variant NestedGroup
-  detail "invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/x-y/#\t, /A ,\tMadrid/x-y/# ,(+\t;/b_1/b_1;Madrid/+/# )"
   refused InvalidLevel
   variant InvalidLevel
@@ -4286,25 +4322,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "#("
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "# "
   accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
   written "/#", read back to the same tree
@@ -4321,9 +4357,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnclosedGroup
   detail "invalid scopeQ pattern: a parenthesised group is not closed"
 "(#"
-  refused UnclosedGroup
-  variant UnclosedGroup
-  detail "invalid scopeQ pattern: a parenthesised group is not closed"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(("
   refused NestedGroup
   variant NestedGroup
@@ -4890,8 +4926,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([SingleLevel])]] }
   written "/A,/+", read back to the same tree
 "/A|#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([MultiLevel])]] }
-  written "/A,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/A|("
   refused MissingPattern
   variant MissingPattern
@@ -4930,8 +4967,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([SingleLevel])]] }
   written "/A,/+", read back to the same tree
 "/A,#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([MultiLevel])]] }
-  written "/A,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/A,("
   refused MissingPattern
   variant MissingPattern
@@ -5138,21 +5176,21 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "/#("
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/#)"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/#|"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/#,"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "/# "
   accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
   written "/#", read back to the same tree
@@ -5767,8 +5805,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([SingleLevel])]] }
   written "/A,/+", read back to the same tree
 "A|#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([MultiLevel])]] }
-  written "/A,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "A|("
   refused MissingPattern
   variant MissingPattern
@@ -5807,8 +5846,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([SingleLevel])]] }
   written "/A,/+", read back to the same tree
 "A,#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([Label(ScopeLabel("A"))])], [ScopePattern([MultiLevel])]] }
-  written "/A,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "A,("
   refused MissingPattern
   variant MissingPattern
@@ -6233,8 +6273,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel])], [ScopePattern([SingleLevel])]] }
   written "/+,/+", read back to the same tree
 "+|#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel])], [ScopePattern([MultiLevel])]] }
-  written "/+,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "+|("
   refused MissingPattern
   variant MissingPattern
@@ -6273,8 +6314,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel])], [ScopePattern([SingleLevel])]] }
   written "/+,/+", read back to the same tree
 "+,#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([SingleLevel])], [ScopePattern([MultiLevel])]] }
-  written "/+,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "+,("
   refused MissingPattern
   variant MissingPattern
@@ -6559,217 +6601,225 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "#(/A"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(/"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(A"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(+"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(#"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(("
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#()"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(;"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(|"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#(,"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#( "
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)/A"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)/"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)A"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)+"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)#"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)("
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#))"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#);"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#)|"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#),"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#) "
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;/A"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;/"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;A"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;+"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;#"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;("
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;)"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;;"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;|"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#;,"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#; "
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|/A"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A"))])]] }
-  written "/#,/A", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|/"
-  refused EmptyPattern
-  variant EmptyPattern
-  detail "invalid scopeQ pattern: a scope pattern must name at least one level"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|A"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A"))])]] }
-  written "/#,/A", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|+"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([SingleLevel])]] }
-  written "/#,/+", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([MultiLevel])]] }
-  written "/#,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|("
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|)"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|;"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#||"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#|,"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#| "
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,/A"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A"))])]] }
-  written "/#,/A", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,/"
-  refused EmptyPattern
-  variant EmptyPattern
-  detail "invalid scopeQ pattern: a scope pattern must name at least one level"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,A"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([Label(ScopeLabel("A"))])]] }
-  written "/#,/A", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,+"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([SingleLevel])]] }
-  written "/#,/+", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,#"
-  accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])], [ScopePattern([MultiLevel])]] }
-  written "/#,/#", read back to the same tree
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,("
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,)"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,;"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,|"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#,,"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#, "
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "# /A"
   refused InvalidLevel
   variant InvalidLevel
@@ -6791,25 +6841,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "# ("
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "# )"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "# ;"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "# |"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "# ,"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "#  "
   accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
   written "/#", read back to the same tree
@@ -6862,9 +6912,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnclosedGroup
   detail "invalid scopeQ pattern: a parenthesised group is not closed"
 "(/#"
-  refused UnclosedGroup
-  variant UnclosedGroup
-  detail "invalid scopeQ pattern: a parenthesised group is not closed"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(/("
   refused EmptyPattern
   variant EmptyPattern
@@ -6996,25 +7046,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 "(#("
-  refused NestedGroup
-  variant NestedGroup
-  detail "invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(#;"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(#|"
-  refused NestedGroup
-  variant NestedGroup
-  detail "invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(#,"
-  refused NestedGroup
-  variant NestedGroup
-  detail "invalid scopeQ pattern: a parenthesised group may only hold scope patterns joined by ;"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "(# "
-  refused UnclosedGroup
-  variant UnclosedGroup
-  detail "invalid scopeQ pattern: a parenthesised group is not closed"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "((/A"
   refused NestedGroup
   variant NestedGroup
@@ -7248,9 +7298,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnclosedGroup
   detail "invalid scopeQ pattern: a parenthesised group is not closed"
 "( #"
-  refused UnclosedGroup
-  variant UnclosedGroup
-  detail "invalid scopeQ pattern: a parenthesised group is not closed"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 "( ("
   refused NestedGroup
   variant NestedGroup
@@ -9350,25 +9400,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidLevel
   detail "invalid scopeQ pattern: a scope level must be a letter followed by letters, digits or underscores"
 " #("
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " #)"
-  refused TrailingInput
-  variant TrailingInput
-  detail "invalid scopeQ pattern: the expression continues after it is complete"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " #;"
-  refused UngroupedConjunction
-  variant UngroupedConjunction
-  detail "invalid scopeQ pattern: a conjunction of scopes must be parenthesised"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " #|"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " #,"
-  refused MissingPattern
-  variant MissingPattern
-  detail "invalid scopeQ pattern: a pattern is missing before an operator, a closing parenthesis or the end of the input"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " # "
   accepted ScopeQuery { alternatives: [[ScopePattern([MultiLevel])]] }
   written "/#", read back to the same tree
@@ -9389,9 +9439,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnclosedGroup
   detail "invalid scopeQ pattern: a parenthesised group is not closed"
 " (#"
-  refused UnclosedGroup
-  variant UnclosedGroup
-  detail "invalid scopeQ pattern: a parenthesised group is not closed"
+  refused AnyScopeNotAlone
+  variant AnyScopeNotAlone
+  detail "invalid scopeQ pattern: /# may only stand as the whole scope query"
 " (("
   refused NestedGroup
   variant NestedGroup
