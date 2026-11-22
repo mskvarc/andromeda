@@ -335,7 +335,7 @@ async fn construct(
         accept_language,
     );
     let context_registry_routes = ContextRegistryRoutes::new(Arc::new(BrokerContextRegistryStateResolver::new(Arc::clone(&tenants))));
-    let registration_routes = RegistrationRoutes::new(Arc::new(BrokerRegistrationStateResolver::new(Arc::clone(&tenants))), accept_language);
+    let registration_routes = RegistrationRoutes::new(Arc::new(BrokerRegistrationStateResolver::new(Arc::clone(&tenants))));
     let subscription_routes = SubscriptionRoutes::new(Arc::new(BrokerSubscriptionStateResolver::new(Arc::clone(&tenants))));
     let entity_map_routes = EntityMapRoutes::new(Arc::new(BrokerEntityMapStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
     let snapshot_routes = SnapshotRoutes::new(Arc::new(BrokerSnapshotStateResolver::new(Arc::clone(&tenants))));

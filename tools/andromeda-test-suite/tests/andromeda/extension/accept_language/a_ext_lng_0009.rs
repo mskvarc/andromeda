@@ -1,4 +1,4 @@
-//! Query context source registrations answers the accepted language.
+//! Query context source registrations ignores the accepted language.
 
 use andromeda_test_suite::{
     broker,
@@ -14,31 +14,32 @@ use googletest::prelude::*;
 use http::{HeaderName, StatusCode};
 use ngsi_ld::{
     http::headers::{Accept, AcceptLanguage},
-    model::{NgsiLdMediaType, Value},
+    model::NgsiLdMediaType,
     query::language_filter::LanguageFilter,
     registration::{CSourceRegistration, ContextSourcePropertyName, EntityInfo, RegistrationInfo},
 };
 
 /// Pins: Query Context Source Registrations with Accept-Language fr and no lang answers the label `LanguageProperty`
-/// of a registration as a Property holding the French string with lang fr, and the response varies on
-/// accept-language
-/// Clause: 4.15, 5.10.2.4
+/// of a registration with its whole `languageMap`, and the response does not vary on accept-language
+/// Clause: 4.15, 5.10.2.5, 6.8.3.2
 /// Recorded: Andromeda extension, not v1.9.1: the `accept_language` extension reads Accept-Language as the clause
-/// 4.15 language filter where no lang names one; NGSI-LD carries the filter in lang alone
+/// 4.15 language filter where no lang names one, and lang leaves the registrations of Query Context Source
+/// Registrations as they were registered, so the header has no effect there to stand in for
 #[gtest]
 #[tokio::test]
-async fn a_ext_lng_0009_query_context_source_registrations_answers_the_accepted_language() -> Result<()> {
+async fn a_ext_lng_0009_query_context_source_registrations_ignores_the_accepted_language() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
     let registration_id = namespace.registration_id(1)?;
     let building_type = namespace.entity_type("Building")?;
+    let label = language_property_value(&[("fr", "Source principale"), ("nl", "Hoofdbron")]);
     let registration = CSourceRegistration::builder(source.endpoint(&format!("sources/{namespace}"))?)
         .id(registration_id.clone())
         .information([RegistrationInfo::builder()
             .entities([EntityInfo::new(building_type.clone()).with_id(namespace.urn("Building", "remote")?)])
             .build()?])
-        .property("label", language_property_value(&[("fr", "Source principale"), ("nl", "Hoofdbron")]))
+        .property("label", label.clone())
         .build()?;
     let created = broker.with_responses().registrations().register(&registration).send().await;
     expect_that!(&created, answered(StatusCode::CREATED));
@@ -53,17 +54,14 @@ async fn a_ext_lng_0009_query_context_source_registrations_answers_the_accepted_
         .await;
     expect_that!(&answer, answered(StatusCode::OK));
     let headed = answer?;
-    expect_that!(vary(headed.head.headers()), contains(eq(&HeaderName::from_static("accept-language"))));
+    expect_that!(vary(headed.head.headers()), not(contains(eq(&HeaderName::from_static("accept-language")))));
     let registrations = headed.outcome.items();
     expect_that!(registrations, len(eq(1)));
     expect_that!(registrations, nth(0, has_id(&registration_id)));
     let label_name = "label".parse::<ContextSourcePropertyName>()?;
-    let Some(Value::Object(label)) = registrations.first().and_then(|registration| registration.properties().get(&label_name)) else {
-        return fail!("the registration holds no label object");
-    };
-    expect_that!(label.get("type"), some(eq(&Value::from("Property"))));
-    expect_that!(label.get("value"), some(eq(&Value::from("Source principale"))));
-    expect_that!(label.get("lang"), some(eq(&Value::from("fr"))));
-    expect_that!(label.get("languageMap"), none());
+    expect_that!(
+        registrations.first().and_then(|registration| registration.properties().get(&label_name)),
+        some(eq(&label))
+    );
     Ok(())
 }

@@ -112,7 +112,6 @@ pub(crate) async fn query(
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let options = params.parse_options().with_registration_instance(&uri)?;
-    let language_filter = params.lang.as_ref().or(protocol.language_filter.as_ref());
     // The registrations are paged in identifier order in either pagination
     // mode.
     let window = pagination
@@ -143,12 +142,7 @@ pub(crate) async fn query(
         .with_registration_instance(&uri)?;
     let registrations = registrations
         .iter()
-        .map(|registration| {
-            RegistrationRenderer::new(registration)
-                .with_sys_attrs(options.sys_attrs)
-                .with_language_filter(language_filter)
-                .render()
-        })
+        .map(|registration| RegistrationRenderer::new(registration).with_sys_attrs(options.sys_attrs).render())
         .collect::<Result<Vec<_>, _>>()
         .with_registration_instance(&uri)?;
     let ready = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)

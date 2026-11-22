@@ -4,7 +4,7 @@ use crate::{
     handler,
     state::{RegistrationRouteState, RegistrationStateResolver},
 };
-use andromeda_http_extraction::{accept_language::AcceptLanguageReading, snapshot_scope_guard::reject_snapshot_scope};
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
 use axum::{
     Router,
     middleware::from_fn,
@@ -19,14 +19,14 @@ pub struct RegistrationRoutes {
 }
 
 impl RegistrationRoutes {
-    /// Construct every registration route with its focused resolver, Query
-    /// Context Source Registrations reading `Accept-Language` as
-    /// `accept_language` says. The Registry API takes no Snapshot
-    /// (clause 5.5.15), so each route refuses one.
-    pub fn new(resolver: Arc<dyn RegistrationStateResolver>, accept_language: AcceptLanguageReading) -> RegistrationRoutes {
+    /// Construct every registration route with its focused resolver. The
+    /// Registry API takes no Snapshot (clause 5.5.15), so each route refuses
+    /// one. No route reads `Accept-Language`: the clause 4.15 language filter
+    /// converts the `LanguageProperty` Attributes of Entities, and a
+    /// registration holds none (Table 5.2.9-1).
+    pub fn new(resolver: Arc<dyn RegistrationStateResolver>) -> RegistrationRoutes {
         let registration_routes = Router::new()
-            .route("/", post(handler::create))
-            .route("/", accept_language.negotiate(get(handler::query)))
+            .route("/", post(handler::create).get(handler::query))
             .route("/{registration_id}", get(handler::get).patch(handler::update).delete(handler::delete));
         let router = Router::new()
             .nest("/csourceRegistrations", registration_routes)
@@ -47,7 +47,6 @@ mod tests {
         routes::RegistrationRoutes,
         state::{RegistrationRouteServices, RegistrationStateResolver},
     };
-    use andromeda_http_extraction::accept_language::AcceptLanguageReading;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -72,7 +71,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_the_complete_registration_inventory() -> Result<(), Box<dyn Error>> {
-        let routes = RegistrationRoutes::new(Arc::new(RejectingResolver), AcceptLanguageReading::Ignored).into_router();
+        let routes = RegistrationRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/csourceRegistrations"),
             (Method::GET, "/csourceRegistrations"),

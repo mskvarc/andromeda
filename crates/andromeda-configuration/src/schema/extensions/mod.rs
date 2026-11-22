@@ -215,13 +215,12 @@ pub struct ExtensionsConfig {
     /// `Accept-Language` read as the clause 4.15 language filter.
     ///
     /// NGSI-LD carries the language filter in the `lang` parameter only. On,
-    /// a Retrieve or Query of Entities or Temporal Evolutions, or a Query of
-    /// Context Source Registrations, that carries no `lang` takes its filter
-    /// from the `Accept-Language` field, and each of those responses carries
-    /// `Vary: Accept-Language` (RFC 9110 section 12.5.5). Off, the field is
-    /// ignored, as RFC 9110 section 12.5.4 permits.
+    /// a Retrieve or Query of Entities or Temporal Evolutions that carries no
+    /// `lang` takes its filter from the `Accept-Language` field, and each of
+    /// those responses carries `Vary: Accept-Language` (RFC 9110 section
+    /// 12.5.5). Off, the field is ignored, as RFC 9110 section 12.5.4 permits.
     #[schemars(
-        description = "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities or Temporal Evolutions, or a Query of context source registrations, that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored."
+        description = "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities or Temporal Evolutions that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored."
     )]
     pub accept_language: ExtensionSwitch,
     /// What a `q` bracket may name as a target language.

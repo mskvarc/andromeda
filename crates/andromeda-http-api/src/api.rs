@@ -326,7 +326,7 @@ mod tests {
                 AcceptLanguageReading::Ignored,
             ))
             .context_registry(ContextRegistryRoutes::new(Arc::new(RejectContextRegistry)))
-            .registration(RegistrationRoutes::new(Arc::new(RejectRegistration), AcceptLanguageReading::Ignored))
+            .registration(RegistrationRoutes::new(Arc::new(RejectRegistration)))
             .subscription(SubscriptionRoutes::new(Arc::new(RejectSubscription)))
             .entity_map(EntityMapRoutes::new(Arc::new(RejectEntityMap), EnabledExtensions::none()))
             .snapshot(SnapshotRoutes::new(Arc::new(RejectSnapshot)))
