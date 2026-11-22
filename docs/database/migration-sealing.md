@@ -43,7 +43,7 @@ The canonical layout can still change after a seal, because sealed files are exe
 `andromeda-sql seal v1.2.0` fails and leaves the ledger as it was unless all of these hold.
 
 - The version is a stable `vX.Y.Z`, with no pre-release part and no build metadata.
-- `pg_format` and Squawk can be found, and Squawk is release 2.70.0.
+- `pg_format` and Squawk can be found, and Squawk is release 2.73.0.
 - `verify` passes, so no sealed file has changed and the ledger is in canonical form.
 - The version is higher than the last sealed release.
 - There is at least one unsealed migration.

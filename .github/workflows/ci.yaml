@@ -35,7 +35,7 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
   PGFORMATTER_VERSION: "5.11"
   # The release andromeda-sql pins; it refuses any other.
-  SQUAWK_VERSION: "2.70.0"
+  SQUAWK_VERSION: "2.73.0"
 
 # Every job but deny first looks up its verdict: when a run on main recorded a pass of the job under the key of
 # everything the job reads, the job passes without running its checks and names that run. Only a job that runs its

@@ -94,7 +94,7 @@ fn a_missing_squawk_is_a_named_error() -> io::Result<()> {
         (output.status.success(), String::from_utf8_lossy(&output.stderr).into_owned()),
         (
             false,
-            "andromeda-sql: squawk is not installed; install Squawk 2.70.0 or set SQUAWK\n".to_owned()
+            "andromeda-sql: squawk is not installed; install Squawk 2.73.0 or set SQUAWK\n".to_owned()
         )
     );
     Ok(())
@@ -116,7 +116,7 @@ fn another_squawk_release_is_refused() -> io::Result<()> {
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.success(), false);
-    assert!(stderr.ends_with("is Squawk 2.71.0; the rules are pinned to Squawk 2.70.0\n"), "{stderr}");
+    assert!(stderr.ends_with("is Squawk 2.71.0; the rules are pinned to Squawk 2.73.0\n"), "{stderr}");
     Ok(())
 }
 
