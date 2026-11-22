@@ -105,7 +105,7 @@ jobs:
       - if: *unless-reused
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-machete@0.9.2
+          tool: cargo-machete@0.10.1
       - if: *unless-reused
         run: cargo machete --with-metadata
       - if: *unless-reused
