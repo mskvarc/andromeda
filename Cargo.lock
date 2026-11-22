@@ -1295,7 +1295,7 @@ dependencies = [
  "chrono",
  "compact_str",
  "derive_more",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "indexmap 2.14.2",
  "iri-rs",
  "langtag",
@@ -4819,7 +4819,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f66822aee11ccb28d6a2e63b587254e578fb52a138bd5806b58d8560125592b"
 dependencies = [
  "gix-hash",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "parking_lot 0.12.5",
 ]
 
@@ -4844,7 +4844,7 @@ dependencies = [
  "gix-traverse",
  "gix-utils",
  "gix-validate",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "itoa",
  "libc",
  "memmap2",
@@ -5391,9 +5391,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.17.1"
+version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+checksum = "735eaa21a6a5ffb2e84362faaeb90c05ba8e19797ca30428478cb6ea3a4921bc"
 dependencies = [
  "allocator-api2",
  "equivalent",
@@ -5952,7 +5952,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "serde",
  "serde_core",
 ]
@@ -6366,7 +6366,7 @@ dependencies = [
  "contextual",
  "derive-where",
  "foldhash",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "indexmap 2.14.2",
  "iri-rs",
  "jsonld-syntax",
@@ -6453,7 +6453,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d7f40e5317f6dff601a33a91039ffe17b3ab7f0312266155ecc9f4bee2938e"
 dependencies = [
  "contextual",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "indexmap 2.14.2",
  "iri-rs",
  "jstrict",
@@ -6488,7 +6488,7 @@ dependencies = [
  "compact_str",
  "contextual",
  "decoded-char",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "json-escape-simd",
  "lexical",
  "locspan",
@@ -7009,7 +7009,7 @@ dependencies = [
  "cefact-units",
  "chrono",
  "derive_more",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "headers",
  "http",
  "indexmap 2.14.2",
@@ -7917,7 +7917,7 @@ checksum = "e66a14574118bad0545463965801bf6fbe8d9d8f29e9c0103e87aee91fa979c8"
 dependencies = [
  "educe",
  "equivalent",
- "hashbrown 0.17.1",
+ "hashbrown 0.17.2",
  "indexmap 2.14.2",
  "iri-rs",
  "itoa",
@@ -8381,9 +8381,9 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "ryu-js"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+checksum = "1f232fd0249f55adbe7f15bee58bbbd3d40708000b84e6482066d2ba599e08a9"
 
 [[package]]
 name = "ryu_floating_decimal"
