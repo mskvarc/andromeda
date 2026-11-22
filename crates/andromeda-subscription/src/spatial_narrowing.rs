@@ -79,9 +79,9 @@ impl<'a> SpatialReach<'a> {
     /// partition.
     ///
     /// An entity carrying no instance of the property reaches none (clause
-    /// 4.10). An untyped or boolean-typed geo subscription is indexed under
-    /// the wildcard partition, which no concrete-type key reaches, so that
-    /// partition is always probed too.
+    /// 4.10). A geo subscription with no selector or one of the wildcard type
+    /// is indexed under the wildcard partition, which no concrete-type key
+    /// reaches, so that partition is always probed too.
     fn probe(&self, geoproperty: &AttributeIri) -> HashSet<Identifier> {
         let spatial = self.cache.spatial();
         let tenant = self.cache.tenant();
@@ -404,6 +404,33 @@ mod tests {
         let mut reach = SpatialReach::new(&cache, &live, &entity, &types);
         let admitted: Vec<bool> = subscriptions.iter().map(|subscription| reach.admits(subscription)).collect();
         pretty_assertions::assert_eq!(admitted, vec![true, false]);
+    }
+
+    /// Clause 4.17: `Building|Tower` selects a Building, so the geo
+    /// subscription is filed under that type and reached by a Building nearby,
+    /// and a Vehicle in the same place reaches no partition it is filed in.
+    #[test]
+    fn a_geo_subscription_on_a_type_expression_is_reached_through_its_covering_types() {
+        let mut on_expression = subscription(
+            1,
+            true,
+            Some(Near {
+                at: HERE,
+                geoproperty: LOCATION,
+            }),
+        );
+        on_expression.selectors = vec![EntitySelector {
+            id: None,
+            id_pattern: None,
+            type_: format!("{BUILDING}|https://example.com/Tower").parse().expect("a type selection"),
+        }];
+        let (cache, subscriptions) = cached(vec![on_expression]);
+        let entity = building(&[(LOCATION, vec![point(HERE, None)])]);
+        let live = ContextTarget::Live;
+        let building_types = building_type();
+        assert!(SpatialReach::new(&cache, &live, &entity, &building_types).admits(&subscriptions[0]));
+        let vehicle_types: Vec<EntityTypeName> = vec!["https://example.com/Vehicle".parse().expect("a type name")];
+        assert!(!SpatialReach::new(&cache, &live, &entity, &vehicle_types).admits(&subscriptions[0]));
     }
 
     /// The index holds the `geoQ` in force, so a superseded selection near

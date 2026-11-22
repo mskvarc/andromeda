@@ -58,6 +58,25 @@ impl<S: NameStage> TypeAlternatives<S> {
         Some(only)
     }
 
+    /// Types of which every Entity the selection selects carries one, each
+    /// once: the first type of each alternative that names none of the types
+    /// taken from the alternatives before it.
+    ///
+    /// An Entity satisfying an alternative carries every type of it, so it
+    /// carries the type taken from that alternative or one taken earlier that
+    /// the alternative also names. A caller that files the selection under
+    /// these types reaches every Entity it can select.
+    #[must_use]
+    pub fn covering_types(&self) -> Vec<&S::EntityType> {
+        let mut covering: Vec<&S::EntityType> = Vec::with_capacity(self.0.len());
+        for conjunction in self.iter() {
+            if !conjunction.iter().any(|entity_type| covering.contains(&entity_type)) {
+                covering.extend(conjunction.first());
+            }
+        }
+        covering
+    }
+
     /// Whether `types` satisfies one of the alternatives, a conjunction needing
     /// every one of its types present. Names are compared whole.
     pub fn matches<T: AsRef<str>>(&self, types: &[T]) -> bool {
@@ -197,6 +216,41 @@ mod tests {
 
         pretty_assertions::assert_eq!(refused, Err("refused"));
         pretty_assertions::assert_eq!(visited, vec!["A".to_owned(), "B".to_owned()]);
+    }
+
+    fn covering(alternatives: Vec<Vec<&str>>) -> Vec<String> {
+        let selection = TypeAlternatives::<Written>::new(
+            alternatives
+                .into_iter()
+                .map(|conjunction| conjunction.into_iter().map(name).collect())
+                .collect(),
+        )
+        .expect("non-empty");
+        selection
+            .covering_types()
+            .into_iter()
+            .map(|entity_type| entity_type.as_str().to_owned())
+            .collect()
+    }
+
+    /// Clause 4.17: an Entity matches a disjunction when it matches one
+    /// alternative, and a conjunction when it carries every type of it, so one
+    /// type of each alternative reaches every Entity the selection selects.
+    #[test]
+    fn the_covering_types_take_one_type_of_each_alternative() {
+        pretty_assertions::assert_eq!(covering(vec![vec!["A"]]), ["A"]);
+        pretty_assertions::assert_eq!(covering(vec![vec!["A"], vec!["B"]]), ["A", "B"]);
+        pretty_assertions::assert_eq!(covering(vec![vec!["A", "B"]]), ["A"]);
+        pretty_assertions::assert_eq!(covering(vec![vec!["A", "B"], vec!["C"]]), ["A", "C"]);
+        pretty_assertions::assert_eq!(covering(vec![vec!["A", "B"], vec!["C", "D"], vec!["E"]]), ["A", "C", "E"]);
+    }
+
+    /// An alternative naming a type already taken is reached through it.
+    #[test]
+    fn an_alternative_naming_a_type_already_taken_adds_none() {
+        pretty_assertions::assert_eq!(covering(vec![vec!["A", "B"], vec!["A", "C"]]), ["A"]);
+        pretty_assertions::assert_eq!(covering(vec![vec!["A"], vec!["B", "A"]]), ["A"]);
+        pretty_assertions::assert_eq!(covering(vec![vec!["A"], vec!["A"]]), ["A"]);
     }
 
     #[test]
