@@ -4,4 +4,5 @@
 
 mod bare_any_scope;
 mod csource_dataset_ids;
+mod quoted_pattern;
 mod receiver_redirects;

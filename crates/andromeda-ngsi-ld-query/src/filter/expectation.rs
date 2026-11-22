@@ -22,9 +22,9 @@ pub enum Expectation {
     /// quoted string or a bare temporal literal.
     #[strum(serialize = "comparable value")]
     ComparableValue,
-    /// The operand of `~=` or `!~=`.
-    #[strum(serialize = "pattern string")]
-    PatternString,
+    /// The operand of `~=` or `!~=`, a regular expression written bare or in quotes.
+    #[strum(serialize = "regular expression")]
+    RegularExpression,
     /// A type name inside a linked-entity type guard.
     #[strum(serialize = "entity type")]
     EntityType,
@@ -95,7 +95,7 @@ mod tests {
         pretty_assertions::assert_eq!(Expectation::AttributeName.to_string(), "attribute name");
         pretty_assertions::assert_eq!(Expectation::Value.to_string(), "value");
         pretty_assertions::assert_eq!(Expectation::ComparableValue.to_string(), "comparable value");
-        pretty_assertions::assert_eq!(Expectation::PatternString.to_string(), "pattern string");
+        pretty_assertions::assert_eq!(Expectation::RegularExpression.to_string(), "regular expression");
         pretty_assertions::assert_eq!(Expectation::EntityType.to_string(), "entity type");
         pretty_assertions::assert_eq!(Expectation::GuardTerminator.to_string(), ":");
     }

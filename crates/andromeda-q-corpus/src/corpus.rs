@@ -208,6 +208,11 @@ pub const CORPUS: &[CorpusCase] = &[
     local("C-113", "rows[a]==6", &[]),
     local("C-114", "rows[a]==5,6", &[E20]),
     local("C-115", "rows[a]!=6", &[E20]),
+    local("C-116", "s~=ab.*", &[E1, E2]),
+    local("C-117", "s!~=abc", &[E2]),
+    local("C-118", "s~=^ab(c|x)$", &[E1]),
+    local("C-119", "(n>15;s~=^ab)", &[E2]),
+    local("C-120", "s~=^abc$|n>15", &[E1, E2, E5]),
 ];
 
 #[cfg(test)]

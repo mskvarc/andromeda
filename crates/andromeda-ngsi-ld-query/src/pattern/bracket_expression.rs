@@ -4,7 +4,7 @@
 //!
 //! A term is restated only when it names exactly one character. Every column a pattern is applied to carries `COLLATE "C"`, where a collating element is one character and an equivalence class holds only the character that names it, so `[[=e=]]` is `e` and never `[eéèê]`. A term naming more than one character (`[[.hyphen.]]`, `[[=ch=]]`) names a multi-character collating element of some locale's table and is refused.
 //!
-//! The scan follows the `regex` crate's tokenizer everywhere else, escapes and the comments and ignored whitespace of `(?x)` included, so that it and the parser reading the restatement agree on where every bracket expression opens and closes.
+//! The scan follows the `regex` crate's tokenizer everywhere else, escapes and the comments and ignored whitespace of `(?x)` included, so that it and the parser reading the restatement agree on where every bracket expression opens and closes. The same scan finds where a pattern written bare in a `q` filter ends, so the term boundary and the compiled pattern never disagree on which characters are the pattern's.
 
 use crate::pattern::{non_posix_construct::NonPosixConstruct, pattern_error::PatternError};
 use regex_syntax::{ast::ClassAsciiKind, is_escapeable_character};
@@ -15,14 +15,41 @@ use regex_syntax::{ast::ClassAsciiKind, is_escapeable_character};
 ///
 /// Returns [`PatternError::NonPosixConstruct`] for a collating symbol or equivalence class that does not name exactly one character, for a `[:` that does not open a character class, and for a range whose end is a character class.
 pub fn restate_bracket_expressions(pattern: &str) -> Result<String, PatternError> {
-    let mut scan = BracketScan {
-        rest: pattern,
-        restated: String::with_capacity(pattern.len()),
-        whitespace: Whitespace::Significant,
-        enclosing: Vec::new(),
-    };
+    let mut scan = BracketScan::new(pattern, ScanBoundary::TextEnd);
     scan.pattern()?;
     Ok(scan.restated)
+}
+
+/// How far the pattern that opens `text` reaches when a `q` filter ends it, before the whitespace after it is set aside.
+///
+/// # Errors
+///
+/// Returns the [`PatternError`] [`restate_bracket_expressions`] returns for the bracket expressions the pattern holds.
+pub(crate) fn query_term_scan(text: &str) -> Result<QueryTermScan, PatternError> {
+    let mut scan = BracketScan::new(text, ScanBoundary::QueryTerm);
+    scan.pattern()?;
+    Ok(QueryTermScan {
+        length: scan.consumed(),
+        escaped_through: scan.escaped_through,
+    })
+}
+
+/// How far a scan of a pattern inside a `q` filter reached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct QueryTermScan {
+    /// The byte length of the pattern, whitespace at its end included.
+    pub(crate) length: usize,
+    /// The byte offset just past the last escape, before which no character is whitespace a `q` filter sets aside.
+    pub(crate) escaped_through: usize,
+}
+
+/// Where a scan of a pattern stops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScanBoundary {
+    /// At the end of the text: the pattern is a whole value, an `idPattern` or a quoted `q` operand.
+    TextEnd,
+    /// Where a bare `q` operand ends (clause 4.9 `RegExp`): at a `;` or `|` outside every group and bracket expression, or at a `)` that closes no group. A comment of `(?x)` shelters none of them, since it would otherwise run to the end of its line, which in `q` is the end of the query.
+    QueryTerm,
 }
 
 /// How the `regex` crate reads whitespace and `#` at the scan's position.
@@ -36,6 +63,8 @@ enum Whitespace {
 
 /// One pattern being restated.
 struct BracketScan<'pattern> {
+    /// The byte length of the text the scan started on.
+    length: usize,
     /// The text not yet scanned.
     rest: &'pattern str,
     /// The restatement of the text already scanned.
@@ -44,12 +73,32 @@ struct BracketScan<'pattern> {
     whitespace: Whitespace,
     /// How whitespace read outside each open group, innermost last, restored when the group closes.
     enclosing: Vec<Whitespace>,
+    /// Where the scan stops.
+    boundary: ScanBoundary,
+    /// The byte offset just past the last escape scanned, 0 before the first.
+    escaped_through: usize,
 }
 
-impl BracketScan<'_> {
-    /// Scans the whole pattern outside any bracket expression.
+impl<'pattern> BracketScan<'pattern> {
+    /// A scan of `text` that stops at `boundary`.
+    fn new(text: &'pattern str, boundary: ScanBoundary) -> BracketScan<'pattern> {
+        BracketScan {
+            length: text.len(),
+            rest: text,
+            restated: String::with_capacity(text.len()),
+            whitespace: Whitespace::Significant,
+            enclosing: Vec::new(),
+            boundary,
+            escaped_through: 0,
+        }
+    }
+
+    /// Scans the pattern outside any bracket expression, up to its boundary.
     fn pattern(&mut self) -> Result<(), PatternError> {
         while let Some(next) = self.rest.chars().next() {
+            if self.ends_at(next) {
+                return Ok(());
+            }
             match next {
                 '\\' => self.escape(),
                 '[' => {
@@ -64,13 +113,37 @@ impl BracketScan<'_> {
                     }
                 }
                 other => {
-                    if !self.skip_ignored() {
+                    if !self.skip_ignored_before_boundary() {
                         self.copy(other.len_utf8());
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Whether `next`, read outside every bracket expression, ends the pattern at the scan's position.
+    const fn ends_at(&self, next: char) -> bool {
+        match self.boundary {
+            ScanBoundary::TextEnd => false,
+            ScanBoundary::QueryTerm => self.enclosing.is_empty() && is_query_delimiter(next),
+        }
+    }
+
+    /// Copies one run of whitespace or one comment `(?x)` skips outside a bracket expression, if the scan is at one, stopping before a character that ends the pattern.
+    fn skip_ignored_before_boundary(&mut self) -> bool {
+        let skipped = self.rest.len() - after_one_ignored(self.rest, self.whitespace).len();
+        let kept = match self.boundary {
+            ScanBoundary::QueryTerm if self.enclosing.is_empty() => self.rest[..skipped].find(is_query_delimiter).unwrap_or(skipped),
+            ScanBoundary::QueryTerm | ScanBoundary::TextEnd => skipped,
+        };
+        self.copy(kept);
+        kept != 0
+    }
+
+    /// The byte length of the text already scanned.
+    const fn consumed(&self) -> usize {
+        self.length - self.rest.len()
     }
 
     /// Scans a bracket expression whose `[` is already copied, through its closing `]`.
@@ -173,6 +246,7 @@ impl BracketScan<'_> {
             after
         };
         self.copy(length);
+        self.escaped_through = self.consumed();
     }
 
     /// Copies a `(` and whatever opens the group with it, tracking how the group reads whitespace.
@@ -227,10 +301,15 @@ fn flag_whitespace(flags: &str, current: Whitespace) -> Whitespace {
             '-' => negated = true,
             'x' if negated => whitespace = Whitespace::Significant,
             'x' => whitespace = Whitespace::Ignored,
-            _ => {}
+            _other => {}
         }
     }
     whitespace
+}
+
+/// Whether `character` ends a bare `q` operand where it stands outside every group and bracket expression of the pattern.
+const fn is_query_delimiter(character: char) -> bool {
+    matches!(character, ';' | '|' | ')')
 }
 
 /// The byte length of a character class whose `[:` is already stripped from `after`, through its `:]`, when the `regex` crate reads it as one.

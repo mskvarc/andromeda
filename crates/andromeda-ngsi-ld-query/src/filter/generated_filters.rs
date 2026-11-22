@@ -53,8 +53,8 @@ const TIMES: [&str; 6] = [
 /// URIs in their normalised spelling.
 const URIS: [&str; 3] = ["urn:x:1", "http://example.com/a", "urn:ngsi-ld:Vehicle:A4567"];
 
-/// Regular expressions as quoted strings.
-const PATTERNS: [&str; 4] = ["\"a.*\"", "\"^x\"", "\"[0-9]+\"", "\"\\\\d\""];
+/// Regular expressions as a `q` filter writes them, quoted or bare (clause 4.9 `RegExp`), a bare one holding a `|` and a `)` only inside its group and its bracket expression.
+const PATTERNS: [&str; 7] = ["\"a.*\"", "\"^x\"", "\"[0-9]+\"", "\"\\\\d\"", "a.*", "^x(y|z)$", "[;|)]+"];
 
 /// A `ComparableValue`.
 fn comparable() -> BoxedStrategy<String> {
