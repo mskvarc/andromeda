@@ -209,7 +209,7 @@ jobs:
       - if: *unless-reused
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest@0.9.149
+          tool: cargo-nextest@0.9.152
       # andromeda-sql shells out to pg_format and Squawk and is tested by sql; andromeda-test-suite needs a live stack.
       - name: Workspace unit tests
         if: *unless-reused
@@ -278,7 +278,7 @@ jobs:
       - if: *unless-reused
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest@0.9.149
+          tool: cargo-nextest@0.9.152
       # The canonical migration layout is the one this pgFormatter release produces. Both tools go under the job's
       # temporary directory, so a runner without sudo installs them the same way. pg_format loads its modules from the
       # directory it sits in, so it runs from the extracted release; its Makefile.PL accepts no install prefix.
