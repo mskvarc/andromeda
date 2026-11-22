@@ -7,7 +7,7 @@
 # binaries of the suite and of the upgrade rehearsals as one nextest archive, so a run compiles nothing.
 FROM rust:1.100.0-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS toolchain
 
-ARG NEXTEST_VERSION=0.9.149
+ARG NEXTEST_VERSION=0.9.152
 
 RUN rustup component add clippy
 

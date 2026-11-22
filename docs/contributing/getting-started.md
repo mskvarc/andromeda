@@ -28,7 +28,7 @@ brew install cargo-nextest taplo cargo-deny shellcheck
 cargo install --locked cargo-machete@0.10.1
 ```
 
-CI runs cargo-nextest 0.9.149, taplo 0.10.0, cargo-deny 0.22.0, shellcheck 0.11.0 and cargo-machete 0.10.1. The workspace refuses a cargo-nextest older than 0.9.145.
+CI runs cargo-nextest 0.9.152, taplo 0.10.0, cargo-deny 0.22.0, shellcheck 0.11.0 and cargo-machete 0.10.1. The workspace refuses a cargo-nextest older than 0.9.145.
 
 The black-box test suite and the local stacks need Docker with Compose.
 
