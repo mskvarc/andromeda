@@ -2,33 +2,25 @@
 //!
 //! Table 6.9.3.1-1 defines no URL parameter for the operation. Clause 6.3.11
 //! gives every GET under `/csourceRegistrations/` the `options` parameter, and
-//! the one registration is shaped by the clause 4.21 projection and the clause
-//! 4.15 language filter as each registration of a discovery is. Anything else,
-//! the discovery's selectors and its paging included, is a parameter the
-//! operation does not define: the clause 6.3.20 `InvalidRequest`.
+//! the one registration is shaped by the clause 4.15 language filter as each
+//! registration of a discovery is. Anything else, the discovery's selectors,
+//! its paging and the clause 4.21 `pick` and `omit` included, is a parameter
+//! the operation does not define: the clause 6.3.20 `InvalidRequest`.
 
 use crate::{
     error::ParameterError,
     options::SysAttrsOptions,
-    query::deserialization::deserialize_optional_projection_terms,
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_query::projection::written_projection_term::WrittenProjectionTerm;
 use serde::Deserialize;
 
 /// Query parameters of Retrieve Context Source Registration.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegistrationRetrieveParams {
-    /// Members the registration is narrowed to (clause 4.21 `pick`).
-    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub pick: Option<Vec<WrittenProjectionTerm>>,
-    /// Members the registration drops (clause 4.21 `omit`).
-    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
-    pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Clause 4.15 natural-language selection preferences (`lang`).
     #[serde(default)]
     pub lang: Option<LanguageFilter>,
@@ -36,7 +28,7 @@ pub struct RegistrationRetrieveParams {
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
 
-query_parameter_set!(RegistrationRetrieveParams { Pick, Omit, Lang, Options });
+query_parameter_set!(RegistrationRetrieveParams { Lang, Options });
 
 impl RegistrationRetrieveParams {
     /// The system-attribute selection the `options` parameter made.
@@ -52,17 +44,33 @@ impl RegistrationRetrieveParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::registration_retrieval::RegistrationRetrieveParams;
+    use crate::{
+        query_parameter::{QueryParameter, QueryParameterSet},
+        registration_retrieval::RegistrationRetrieveParams,
+    };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn options_pick_omit_and_lang_are_read() {
-        let params: RegistrationRetrieveParams = serde_urlencoded::from_str("options=sysAttrs&pick=id,endpoint&omit=type&lang=en").expect("parses");
+    fn options_and_lang_are_read() {
+        let params: RegistrationRetrieveParams = serde_urlencoded::from_str("options=sysAttrs&lang=en").expect("parses");
         assert_eq!(params.parse_options().expect("a supported options value").sys_attrs, SysAttrsInclusion::Include);
-        assert_eq!(params.pick.as_deref().map(<[_]>::len), Some(2));
-        assert_eq!(params.omit.as_deref().map(<[_]>::len), Some(1));
         assert!(params.lang.is_some());
+    }
+
+    /// Table 6.9.3.1-1 defines no `pick` or `omit` for retrieval, and clause
+    /// 5.2.9 makes `type`, `endpoint` and `information` mandatory, so each is
+    /// a parameter the operation does not define (clause 6.3.20).
+    #[test]
+    fn pick_and_omit_are_unknown() {
+        for query in ["pick=id", "omit=endpoint", "pick=id,endpoint&omit=type"] {
+            let message = serde_urlencoded::from_str::<RegistrationRetrieveParams>(query)
+                .expect_err("refused")
+                .to_string();
+            assert!(message.contains("unknown field"), "{query}: {message}");
+        }
+        assert!(!RegistrationRetrieveParams::defines(QueryParameter::Pick));
+        assert!(!RegistrationRetrieveParams::defines(QueryParameter::Omit));
     }
 
     /// Table 6.9.3.1-1 defines no discovery selector and no paging, so each

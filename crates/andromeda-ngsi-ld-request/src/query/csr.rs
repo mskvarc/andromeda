@@ -84,10 +84,14 @@ pub struct CsrQueryParameters {
     /// The scope query matched against the registrations' `scope` (clause 4.19 `scopeQ`).
     #[serde(rename = "scopeQ")]
     pub scope_q: Option<ScopeQuery>,
-    /// Members the response is narrowed to (clause 4.21 `pick`).
+    /// The clause 4.21 `pick` terms, checked against the projection language as
+    /// Table 6.8.3.2-1 requires. They neither narrow the query nor shape the
+    /// answer: a registration is not an Entity and clause 5.2.9 makes its
+    /// `type`, `endpoint` and `information` mandatory.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<WrittenProjectionTerm>>,
-    /// Members the response drops (clause 4.21 `omit`).
+    /// The clause 4.21 `omit` terms, accepted and checked like `pick`, with no
+    /// effect on the answer.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<WrittenProjectionTerm>>,
     /// Clause-4.15 natural-language selection preferences (`lang`).
@@ -279,6 +283,24 @@ mod tests {
                 matches!(err, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)),
                 "{query}: {err:?}"
             );
+        }
+    }
+
+    /// Clause 5.10.2.4 lists neither `pick` nor `omit` among the narrowing
+    /// inputs, so a request carrying only them is too wide.
+    #[test]
+    fn pick_or_omit_alone_or_beside_identifiers_is_too_wide() {
+        for query in ["pick=id", "omit=endpoint", "idPattern=urn:.*&pick=id", "id=urn:ngsi-ld:Vehicle:1&omit=endpoint"] {
+            let err = params_from_query(query).validate().expect_err("no narrowing input");
+            assert!(matches!(err, ParameterError::SelectorRequired(_)), "{query}: {err:?}");
+        }
+    }
+
+    /// Table 6.8.3.2-1 has the broker check the clause 4.21 syntax of both.
+    #[test]
+    fn a_pick_or_omit_outside_the_projection_language_is_refused() {
+        for query in ["type=Vehicle&pick=a{", "type=Vehicle&omit=,"] {
+            assert!(serde_urlencoded::from_str::<CsrQueryParameters>(query).is_err(), "{query}");
         }
     }
 

@@ -40,7 +40,7 @@ async fn o_csr_qry_9021_attrs_beside_pick_or_omit_is_bad_request_data() -> Resul
     // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
     // cooldown that opens there holds back a later test's registration naming the same endpoint.
     let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
-    // Query Context Source Registrations has no `pick` or `omit` parameter, so the query string is written as given.
+    // The typed client has no `pick` or `omit` on registrations, so the query string is written as given.
     let type_text = building_type.to_string();
     let height = namespace.attribute("height")?.to_string();
     for parameters in [

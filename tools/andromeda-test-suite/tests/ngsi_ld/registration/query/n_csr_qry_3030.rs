@@ -1,7 +1,7 @@
 //! Pick or omit with no narrowing input is too wide.
 
 use andromeda_test_suite::{
-    body_json::{json_count, json_equals},
+    body_json::{json_count, json_equals, json_exists},
     broker,
     cleanup::Cleanup,
     context_source::ContextSource,
@@ -37,7 +37,7 @@ async fn n_csr_qry_3030_pick_or_omit_with_no_narrowing_input_is_too_wide() -> Re
     // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
     // cooldown that opens there holds back a later test's registration naming the same endpoint.
     let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
-    // Query Context Source Registrations has no `pick` or `omit` parameter, so the query string is written as given.
+    // The typed client has no `pick` or `omit` on registrations, so the query string is written as given.
     let id_pattern = format!("urn:ngsi-ld:Building:{namespace}-.*");
     let type_text = building_type.to_string();
     for parameters in [
@@ -55,8 +55,8 @@ async fn n_csr_qry_3030_pick_or_omit_with_no_narrowing_input_is_too_wide() -> Re
         let answer = broker.send_unchecked(request).await;
         expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_title());
     }
-    // A `pick` of `p` leaves a registration without `information` or `endpoint`, which the model cannot read, so the
-    // page is read as received.
+    // A `pick` changes nothing of the registration answered, and the typed client cannot write it, so the page is read
+    // as received.
     let response = call(
         &broker,
         Method::GET,
@@ -68,5 +68,7 @@ async fn n_csr_qry_3030_pick_or_omit_with_no_narrowing_input_is_too_wide() -> Re
     expect_that!(response.status(), eq(StatusCode::OK));
     expect_that!(response.body(), json_count("$", 1));
     expect_that!(response.body(), json_equals("$[0].id", registration_id.to_string()));
+    expect_that!(response.body(), json_exists("$[0].endpoint"));
+    expect_that!(response.body(), json_exists("$[0].information"));
     Ok(())
 }

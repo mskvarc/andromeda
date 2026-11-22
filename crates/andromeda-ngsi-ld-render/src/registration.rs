@@ -1,10 +1,12 @@
 //! Presentation logic for context source registration (CSR) responses.
 //!
 //! Applies, over a registration, the members of Table 6.8.3.2-1 that shape the
-//! representation rather than narrow the query: `sysAttrs`, the clause 4.21
-//! `pick`/`omit` member projection, and the clause 4.15 `lang` language
-//! negotiation. The clause 4.5.16 `geometryProperty` selection is not applied
-//! here: a registration has no `GeoJSON` representation (clause 6.3.4).
+//! representation rather than narrow the query: `sysAttrs` and the clause 4.15
+//! `lang` language negotiation. The clause 4.21 `pick` and `omit` projection is
+//! not applied: a registration is not an Entity, and clause 5.2.9 makes its
+//! `type`, `endpoint` and `information` mandatory, so the answer always carries
+//! the whole registration. The clause 4.5.16 `geometryProperty` selection is not
+//! applied either: a registration has no `GeoJSON` representation (clause 6.3.4).
 
 use crate::{
     error::{RenderError, RenderedShape},
@@ -16,7 +18,6 @@ use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     registration::ContextSourceRegistration,
 };
-use andromeda_ngsi_ld_query::projection::written_projection_term::WrittenProjectionTerm;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde::{
     Serialize,
@@ -25,13 +26,6 @@ use serde::{
 };
 use serde_json::value::{RawValue, to_raw_value};
 use thiserror::Error;
-
-/// The structural members a registration always keeps, whatever `pick`/`omit`
-/// name: `id` and `type` identify the document (clause 5.2.9 cardinality 1),
-/// and `@context` is a JSON-LD transport concern, never a structural member.
-fn is_always_retained(key: &str) -> bool {
-    key == "id" || key == "type" || key == "@context"
-}
 
 /// The clause 4.8 system timestamps `sysAttrs` governs.
 fn is_system_timestamp(key: &str) -> bool {
@@ -64,16 +58,12 @@ pub struct RegistrationRenderer<'a> {
     selection: MemberSelection<'a>,
 }
 
-/// What a request's `sysAttrs`, `pick`, `omit` and `lang` leave of the members
-/// of a registration.
+/// What a request's `sysAttrs` and `lang` leave of the members of a
+/// registration.
 #[derive(Debug)]
 struct MemberSelection<'a> {
     /// Whether the clause 4.8 system attributes survive.
     sys_attrs: SysAttrsInclusion,
-    /// The clause 4.21 `pick` terms, when the request narrowed the members.
-    pick: Option<&'a [WrittenProjectionTerm]>,
-    /// The clause 4.21 `omit` terms, when the request dropped members.
-    omit: Option<&'a [WrittenProjectionTerm]>,
     /// The clause 4.15 `lang` preferences, when the request negotiated language.
     language_filter: Option<&'a LanguageFilter>,
 }
@@ -81,23 +71,9 @@ struct MemberSelection<'a> {
 impl MemberSelection<'_> {
     /// Whether the member `name` is part of the response.
     ///
-    /// Clause 4.8: `sysAttrs` governs only the system timestamps. Clause 4.21:
-    /// a member is kept when `pick` is empty or names it and `omit` does not. Member
-    /// names are matched by the compact term the client wrote, which the
-    /// rendered registration is keyed by under the same negotiated `@context`.
-    /// `id` and `type` are retained whatever the projection names, since a
-    /// registration without them is not one.
+    /// Clause 4.8: `sysAttrs` governs only the system timestamps.
     fn keeps(&self, name: &str) -> bool {
-        if self.sys_attrs == SysAttrsInclusion::Strip && is_system_timestamp(name) {
-            return false;
-        }
-        if is_always_retained(name) {
-            return true;
-        }
-        let named_in = |terms: &[WrittenProjectionTerm]| terms.iter().any(|term| term.name.as_str() == name);
-        let picked = self.pick.filter(|terms| !terms.is_empty()).is_none_or(named_in);
-        let omitted = self.omit.filter(|terms| !terms.is_empty()).is_some_and(named_in);
-        picked && !omitted
+        self.sys_attrs == SysAttrsInclusion::Include || !is_system_timestamp(name)
     }
 }
 
@@ -109,8 +85,6 @@ impl<'a> RegistrationRenderer<'a> {
             registration,
             selection: MemberSelection {
                 sys_attrs: SysAttrsInclusion::Strip,
-                pick: None,
-                omit: None,
                 language_filter: None,
             },
         }
@@ -123,20 +97,6 @@ impl<'a> RegistrationRenderer<'a> {
         self
     }
 
-    /// Set the clause 4.21 `pick` terms the response is narrowed to.
-    #[must_use]
-    pub const fn with_pick(mut self, pick: Option<&'a [WrittenProjectionTerm]>) -> Self {
-        self.selection.pick = pick;
-        self
-    }
-
-    /// Set the clause 4.21 `omit` terms the response drops.
-    #[must_use]
-    pub const fn with_omit(mut self, omit: Option<&'a [WrittenProjectionTerm]>) -> Self {
-        self.selection.omit = omit;
-        self
-    }
-
     /// Set the clause 4.15 `lang` preferences applied to language maps.
     #[must_use]
     pub const fn with_language_filter(mut self, language_filter: Option<&'a LanguageFilter>) -> Self {
@@ -144,7 +104,7 @@ impl<'a> RegistrationRenderer<'a> {
         self
     }
 
-    /// Write the registration and keep what narrows and negotiates its members
+    /// Write the registration and keep what strips and negotiates its members
     /// when the response is written.
     ///
     /// # Errors
@@ -161,13 +121,12 @@ impl<'a> RegistrationRenderer<'a> {
 }
 
 /// A registration as a response writes it: the members the request's
-/// `sysAttrs`, `pick`, `omit` and `lang` leave, in the order the registration
-/// writes them.
+/// `sysAttrs` and `lang` leave, in the order the registration writes them.
 #[derive(Debug)]
 pub struct RenderedRegistration<'a> {
     /// The registration, every member of it written.
     written: Box<RawValue>,
-    /// What narrows and negotiates the members when they are written out.
+    /// What strips and negotiates the members when they are written out.
     selection: MemberSelection<'a>,
 }
 
@@ -203,7 +162,6 @@ mod tests {
     use crate::registration::RegistrationRenderer;
     use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::projection::written_projection_list::WrittenProjectionList;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
@@ -239,24 +197,12 @@ mod tests {
     }
 
     #[test]
-    fn pick_narrows_to_the_named_members_and_keeps_id_and_type() {
+    fn the_rendering_carries_every_mandatory_member_of_the_registration() {
         let registration = registration();
-        let pick = Vec::from("endpoint".parse::<WrittenProjectionList>().expect("valid pick"));
-        let rendered = document_under(RegistrationRenderer::new(&registration).with_pick(Some(&pick)));
+        let rendered = document_under(RegistrationRenderer::new(&registration));
         assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceRegistration:1");
         assert_eq!(rendered["type"], "ContextSourceRegistration");
         assert_eq!(rendered["endpoint"], "http://source:1026/");
-        assert!(rendered.get("information").is_none(), "unpicked member survived: {rendered}");
-    }
-
-    #[test]
-    fn omit_drops_the_named_members_but_never_id_or_type() {
-        let registration = registration();
-        let omit = Vec::from("endpoint,type".parse::<WrittenProjectionList>().expect("valid omit"));
-        let rendered = document_under(RegistrationRenderer::new(&registration).with_omit(Some(&omit)));
-        assert!(rendered.get("endpoint").is_none(), "omitted member survived: {rendered}");
-        assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceRegistration:1");
-        assert_eq!(rendered["type"], "ContextSourceRegistration", "type must survive omit");
         assert_eq!(rendered["information"], json!([{"entities": [{"type": "Vehicle"}]}]));
     }
 
@@ -286,15 +232,6 @@ mod tests {
         let filter = LanguageFilter::parse("fr").expect("valid lang filter");
         let rendered = document_under(RegistrationRenderer::new(&registration).with_language_filter(Some(&filter)));
         assert_eq!(rendered["endpoint"], "http://source:1026/");
-    }
-
-    #[test]
-    fn an_empty_projection_leaves_every_member() {
-        let registration = registration();
-        let pick = "".parse::<WrittenProjectionList>().map_or_default(Vec::from);
-        let rendered = document_under(RegistrationRenderer::new(&registration).with_pick(Some(&pick)));
-        assert_eq!(rendered["endpoint"], "http://source:1026/");
-        assert_eq!(rendered["information"], json!([{"entities": [{"type": "Vehicle"}]}]));
     }
 
     /// The members keep the order the registration writes them in, so a body
