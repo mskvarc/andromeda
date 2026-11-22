@@ -20,6 +20,8 @@ allow = ["CC0-1.0"]
 [advisories]
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
+# Transitive crates count too, so an unmaintained crate anywhere in the graph needs a ruling below.
+unmaintained = "all"
 ignore = [
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error 1.0.4 is unmaintained, which the advisory reports in place of a vulnerability. Only the procedural macros of static-automata-macros, static-regular-grammar and str-newtype-derive use it, so it runs while the broker compiles and none of its code is in the binary. The newest releases of static-automata-macros and static-regular-grammar still depend on it." },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 2.2.0 is unmaintained, which the advisory reports in place of a vulnerability. rumqttc 0.25.1, the only crate linking it, calls it only to read certificate files for a TlsConfiguration::Simple, and the broker never builds one, handing rumqttc a ready rustls client configuration instead." },
