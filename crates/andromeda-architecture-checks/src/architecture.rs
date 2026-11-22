@@ -72,6 +72,9 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
     );
 }
 
+/// The identifiers of retired architecture, which no production source names.
+const RETIRED_IDENTIFIERS: &[&str] = &["AndromedaError", "AppState", "DataExpirationWorker"];
+
 /// Find public re-exports and over-qualified inline paths in one syntax tree.
 struct ArchitectureVisitor<'path> {
     /// Workspace-relative file currently scanned.
@@ -108,11 +111,8 @@ impl<'ast> Visit<'ast> for ArchitectureVisitor<'_> {
     }
 
     fn visit_ident(&mut self, identifier: &'ast syn::Ident) {
-        if identifier == "AppState" {
-            self.violations.push(format!("{} contains retired AppState identifier", self.path));
-        }
-        if identifier == "AndromedaError" {
-            self.violations.push(format!("{} contains retired AndromedaError identifier", self.path));
+        if let Some(retired) = RETIRED_IDENTIFIERS.iter().find(|retired| identifier == *retired) {
+            self.violations.push(format!("{} contains retired {retired} identifier", self.path));
         }
         visit_ident(self, identifier);
     }
@@ -167,6 +167,13 @@ mod tests {
     fn ignores_test_only_inline_items() {
         let violations = violations("#[cfg(test)] mod tests { pub use crate::name::Value; }");
         assert_eq!(violations, [] as [String; 0]);
+    }
+
+    #[test]
+    fn rejects_retired_identifiers() {
+        for source in ["struct AppState;", "enum AndromedaError {}", "fn spawn(worker: DataExpirationWorker) {}"] {
+            assert_eq!(violations(source).len(), 1, "{source}");
+        }
     }
 
     #[test]
