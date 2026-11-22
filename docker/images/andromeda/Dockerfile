@@ -25,12 +25,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 
 # Survives the lockfile changes that invalidate the chef layer.
-ARG SCCACHE_VERSION=0.18.0
+ARG SCCACHE_VERSION=0.19.0
 RUN set -eux; \
     arch="$(uname -m)"; \
     case "$arch" in \
-        x86_64) sha256=45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89 ;; \
-        aarch64) sha256=2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a ;; \
+        x86_64) sha256=aa73c7270c997894038c0d8f0d297865f57569e1687883322bc431713d4bb9dd ;; \
+        aarch64) sha256=3e47fc4a71b1ddd1b4294a0de9d34498922fdf41e3cd0bda5df3954e3d6deb9d ;; \
         *) echo "no pinned sccache checksum for $arch" >&2; exit 1 ;; \
     esac; \
     release="sccache-v${SCCACHE_VERSION}-${arch}-unknown-linux-musl"; \
