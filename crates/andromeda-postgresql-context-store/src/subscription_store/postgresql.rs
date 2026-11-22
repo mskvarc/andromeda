@@ -16,7 +16,7 @@ use crate::{
     subscription::repo::SubscriptionRepository,
     subscription_store::{
         csource_statements::{csource_create, csource_update},
-        delivery_state::{SlotClaimStatement, outcome_statement, record_interval_tick_statement, slot_claim_statement, state_insert},
+        delivery_state::{SlotClaimRow, SlotClaimStatement, outcome_statement, record_interval_tick_statement, slot_claim_statement, state_insert},
         entity_statements::{entity_create, entity_update},
         failure::create_error,
         interned_attributes::intern_attribute_lists,
@@ -38,7 +38,7 @@ use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use andromeda_subscription::{
     error::SubscriptionError,
     interval_schedule::{interval_duration, next_interval_due as next_interval_grid_due},
-    notification_slot::{NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notification_slot::{NotificationSlot, NotificationSlotGate, Suppression},
     notifying_since::NotifyingRestart,
     outcome_tally::OutcomeTally,
     store::{SubscriptionFields, SubscriptionStore},
@@ -161,29 +161,21 @@ macro_rules! impl_subscription_store {
                 id: &Identifier,
                 gate: NotificationSlotGate,
             ) -> Result<NotificationSlot, SubscriptionError> {
-                // The gate is the statement's own `WHERE`, so a state row it
-                // did not match is a slot the ceilings refused.
-                // A Snapshot branch reaped since the delivery was claimed takes
-                // its subscriptions with it, so its slot is refused as for a
-                // subscription deleted meanwhile.
-                match slot_claim_statement(target, id, $kind, gate) {
-                    SlotClaimStatement::Stamping(statement) => match statement.to_query().execute(&self.pool).await {
-                        Ok(result) if result.rows_affected() > 0 => Ok(NotificationSlot::Claimed(OutcomeRecord::OutcomeOnly)),
-                        Ok(_) => Ok(NotificationSlot::Suppressed),
-                        Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(NotificationSlot::Suppressed),
-                        Err(error) => Err(persistence_error::<SubscriptionError>(error)),
-                    },
-                    SlotClaimStatement::Checking(statement) => match statement
-                        .to_query_scalar::<chrono::DateTime<chrono::Utc>>()
-                        .fetch_optional(&self.pool)
-                        .await
-                    {
-                        Ok(claimed) => Ok(claimed.map_or(NotificationSlot::Suppressed, |notified_at| {
-                            NotificationSlot::Claimed(OutcomeRecord::CountingNotification { notified_at })
-                        })),
-                        Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(NotificationSlot::Suppressed),
-                        Err(error) => Err(persistence_error::<SubscriptionError>(error)),
-                    },
+                // Only an active subscription's state row answers, with
+                // whether the gate admitted the claim, so no row is a
+                // subscription no longer active. A Snapshot branch reaped since
+                // the delivery was claimed takes its subscriptions with it, so
+                // its slot is refused as for a subscription deleted meanwhile.
+                let statement = slot_claim_statement(target, id, $kind, gate);
+                let answer = match &statement {
+                    SlotClaimStatement::Stamping(claim) => claim.to_query_as::<SlotClaimRow>().fetch_optional(&self.pool).await,
+                    SlotClaimStatement::Checking(claim) => claim.to_query_as::<SlotClaimRow>().fetch_optional(&self.pool).await,
+                };
+                match answer {
+                    Ok(Some(row)) => Ok(row.into_slot(&statement)),
+                    Ok(None) => Ok(NotificationSlot::Suppressed(Suppression::Inactive)),
+                    Err(error) if is_reaped_snapshot_branch(target, &error) => Ok(NotificationSlot::Suppressed(Suppression::Inactive)),
+                    Err(error) => Err(persistence_error::<SubscriptionError>(error)),
                 }
             }
 

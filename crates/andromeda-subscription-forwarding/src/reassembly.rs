@@ -355,7 +355,7 @@ impl SubscriptionForwardingService {
         let gate = NotificationSlotGate::at(generated_at, compiled.cadence(), compiled.endpoint_cooldown);
         let record = match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
             NotificationSlot::Claimed(record) => record,
-            NotificationSlot::Suppressed => {
+            NotificationSlot::Suppressed(_) => {
                 debug!(subscription = %local, "re-assembled notification suppressed by the subscription's throttling or its endpoint's cooldown");
                 return Ok(());
             }

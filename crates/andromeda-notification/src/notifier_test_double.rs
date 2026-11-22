@@ -31,7 +31,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_subscription::{
     error::SubscriptionError,
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{DeliveryStamps, NotificationSlot, NotificationSlotGate, Suppression},
     notifying_since::NotifyingRestart,
     outcome_tally::OutcomeTally,
     store::{SubscriptionFields, SubscriptionStore},
@@ -89,7 +89,7 @@ impl SubscriptionStore for ClaimRecordingStore {
         gate: NotificationSlotGate,
     ) -> Result<NotificationSlot, SubscriptionError> {
         self.claims.lock().expect("the claim record is never poisoned").push((id.clone(), gate));
-        Ok(NotificationSlot::Suppressed)
+        Ok(NotificationSlot::Suppressed(Suppression::Windowed(DeliveryStamps::default())))
     }
 
     async fn record_outcomes(&self, _target: &ContextTarget, _id: &Identifier, _tally: OutcomeTally) -> Result<(), SubscriptionError> {

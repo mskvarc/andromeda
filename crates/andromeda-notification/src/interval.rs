@@ -175,7 +175,7 @@ impl IntervalNotificationOperation {
         let gate = NotificationSlotGate::at(cutoff, NotificationCadence::Periodic, sub.notification.endpoint.cooldown);
         let record = match self.sub_repo.claim_notification_slot(&self.target, &sub.id, gate).await {
             Ok(NotificationSlot::Claimed(record)) => record,
-            Ok(NotificationSlot::Suppressed) => return,
+            Ok(NotificationSlot::Suppressed(_)) => return,
             Err(error) => {
                 debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, error);
                 return;

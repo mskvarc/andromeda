@@ -52,12 +52,13 @@ use andromeda_subscription::{
     change_filters::ChangedStates,
     compiled::CompiledSubscription,
     error::SubscriptionError,
+    notification_slot::Withholding,
     store::SubscriptionStore,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::StreamExt;
-use std::{sync::Arc, time::Duration};
+use std::{cmp, sync::Arc};
 use tracing::{debug, warn};
 
 /// Subscriptions one committed change notifies at once.
@@ -88,7 +89,13 @@ fn aggregate_delivery_outcomes(notified: Vec<SubscriptionNotified>) -> Notificat
                 FailureClass::ServerError => FailedAttempts::count(&mut outcome.server_error, failure),
                 FailureClass::Permanent => FailedAttempts::count(&mut outcome.permanent, failure),
             },
-            SubscriptionNotified::Withheld(window) => outcome.withheld = Some(outcome.withheld.map_or(window, |longest| longest.max(window))),
+            SubscriptionNotified::Withheld(withholding) => {
+                outcome.withheld = Some(
+                    outcome
+                        .withheld
+                        .map_or(withholding, |longest| cmp::max_by_key(longest, withholding, |withheld| withheld.reopens_after)),
+                );
+            }
             SubscriptionNotified::NotOwed => {}
         }
         outcome
@@ -159,8 +166,9 @@ pub struct NotificationEvaluationOutcome {
     /// there were none.
     pub permanent: Option<FailedAttempts>,
     /// Of the notifications a `throttling` or `cooldown` window withheld, the
-    /// longest wait until the window passes; `None` when none was withheld.
-    pub withheld: Option<Duration>,
+    /// one that waits longest for its windows to pass; `None` when none was
+    /// withheld.
+    pub withheld: Option<Withholding>,
 }
 
 impl NotificationProcessor {

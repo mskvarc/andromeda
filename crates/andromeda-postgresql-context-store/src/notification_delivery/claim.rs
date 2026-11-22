@@ -277,8 +277,40 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::AttemptCount)),
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::NextAttemptAt)),
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
+            newer_queued(target),
         ]))
         .to_owned()
+}
+
+/// Whether a newer delivery of the claimed row's Subscription is still
+/// queued, held or not:
+///
+/// ```sql
+/// EXISTS (SELECT 1 FROM notification_deliveries AS later
+///         WHERE later.subscription_key = notification_deliveries.subscription_key
+///           AND later.delivery_key > notification_deliveries.delivery_key
+///           AND later.delivered_at IS NULL AND later.exhausted_at IS NULL)
+/// ```
+///
+/// A delivery a `throttling` window withholds is superseded by such a row.
+/// `idx_notification_deliveries_subscription` leads with the Subscription and
+/// orders the rows of each `held_at` by key, so the probe stops at the first
+/// newer row.
+fn newer_queued(target: &ContextTarget) -> SimpleExpr {
+    Expr::exists(
+        Query::select()
+            .expr(Expr::val(1))
+            .from(table_of(target, NotificationDeliveries::Table).alias(Later))
+            .and_where(
+                Expr::col((Later, NotificationDeliveries::SubscriptionKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
+            )
+            .and_where(
+                Expr::col((Later, NotificationDeliveries::DeliveryKey)).gt(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey))),
+            )
+            .and_where(Expr::col((Later, NotificationDeliveries::DeliveredAt)).is_null())
+            .and_where(Expr::col((Later, NotificationDeliveries::ExhaustedAt)).is_null())
+            .to_owned(),
+    )
 }
 
 /// `SELECT delivery_key ... FOR UPDATE SKIP LOCKED`: the first `batch_size`
@@ -328,6 +360,11 @@ pub(crate) fn delivery_claimable_at() -> SimpleExpr {
 #[derive(Iden, Clone, Copy)]
 #[iden = "s"]
 struct DeliverySubscription;
+
+/// The alias of a delivery queued after a claimed one, `later`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "later"]
+struct Later;
 
 #[cfg(test)]
 mod tests {
@@ -426,7 +463,26 @@ mod tests {
     #[test]
     fn the_queue_claim_reads_the_holds_once_rather_than_per_candidate() {
         let sql = claim_sql(&ContextTarget::Live);
-        assert!(!sql.contains("EXISTS"), "{sql}");
+        let predicate = sql.split(" RETURNING ").next().unwrap_or_default();
+        assert!(!predicate.contains("EXISTS"), "{sql}");
+    }
+
+    /// A delivery a throttling window withholds is dropped only for a newer
+    /// one still queued, so each claimed row says whether its Subscription
+    /// has one, held or not.
+    #[test]
+    fn the_claim_says_whether_a_newer_delivery_of_the_subscription_is_still_queued() {
+        let sql = claim_sql(&ContextTarget::Live);
+        assert!(
+            sql.contains(concat!(
+                r#"EXISTS(SELECT 1 FROM "notification_deliveries" AS "later" "#,
+                r#"WHERE "later"."subscription_key" = "notification_deliveries"."subscription_key" "#,
+                r#"AND "later"."delivery_key" > "notification_deliveries"."delivery_key" AND "later"."delivered_at" IS NULL "#,
+                r#"AND "later"."exhausted_at" IS NULL)"#
+            )),
+            "{sql}"
+        );
+        assert!(!sql.contains(r#""later"."held_at""#), "a held delivery is queued too: {sql}");
     }
 
     #[test]
@@ -522,9 +578,9 @@ mod tests {
     fn the_claim_returns_each_column_the_row_mapper_reads() {
         let sql = claim_sql(&ContextTarget::Live);
         assert!(
-            sql.ends_with(concat!(
+            sql.contains(concat!(
                 r#"RETURNING "notification_deliveries"."delivery_key", "s"."id", "notification_deliveries"."attempt_count", "#,
-                r#""notification_deliveries"."next_attempt_at", "notification_deliveries"."event_key""#
+                r#""notification_deliveries"."next_attempt_at", "notification_deliveries"."event_key", EXISTS("#
             )),
             "{sql}"
         );

@@ -146,7 +146,7 @@ mod tests {
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_notification::{
         delivery_claim::DeliveryClaim,
-        delivery_entry::{DeliveryEntry, DeliveryKey},
+        delivery_entry::{DeliveryEntry, DeliveryKey, NewerDelivery},
         notification_event::{NotificationEvent, NotificationEventKey},
     };
     use chrono::Utc;
@@ -171,6 +171,7 @@ mod tests {
                     .committed_at(StoreInstant::new(Utc::now()))
                     .build(),
             ))
+            .newer(NewerDelivery::Absent)
             .build()
     }
 

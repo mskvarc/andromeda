@@ -122,15 +122,39 @@ impl NotificationSlotGate {
         }
     }
 
+    /// The windows that refused a claim of this gate, taken at `now`, judged
+    /// from the `stamps` the store held when it refused.
+    ///
+    /// A window refused the claim when its stamp is past the gate's ceiling,
+    /// and it reopens once the stamp has fallen back to the ceiling: `stamp -
+    /// ceiling` after `now`. The store reads the stamps in the statement that
+    /// refused, but a claim racing it can move a stamp after that read, so
+    /// stamps that explain no refusal are answered with the gate's whole
+    /// window, the longest the refusing stamp can still need.
+    #[must_use]
+    pub fn withholding(self, now: DateTime<Utc>, stamps: DeliveryStamps) -> Withholding {
+        let refusing = |ceiling: Option<DateTime<Utc>>, stamp: Option<DateTime<Utc>>| match (ceiling, stamp) {
+            (Some(ceiling), Some(stamp)) if stamp > ceiling => Some((stamp, stamp - ceiling)),
+            (Some(_) | None, Some(_) | None) => None,
+        };
+        let throttling = refusing(self.throttling_ceiling(), stamps.last_notification);
+        let cooldown = refusing(self.last_failure, stamps.last_failure);
+        let explained = [throttling, cooldown].into_iter().flatten().filter_map(|(_, wait)| wait.to_std().ok()).max();
+        Withholding {
+            throttled_since: throttling.map(|(stamp, _)| stamp),
+            cooled_since: cooldown.map(|(stamp, _)| stamp),
+            reopens_after: explained.unwrap_or_else(|| self.reopens_after(now)),
+        }
+    }
+
     /// How long after `now`, the instant the gate was taken at, a claim it
-    /// refused is admitted again: the longer of the subscription's
-    /// `throttling` and its endpoint's `cooldown`, zero for a gate with
-    /// neither.
+    /// refused is admitted again however recent the refusing stamp: the
+    /// longer of the subscription's `throttling` and its endpoint's
+    /// `cooldown`, zero for a gate with neither.
     ///
     /// Every stamp the gate compares is at or before `now`, so once this has
     /// passed, neither window still covers the stamp that refused the claim.
-    #[must_use]
-    pub fn reopens_after(self, now: DateTime<Utc>) -> Duration {
+    fn reopens_after(self, now: DateTime<Utc>) -> Duration {
         [self.throttling_ceiling(), self.last_failure]
             .into_iter()
             .flatten()
@@ -170,16 +194,53 @@ pub enum OutcomeRecord {
 /// The claim is the moment a notification either happens or does not: Table
 /// 5.2.15-1 says of `cooldown` that "if requests are received before the
 /// cooldown period has expired, no notification is sent", and clause 5.2.12
-/// `throttling` bounds the same claim from the other side. Nothing downstream
-/// has to be told which of the two refused it, only that nothing is sent.
+/// `throttling` bounds the same claim from the other side. A refusal carries
+/// the stamps the windows were measured from, so a queued notification can
+/// tell a window that was open when its change was made from one opened since.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationSlot {
     /// The slot was taken and the notification is the caller's to send; its
     /// outcome is recorded with the [`OutcomeRecord`] carried.
     Claimed(OutcomeRecord),
-    /// A gate refused it, or the subscription is no longer active, so no
-    /// notification is sent at all and the delivery instants did not move.
-    Suppressed,
+    /// No notification is sent at all and the delivery instants did not
+    /// move, for the reason carried.
+    Suppressed(Suppression),
+}
+
+/// Why a notification-slot claim took no slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Suppression {
+    /// The subscription is no longer active, or its branch is gone.
+    Inactive,
+    /// A `throttling` or `cooldown` window refused the claim; the stamps are
+    /// the ones the store held when it refused.
+    Windowed(DeliveryStamps),
+}
+
+/// The stored instants a subscription's notification windows are measured
+/// from (clause 5.2.12 `throttling` and Table 5.2.15-1 `cooldown`), on the
+/// store's clock.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeliveryStamps {
+    /// The instant of the last notification sent (`lastNotification`),
+    /// `None` when none was.
+    pub last_notification: Option<DateTime<Utc>>,
+    /// The instant of the last failed notification (`lastFailure`), `None`
+    /// when none failed.
+    pub last_failure: Option<DateTime<Utc>>,
+}
+
+/// The windows that withheld one notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Withholding {
+    /// The `lastNotification` whose `throttling` window refused the claim,
+    /// `None` when that window did not.
+    pub throttled_since: Option<DateTime<Utc>>,
+    /// The `lastFailure` whose `cooldown` refused the claim, `None` when the
+    /// cooldown did not.
+    pub cooled_since: Option<DateTime<Utc>>,
+    /// How long after the claim both refusing windows have passed.
+    pub reopens_after: Duration,
 }
 
 /// How the endpoint answered one notification (clause 5.8.6).
@@ -194,7 +255,7 @@ pub enum NotificationOutcome {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_slot::{NotificationCadence, NotificationSlotGate, NotificationStamp};
+    use crate::notification_slot::{DeliveryStamps, NotificationCadence, NotificationSlotGate, NotificationStamp, Withholding};
     use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
     use chrono::{TimeDelta, TimeZone, Utc};
     use std::time::Duration;
@@ -282,6 +343,92 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(gate.reopens_after(now), window, "{gate:?}");
         }
+        Ok(())
+    }
+
+    /// A refusal names the stamp of each window that covers the claim, and
+    /// is admitted again once the latest of them falls out of its window.
+    #[test]
+    fn a_refusal_names_each_window_its_stamps_fall_inside_and_when_the_last_one_passes() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
+        let cooldown = PositiveMilliseconds::try_from(4_000).map_err(|_error| "a positive millisecond count")?;
+        let throttling = NotificationCadence::OnChange { throttling_secs: Some(10.0) };
+        let gate = NotificationSlotGate::at(now, throttling, Some(cooldown));
+        let notified = now - TimeDelta::seconds(7);
+        let failed = now - TimeDelta::seconds(1);
+        let stamps = |last_notification, last_failure| DeliveryStamps {
+            last_notification,
+            last_failure,
+        };
+        pretty_assertions::assert_eq!(
+            gate.withholding(now, stamps(Some(notified), None)),
+            Withholding {
+                throttled_since: Some(notified),
+                cooled_since: None,
+                reopens_after: Duration::from_secs(3),
+            }
+        );
+        pretty_assertions::assert_eq!(
+            gate.withholding(now, stamps(None, Some(failed))),
+            Withholding {
+                throttled_since: None,
+                cooled_since: Some(failed),
+                reopens_after: Duration::from_secs(3),
+            }
+        );
+        pretty_assertions::assert_eq!(
+            gate.withholding(now, stamps(Some(now - TimeDelta::seconds(2)), Some(failed))),
+            Withholding {
+                throttled_since: Some(now - TimeDelta::seconds(2)),
+                cooled_since: Some(failed),
+                reopens_after: Duration::from_secs(8),
+            }
+        );
+        Ok(())
+    }
+
+    /// A stamp counts only against a window the gate has: an unthrottled
+    /// subscription that notified a moment ago is refused by its cooldown
+    /// alone.
+    #[test]
+    fn a_stamp_counts_only_against_a_window_the_gate_has() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
+        let cooldown = PositiveMilliseconds::try_from(4_000).map_err(|_error| "a positive millisecond count")?;
+        let failed = now - TimeDelta::seconds(1);
+        let withholding = NotificationSlotGate::at(now, UNTHROTTLED, Some(cooldown)).withholding(
+            now,
+            DeliveryStamps {
+                last_notification: Some(now),
+                last_failure: Some(failed),
+            },
+        );
+        pretty_assertions::assert_eq!(withholding.throttled_since, None);
+        pretty_assertions::assert_eq!(withholding.cooled_since, Some(failed));
+        Ok(())
+    }
+
+    /// A claim racing the refusal can move a stamp after the store read it,
+    /// so stamps no window covers wait the gate's whole window rather than
+    /// none.
+    #[test]
+    fn stamps_that_explain_no_refusal_wait_the_whole_window() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
+        let throttling = NotificationCadence::OnChange { throttling_secs: Some(10.0) };
+        let withholding = NotificationSlotGate::at(now, throttling, None).withholding(
+            now,
+            DeliveryStamps {
+                last_notification: Some(now - TimeDelta::seconds(30)),
+                last_failure: None,
+            },
+        );
+        pretty_assertions::assert_eq!(
+            withholding,
+            Withholding {
+                throttled_since: None,
+                cooled_since: None,
+                reopens_after: Duration::from_secs(10),
+            }
+        );
         Ok(())
     }
 

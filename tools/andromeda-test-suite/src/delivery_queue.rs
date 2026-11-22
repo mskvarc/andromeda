@@ -21,6 +21,7 @@ use sqlx::{
     postgres::{PgPoolOptions, PgRow},
 };
 use std::time::Duration;
+use url::Url;
 
 /// The longest a reading waits for its one connection.
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -68,11 +69,25 @@ impl DeliveryQueue {
     ///
     /// Returns [`DeliveryQueueError::Config`] when the stack names no such server.
     pub fn of(role: BrokerRole, database: &DatabaseName) -> Result<DeliveryQueue, DeliveryQueueError> {
-        let server = SuiteConfig::get().map_err(Clone::clone)?.servers().database(role, database)?;
+        DeliveryQueue::at(&SuiteConfig::get().map_err(Clone::clone)?.servers().database(role, database)?)
+    }
+
+    /// The default tenant's database on the server of the broker of `role`: the platform database the server is
+    /// named with, which is the only tenant database of a broker with multi-tenancy disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryQueueError::Config`] when the stack names no such server.
+    pub fn of_default_tenant(role: BrokerRole) -> Result<DeliveryQueue, DeliveryQueueError> {
+        DeliveryQueue::at(SuiteConfig::get().map_err(Clone::clone)?.servers().server(role)?)
+    }
+
+    /// The database `database` names, reached over one connection opened on first use.
+    fn at(database: &Url) -> Result<DeliveryQueue, DeliveryQueueError> {
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(ACQUIRE_TIMEOUT)
-            .connect_lazy(server.as_str())?;
+            .connect_lazy(database.as_str())?;
         Ok(DeliveryQueue { pool })
     }
 

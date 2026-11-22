@@ -150,7 +150,7 @@ impl CsourceNotificationDelivery {
             .await
         {
             Ok(NotificationSlot::Claimed(record)) => record,
-            Ok(NotificationSlot::Suppressed) => return CsourceDeliveryOutcome::NotSent,
+            Ok(NotificationSlot::Suppressed(_)) => return CsourceDeliveryOutcome::NotSent,
             Err(error) => {
                 debug!("Failed to claim CSR notification slot for {}: {}", sub_id, error);
                 return CsourceDeliveryOutcome::NotSent;
