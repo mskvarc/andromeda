@@ -413,7 +413,8 @@ expect 'init scripts run in andromeda' "$(sql init-scripts "SELECT to_regclass('
 
 printf 'fromfile' > "$mounts/user"
 chmod a+r "$mounts/user"
-start user-file -v "$mounts/user:/run/user:ro" -e POSTGRES_USER_FILE=/run/user --
+# A file binds only onto a path the image leaves free; the base image owns /run/user as a directory.
+start user-file -v "$mounts/user:/run/secrets/postgres-user:ro" -e POSTGRES_USER_FILE=/run/secrets/postgres-user --
 expect 'POSTGRES_USER_FILE names the superuser' \
 	"$(sql_as user-file fromfile "SELECT count(*) FROM pg_roles WHERE rolname = 'fromfile' AND rolsuper")" 1
 expect 'the health check connects as the POSTGRES_USER_FILE role' "$(logs_mention user-file 'does not exist')" no
