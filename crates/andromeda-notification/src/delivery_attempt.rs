@@ -6,6 +6,12 @@
 //! is handed over as a step the queue adds to its own clock, never as an
 //! instant read from the broker's.
 //!
+//! A retried failure waits its backoff step, or the wait its endpoint asked
+//! for with `Retry-After` (RFC 9110 section 10.2.3, and RFC 6585 section 4
+//! for a 429) when that is longer, up to `max_retry_interval`. A failure
+//! that exhausts its delivery is not attempted again, so what it asked for
+//! is moot.
+//!
 //! A failure gets the attempts its [`FailureClass`] allows: an unavailable
 //! endpoint the full ceiling, since an outage may last, one that answered
 //! another server error the lower server-error ceiling, since every
@@ -80,8 +86,15 @@ impl DeliveryAttempt {
             DeliveryDisposition::Deferred { window } => Ok(DeliveryVerdict::Deferred {
                 retry_after: self.retry_schedule.deferral(window),
             }),
-            DeliveryDisposition::Failed { class, detail } if self.retries(class, entry.attempt_count) => Ok(DeliveryVerdict::Failed {
-                retry_after: self.retry_schedule.step(entry.attempt_count).map_err(NotificationInvariant::AttemptCount)?,
+            DeliveryDisposition::Failed {
+                class,
+                detail,
+                retry_after: requested,
+            } if self.retries(class, entry.attempt_count) => Ok(DeliveryVerdict::Failed {
+                retry_after: self
+                    .retry_schedule
+                    .step_honouring(entry.attempt_count, requested)
+                    .map_err(NotificationInvariant::AttemptCount)?,
                 detail: self.error_bound.truncate(&detail).into_owned(),
             }),
             DeliveryDisposition::Failed { detail, .. } => Ok(DeliveryVerdict::Exhausted {

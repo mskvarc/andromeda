@@ -12,7 +12,7 @@ use crate::{
     transport::NotificationTransport,
 };
 use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
-use andromeda_http_headers::link::field_layout::apply_link_field_layout;
+use andromeda_http_headers::{link::field_layout::apply_link_field_layout, retry_after::RetryAfter};
 use andromeda_ngsi_ld_model::notification_header_field::notification_header_field;
 use andromeda_outbound_http::{client::OutboundHttpPolicy, endpoint_guard::PrivateIpGuard};
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
@@ -23,7 +23,7 @@ use std::{
     error::Error,
     io,
     iter,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tracing::{debug, warn};
 use url::Url;
@@ -214,11 +214,27 @@ impl HttpTransport {
                 "HTTP notification delivery rejected"
             );
             Ok(DeliveryOutcome::Rejected {
-                reason: EndpointRejection::HttpStatus { status },
+                reason: EndpointRejection::HttpStatus {
+                    status,
+                    retry_after: requested_wait(response.headers()),
+                },
                 class: FailureClass::of_http_status(status),
             })
         }
     }
+}
+
+/// The wait an answer's `Retry-After` asks for, counted from now, the instant
+/// the answer arrived; `None` when it carries none, or one that is neither
+/// form.
+///
+/// RFC 9110 section 10.2.3 counts `delay-seconds` from the receipt of the
+/// response, so a date is read against the broker's clock at that same
+/// instant, the one moment both forms share. What is carried on from here is
+/// a wait, which the delivery queue adds to its own clock like any retry step,
+/// so no instant of the endpoint's clock is ever compared with the queue's.
+fn requested_wait(headers: &HeaderMap) -> Option<Duration> {
+    headers.typed_get::<RetryAfter>().map(|requested| requested.wait_from(SystemTime::now()))
 }
 
 /// The header fields an HTTP notification is sent with.
@@ -274,7 +290,7 @@ mod tests {
         },
         notification_body::NotificationBody,
         notification_context::NotificationContext,
-        outcome::DeliveryOutcome,
+        outcome::{DeliveryOutcome, EndpointRejection},
         oversized_notification::OversizedNotification,
         request::{DeliveryRequest, NotificationDelivery},
         transport::NotificationTransport,
@@ -392,6 +408,55 @@ mod tests {
         assert!(matches!(first, DeliveryOutcome::Success { .. }), "{first:?}");
         assert!(matches!(second, DeliveryOutcome::Success { .. }), "{second:?}");
         pretty_assertions::assert_eq!(accepted.load(Ordering::SeqCst), 2, "the second notification opened a fresh connection");
+    }
+
+    /// A receiver that answers every request with `answer`, sent as written.
+    async fn receiver_answering(answer: &'static [u8]) -> Url {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener binds");
+        let address = listener.local_addr().expect("the listener has an address");
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    while read_request(&mut stream).await.is_some() {
+                        let _written = stream.write_all(answer).await;
+                    }
+                });
+            }
+        });
+        Url::parse(&format!("http://{address}/notify")).expect("a well-formed endpoint")
+    }
+
+    /// The status, requested wait and class of the rejection a receiver
+    /// answering `answer` gives; `None` when it accepts.
+    async fn rejection(answer: &'static [u8]) -> Option<(u16, Option<Duration>, FailureClass)> {
+        let transport = HttpTransport::new(HttpTransportConfig::default()).expect("the transport builds");
+        match deliver(&transport, &receiver_answering(answer).await).await {
+            DeliveryOutcome::Rejected {
+                reason: EndpointRejection::HttpStatus { status, retry_after },
+                class,
+            } => Some((status, retry_after, class)),
+            DeliveryOutcome::Success { .. } => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejection_carries_the_wait_its_retry_after_asks_for() {
+        let rejected = rejection(b"HTTP/1.1 503 Service Unavailable\r\nretry-after: 7\r\ncontent-length: 0\r\n\r\n").await;
+        pretty_assertions::assert_eq!(rejected, Some((503, Some(Duration::from_secs(7)), FailureClass::Unavailable)));
+    }
+
+    /// The date is read against the clock as the answer arrives, so one
+    /// already past asks for no wait.
+    #[tokio::test]
+    async fn a_rejection_whose_retry_after_names_a_past_date_asks_for_no_wait() {
+        let rejected = rejection(b"HTTP/1.1 429 Too Many Requests\r\nretry-after: Sun, 06 Nov 1994 08:49:37 GMT\r\ncontent-length: 0\r\n\r\n").await;
+        pretty_assertions::assert_eq!(rejected, Some((429, Some(Duration::ZERO), FailureClass::Unavailable)));
+    }
+
+    #[tokio::test]
+    async fn a_rejection_whose_retry_after_is_neither_form_asks_for_no_particular_wait() {
+        let rejected = rejection(b"HTTP/1.1 503 Service Unavailable\r\nretry-after: soon\r\ncontent-length: 0\r\n\r\n").await;
+        pretty_assertions::assert_eq!(rejected, Some((503, None, FailureClass::Unavailable)));
     }
 
     #[tokio::test]

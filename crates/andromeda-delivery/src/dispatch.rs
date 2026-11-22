@@ -199,7 +199,7 @@ mod tests {
             (503, FailureClass::Unavailable),
         ] {
             let result = classify(Ok(DeliveryOutcome::Rejected {
-                reason: EndpointRejection::HttpStatus { status },
+                reason: EndpointRejection::HttpStatus { status, retry_after: None },
                 class: FailureClass::of_http_status(status),
             }));
             assert!(!result.is_delivered());

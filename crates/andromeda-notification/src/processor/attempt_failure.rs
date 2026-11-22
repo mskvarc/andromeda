@@ -13,7 +13,7 @@ use andromeda_delivery::{
 };
 use andromeda_entity::error::EntityError;
 use andromeda_subscription::error::SubscriptionError;
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Duration};
 use thiserror::Error;
 
 /// Why one subscription was not notified of a change.
@@ -70,6 +70,23 @@ impl NotificationAttemptFailure {
             | NotificationAttemptFailure::Unwritten(_) => FailureClass::Permanent,
         }
     }
+
+    /// The wait the endpoint asked for before the next attempt (RFC 9110
+    /// section 10.2.3 `Retry-After`), `None` when it asked for none or the
+    /// failure is not an endpoint's.
+    #[must_use]
+    pub const fn retry_after(&self) -> Option<Duration> {
+        match self {
+            NotificationAttemptFailure::Endpoint(failure) => failure.retry_after(),
+            NotificationAttemptFailure::ContextUnloadable
+            | NotificationAttemptFailure::SlotUnclaimed(_)
+            | NotificationAttemptFailure::NothingToNotify
+            | NotificationAttemptFailure::EndpointUndeliverable(_)
+            | NotificationAttemptFailure::NoData
+            | NotificationAttemptFailure::Unwritten(_)
+            | NotificationAttemptFailure::LinkedEntitiesUnread(_) => None,
+        }
+    }
 }
 
 /// The failed attempts of one change that share a [`FailureClass`].
@@ -79,6 +96,9 @@ pub struct FailedAttempts {
     pub attempts: NonZeroUsize,
     /// Why the first of them failed.
     pub first: NotificationAttemptFailure,
+    /// The longest wait an endpoint asked for before the next attempt, `None`
+    /// when none asked.
+    pub retry_after: Option<Duration>,
 }
 
 impl FailedAttempts {
@@ -87,14 +107,19 @@ impl FailedAttempts {
     pub const fn new(first: NotificationAttemptFailure) -> FailedAttempts {
         FailedAttempts {
             attempts: NonZeroUsize::MIN,
+            retry_after: first.retry_after(),
             first,
         }
     }
 
-    /// Count `failure` into `tally`, keeping the first failure's cause.
+    /// Count `failure` into `tally`, keeping the first failure's cause and
+    /// the longest wait any of them asked for.
     pub fn count(tally: &mut Option<FailedAttempts>, failure: NotificationAttemptFailure) {
         match tally {
-            Some(failed) => failed.attempts = failed.attempts.saturating_add(1),
+            Some(failed) => {
+                failed.attempts = failed.attempts.saturating_add(1);
+                failed.retry_after = failed.retry_after.max(failure.retry_after());
+            }
             None => *tally = Some(FailedAttempts::new(failure)),
         }
     }
@@ -105,6 +130,15 @@ mod tests {
     use crate::processor::attempt_failure::{FailedAttempts, NotificationAttemptFailure};
     use andromeda_delivery::{endpoint_failure::EndpointFailure, failure_class::FailureClass, outcome::EndpointRejection};
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    /// An endpoint's 503 asking for `retry_after`.
+    fn unavailable(retry_after: Option<Duration>) -> NotificationAttemptFailure {
+        NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
+            reason: EndpointRejection::HttpStatus { status: 503, retry_after },
+            class: FailureClass::Unavailable,
+        })
+    }
 
     #[test]
     fn a_tally_keeps_the_first_cause_and_counts_every_attempt() {
@@ -118,11 +152,34 @@ mod tests {
     #[test]
     fn an_endpoint_failure_reads_as_the_endpoint_failure_and_keeps_its_class() {
         let rejected = NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
-            reason: EndpointRejection::HttpStatus { status: 500 },
+            reason: EndpointRejection::HttpStatus {
+                status: 500,
+                retry_after: None,
+            },
             class: FailureClass::ServerError,
         });
         assert_eq!(rejected.to_string(), "the endpoint answered HTTP 500");
         assert_eq!(rejected.class(), FailureClass::ServerError);
+    }
+
+    #[test]
+    fn an_endpoint_failure_keeps_the_wait_its_endpoint_asked_for_and_any_other_failure_asks_for_none() {
+        assert_eq!(unavailable(Some(Duration::from_secs(7))).retry_after(), Some(Duration::from_secs(7)));
+        assert_eq!(unavailable(None).retry_after(), None);
+        assert_eq!(NotificationAttemptFailure::ContextUnloadable.retry_after(), None);
+    }
+
+    #[test]
+    fn a_tally_keeps_the_longest_wait_any_of_its_endpoints_asked_for() {
+        let mut tally = None;
+        for retry_after in [None, Some(2), Some(5), Some(3)] {
+            FailedAttempts::count(&mut tally, unavailable(retry_after.map(Duration::from_secs)));
+        }
+        assert_eq!(tally.and_then(|failed| failed.retry_after), Some(Duration::from_secs(5)));
+        let mut asked_by_none = None;
+        FailedAttempts::count(&mut asked_by_none, unavailable(None));
+        FailedAttempts::count(&mut asked_by_none, NotificationAttemptFailure::ContextUnloadable);
+        assert_eq!(asked_by_none.and_then(|failed| failed.retry_after), None);
     }
 
     #[test]

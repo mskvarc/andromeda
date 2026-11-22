@@ -200,9 +200,11 @@ pub struct DeliveryConfig {
     )]
     pub max_server_error_attempts: NonZeroU32,
     /// How the queue is polled, claimed and retried. A delivery is retried on
-    /// a delay that doubles from `retry_interval` up to `max_retry_interval`.
+    /// a delay that doubles from `retry_interval` up to `max_retry_interval`,
+    /// or after the longer wait an HTTP endpoint asks for with `Retry-After`,
+    /// never past `max_retry_interval`.
     #[schemars(
-        description = "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval` up to `notifications.delivery.queue.max_retry_interval`."
+        description = "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval` up to `notifications.delivery.queue.max_retry_interval`. When an HTTP endpoint answers with `Retry-After` and asks for a longer wait, the retry waits that long instead, never longer than `notifications.delivery.queue.max_retry_interval`."
     )]
     pub queue: DurableQueue,
     /// How long a finished delivery is kept.
