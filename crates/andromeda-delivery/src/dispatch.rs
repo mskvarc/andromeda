@@ -4,6 +4,7 @@ use crate::{
     endpoint::transport::EndpointTransport,
     endpoint_failure::EndpointFailure,
     error::TransportError,
+    failure_class::FailureClass,
     http::{config::HttpTransportConfig, transport::HttpTransport},
     mqtt::{client_tls::mqtt_client_tls, config::MqttPoolConfig, dial::RumqttcDialer, handle::MqttTransportHandle, pool::MqttTransportPool},
     outcome::DeliveryOutcome,
@@ -26,9 +27,9 @@ pub struct TransportDispatcher {
 /// Result of a notification delivery attempt.
 ///
 /// A failure keeps why it failed, which is also what decides whether it is
-/// worth another attempt. Collapsing every failure to one answer would retry
-/// a permanently-rejecting `400` through its whole budget exactly like a
-/// transient `503`.
+/// worth another attempt and for how long. Collapsing every failure to one
+/// answer would retry a permanently-rejecting `400` through its whole budget
+/// exactly like a transient `503`.
 pub enum DeliveryResult {
     /// The endpoint accepted the notification.
     Delivered,
@@ -43,17 +44,20 @@ impl DeliveryResult {
         matches!(self, DeliveryResult::Delivered)
     }
 
-    /// Whether a failed delivery should be retried: after a `5xx` or `429`
-    /// rejection, a timeout, a lost connection, a DNS failure or an
-    /// unacknowledged MQTT publish. A `4xx` rejection (other than `429`), a
-    /// payload over the limit, a blocked endpoint or a serialisation failure
-    /// must not be, or the delivery queue burns its whole attempt budget on a
-    /// delivery that can never succeed.
+    /// What a failed delivery says about attempting it again; `None` when it
+    /// was delivered.
+    ///
+    /// A timeout, a lost connection, a DNS failure, an unacknowledged MQTT
+    /// publish, a `429` and a `502`, `503` or `504` are unavailability, any
+    /// other `5xx` a server error the endpoint failed on, and a `4xx` (other
+    /// than `429`), a payload over the limit, a blocked endpoint or a
+    /// serialisation failure repeat on every attempt, so the delivery queue
+    /// spends no budget on them.
     #[must_use]
-    pub const fn should_retry(&self) -> bool {
+    pub const fn failure_class(&self) -> Option<FailureClass> {
         match self {
-            DeliveryResult::Delivered => false,
-            DeliveryResult::Failed(failure) => failure.is_retryable(),
+            DeliveryResult::Delivered => None,
+            DeliveryResult::Failed(failure) => Some(failure.class()),
         }
     }
 }
@@ -62,7 +66,7 @@ impl DeliveryResult {
 fn classify(outcome: Result<DeliveryOutcome, TransportError>) -> DeliveryResult {
     match outcome {
         Ok(DeliveryOutcome::Success { .. }) => DeliveryResult::Delivered,
-        Ok(DeliveryOutcome::Rejected { reason, retryable }) => DeliveryResult::Failed(EndpointFailure::Rejected { reason, retryable }),
+        Ok(DeliveryOutcome::Rejected { reason, class }) => DeliveryResult::Failed(EndpointFailure::Rejected { reason, class }),
         Err(error) => DeliveryResult::Failed(EndpointFailure::Transport(error)),
     }
 }
@@ -107,11 +111,11 @@ impl TransportDispatcher {
                 ?duration,
                 "notification delivered"
             ),
-            Ok(DeliveryOutcome::Rejected { reason, retryable }) => warn!(
+            Ok(DeliveryOutcome::Rejected { reason, class }) => warn!(
                 subscription_id = %request.subscription_id,
                 endpoint = %request.endpoint_uri,
                 reason = %reason,
-                retryable,
+                ?class,
                 "notification rejected by endpoint"
             ),
             Err(error) => {
@@ -166,9 +170,11 @@ mod tests {
     use crate::{
         dispatch::classify,
         error::TransportError,
+        failure_class::FailureClass,
         outcome::{DeliveryOutcome, EndpointRejection},
         oversized_notification::OversizedNotification,
     };
+    use pretty_assertions::assert_eq;
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::Duration,
@@ -176,51 +182,48 @@ mod tests {
     use url::Url;
 
     #[test]
-    fn a_success_is_delivered_and_not_retried() {
+    fn a_success_is_delivered_with_no_failure_class() {
         let result = classify(Ok(DeliveryOutcome::Success {
             status_code: Some(204),
             duration: Duration::from_millis(1),
         }));
         assert!(result.is_delivered());
-        assert!(!result.should_retry());
+        assert_eq!(result.failure_class(), None);
     }
 
     #[test]
-    fn a_4xx_rejection_is_terminal_so_it_is_attempted_once_not_through_the_whole_budget() {
-        let result = classify(Ok(DeliveryOutcome::Rejected {
-            reason: EndpointRejection::HttpStatus { status: 400 },
-            retryable: false,
-        }));
-        assert!(!result.is_delivered());
-        assert!(!result.should_retry());
+    fn a_rejection_keeps_the_class_its_status_gives() {
+        for (status, class) in [
+            (400, FailureClass::Permanent),
+            (500, FailureClass::ServerError),
+            (503, FailureClass::Unavailable),
+        ] {
+            let result = classify(Ok(DeliveryOutcome::Rejected {
+                reason: EndpointRejection::HttpStatus { status },
+                class: FailureClass::of_http_status(status),
+            }));
+            assert!(!result.is_delivered());
+            assert_eq!(result.failure_class(), Some(class), "{status}");
+        }
     }
 
     #[test]
-    fn a_5xx_or_429_rejection_is_retryable() {
-        let result = classify(Ok(DeliveryOutcome::Rejected {
-            reason: EndpointRejection::HttpStatus { status: 503 },
-            retryable: true,
-        }));
-        assert!(result.should_retry());
-    }
-
-    #[test]
-    fn a_timeout_is_retryable_but_a_blocked_endpoint_and_an_oversized_payload_are_terminal() {
+    fn a_timeout_is_unavailability_but_a_blocked_endpoint_and_an_oversized_payload_repeat() {
         let endpoint = Url::parse("https://receiver.example.com/notify").expect("a valid endpoint URI");
         // An MQTT ack timeout and a slow endpoint both surface as Timeout.
         let timeout = classify(Err(TransportError::Timeout {
             endpoint: endpoint.clone(),
             duration: Duration::from_secs(1),
         }));
-        assert!(timeout.should_retry());
+        assert_eq!(timeout.failure_class(), Some(FailureClass::Unavailable));
 
         let blocked = classify(Err(TransportError::PrivateIpBlocked {
             endpoint,
             ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         }));
-        assert!(!blocked.should_retry());
+        assert_eq!(blocked.failure_class(), Some(FailureClass::Permanent));
 
         let too_large = classify(Err(TransportError::Oversized(OversizedNotification::MaxHttpBody { size: 100, limit: 10 })));
-        assert!(!too_large.should_retry());
+        assert_eq!(too_large.failure_class(), Some(FailureClass::Permanent));
     }
 }

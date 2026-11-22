@@ -49,4 +49,13 @@ pub enum DeliveryVerdict {
         /// the delivery's Subscription is due, if the delivery was its probe.
         probe_after: BackoffStep,
     },
+    /// Nothing was sent, because a window the Subscription or its endpoint
+    /// leaves between two attempts was still open: the delivery is due again
+    /// `retry_after` once the queue records it, its attempts and diagnostic
+    /// stay as they were, and its Subscription's hold does not move.
+    Deferred {
+        /// How long after the queue records the deferral the delivery is due
+        /// again.
+        retry_after: BackoffStep,
+    },
 }

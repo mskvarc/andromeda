@@ -116,6 +116,7 @@ impl DeliveryAcknowledgement {
                     DeliveryVerdict::Delivered => QueueOutcome::Completed,
                     DeliveryVerdict::Failed { .. } => QueueOutcome::Retried,
                     DeliveryVerdict::Exhausted { .. } => QueueOutcome::Exhausted,
+                    DeliveryVerdict::Deferred { .. } => QueueOutcome::Deferred,
                 },
                 LeaseAcknowledgement::Lost => {
                     warn!(delivery_id = %settlement.key, worker_id = %self.worker_id, event = "notification_delivery_lease_lost");

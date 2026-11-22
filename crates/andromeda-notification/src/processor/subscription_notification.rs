@@ -27,7 +27,7 @@ use andromeda_subscription::{
     notification_slot::{NotificationSlot, NotificationSlotGate},
 };
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, error};
 
 /// The committed change every subscription matched by it is notified of.
@@ -53,20 +53,28 @@ pub(super) struct NotifiedChange<'a> {
     pub(super) identity: NotificationIdentity,
 }
 
+/// What notifying one subscription of one change came to.
+#[derive(Debug)]
+pub(super) enum SubscriptionNotified {
+    /// The endpoint accepted the notification.
+    Delivered,
+    /// The notification could not be built or sent, or the endpoint refused
+    /// it.
+    Failed(NotificationAttemptFailure),
+    /// No endpoint was addressed: the subscription's clause 5.2.12
+    /// `throttling` window or its endpoint's Table 5.2.15-1 `cooldown` window
+    /// refused the slot, or the store found the subscription no longer active.
+    /// Both windows pass within the wait carried.
+    Withheld(Duration),
+    /// No notification is owed: the subscription expired before it was
+    /// generated.
+    NotOwed,
+}
+
 impl NotificationProcessor {
     /// Notify one subscription of `change` and record the outcome on it
     /// (clause 5.8.6).
-    ///
-    /// `None` is answered when no endpoint was addressed at all: the
-    /// subscription expired before the notification was generated, or the
-    /// slot was refused because the subscription's clause 5.2.12 `throttling`
-    /// window or its endpoint's Table 5.2.15-1 `cooldown` window swallowed the
-    /// notification.
-    pub(super) async fn notify_subscription(
-        &self,
-        compiled_sub: &CompiledSubscription,
-        change: &NotifiedChange<'_>,
-    ) -> Option<Result<(), NotificationAttemptFailure>> {
+    pub(super) async fn notify_subscription(&self, compiled_sub: &CompiledSubscription, change: &NotifiedChange<'_>) -> SubscriptionNotified {
         let subscription_id = &compiled_sub.id;
         // Clause 5.8.1.4: no notification is sent once `expiresAt` is reached.
         // The match judged the subscription in force when the change was
@@ -74,7 +82,7 @@ impl NotificationProcessor {
         // `notifiedAt` carries.
         let generated_at = Utc::now();
         if !compiled_sub.standing.notifies_at(generated_at) {
-            return None;
+            return SubscriptionNotified::NotOwed;
         }
         let gate = NotificationSlotGate::at(generated_at, compiled_sub.cadence(), compiled_sub.endpoint_cooldown);
         // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
@@ -91,24 +99,24 @@ impl NotificationProcessor {
         .await
         {
             UnclaimedContext::Resolved(context) => context,
-            UnclaimedContext::Failed => return Some(Err(NotificationAttemptFailure::ContextUnloadable)),
-            UnclaimedContext::Suppressed => return None,
+            UnclaimedContext::Failed => return SubscriptionNotified::Failed(NotificationAttemptFailure::ContextUnloadable),
+            UnclaimedContext::Suppressed => return SubscriptionNotified::Withheld(gate.reopens_after(generated_at)),
         };
         let record = match self.sub_repo.claim_notification_slot(change.target, subscription_id, gate).await {
             Ok(NotificationSlot::Claimed(record)) => record,
-            Ok(NotificationSlot::Suppressed) => return None,
+            Ok(NotificationSlot::Suppressed) => return SubscriptionNotified::Withheld(gate.reopens_after(generated_at)),
             Err(error) => {
                 debug!("Failed to claim notification slot for {}: {}", subscription_id, error);
-                return Some(Err(NotificationAttemptFailure::SlotUnclaimed(error)));
+                return SubscriptionNotified::Failed(NotificationAttemptFailure::SlotUnclaimed(error));
             }
         };
 
         let Some(notified) = change.notified else {
-            return Some(Err(NotificationAttemptFailure::NothingToNotify));
+            return SubscriptionNotified::Failed(NotificationAttemptFailure::NothingToNotify);
         };
         let endpoint_transport = match compiled_transport(compiled_sub) {
             Ok(transport) => transport,
-            Err(error) => return Some(Err(NotificationAttemptFailure::EndpointUndeliverable(error))),
+            Err(error) => return SubscriptionNotified::Failed(NotificationAttemptFailure::EndpointUndeliverable(error)),
         };
         let delivery = NotificationDelivery::builder()
             .endpoint_uri(&compiled_sub.endpoint_uri)
@@ -143,13 +151,13 @@ impl NotificationProcessor {
         };
         let Some(data) = build_notification_data(&build, shape).await else {
             debug!("Subscription {} produced no notification data for entity {}", subscription_id, event.entity_id);
-            return Some(Err(NotificationAttemptFailure::NoData));
+            return SubscriptionNotified::Failed(NotificationAttemptFailure::NoData);
         };
         let request = match change.identity.notification(&delivery, subscription_id, data, generated_at) {
             Ok(request) => request,
             Err(error) => {
                 error!("Failed to write the notification for {}: {}", subscription_id, error);
-                return Some(Err(NotificationAttemptFailure::Unwritten(error)));
+                return SubscriptionNotified::Failed(NotificationAttemptFailure::Unwritten(error));
             }
         };
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
@@ -161,10 +169,10 @@ impl NotificationProcessor {
         {
             debug!("Failed to record the notification outcome for {}: {}", subscription_id, error);
         }
-        Some(match delivery {
-            DeliveryResult::Delivered => Ok(()),
-            DeliveryResult::Failed(failure) => Err(NotificationAttemptFailure::Endpoint(failure)),
-        })
+        match delivery {
+            DeliveryResult::Delivered => SubscriptionNotified::Delivered,
+            DeliveryResult::Failed(failure) => SubscriptionNotified::Failed(NotificationAttemptFailure::Endpoint(failure)),
+        }
     }
 }
 
@@ -178,7 +186,7 @@ mod tests {
             NotificationProcessorDeps,
             notification_identity::NotificationIdentity,
             payload::cache::NotificationCompactionCache,
-            subscription_notification::NotifiedChange,
+            subscription_notification::{NotifiedChange, SubscriptionNotified},
         },
     };
     use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};
@@ -271,7 +279,10 @@ mod tests {
             identity: NotificationIdentity::Live,
         };
         let sent = processor(&store).notify_subscription(subscription, &change).await;
-        assert!(sent.is_none(), "the store refuses every slot, so no endpoint is addressed");
+        assert!(
+            matches!(sent, SubscriptionNotified::Withheld(_) | SubscriptionNotified::NotOwed),
+            "the store refuses every slot, so no endpoint is addressed: {sent:?}"
+        );
         store.claims().into_iter().map(|(id, _gate)| id).collect()
     }
 

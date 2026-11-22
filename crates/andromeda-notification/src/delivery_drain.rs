@@ -404,6 +404,7 @@ mod tests {
         write_ordinal::WriteOrdinal,
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_delivery::failure_class::FailureClass;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -479,6 +480,8 @@ mod tests {
         terminal: Mutex<Vec<(DeliveryKey, String)>>,
         /// The wait for the next probe each terminal acknowledgement carried.
         next_probes: Mutex<Vec<BackoffStep>>,
+        /// Each deferred delivery with the wait its deferral carried.
+        deferred: Mutex<Vec<(DeliveryKey, BackoffStep)>>,
         claimed_with: Mutex<Vec<LeaseTerm>>,
         /// The order each claim asked for, in the order the claims were made.
         orders: Mutex<Vec<DeliveryClaimOrder>>,
@@ -589,6 +592,12 @@ mod tests {
                         .expect("the test lock is not poisoned")
                         .push((settlement.key, detail.clone()));
                     self.next_probes.lock().expect("the test lock is not poisoned").push(*probe_after);
+                }
+                DeliveryVerdict::Deferred { retry_after } => {
+                    self.deferred
+                        .lock()
+                        .expect("the test lock is not poisoned")
+                        .push((settlement.key, *retry_after));
                 }
             }
             LeaseAcknowledgement::Applied
@@ -780,7 +789,8 @@ mod tests {
         fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
             Box::pin(async move {
                 if entry.key == self.0 {
-                    DeliveryDisposition::TerminalFailure {
+                    DeliveryDisposition::Failed {
+                        class: FailureClass::Permanent,
                         detail: "stored payload cannot be evaluated".to_owned(),
                     }
                 } else {
@@ -918,7 +928,8 @@ mod tests {
             let retry_store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(
                 retry_store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
                 },
             )?
@@ -930,7 +941,8 @@ mod tests {
             let terminal_store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(
                 terminal_store.clone(),
-                DeliveryDisposition::TerminalFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Permanent,
                     detail: "permanent".to_owned(),
                 },
             )?
@@ -951,7 +963,8 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(final_attempt));
             drain(
                 store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
                 },
             )?
@@ -976,7 +989,8 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(penultimate));
             drain(
                 store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
                 },
             )?
@@ -990,13 +1004,94 @@ mod tests {
         })
     }
 
+    /// A delivery whose endpoint keeps answering a server error gets the
+    /// server-error ceiling, and one whose endpoint is unavailable the full
+    /// one: with 18 attempts and 5 for a server error, the fifth attempt
+    /// exhausts the first and reschedules the second.
+    #[test]
+    fn a_server_error_exhausts_its_delivery_at_the_lower_ceiling_an_outage_does_not() -> Result<(), NotificationError> {
+        block_on(async {
+            let mut config = config();
+            config.max_attempts = NonZeroU32::new(18).expect("a positive ceiling");
+            config.max_server_error_attempts = NonZeroU32::new(5).expect("a positive ceiling");
+            let config = &config;
+            let settle = |class| async move {
+                let mut fifth = entry()?;
+                fifth.attempt_count = 4;
+                let store = Arc::new(RecordingStore::with_entry(fifth));
+                let transport = FixedTransport(DeliveryDisposition::Failed {
+                    class,
+                    detail: "failing".to_owned(),
+                });
+                NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), config)?
+                    .execute(&CancellationToken::new())
+                    .await?;
+                let failed = store.failed.lock().expect("the retry result lock is not poisoned").len();
+                let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned").len();
+                Ok::<_, NotificationError>((failed, terminal))
+            };
+            pretty_assertions::assert_eq!(settle(FailureClass::ServerError).await?, (0, 1));
+            pretty_assertions::assert_eq!(settle(FailureClass::Unavailable).await?, (1, 0));
+            Ok(())
+        })
+    }
+
+    /// A permanent failure is exhausted on its first attempt.
+    #[test]
+    fn a_permanent_failure_is_exhausted_on_its_first_attempt() -> Result<(), NotificationError> {
+        block_on(async {
+            let store = Arc::new(RecordingStore::with_entry(entry()?));
+            drain(
+                store.clone(),
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Permanent,
+                    detail: "permanent".to_owned(),
+                },
+            )?
+            .execute(&CancellationToken::new())
+            .await?;
+            pretty_assertions::assert_eq!(store.failed.lock().expect("the retry result lock is not poisoned").len(), 0);
+            pretty_assertions::assert_eq!(store.terminal.lock().expect("the terminal result lock is not poisoned").len(), 1);
+            Ok(())
+        })
+    }
+
+    /// A deferral counts no attempt and records no failure, even on what
+    /// would be the final attempt, and is due once its window has passed,
+    /// never sooner than the first retry step.
+    #[test]
+    fn a_deferred_delivery_is_rescheduled_after_its_window_without_spending_an_attempt() -> Result<(), NotificationError> {
+        block_on(async {
+            for (window, wait) in [
+                (Duration::from_secs(60), Duration::from_secs(60)),
+                (Duration::from_secs(1), Duration::from_secs(5)),
+            ] {
+                let mut final_attempt = entry()?;
+                final_attempt.attempt_count = 4;
+                let store = Arc::new(RecordingStore::with_entry(final_attempt));
+                drain(store.clone(), DeliveryDisposition::Deferred { window })?
+                    .execute(&CancellationToken::new())
+                    .await?;
+                let deferred = store.deferred.lock().expect("the deferral lock is not poisoned").clone();
+                pretty_assertions::assert_eq!(
+                    deferred.iter().map(|(key, step)| (*key, step.duration())).collect::<Vec<_>>(),
+                    vec![(DeliveryKey::from(1), wait)]
+                );
+                pretty_assertions::assert_eq!(store.failed.lock().expect("the retry result lock is not poisoned").len(), 0);
+                pretty_assertions::assert_eq!(store.terminal.lock().expect("the terminal result lock is not poisoned").len(), 0);
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn a_recorded_failure_diagnostic_is_truncated_to_the_configured_bound() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(
                 store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "endpoint refused the notification".to_owned(),
                 },
             )?
@@ -1039,7 +1134,8 @@ mod tests {
             let store = Arc::new(RecordingStore::with_expired_lease(entry()?));
             let outcome = drain(
                 store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
                 },
             )?
@@ -1256,10 +1352,12 @@ mod tests {
         fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
             Box::pin(async move {
                 match entry.key.into_inner() {
-                    3 => DeliveryDisposition::RetryableFailure {
+                    3 => DeliveryDisposition::Failed {
+                        class: FailureClass::Unavailable,
                         detail: "transient".to_owned(),
                     },
-                    4 => DeliveryDisposition::TerminalFailure {
+                    4 => DeliveryDisposition::Failed {
+                        class: FailureClass::Permanent,
                         detail: "permanent".to_owned(),
                     },
                     _ => DeliveryDisposition::Delivered,
@@ -1531,7 +1629,8 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(third_attempt));
             drain(
                 store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
                 },
             )?
@@ -1557,7 +1656,8 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(final_attempt));
             drain(
                 store.clone(),
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
                 },
             )?
@@ -1702,7 +1802,8 @@ mod tests {
                     }
                 })
                 .await;
-                DeliveryDisposition::RetryableFailure {
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
                     detail: "timed out".to_owned(),
                 }
             })

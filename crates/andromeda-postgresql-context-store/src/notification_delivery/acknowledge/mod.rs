@@ -15,11 +15,12 @@
 //!
 //! Each settlement also moves the hold of its delivery's Subscription
 //! ([`crate::notification_delivery::hold`]) in the same transaction: a
-//! retryable failure takes it, a delivery releases it and an exhausted probe
-//! hands it over. The settlements of one group were in flight together, so
-//! no order between them is owed; the deliveries are recorded first, then the
-//! failures, then the exhaustions, and each sees the holds as the kinds
-//! before it left them, as it would had it arrived after them.
+//! retried failure takes it, a delivery releases it and an exhausted probe
+//! hands it over, while a deferral leaves it where it is. The settlements of
+//! one group were in flight together, so no order between them is owed; the
+//! deliveries are recorded first, then the failures, then the exhaustions,
+//! then the deferrals, and each sees the holds as the kinds before it left
+//! them, as it would had it arrived after them.
 //!
 //! The failure diagnostic arrives already trimmed to the length the schema
 //! accepts, because the bound is a delivery-policy decision the notification
@@ -32,7 +33,7 @@ mod statements;
 use crate::{
     error::ContextStoreError,
     notification_delivery::{
-        acknowledge::statements::{ExhaustedRows, FailedRows, delivered_statement, exhausted_statement, failed_statement},
+        acknowledge::statements::{DeferredRows, ExhaustedRows, FailedRows, deferred_statement, delivered_statement, exhausted_statement, failed_statement},
         hold::{HeldSubscription, hand_over_statement, resume_statement, set_aside_statement},
     },
 };
@@ -60,6 +61,8 @@ struct BranchSettlements<'a> {
     /// How long after the acknowledgement the next probe of each exhausted
     /// delivery's Subscription is due, if it was the probe.
     next_probes: HashMap<i64, BackoffStep>,
+    /// The deferred deliveries.
+    deferred: DeferredRows,
 }
 
 impl<'a> BranchSettlements<'a> {
@@ -76,6 +79,10 @@ impl<'a> BranchSettlements<'a> {
                 self.exhausted.delivery_keys.push(key);
                 self.exhausted.failures.push(detail);
                 self.next_probes.insert(key, *probe_after);
+            }
+            DeliveryVerdict::Deferred { retry_after } => {
+                self.deferred.delivery_keys.push(key);
+                self.deferred.retry_steps.push(*retry_after);
             }
         }
     }
@@ -112,6 +119,8 @@ pub(crate) async fn record_settlements(
         let keys = record_failed(connection, target, worker_id, branch.failed).await?;
         recorded.extend(keys.into_iter().map(|key| (target, key)));
         let keys = record_exhausted(connection, target, worker_id, branch.exhausted, &next_probes).await?;
+        recorded.extend(keys.into_iter().map(|key| (target, key)));
+        let keys = record_deferred(connection, target, worker_id, branch.deferred).await?;
         recorded.extend(keys.into_iter().map(|key| (target, key)));
     }
     Ok(settlements
@@ -215,4 +224,22 @@ async fn record_exhausted(
         }
     }
     Ok(recorded.into_iter().map(|(key, _)| key).collect())
+}
+
+/// Record the deferred deliveries of `rows`, each due its own step after the
+/// transaction began; returns the keys recorded.
+async fn record_deferred(
+    connection: &mut PgConnection,
+    target: &ContextTarget,
+    worker_id: LeaseHolder,
+    rows: DeferredRows,
+) -> Result<Vec<i64>, ContextStoreError> {
+    if rows.delivery_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(observe_statement(
+        ObservedStatement::NotificationDeliveryAcknowledge,
+        deferred_statement(target, worker_id, rows).to_query_scalar::<i64>().fetch_all(&mut *connection),
+    )
+    .await?)
 }

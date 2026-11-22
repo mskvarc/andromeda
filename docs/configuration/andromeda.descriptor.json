@@ -3928,7 +3928,7 @@
     },
     {
       "path": "notifications.delivery.max_attempts",
-      "description": "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived. While an endpoint keeps failing, the other notifications of its Subscription wait behind the one being retried and spend no attempts. This therefore sets how long an outage the oldest notification survives, and how long a notification the endpoint keeps answering with a server error holds up the ones queued after it. At the default retry delays, 18 attempts span about an hour.",
+      "description": "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived. While an endpoint keeps failing, the other notifications of its Subscription wait behind the one being retried and spend no attempts. This therefore sets how long an outage the oldest notification survives: an endpoint that cannot be reached, or answers 429, 502, 503 or 504. At the default retry delays, 18 attempts span about an hour.",
       "apply": "restart",
       "replica_consistent": false,
       "sensitive": false,
@@ -3950,6 +3950,25 @@
             "kind": "fixed",
             "value": "2147483647"
           }
+        }
+      ],
+      "conditions": []
+    },
+    {
+      "path": "notifications.delivery.max_server_error_attempts",
+      "description": "The attempts a queued notification gets while its endpoint answers it with a server error other than 502, 503 or 504. Such an endpoint was reached and failed on this notification, and the other notifications of its Subscription wait while it is retried, so this sets how long one notification the endpoint keeps failing on holds them up before it is dead-lettered. A delivery never gets more than `notifications.delivery.max_attempts`, which applies when it is the lower of the two. At the default retry delays, 5 attempts span 75 seconds.",
+      "apply": "restart",
+      "replica_consistent": false,
+      "sensitive": false,
+      "type_name": "positive integer",
+      "presence": "default",
+      "value": "5",
+      "choices": [],
+      "environment_variable": "ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_SERVER_ERROR_ATTEMPTS",
+      "limits": [
+        {
+          "statement": "above zero",
+          "kind": "positive"
         }
       ],
       "conditions": []

@@ -84,6 +84,16 @@ impl DeliveryBackoff {
     pub fn first_step(&self) -> BackoffStep {
         BackoffStep(self.0.delay(RetryNumber::FIRST))
     }
+
+    /// The wait before a deferred delivery is due again, for a window that
+    /// passes `window` from now: at least the first step, so a window already
+    /// past does not bring the delivery straight back, and at most
+    /// [`DeliveryBackoff::MAX_STEP`], after which a longer window defers it
+    /// once more.
+    #[must_use]
+    pub fn deferral(&self, window: Duration) -> BackoffStep {
+        BackoffStep(window.max(self.first_step().duration()).min(DeliveryBackoff::MAX_STEP))
+    }
 }
 
 /// The wait before a failed delivery, or the next probe of a held
@@ -136,6 +146,23 @@ mod tests {
             .map(|attempts| backoff().step(attempts).map(|step| step.duration().as_secs()))
             .collect();
         assert_eq!(waits, [Ok(10), Ok(20), Ok(40), Ok(160), Ok(160)]);
+    }
+
+    #[test]
+    fn a_deferral_waits_out_its_window_within_the_first_and_the_longest_step() {
+        let waits: Vec<_> = [Duration::ZERO, Duration::from_secs(3), Duration::from_secs(60), Duration::from_hours(48)]
+            .into_iter()
+            .map(|window| backoff().deferral(window).duration())
+            .collect();
+        assert_eq!(
+            waits,
+            [
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                Duration::from_secs(60),
+                Duration::from_hours(24)
+            ]
+        );
     }
 
     #[test]

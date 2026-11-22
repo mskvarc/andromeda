@@ -63,29 +63,27 @@ impl ConfigKey {
     /// reads instead, and for a CORS list written as its entries, which holds
     /// no keyword.
     pub(crate) fn holding(self, config: &BrokerConfig) -> Option<Holding<'_>> {
-        let http = &config.http;
-        let tls = &config.tls;
         match self {
             ConfigKey::ServerTransport => Some(choice(config.server.transport)),
             ConfigKey::ServerHttp3Mode => Some(choice(config.server.http3.mode)),
             ConfigKey::ManagementMode => Some(choice(config.management.mode)),
             ConfigKey::ManagementTransport => Some(choice(config.management.transport)),
-            ConfigKey::TlsCertificate => Some(optional(tls.certificate.as_ref())),
-            ConfigKey::TlsPrivateKey => Some(optional(tls.private_key.as_ref())),
-            ConfigKey::TlsClientAuthenticationCa => Some(optional(tls.client_authentication.ca.as_ref())),
-            ConfigKey::TlsClientAuthenticationMode => Some(choice(tls.client_authentication.mode)),
-            ConfigKey::HttpCorsMode => Some(choice(http.cors.mode)),
-            ConfigKey::HttpCorsCredentials => Some(choice(http.cors.credentials)),
-            ConfigKey::HttpCorsAllowOrigins => matches!(http.cors.allow_origins, OriginRule::Any).then_some(ANY),
-            ConfigKey::HttpCorsAllowMethods => matches!(http.cors.allow_methods, MethodRule::Any).then_some(ANY),
-            ConfigKey::HttpCorsAllowHeaders => matches!(http.cors.allow_headers, HeaderRule::Any).then_some(ANY),
-            ConfigKey::HttpCorsExposeHeaders => matches!(http.cors.expose_headers, ExposeRule::Any).then_some(ANY),
-            ConfigKey::HttpCompressionMode => Some(choice(http.compression.mode)),
-            ConfigKey::HttpCompressionAlgorithms => Some(listed(http.compression.algorithms.iter())),
-            ConfigKey::HttpDecompressionMode => Some(choice(http.decompression.mode)),
-            ConfigKey::HttpDecompressionAlgorithms => Some(listed(http.decompression.algorithms.iter())),
-            ConfigKey::HttpForwardedTrust => Some(choice(http.forwarded.trust)),
-            ConfigKey::HttpForwardedProxies => Some(listed(http.forwarded.proxies.iter())),
+            ConfigKey::TlsCertificate => Some(optional(config.tls.certificate.as_ref())),
+            ConfigKey::TlsPrivateKey => Some(optional(config.tls.private_key.as_ref())),
+            ConfigKey::TlsClientAuthenticationCa => Some(optional(config.tls.client_authentication.ca.as_ref())),
+            ConfigKey::TlsClientAuthenticationMode => Some(choice(config.tls.client_authentication.mode)),
+            ConfigKey::HttpCorsMode => Some(choice(config.http.cors.mode)),
+            ConfigKey::HttpCorsCredentials => Some(choice(config.http.cors.credentials)),
+            ConfigKey::HttpCorsAllowOrigins => matches!(config.http.cors.allow_origins, OriginRule::Any).then_some(ANY),
+            ConfigKey::HttpCorsAllowMethods => matches!(config.http.cors.allow_methods, MethodRule::Any).then_some(ANY),
+            ConfigKey::HttpCorsAllowHeaders => matches!(config.http.cors.allow_headers, HeaderRule::Any).then_some(ANY),
+            ConfigKey::HttpCorsExposeHeaders => matches!(config.http.cors.expose_headers, ExposeRule::Any).then_some(ANY),
+            ConfigKey::HttpCompressionMode => Some(choice(config.http.compression.mode)),
+            ConfigKey::HttpCompressionAlgorithms => Some(listed(config.http.compression.algorithms.iter())),
+            ConfigKey::HttpDecompressionMode => Some(choice(config.http.decompression.mode)),
+            ConfigKey::HttpDecompressionAlgorithms => Some(listed(config.http.decompression.algorithms.iter())),
+            ConfigKey::HttpForwardedTrust => Some(choice(config.http.forwarded.trust)),
+            ConfigKey::HttpForwardedProxies => Some(listed(config.http.forwarded.proxies.iter())),
             ConfigKey::JsonLdPreloadedContextUrl => Some(Holding::PreloadedContexts(&config.jsonld.preloaded_contexts)),
             ConfigKey::TemporalStorageDeleteAfter => Some(optional(config.temporal.storage.retention.delete_after.as_ref())),
             ConfigKey::TemporalStorageRetentionMode => Some(choice(config.temporal.storage.retention.mode)),
@@ -140,6 +138,7 @@ impl ConfigKey {
             | ConfigKey::NotificationsEvaluationDrainTimeout
             | ConfigKey::NotificationsDeliveryMaxHttpBody
             | ConfigKey::NotificationsDeliveryMaxAttempts
+            | ConfigKey::NotificationsDeliveryMaxServerErrorAttempts
             | ConfigKey::NotificationsDeliveryMaxMqttPacket
             | ConfigKey::NotificationsDeliveryMaxConcurrent
             | ConfigKey::NotificationsDeliveryMaxErrorLength

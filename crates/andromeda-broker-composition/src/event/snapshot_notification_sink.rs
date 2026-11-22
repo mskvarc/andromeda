@@ -6,6 +6,7 @@ use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, leas
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::EndpointTransport,
+    failure_class::FailureClass,
     notification_body::NotificationBody,
     notification_context_placement::notification_context_placement,
     request::DeliveryRequest,
@@ -58,9 +59,13 @@ pub(crate) struct SnapshotStatusDeliveryDrain {
     /// How long a claim or renewal holds a delivery, from the claim or renewal
     /// on the queue's clock: `notifications.delivery.queue.lease_timeout`.
     lease: Duration,
-    /// Attempts after which a failed delivery is dead:
+    /// Attempts after which a delivery whose endpoint is unavailable is dead:
     /// `notifications.delivery.max_attempts`, saturated at `i32::MAX`.
     max_attempts: i32,
+    /// Attempts after which a delivery its endpoint answers with a server
+    /// error is dead: `notifications.delivery.max_server_error_attempts`, or
+    /// `max_attempts` when that is lower.
+    max_server_error_attempts: i32,
     /// The wait before a failed status notification is due again.
     retry_schedule: DeliveryBackoff,
     /// Deliveries one pass claims and sends at once at most:
@@ -89,6 +94,7 @@ impl SnapshotStatusDeliveryDrain {
             worker: LeaseHolder::mint(),
             lease: config.queue.lease_timeout.duration(),
             max_attempts: i32::try_from(config.max_attempts.get()).unwrap_or(i32::MAX),
+            max_server_error_attempts: i32::try_from(config.max_server_error_attempts.min(config.max_attempts).get()).unwrap_or(i32::MAX),
             retry_schedule: retry_schedule(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
                 SnapshotInvariant::NotificationRetrySchedule
@@ -168,24 +174,30 @@ impl SnapshotStatusDeliveryDrain {
         }
         let acknowledgement = match self.transport.deliver_status(&entry).await {
             DeliveryResult::Delivered => self.outbox.acknowledge(&entry, self.worker).await?,
-            failure @ DeliveryResult::Failed(_) => {
-                let retryable = failure.should_retry();
-                let failure = if retryable {
-                    SnapshotDeliveryFailure::Retryable
-                } else {
-                    SnapshotDeliveryFailure::Terminal
+            DeliveryResult::Failed(failure) => {
+                let (failure, max_attempts, detail) = match failure.class() {
+                    FailureClass::Unavailable => (
+                        SnapshotDeliveryFailure::Retryable,
+                        self.max_attempts,
+                        "Snapshot notification delivery failed transiently",
+                    ),
+                    FailureClass::ServerError => (
+                        SnapshotDeliveryFailure::Retryable,
+                        self.max_server_error_attempts,
+                        "Snapshot notification delivery was answered with a server error",
+                    ),
+                    FailureClass::Permanent => (
+                        SnapshotDeliveryFailure::Terminal,
+                        self.max_attempts,
+                        "Snapshot notification delivery failed terminally",
+                    ),
                 };
                 let retry_after = self
                     .retry_schedule
                     .step(entry.attempt_count)
                     .map_err(SnapshotInvariant::NotificationAttemptCount)?;
-                let detail = if retryable {
-                    "Snapshot notification delivery failed transiently"
-                } else {
-                    "Snapshot notification delivery failed terminally"
-                };
                 let detail = self.error_bound.truncate(detail);
-                self.outbox.fail(&entry, self.worker, failure, self.max_attempts, retry_after, &detail).await?
+                self.outbox.fail(&entry, self.worker, failure, max_attempts, retry_after, &detail).await?
             }
         };
         if acknowledgement == LeaseAcknowledgement::Lost {

@@ -99,6 +99,7 @@ impl ConfigKey {
             ConfigKey::NotificationsEvaluationDrainTimeout => Some(span(config.notifications.evaluation.drain_timeout)),
             ConfigKey::NotificationsDeliveryMaxHttpBody => Some(size(config.notifications.delivery.max_http_body.byte_size())),
             ConfigKey::NotificationsDeliveryMaxAttempts => Some(count(config.notifications.delivery.max_attempts.get())),
+            ConfigKey::NotificationsDeliveryMaxServerErrorAttempts => Some(count(config.notifications.delivery.max_server_error_attempts.get())),
             ConfigKey::NotificationsDeliveryMaxMqttPacket => Some(Quantity::Bytes(u64::from(config.notifications.delivery.max_mqtt_packet.octets()))),
             ConfigKey::NotificationsDeliveryMaxConcurrent => Some(count(config.notifications.delivery.max_concurrent.get())),
             ConfigKey::NotificationsDeliveryMaxErrorLength => Some(count(config.notifications.delivery.max_error_length.get())),

@@ -37,6 +37,8 @@ const DELIVERY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// The count and size ceilings are what the delivery store and the MQTT
 /// protocol hold, and the most slots one delivery pass may keep in flight;
 /// the lease and the longest retry step are bounded at a day by policy.
+/// `max_server_error_attempts` needs no bound of its own: the delivery layer
+/// takes the lesser of it and `max_attempts`.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [Rule::Positive(ConfigKey::NotificationsDeliveryRequestTimeout)]
         .into_iter()
@@ -157,6 +159,16 @@ mod tests {
         config.notifications.delivery.max_attempts = NonZeroU32::MIN.saturating_add(2_147_483_646);
         config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_023);
         config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_047);
+        assert_accepted(&config);
+    }
+
+    /// The delivery layer caps server-error attempts at `max_attempts`, so
+    /// lowering `max_attempts` alone below them stays a valid configuration.
+    #[test]
+    fn server_error_attempts_above_the_attempts_are_accepted() {
+        let mut config = BrokerConfig::local();
+        config.notifications.delivery.max_attempts = NonZeroU32::MIN.saturating_add(2);
+        config.notifications.delivery.max_server_error_attempts = NonZeroU32::MIN.saturating_add(4);
         assert_accepted(&config);
     }
 

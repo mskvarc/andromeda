@@ -4,6 +4,14 @@
 //! event the processor evaluates is rebuilt from the stored row: the entity's
 //! types come back from the state it carries and its system attributes from
 //! the event, which recorded them as the change left the Entity.
+//!
+//! A `throttling` or `cooldown` window that withholds a delivery's first
+//! attempt withholds its notification, as it would a live one: Table 5.2.15-1
+//! says no notification is sent while the cooldown runs. A window that
+//! withholds a retry was opened by the delivery's own earlier attempt, which
+//! failed, so the notification is still owed. The retry is deferred until the
+//! window has passed, since Table 5.2.15-1 has the cooldown elapse "before
+//! attempting to make a subsequent notification", rather than dropped.
 
 use crate::{
     delivery_entry::DeliveryEntry,
@@ -18,6 +26,7 @@ use crate::{
     },
 };
 use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_delivery::failure_class::FailureClass;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::ChangeOrigin};
 use andromeda_subscription::error::SubscriptionError;
@@ -39,24 +48,40 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 write_id: entry.event.write_id,
                 event_ordinal: entry.event.event_ordinal,
             };
-            let NotificationEvaluationOutcome {
-                delivered,
-                retryable,
-                terminal,
-            } = self
+            let outcome = self
                 .apply_entity_change_for(entry.target.clone(), event, entry.event.committed_at, audience, identity)
                 .await;
-            match (delivered, retryable, terminal) {
-                (1.., _, _) => DeliveryDisposition::Delivered,
-                (0, Some(failed), _) => DeliveryDisposition::RetryableFailure {
-                    detail: DeliveryFailure::TransientEndpoints(failed).to_string(),
-                },
-                (0, None, Some(failed)) => DeliveryDisposition::TerminalFailure {
-                    detail: DeliveryFailure::PermanentEndpoints(failed).to_string(),
-                },
-                (0, None, None) => DeliveryDisposition::Obsolete,
-            }
+            disposition(outcome, entry.attempt_count)
         })
+    }
+}
+
+/// How the queue settles a delivery that had failed `attempts_before`
+/// attempts and whose notification came to `outcome`.
+///
+/// A failure is settled under its class, an unavailable endpoint or store
+/// first since it explains the attempt best. A notification a window withheld
+/// is deferred when it is a retry and withheld for good when it is not, and
+/// one owed nothing is obsolete.
+fn disposition(outcome: NotificationEvaluationOutcome, attempts_before: i32) -> DeliveryDisposition {
+    match outcome {
+        NotificationEvaluationOutcome { delivered: 1.., .. } => DeliveryDisposition::Delivered,
+        NotificationEvaluationOutcome { unavailable: Some(failed), .. } => DeliveryDisposition::Failed {
+            class: FailureClass::Unavailable,
+            detail: DeliveryFailure::TransientEndpoints(failed).to_string(),
+        },
+        NotificationEvaluationOutcome {
+            server_error: Some(failed), ..
+        } => DeliveryDisposition::Failed {
+            class: FailureClass::ServerError,
+            detail: DeliveryFailure::ServerErrorEndpoints(failed).to_string(),
+        },
+        NotificationEvaluationOutcome { permanent: Some(failed), .. } => DeliveryDisposition::Failed {
+            class: FailureClass::Permanent,
+            detail: DeliveryFailure::PermanentEndpoints(failed).to_string(),
+        },
+        NotificationEvaluationOutcome { withheld: Some(window), .. } if attempts_before > 0 => DeliveryDisposition::Deferred { window },
+        NotificationEvaluationOutcome { .. } => DeliveryDisposition::Obsolete,
     }
 }
 
@@ -70,7 +95,8 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 /// subscription bookkeeping (clause 5.2.14.2 `timesSent`, `timesFailed`)
 /// records it.
 fn unreadable_subscription(subscription_id: &Identifier, error: SubscriptionError) -> DeliveryDisposition {
-    DeliveryDisposition::RetryableFailure {
+    DeliveryDisposition::Failed {
+        class: FailureClass::Unavailable,
         detail: DeliveryFailure::SubscriptionUnreadable {
             subscription_id: subscription_id.clone(),
             source: error,
@@ -134,11 +160,14 @@ mod tests {
         delivery_transport::DeliveryDisposition,
         notification_event::{NotificationEvent, NotificationEventKey},
         processor::{
+            NotificationEvaluationOutcome,
+            attempt_failure::{FailedAttempts, NotificationAttemptFailure},
             change_audience::CommitFilters,
-            durable_delivery::{commit_filters, queued_change_event, unreadable_subscription},
+            durable_delivery::{commit_filters, disposition, queued_change_event, unreadable_subscription},
         },
     };
     use andromeda_context_commit::{store_instant::StoreInstant, write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_delivery::{endpoint_failure::EndpointFailure, failure_class::FailureClass, outcome::EndpointRejection};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         reads::{
@@ -154,8 +183,9 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_subscription::error::SubscriptionError;
     use chrono::{TimeZone, Utc};
+    use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
     use uuid::Uuid;
 
     /// The attribute the deliveries below name.
@@ -293,13 +323,107 @@ mod tests {
         let subscription_id = "urn:ngsi-ld:Subscription:1".parse().expect("valid subscription URI");
         let disposition = unreadable_subscription(&subscription_id, SubscriptionError::from(PersistenceFailure::Unavailable));
         match disposition {
-            DeliveryDisposition::RetryableFailure { detail } => {
+            DeliveryDisposition::Failed {
+                class: FailureClass::Unavailable,
+                detail,
+            } => {
                 assert!(detail.contains("urn:ngsi-ld:Subscription:1"), "{detail}");
                 assert!(detail.contains("the datastore is temporarily unavailable"), "{detail}");
             }
-            other @ (DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete | DeliveryDisposition::TerminalFailure { .. }) => {
+            other @ (DeliveryDisposition::Delivered
+            | DeliveryDisposition::Obsolete
+            | DeliveryDisposition::Failed { .. }
+            | DeliveryDisposition::Deferred { .. }) => {
                 panic!("an unreadable subscription must be retried, got {other:?}")
             }
         }
+    }
+
+    /// The outcome of a change that delivered nothing and failed nothing.
+    fn quiet() -> NotificationEvaluationOutcome {
+        NotificationEvaluationOutcome::default()
+    }
+
+    #[test]
+    fn a_failure_is_settled_under_its_class_an_unavailable_one_first() {
+        let unavailable = || Some(FailedAttempts::new(NotificationAttemptFailure::ContextUnloadable));
+        let server_error = || {
+            Some(FailedAttempts::new(NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus { status: 500 },
+                class: FailureClass::ServerError,
+            })))
+        };
+        let permanent = || Some(FailedAttempts::new(NotificationAttemptFailure::NoData));
+        let class_of = |outcome| match disposition(outcome, 0) {
+            DeliveryDisposition::Failed { class, .. } => Some(class),
+            DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete | DeliveryDisposition::Deferred { .. } => None,
+        };
+        let all = NotificationEvaluationOutcome {
+            unavailable: unavailable(),
+            server_error: server_error(),
+            permanent: permanent(),
+            ..quiet()
+        };
+        assert_eq!(class_of(all), Some(FailureClass::Unavailable));
+        let without_unavailable = NotificationEvaluationOutcome {
+            server_error: server_error(),
+            permanent: permanent(),
+            ..quiet()
+        };
+        assert_eq!(class_of(without_unavailable), Some(FailureClass::ServerError));
+        let permanent_only = NotificationEvaluationOutcome {
+            permanent: permanent(),
+            ..quiet()
+        };
+        assert_eq!(class_of(permanent_only), Some(FailureClass::Permanent));
+    }
+
+    #[test]
+    fn a_server_error_is_recorded_as_one() {
+        let outcome = NotificationEvaluationOutcome {
+            server_error: Some(FailedAttempts::new(NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus { status: 500 },
+                class: FailureClass::ServerError,
+            }))),
+            ..quiet()
+        };
+        assert_eq!(
+            disposition(outcome, 0),
+            DeliveryDisposition::Failed {
+                class: FailureClass::ServerError,
+                detail: "1 endpoint attempt(s) were answered with a server error, the first because the endpoint answered HTTP 500".to_owned(),
+            }
+        );
+    }
+
+    /// Table 5.2.15-1: no notification is sent while the cooldown runs, so a
+    /// first attempt a window withholds sends none. A retry was withheld by
+    /// the window its own failed attempt opened, and still owes the
+    /// notification, so it waits the window out.
+    #[test]
+    fn a_withheld_retry_is_deferred_and_a_withheld_first_attempt_withheld_for_good() {
+        let withheld = || NotificationEvaluationOutcome {
+            withheld: Some(Duration::from_secs(30)),
+            ..quiet()
+        };
+        assert_eq!(disposition(withheld(), 0), DeliveryDisposition::Obsolete);
+        assert_eq!(
+            disposition(withheld(), 1),
+            DeliveryDisposition::Deferred {
+                window: Duration::from_secs(30)
+            }
+        );
+    }
+
+    #[test]
+    fn a_delivery_any_endpoint_accepted_is_delivered_and_one_owed_nothing_obsolete() {
+        let delivered = NotificationEvaluationOutcome {
+            delivered: 1,
+            permanent: Some(FailedAttempts::new(NotificationAttemptFailure::NoData)),
+            withheld: Some(Duration::from_secs(30)),
+            ..quiet()
+        };
+        assert_eq!(disposition(delivered, 3), DeliveryDisposition::Delivered);
+        assert_eq!(disposition(quiet(), 3), DeliveryDisposition::Obsolete);
     }
 }

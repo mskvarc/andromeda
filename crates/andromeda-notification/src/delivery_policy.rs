@@ -33,7 +33,8 @@ pub const fn delivery_concurrency(config: &DeliveryConfig) -> Result<DeliveryCon
     DeliveryConcurrency::from_count(config.max_concurrent.get())
 }
 
-/// The configured attempt ceiling.
+/// The configured attempt ceiling, for a delivery whose endpoint cannot be
+/// reached or answers that it is unavailable.
 ///
 /// # Errors
 ///
@@ -41,6 +42,18 @@ pub const fn delivery_concurrency(config: &DeliveryConfig) -> Result<DeliveryCon
 /// configured attempt ceiling exceeds what the store counts.
 pub fn attempt_ceiling(config: &DeliveryConfig) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
     DeliveryAttemptCeiling::from_attempts(config.max_attempts)
+}
+
+/// The attempt ceiling of a delivery its endpoint answers with a server error:
+/// `max_server_error_attempts`, or `max_attempts` when that is lower, so no
+/// delivery gets more attempts than an outage does.
+///
+/// # Errors
+///
+/// Returns [`DeliveryAttemptCeilingError::AboveStoredRange`] when the ceiling
+/// exceeds what the store counts.
+pub fn server_error_ceiling(config: &DeliveryConfig) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
+    DeliveryAttemptCeiling::from_attempts(config.max_server_error_attempts.min(config.max_attempts))
 }
 
 /// The schedule a failed delivery is retried on: doubling from
@@ -95,7 +108,7 @@ mod tests {
         delivery_concurrency::DeliveryConcurrency,
         delivery_error_bound::DeliveryErrorBound,
         delivery_lease::LeaseTerm,
-        delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
+        delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule, server_error_ceiling},
     };
     use andromeda_configuration::{
         human_duration::HumanDuration,
@@ -121,6 +134,7 @@ mod tests {
     fn the_shipped_delivery_values_are_usable() {
         let config = DeliveryConfig::default();
         assert!(attempt_ceiling(&config).is_ok());
+        assert!(server_error_ceiling(&config).is_ok());
         assert!(retry_schedule(&config).is_ok());
         assert!(lease_term(&config).is_ok());
         assert!(error_bound(&config).is_ok());
@@ -138,6 +152,35 @@ mod tests {
             .map(|count| schedule.step(count).expect("a recorded attempt count").duration())
             .sum();
         pretty_assertions::assert_eq!(window, Duration::from_secs(3_615));
+    }
+
+    /// The waits between the 5 shipped attempts a server error gets are 5,
+    /// 10, 20 and 40 s.
+    #[test]
+    fn the_shipped_server_error_attempts_retry_a_delivery_for_75_seconds() {
+        let config = DeliveryConfig::default();
+        let schedule = retry_schedule(&config).expect("the shipped retry schedule");
+        let attempts = server_error_ceiling(&config).expect("the shipped server-error ceiling").attempts();
+        let window: Duration = (0..attempts.saturating_sub(1))
+            .map(|count| schedule.step(count).expect("a recorded attempt count").duration())
+            .sum();
+        pretty_assertions::assert_eq!(window, Duration::from_secs(75));
+    }
+
+    /// A server error never gets more attempts than an outage does.
+    #[test]
+    fn the_server_error_ceiling_is_the_lower_of_the_two_attempt_counts() {
+        for (max_attempts, ceiling) in [(3, 3), (18, 5)] {
+            let config = DeliveryConfig {
+                max_attempts: NonZeroU32::new(max_attempts).expect("a positive ceiling"),
+                ..DeliveryConfig::default()
+            };
+            pretty_assertions::assert_eq!(
+                server_error_ceiling(&config).map(DeliveryAttemptCeiling::attempts),
+                Ok(ceiling),
+                "{max_attempts}"
+            );
+        }
     }
 
     /// The configuration refuses a delivery value past its declared ceiling,

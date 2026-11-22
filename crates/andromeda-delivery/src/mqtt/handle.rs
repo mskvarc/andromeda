@@ -142,6 +142,7 @@ mod tests {
             topic::MqttTopic,
         },
         error::TransportError,
+        failure_class::FailureClass,
         host_port::HostPort,
         mqtt::{client_tls::mqtt_client_tls, config::MqttPoolConfig, dial::RumqttcDialer, envelope::build_envelope, pool::MqttTransportPool},
         notification_body::NotificationBody,
@@ -455,7 +456,7 @@ mod tests {
             ),
             "{refused:?}"
         );
-        assert!(!refused.is_retryable(), "every attempt would publish the same packet");
+        pretty_assertions::assert_eq!(refused.class(), FailureClass::Permanent, "every attempt would publish the same packet");
 
         let small = notification(&endpoint, 64);
         let outcome = handle.deliver(&small).await.expect("the connection still delivers");
@@ -490,7 +491,7 @@ mod tests {
             ),
             "{refused:?}"
         );
-        assert!(!refused.is_retryable(), "every attempt would publish the same packet");
+        pretty_assertions::assert_eq!(refused.class(), FailureClass::Permanent, "every attempt would publish the same packet");
         pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the server");
 
         let small = notification(&endpoint, 64);
@@ -544,7 +545,7 @@ mod tests {
             .expect_err("a loopback broker is refused");
 
         assert!(matches!(refused, TransportError::PrivateIpBlocked { .. }), "{refused:?}");
-        assert!(!refused.is_retryable());
+        pretty_assertions::assert_eq!(refused.class(), FailureClass::Permanent);
         pretty_assertions::assert_eq!(received.load(Ordering::SeqCst), 0, "nothing was published to the refused broker");
     }
 

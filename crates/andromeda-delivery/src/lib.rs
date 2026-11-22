@@ -28,6 +28,7 @@ pub mod dispatch;
 pub mod endpoint;
 pub mod endpoint_failure;
 pub mod error;
+pub mod failure_class;
 pub mod host_port;
 pub mod http;
 pub mod mqtt;

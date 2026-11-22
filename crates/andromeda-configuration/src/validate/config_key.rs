@@ -255,6 +255,9 @@ pub enum ConfigKey {
     /// `notifications.delivery.max_attempts`.
     #[display("notifications.delivery.max_attempts")]
     NotificationsDeliveryMaxAttempts,
+    /// `notifications.delivery.max_server_error_attempts`.
+    #[display("notifications.delivery.max_server_error_attempts")]
+    NotificationsDeliveryMaxServerErrorAttempts,
     /// `notifications.delivery.max_mqtt_packet`.
     #[display("notifications.delivery.max_mqtt_packet")]
     NotificationsDeliveryMaxMqttPacket,
