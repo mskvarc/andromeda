@@ -44,6 +44,22 @@ pub struct DeliveryEntry {
     /// that answers it within one delivery pass while any of them is in
     /// flight.
     pub event: Arc<NotificationEvent>,
+    /// Whether the queue held a newer delivery for the same subscription
+    /// when this one was claimed.
+    pub newer: NewerDelivery,
+}
+
+/// Whether a delivery has a newer one of its subscription queued behind it.
+///
+/// A newer delivery carries a later change, so a delivery a `throttling`
+/// window withholds is superseded by it rather than owed once the window
+/// passes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NewerDelivery {
+    /// A newer delivery of the subscription waits, held or not.
+    Queued,
+    /// This is the newest delivery of its subscription still queued.
+    Absent,
 }
 
 #[cfg(test)]

@@ -5,16 +5,29 @@
 //! types come back from the state it carries and its system attributes from
 //! the event, which recorded them as the change left the Entity.
 //!
-//! A `throttling` or `cooldown` window that withholds a delivery's first
-//! attempt withholds its notification, as it would a live one: Table 5.2.15-1
-//! says no notification is sent while the cooldown runs. A window that
-//! withholds a retry was opened by the delivery's own earlier attempt, which
-//! failed, so the notification is still owed. The retry is deferred until the
-//! window has passed, since Table 5.2.15-1 has the cooldown elapse "before
-//! attempting to make a subsequent notification", rather than dropped.
+//! A `throttling` or `cooldown` window that withholds a queued notification
+//! is judged by the change that raised it, not by how long it waited in the
+//! queue:
+//!
+//! - Table 5.2.15-1 sends no notification for a request received while the
+//!   cooldown runs, so a delivery whose change committed at or after the
+//!   failure that opened the cooldown is withheld for good. A failure after
+//!   the commit opened the window while the delivery waited, and the cooldown
+//!   elapses "before attempting to make a subsequent notification", so the
+//!   delivery waits it out.
+//! - Clause 5.2.12 lets one notification through per `throttling` window. A
+//!   delivery the window withholds is withheld for good when a newer delivery
+//!   of its subscription is queued, which notifies a later change, and waits
+//!   the window out when it is the newest. However long the queue backed up
+//!   behind an endpoint that failed, the latest change goes out within one
+//!   window and the ones before it are dropped, as live changes inside the
+//!   window are.
+//! - A retry was withheld by the window its own failed attempt opened, and
+//!   the subscription's newer deliveries wait behind it, so it waits the
+//!   window out.
 
 use crate::{
-    delivery_entry::DeliveryEntry,
+    delivery_entry::{DeliveryEntry, NewerDelivery},
     delivery_transport::{DeliveryDisposition, NotificationDeliveryTransport},
     notification_event::NotificationEvent,
     processor::{
@@ -25,11 +38,11 @@ use crate::{
         notification_identity::NotificationIdentity,
     },
 };
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant};
 use andromeda_delivery::failure_class::FailureClass;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::ChangeOrigin};
-use andromeda_subscription::error::SubscriptionError;
+use andromeda_subscription::{error::SubscriptionError, notification_slot::Withholding};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -51,19 +64,19 @@ impl NotificationDeliveryTransport for NotificationProcessor {
             let outcome = self
                 .apply_entity_change_for(entry.target.clone(), event, entry.event.committed_at, audience, identity)
                 .await;
-            disposition(outcome, entry.attempt_count)
+            disposition(outcome, entry.attempt_count, entry.event.committed_at, entry.newer)
         })
     }
 }
 
 /// How the queue settles a delivery that had failed `attempts_before`
-/// attempts and whose notification came to `outcome`.
+/// attempts, whose change committed at `committed_at` and which had a
+/// `newer` delivery queued or not, when its notification came to `outcome`.
 ///
 /// A failure is settled under its class, an unavailable endpoint or store
 /// first since it explains the attempt best. A notification a window withheld
-/// is deferred when it is a retry and withheld for good when it is not, and
-/// one owed nothing is obsolete.
-fn disposition(outcome: NotificationEvaluationOutcome, attempts_before: i32) -> DeliveryDisposition {
+/// is settled by [`withheld`], and one owed nothing is obsolete.
+fn disposition(outcome: NotificationEvaluationOutcome, attempts_before: i32, committed_at: StoreInstant, newer: NewerDelivery) -> DeliveryDisposition {
     match outcome {
         NotificationEvaluationOutcome { delivered: 1.., .. } => DeliveryDisposition::Delivered,
         NotificationEvaluationOutcome { unavailable: Some(failed), .. } => DeliveryDisposition::Failed {
@@ -80,8 +93,33 @@ fn disposition(outcome: NotificationEvaluationOutcome, attempts_before: i32) -> 
             class: FailureClass::Permanent,
             detail: DeliveryFailure::PermanentEndpoints(failed).to_string(),
         },
-        NotificationEvaluationOutcome { withheld: Some(window), .. } if attempts_before > 0 => DeliveryDisposition::Deferred { window },
+        NotificationEvaluationOutcome {
+            withheld: Some(withholding), ..
+        } => withheld(withholding, attempts_before, committed_at, newer),
         NotificationEvaluationOutcome { .. } => DeliveryDisposition::Obsolete,
+    }
+}
+
+/// How the queue settles a delivery the windows of `withholding` withheld,
+/// that had failed `attempts_before` attempts, whose change committed at
+/// `committed_at` and which had a `newer` delivery queued or not.
+///
+/// It is withheld for good when its change committed inside the cooldown, or
+/// when the throttling window withheld it and a newer delivery is queued;
+/// otherwise it waits until the windows have passed. A retry always waits.
+fn withheld(withholding: Withholding, attempts_before: i32, committed_at: StoreInstant, newer: NewerDelivery) -> DeliveryDisposition {
+    let waits = DeliveryDisposition::Deferred {
+        window: withholding.reopens_after,
+    };
+    if attempts_before > 0 {
+        return waits;
+    }
+    let committed_inside_cooldown = withholding.cooled_since.is_some_and(|failed_at| failed_at <= committed_at.get());
+    let superseded = withholding.throttled_since.is_some() && newer == NewerDelivery::Queued;
+    if committed_inside_cooldown || superseded {
+        DeliveryDisposition::Obsolete
+    } else {
+        waits
     }
 }
 
@@ -157,6 +195,7 @@ fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
 #[cfg(test)]
 mod tests {
     use crate::{
+        delivery_entry::NewerDelivery,
         delivery_transport::DeliveryDisposition,
         notification_event::{NotificationEvent, NotificationEventKey},
         processor::{
@@ -181,8 +220,8 @@ mod tests {
         notification::SysAttrsSnapshot,
     };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-    use andromeda_subscription::error::SubscriptionError;
-    use chrono::{TimeZone, Utc};
+    use andromeda_subscription::{error::SubscriptionError, notification_slot::Withholding};
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::{sync::Arc, time::Duration};
@@ -354,7 +393,7 @@ mod tests {
             })))
         };
         let permanent = || Some(FailedAttempts::new(NotificationAttemptFailure::NoData));
-        let class_of = |outcome| match disposition(outcome, 0) {
+        let class_of = |outcome| match disposition(outcome, 0, committed(), NewerDelivery::Absent) {
             DeliveryDisposition::Failed { class, .. } => Some(class),
             DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete | DeliveryDisposition::Deferred { .. } => None,
         };
@@ -388,7 +427,7 @@ mod tests {
             ..quiet()
         };
         assert_eq!(
-            disposition(outcome, 0),
+            disposition(outcome, 0, committed(), NewerDelivery::Absent),
             DeliveryDisposition::Failed {
                 class: FailureClass::ServerError,
                 detail: "1 endpoint attempt(s) were answered with a server error, the first because the endpoint answered HTTP 500".to_owned(),
@@ -396,23 +435,92 @@ mod tests {
         );
     }
 
-    /// Table 5.2.15-1: no notification is sent while the cooldown runs, so a
-    /// first attempt a window withholds sends none. A retry was withheld by
-    /// the window its own failed attempt opened, and still owes the
-    /// notification, so it waits the window out.
-    #[test]
-    fn a_withheld_retry_is_deferred_and_a_withheld_first_attempt_withheld_for_good() {
-        let withheld = || NotificationEvaluationOutcome {
-            withheld: Some(Duration::from_secs(30)),
+    /// The instant the change of every delivery below committed at.
+    fn committed() -> StoreInstant {
+        StoreInstant::new(Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).single().expect("valid instant"))
+    }
+
+    /// `seconds` after the commit, negative for before it.
+    fn after_commit(seconds: i64) -> DateTime<Utc> {
+        committed().get() + TimeDelta::seconds(seconds)
+    }
+
+    /// The outcome of a notification the windows named withheld, both
+    /// passing in 30 seconds.
+    fn withheld_by(throttled_since: Option<DateTime<Utc>>, cooled_since: Option<DateTime<Utc>>) -> NotificationEvaluationOutcome {
+        NotificationEvaluationOutcome {
+            withheld: Some(Withholding {
+                throttled_since,
+                cooled_since,
+                reopens_after: Duration::from_secs(30),
+            }),
             ..quiet()
-        };
-        assert_eq!(disposition(withheld(), 0), DeliveryDisposition::Obsolete);
+        }
+    }
+
+    /// A delivery deferred until the windows of [`withheld_by`] pass.
+    const WAITS: DeliveryDisposition = DeliveryDisposition::Deferred {
+        window: Duration::from_secs(30),
+    };
+
+    /// Table 5.2.15-1: "If requests are received before the cooldown period
+    /// has expired, no notification is sent", so a change committed after
+    /// the failure is withheld for good however the queue stands.
+    #[test]
+    fn a_first_attempt_whose_change_committed_inside_the_cooldown_is_withheld_for_good() {
+        for failed_at in [after_commit(-1), after_commit(0)] {
+            assert_eq!(
+                disposition(withheld_by(None, Some(failed_at)), 0, committed(), NewerDelivery::Absent),
+                DeliveryDisposition::Obsolete
+            );
+        }
+    }
+
+    /// A failure after the commit opened the cooldown while the delivery was
+    /// queued, as when a probe is exhausted and hands its hold on, so the
+    /// notification is owed once the cooldown has elapsed, newer deliveries
+    /// or not.
+    #[test]
+    fn a_first_attempt_a_later_failure_cooled_waits_the_cooldown_out() {
+        for newer in [NewerDelivery::Absent, NewerDelivery::Queued] {
+            assert_eq!(disposition(withheld_by(None, Some(after_commit(5))), 0, committed(), newer), WAITS);
+        }
+    }
+
+    /// Clause 5.2.12 lets one notification through per window: a newer
+    /// delivery queued behind the withheld one notifies a later change, so
+    /// the withheld one is dropped, while the newest waits the window out.
+    #[test]
+    fn a_throttled_first_attempt_is_superseded_by_a_newer_delivery_and_the_newest_waits() {
+        let throttled = || withheld_by(Some(after_commit(5)), None);
+        assert_eq!(disposition(throttled(), 0, committed(), NewerDelivery::Queued), DeliveryDisposition::Obsolete);
+        assert_eq!(disposition(throttled(), 0, committed(), NewerDelivery::Absent), WAITS);
+    }
+
+    /// A newer delivery supersedes a throttled one whatever the cooldown
+    /// says of it.
+    #[test]
+    fn a_newer_delivery_supersedes_a_throttled_one_a_later_failure_also_cooled() {
         assert_eq!(
-            disposition(withheld(), 1),
-            DeliveryDisposition::Deferred {
-                window: Duration::from_secs(30)
-            }
+            disposition(withheld_by(Some(after_commit(5)), Some(after_commit(5))), 0, committed(), NewerDelivery::Queued),
+            DeliveryDisposition::Obsolete
         );
+    }
+
+    /// A retry was withheld by the window its own failed attempt opened, and
+    /// the newer deliveries of its subscription wait behind it, so it waits
+    /// the window out whatever else the windows say.
+    #[test]
+    fn a_withheld_retry_waits_the_window_out() {
+        let outcome = || withheld_by(Some(after_commit(5)), Some(after_commit(-1)));
+        assert_eq!(disposition(outcome(), 1, committed(), NewerDelivery::Queued), WAITS);
+    }
+
+    /// Stamps a racing claim moved explain no refusal, so nothing says the
+    /// notification is not owed and it waits the whole window.
+    #[test]
+    fn a_refusal_no_stamp_explains_waits() {
+        assert_eq!(disposition(withheld_by(None, None), 0, committed(), NewerDelivery::Queued), WAITS);
     }
 
     #[test]
@@ -420,10 +528,9 @@ mod tests {
         let delivered = NotificationEvaluationOutcome {
             delivered: 1,
             permanent: Some(FailedAttempts::new(NotificationAttemptFailure::NoData)),
-            withheld: Some(Duration::from_secs(30)),
-            ..quiet()
+            ..withheld_by(Some(after_commit(5)), None)
         };
-        assert_eq!(disposition(delivered, 3), DeliveryDisposition::Delivered);
-        assert_eq!(disposition(quiet(), 3), DeliveryDisposition::Obsolete);
+        assert_eq!(disposition(delivered, 3, committed(), NewerDelivery::Absent), DeliveryDisposition::Delivered);
+        assert_eq!(disposition(quiet(), 3, committed(), NewerDelivery::Absent), DeliveryDisposition::Obsolete);
     }
 }

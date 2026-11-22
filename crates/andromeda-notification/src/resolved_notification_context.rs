@@ -14,7 +14,7 @@ use andromeda_delivery::notification_context::NotificationContext;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::{
-    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+    notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord, Suppression},
     outcome_tally::OutcomeTally,
     store::SubscriptionStore,
 };
@@ -53,8 +53,8 @@ pub(crate) enum UnclaimedContext {
     /// The context cannot be loaded and the failure is recorded.
     Failed,
     /// The context cannot be loaded, but the gate would have refused the
-    /// notification anyway, so nothing is recorded.
-    Suppressed,
+    /// notification anyway, for the reason carried, so nothing is recorded.
+    Suppressed(Suppression),
 }
 
 /// The notification `@context` of the subscription `subscription_id`, whose
@@ -83,7 +83,7 @@ pub(crate) async fn unclaimed_notification_context(
                     record_failure(sub_repo, target, subscription_id, OutcomeRecord::OutcomeOnly).await;
                     UnclaimedContext::Failed
                 }
-                Ok(NotificationSlot::Suppressed) => UnclaimedContext::Suppressed,
+                Ok(NotificationSlot::Suppressed(suppression)) => UnclaimedContext::Suppressed(suppression),
                 Err(error) => {
                     debug!(subscription = %subscription_id, %error, "failed to probe the notification slot");
                     UnclaimedContext::Failed
@@ -113,7 +113,7 @@ mod tests {
     use andromeda_ngsi_ld_query::page_window::PageWindow;
     use andromeda_subscription::{
         error::SubscriptionError,
-        notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord},
+        notification_slot::{DeliveryStamps, NotificationOutcome, NotificationSlot, NotificationSlotGate, OutcomeRecord, Suppression},
         notifying_since::NotifyingRestart,
         outcome_tally::OutcomeTally,
         store::{SubscriptionFields, SubscriptionStore},
@@ -292,14 +292,15 @@ mod tests {
     /// so its unloadable context records nothing.
     #[tokio::test]
     async fn an_unloadable_context_before_the_claim_records_nothing_when_the_gate_refuses() {
+        let refusal = Suppression::Windowed(DeliveryStamps::default());
         let store = FailureRecordingStore {
-            slot: Some(NotificationSlot::Suppressed),
+            slot: Some(NotificationSlot::Suppressed(refusal)),
             ..FailureRecordingStore::default()
         };
 
         let resolved = unclaimed(&store, Some(&unreachable_context())).await;
 
-        assert!(matches!(resolved, UnclaimedContext::Suppressed));
+        assert!(matches!(resolved, UnclaimedContext::Suppressed(suppression) if suppression == refusal));
         pretty_assertions::assert_eq!(store.failures(), Vec::new());
     }
 

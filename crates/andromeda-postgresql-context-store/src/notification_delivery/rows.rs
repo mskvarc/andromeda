@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
 use andromeda_notification::{
-    delivery_entry::{DeliveryEntry, DeliveryKey},
+    delivery_entry::{DeliveryEntry, DeliveryKey, NewerDelivery},
     notification_event::NotificationEventKey,
 };
 use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
@@ -80,6 +80,11 @@ pub(crate) struct RawClaimedDeliveryRow {
     pub(crate) next_attempt_at: DateTime<Utc>,
     /// Key of the event the delivery carries.
     pub(crate) event_key: i64,
+    /// Whether a newer delivery of the same subscription is still queued.
+    /// The claim returns it as a bare `EXISTS`, the expression PostgreSQL
+    /// names `exists`, since a `RETURNING` list names no alias.
+    #[sqlx(rename = "exists")]
+    pub(crate) newer_queued: bool,
 }
 
 impl RawClaimedDeliveryRow {
@@ -133,6 +138,7 @@ impl RawClaimedDeliveryRow {
             .attempt_count(self.attempt_count)
             .next_attempt_at(self.next_attempt_at)
             .event(event)
+            .newer(if self.newer_queued { NewerDelivery::Queued } else { NewerDelivery::Absent })
             .build())
     }
 }
@@ -178,7 +184,10 @@ mod tests {
         rows::{ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_notification::{delivery_entry::DeliveryKey, notification_event::NotificationEventKey};
+    use andromeda_notification::{
+        delivery_entry::{DeliveryKey, NewerDelivery},
+        notification_event::NotificationEventKey,
+    };
     use andromeda_postgresql_attribute_instance::name_keys::KeyNames;
     use chrono::Utc;
     use std::sync::Arc;
@@ -190,6 +199,7 @@ mod tests {
             attempt_count: 2,
             next_attempt_at: Utc::now(),
             event_key,
+            newer_queued: true,
         }
     }
 
@@ -206,6 +216,7 @@ mod tests {
         pretty_assertions::assert_eq!(entry.attempt_count, 2);
         pretty_assertions::assert_eq!(entry.event.key, NotificationEventKey::from(3_i64));
         pretty_assertions::assert_eq!(entry.target, ContextTarget::Live);
+        pretty_assertions::assert_eq!(entry.newer, NewerDelivery::Queued);
     }
 
     #[test]

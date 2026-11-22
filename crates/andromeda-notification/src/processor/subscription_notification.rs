@@ -24,10 +24,10 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_subscription::{
     compiled::CompiledSubscription,
-    notification_slot::{NotificationSlot, NotificationSlotGate},
+    notification_slot::{NotificationSlot, NotificationSlotGate, Suppression, Withholding},
 };
 use chrono::{DateTime, Utc};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tracing::{debug, error};
 
 /// The committed change every subscription matched by it is notified of.
@@ -63,11 +63,10 @@ pub(super) enum SubscriptionNotified {
     Failed(NotificationAttemptFailure),
     /// No endpoint was addressed: the subscription's clause 5.2.12
     /// `throttling` window or its endpoint's Table 5.2.15-1 `cooldown` window
-    /// refused the slot, or the store found the subscription no longer active.
-    /// Both windows pass within the wait carried.
-    Withheld(Duration),
+    /// refused the slot, as carried.
+    Withheld(Withholding),
     /// No notification is owed: the subscription expired before it was
-    /// generated.
+    /// generated, or the store found it no longer active.
     NotOwed,
 }
 
@@ -100,11 +99,11 @@ impl NotificationProcessor {
         {
             UnclaimedContext::Resolved(context) => context,
             UnclaimedContext::Failed => return SubscriptionNotified::Failed(NotificationAttemptFailure::ContextUnloadable),
-            UnclaimedContext::Suppressed => return SubscriptionNotified::Withheld(gate.reopens_after(generated_at)),
+            UnclaimedContext::Suppressed(suppression) => return suppressed(gate, generated_at, suppression),
         };
         let record = match self.sub_repo.claim_notification_slot(change.target, subscription_id, gate).await {
             Ok(NotificationSlot::Claimed(record)) => record,
-            Ok(NotificationSlot::Suppressed) => return SubscriptionNotified::Withheld(gate.reopens_after(generated_at)),
+            Ok(NotificationSlot::Suppressed(suppression)) => return suppressed(gate, generated_at, suppression),
             Err(error) => {
                 debug!("Failed to claim notification slot for {}: {}", subscription_id, error);
                 return SubscriptionNotified::Failed(NotificationAttemptFailure::SlotUnclaimed(error));
@@ -173,6 +172,15 @@ impl NotificationProcessor {
             DeliveryResult::Delivered => SubscriptionNotified::Delivered,
             DeliveryResult::Failed(failure) => SubscriptionNotified::Failed(NotificationAttemptFailure::Endpoint(failure)),
         }
+    }
+}
+
+/// What a claim of `gate`, taken at `generated_at`, that took no slot for
+/// `suppression` came to.
+fn suppressed(gate: NotificationSlotGate, generated_at: DateTime<Utc>, suppression: Suppression) -> SubscriptionNotified {
+    match suppression {
+        Suppression::Inactive => SubscriptionNotified::NotOwed,
+        Suppression::Windowed(stamps) => SubscriptionNotified::Withheld(gate.withholding(generated_at, stamps)),
     }
 }
 

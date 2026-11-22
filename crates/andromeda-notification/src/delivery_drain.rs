@@ -382,7 +382,7 @@ mod tests {
         delivery_claim::{DeliveryClaim, UnreadableDelivery},
         delivery_claim_order::{DeliveryClaimOrder, InFlightCeiling},
         delivery_drain::NotificationDeliveryDrain,
-        delivery_entry::{DeliveryEntry, DeliveryKey},
+        delivery_entry::{DeliveryEntry, DeliveryKey, NewerDelivery},
         delivery_lease::LeaseTerm,
         delivery_round::{ClaimRequest, SettledRound},
         delivery_settlement::{DeliverySettlement, DeliveryVerdict},
@@ -872,6 +872,7 @@ mod tests {
             .attempt_count(0)
             .next_attempt_at(Utc::now())
             .event(Arc::new(event))
+            .newer(NewerDelivery::Absent)
             .build())
     }
 
