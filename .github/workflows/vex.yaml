@@ -1,9 +1,9 @@
 name: vex
 
 # Attests the VEX document of the commit the run starts from to a released broker image, for an advisory published
-# after the release. The commit must have passed ci, whose unit job holds its statements to the rulings of deny.toml and
-# to the crate versions of its lockfile, so a statement about a crate the release links is attested from a branch off
-# the release's tag. The release's VEX asset is replaced with the same document, since Trivy reads only the first
+# after the release. The commit must have passed ci, whose unit job holds the document to the one generated from the
+# rulings and deny.toml, and the rulings to the crate versions of its lockfile, so a ruling about a crate the release
+# links is attested from a branch off the release's tag. The release's VEX asset is replaced with the same document, since Trivy reads only the first
 # OpenVEX attestation of a digest and the asset is how a scanner given it with --vex sees the newest one.
 on:
   workflow_dispatch:

@@ -83,19 +83,18 @@ The gates below run over the whole workspace. Most of them check production code
 | `manifest_hygiene`, `package_metadata` | the manifest rules in [Dependencies](dependencies.md) | |
 | `licence_policy` | a licence `about.toml` accepts that `deny.toml` doesn't allow, or the other way round, or a licence `about.toml` grants a crate that `deny.toml` makes no exception for | The licence file the broker image ships is written under the same policy cargo-deny enforces. [Dependencies](dependencies.md#licences) describes both. |
 | `auditable_build` | a build of the broker binary in the broker image that isn't `cargo auditable build`, or a broker image that builds no `--bin andromeda` | Scanners and SBOM generators see the crates of a Rust binary only through the dependency tree `cargo auditable` embeds, so without it the image's SBOMs list no crate and its VEX statements match nothing. |
-| `advisory_rulings` | a VEX statement that disagrees with `deny.toml`, `Cargo.lock` or the broker image, in one of the ways listed below the table | The VEX document attested to the broker image and `deny.toml` record the same rulings, so one can't change without the other. [Dependencies](dependencies.md#ignoring-an-advisory) describes the statements. |
+| `advisory_rulings` | a checked-in VEX document other than the one generated from `deny.toml` and `.vex/rulings.toml`, or a ruling that disagrees with `deny.toml` or `Cargo.lock` in one of the ways listed below the table | The VEX document attested to the broker image states exactly the rulings `deny.toml` applies, so one can't change without the other. [Dependencies](dependencies.md#ignoring-an-advisory) describes the rulings. |
 | `task_runtime_boundary` | a dependency on `andromeda-task-runtime` from a package other than `andromeda-broker-composition` and `andromeda-tenancy`, a Tokio executor built in the task runtime's production code, or `JoinHandle`, `TaskRegistration` or `TaskSupervisor` named in one of the policy crates, such as `andromeda-entity` | The task runtime runs tasks on the executor the broker binary builds, and the composition adapts policy operations into its tasks, so no policy crate decides how its work runs. |
 
 The same tests also refuse `pub use` re-exports, the identifiers and paths of retired architecture (such as `AppState`), and any implementation of `FromRequest`, `FromRequestParts`, `Header` or `IntoResponse` outside `andromeda-http-extraction`, `andromeda-http-headers` and `andromeda-http-response`. Paths qualified more than they need to be are caught by the `clippy::absolute_paths` and `unused_qualifications` lints instead.
 
 `advisory_rulings` fails on any of these.
 
-- An ignore in `deny.toml` without a VEX statement, or a statement whose identifiers `deny.toml` doesn't ignore.
-- An impact statement that isn't the ignore's reason word for word, a status other than `not_affected`, or a statement without a justification or a timestamp of its own.
-- An alias that names no statement, or whose statement lists other identifiers, gives another justification or names other crates.
-- A crate version `Cargo.lock` doesn't hold, or, for a ruling that rests on what the crates linking that version call, a linking crate the impact statement doesn't name with its version.
-- A crate the impact statement relies on as `<name> <version> or later` that `Cargo.lock` holds at no version that high, or holds below it at a version the statement doesn't rule on.
-- A product other than the broker image's two package URLs under the owner of the workspace repository, one with a version or a qualifier other than `repository_url`, or a statement leaving either URL out.
+- A checked-in document that differs from the generated one.
+- An ignore in `deny.toml` without a ruling or without a reason, or a ruling `deny.toml` doesn't ignore.
+- A ruling that can't be read, or an identifier two rulings name.
+- A crate version `Cargo.lock` doesn't hold, or, for a ruling that rests on what the crates linking that version call, a linking crate the reason doesn't name with its version.
+- A crate the reason relies on as `<name> <version> or later` that `Cargo.lock` holds at no version that high, or holds below it at a version the ruling isn't about.
 
 ## How big it gets
 
