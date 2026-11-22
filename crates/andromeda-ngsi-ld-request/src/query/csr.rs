@@ -30,7 +30,10 @@ use andromeda_ngsi_ld_query::{
     filter::Filter,
     name_stage::Written,
     pattern::Pattern,
-    projection::written_projection_term::WrittenProjectionTerm,
+    projection::{
+        exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+        written_projection_term::WrittenProjectionTerm,
+    },
     query_error::QueryError,
     scope::scope_query::ScopeQuery,
     temporal::window::TimeInterval,
@@ -180,20 +183,26 @@ impl CsrQueryParameters {
     /// Validates the CSR query parameters for completeness and correctness.
     ///
     /// At least one of the clause 5.10.2.4 narrowing parameters must be
-    /// present, and the temporal parameter group must be complete when any
-    /// member is specified.
+    /// present, `attrs` may not stand beside `pick` or `omit`, and the
+    /// temporal parameter group must be complete when any member is specified.
     ///
     /// # Errors
     ///
     /// Returns [`ParameterError::SelectorRequired`] when none of `type`,
-    /// `attrs`, `q` and `georel` narrows the registrations, and
-    /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
-    /// group names no interval.
+    /// `attrs`, `q` and `georel` narrows the registrations,
+    /// [`ParameterError::Projection`] when `attrs` is combined with `pick` or
+    /// `omit`, and [`ParameterError::Query`] when the `timerel`, `timeAt` and
+    /// `endTimeAt` group names no interval.
     pub fn validate(&self) -> Result<(), ParameterError> {
         // Clause 6.3.20: `sysAttrs` is the one value clause 6.3.11 defines for
         // this operation's `options`.
         self.parse_options()?;
         require_narrowing(&self.narrowing_inputs())?;
+        check_projection_exclusivity(ProjectionSelectors {
+            pick: Presence::of(self.pick.as_deref()),
+            omit: Presence::of(self.omit.as_deref()),
+            attrs: Presence::of(self.attrs.as_deref()),
+        })?;
         // Clause 5.5.9: an opaque `cursor` (5.5.9.1) and an `offset` (5.5.9.2)
         // page a collection by different mechanisms and cannot both govern it.
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
@@ -210,7 +219,7 @@ impl CsrQueryParameters {
 mod tests {
     use super::*;
     use crate::{params_from_query, query::SharedQueryParams};
-    use andromeda_ngsi_ld_query::temporal::time_interval_error::TimeIntervalError;
+    use andromeda_ngsi_ld_query::{projection::exclusivity::ProjectionConflict, temporal::time_interval_error::TimeIntervalError};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn params_from_query(query: &str) -> CsrQueryParameters {
@@ -253,6 +262,34 @@ mod tests {
         ] {
             let p = params_from_query(query);
             assert!(matches!(p.validate(), Err(ParameterError::SelectorRequired(_))), "{query} must be rejected");
+        }
+    }
+
+    /// Table 6.8.3.2-1 makes `attrs` "A synonym for a combination of the pick
+    /// and q members", as Table 6.4.3.2-1 does for Query Entities.
+    #[test]
+    fn pick_or_omit_beside_attrs_is_rejected() {
+        for query in [
+            "attrs=speed&pick=id,speed",
+            "attrs=speed&omit=type",
+            "type=Vehicle&attrs=speed&pick=id&omit=type",
+        ] {
+            let err = params_from_query(query).validate().expect_err("a projection beside attrs");
+            assert!(
+                matches!(err, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)),
+                "{query}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pick_and_omit_beside_a_type_selector_are_admitted() {
+        for query in [
+            "type=Vehicle&pick=id,endpoint",
+            "type=Vehicle&omit=information",
+            "type=Vehicle&pick=id,endpoint&omit=type",
+        ] {
+            assert!(params_from_query(query).validate().is_ok(), "{query} must validate");
         }
     }
 
