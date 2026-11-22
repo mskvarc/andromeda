@@ -29,6 +29,10 @@ const QUIET_WINDOW: Duration = Duration::from_secs(3);
 /// Clause: 4.19, 5.8.1.4, 5.8.3, 5.8.6
 /// Recorded: clause 4.19 adds the `#` wildcard "at the end of a Scope specification", and a Scope inside a group is
 /// one, though its grammar writes the group without the `/#`
+///
+/// Each Entity carries an attribute: without `notificationTrigger` the default triggers are `attributeCreated` and
+/// `attributeUpdated` (Table 5.2.12-1), and `scope` is an Entity member, not an Attribute, so a creation carrying only
+/// `scope` raises neither.
 #[gtest]
 #[tokio::test]
 async fn n_sub_cre_0006_a_scope_query_whose_group_holds_a_hierarchy_reads_back_as_written_and_notifies_its_hierarchy() -> Result<()> {
@@ -68,6 +72,7 @@ async fn n_sub_cre_0006_a_scope_query_whose_group_holds_a_hierarchy_reads_back_a
         .id(namespace.urn("Building", "outside")?)
         .entity_type(building_type.clone())
         .scope("/Madrid/Gardens")
+        .property("name", "outside")
         .build()?;
     broker.entities().create(&outside).send().await?.done()?;
     let inside_id = namespace.urn("Building", "inside")?;
@@ -75,6 +80,7 @@ async fn n_sub_cre_0006_a_scope_query_whose_group_holds_a_hierarchy_reads_back_a
         .id(inside_id.clone())
         .entity_type(building_type.clone())
         .scope(["/Madrid/Gardens", "/CompanyA"])
+        .property("name", "inside")
         .build()?;
     broker.entities().create(&inside).send().await?.done()?;
     sink.wait_for_at_least("hierarchy", 1).await?;
