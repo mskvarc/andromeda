@@ -74,23 +74,27 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 /// `newer` delivery queued or not, when its notification came to `outcome`.
 ///
 /// A failure is settled under its class, an unavailable endpoint or store
-/// first since it explains the attempt best. A notification a window withheld
+/// first since it explains the attempt best, with the longest wait an
+/// endpoint of that class asked for. A notification a window withheld
 /// is settled by [`withheld`], and one owed nothing is obsolete.
 fn disposition(outcome: NotificationEvaluationOutcome, attempts_before: i32, committed_at: StoreInstant, newer: NewerDelivery) -> DeliveryDisposition {
     match outcome {
         NotificationEvaluationOutcome { delivered: 1.., .. } => DeliveryDisposition::Delivered,
         NotificationEvaluationOutcome { unavailable: Some(failed), .. } => DeliveryDisposition::Failed {
             class: FailureClass::Unavailable,
+            retry_after: failed.retry_after,
             detail: DeliveryFailure::TransientEndpoints(failed).to_string(),
         },
         NotificationEvaluationOutcome {
             server_error: Some(failed), ..
         } => DeliveryDisposition::Failed {
             class: FailureClass::ServerError,
+            retry_after: failed.retry_after,
             detail: DeliveryFailure::ServerErrorEndpoints(failed).to_string(),
         },
         NotificationEvaluationOutcome { permanent: Some(failed), .. } => DeliveryDisposition::Failed {
             class: FailureClass::Permanent,
+            retry_after: failed.retry_after,
             detail: DeliveryFailure::PermanentEndpoints(failed).to_string(),
         },
         NotificationEvaluationOutcome {
@@ -140,6 +144,7 @@ fn unreadable_subscription(subscription_id: &Identifier, error: SubscriptionErro
             source: error,
         }
         .to_string(),
+        retry_after: None,
     }
 }
 
@@ -365,6 +370,7 @@ mod tests {
             DeliveryDisposition::Failed {
                 class: FailureClass::Unavailable,
                 detail,
+                retry_after: None,
             } => {
                 assert!(detail.contains("urn:ngsi-ld:Subscription:1"), "{detail}");
                 assert!(detail.contains("the datastore is temporarily unavailable"), "{detail}");
@@ -388,7 +394,10 @@ mod tests {
         let unavailable = || Some(FailedAttempts::new(NotificationAttemptFailure::ContextUnloadable));
         let server_error = || {
             Some(FailedAttempts::new(NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
-                reason: EndpointRejection::HttpStatus { status: 500 },
+                reason: EndpointRejection::HttpStatus {
+                    status: 500,
+                    retry_after: None,
+                },
                 class: FailureClass::ServerError,
             })))
         };
@@ -421,7 +430,10 @@ mod tests {
     fn a_server_error_is_recorded_as_one() {
         let outcome = NotificationEvaluationOutcome {
             server_error: Some(FailedAttempts::new(NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
-                reason: EndpointRejection::HttpStatus { status: 500 },
+                reason: EndpointRejection::HttpStatus {
+                    status: 500,
+                    retry_after: None,
+                },
                 class: FailureClass::ServerError,
             }))),
             ..quiet()
@@ -431,6 +443,33 @@ mod tests {
             DeliveryDisposition::Failed {
                 class: FailureClass::ServerError,
                 detail: "1 endpoint attempt(s) were answered with a server error, the first because the endpoint answered HTTP 500".to_owned(),
+                retry_after: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_failure_is_settled_with_the_wait_its_endpoint_asked_for() {
+        let mut unavailable = None;
+        for retry_after in [Some(30), Some(90)] {
+            FailedAttempts::count(
+                &mut unavailable,
+                NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
+                    reason: EndpointRejection::HttpStatus {
+                        status: 503,
+                        retry_after: retry_after.map(Duration::from_secs),
+                    },
+                    class: FailureClass::Unavailable,
+                }),
+            );
+        }
+        let outcome = NotificationEvaluationOutcome { unavailable, ..quiet() };
+        assert_eq!(
+            disposition(outcome, 2, committed(), NewerDelivery::Absent),
+            DeliveryDisposition::Failed {
+                class: FailureClass::Unavailable,
+                detail: "2 endpoint attempt(s) failed transiently, the first because the endpoint answered HTTP 503".to_owned(),
+                retry_after: Some(Duration::from_secs(90)),
             }
         );
     }

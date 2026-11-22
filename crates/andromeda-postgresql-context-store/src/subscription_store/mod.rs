@@ -12,6 +12,7 @@
 //! - [`conformance_text`]: the text `ngsildConformance` is stored as.
 //! - [`dataset_text`]: the text `datasetId` selectors are stored as.
 //! - [`delivery_state`]: the delivery counters and their statements.
+//! - [`slot_claim`]: the claim of one notification slot, gated by its windows.
 //! - [`projection`]: the read-side projection every subscription query shares.
 //! - [`failure`]: how adapter failures surface at the policy boundary.
 //! - [`surrogate_key`]: the surrogate key of a subscription named by its URI.
@@ -27,6 +28,10 @@ mod csource_statements;
 mod dataset_text;
 /// The delivery counters and the statements that read and move them.
 pub(crate) mod delivery_state;
+/// The subscription, branch and instants the delivery state statement tests
+/// address.
+#[cfg(test)]
+mod delivery_state_fixture;
 /// The create and replace statements of an entity subscription row.
 mod entity_statements;
 /// How adapter failures surface at the policy boundary.
@@ -51,6 +56,8 @@ mod postgresql;
 mod projection;
 /// Row structures for subscriptions.
 pub mod rows;
+/// The claim of one notification slot on a subscription's delivery state row.
+mod slot_claim;
 /// The number a subscription's lifecycle state is stored as.
 pub(crate) mod status_code;
 /// Which subscription family a statement addresses.

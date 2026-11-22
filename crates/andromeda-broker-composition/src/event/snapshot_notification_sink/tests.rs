@@ -40,6 +40,7 @@ enum Call {
 enum Answer {
     Accepts,
     FailsTransiently,
+    AsksToWait(Duration),
     AnswersServerError,
     RejectsPermanently,
 }
@@ -150,15 +151,31 @@ impl SnapshotStatusTransport for SlowReceiver {
         match self.answer {
             Answer::Accepts => DeliveryResult::Delivered,
             Answer::FailsTransiently => DeliveryResult::Failed(EndpointFailure::Rejected {
-                reason: EndpointRejection::HttpStatus { status: 503 },
+                reason: EndpointRejection::HttpStatus {
+                    status: 503,
+                    retry_after: None,
+                },
+                class: FailureClass::Unavailable,
+            }),
+            Answer::AsksToWait(wait) => DeliveryResult::Failed(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus {
+                    status: 503,
+                    retry_after: Some(wait),
+                },
                 class: FailureClass::Unavailable,
             }),
             Answer::AnswersServerError => DeliveryResult::Failed(EndpointFailure::Rejected {
-                reason: EndpointRejection::HttpStatus { status: 500 },
+                reason: EndpointRejection::HttpStatus {
+                    status: 500,
+                    retry_after: None,
+                },
                 class: FailureClass::ServerError,
             }),
             Answer::RejectsPermanently => DeliveryResult::Failed(EndpointFailure::Rejected {
-                reason: EndpointRejection::HttpStatus { status: 400 },
+                reason: EndpointRejection::HttpStatus {
+                    status: 400,
+                    retry_after: None,
+                },
                 class: FailureClass::Permanent,
             }),
         }
@@ -282,6 +299,27 @@ fn the_drain_hands_the_queue_the_lease_span_and_the_retry_step() -> Result<(), S
     let lease = config.queue.lease_timeout.duration();
     assert_eq!(*locked(&queue.leases), vec![lease, lease], "the claim and the renewal");
     assert_eq!(*locked(&queue.retry_steps), vec![Duration::from_secs(5)]);
+    Ok(())
+}
+
+/// A failed status notification waits the 5-second first step, or as long as
+/// its endpoint asked when that is longer, up to the 5-minute longest delay.
+#[test]
+fn a_failure_waits_as_long_as_its_endpoint_asked_up_to_the_longest_delay() -> Result<(), SnapshotError> {
+    let mut waits = Vec::new();
+    for requested in [Duration::from_secs(1), Duration::from_secs(60), Duration::from_hours(1)] {
+        let queue = Arc::new(RecordingQueue::holding([delivery(1)]));
+        let receiver = SlowReceiver {
+            queue: Arc::clone(&queue),
+            answer: Answer::AsksToWait(requested),
+            takes_over_while_sending: BTreeMap::new(),
+        };
+        let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue);
+        let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config(1))?;
+        block_on(drain.execute())?;
+        waits.extend(locked(&queue.retry_steps).iter().copied());
+    }
+    assert_eq!(waits, vec![Duration::from_secs(5), Duration::from_secs(60), Duration::from_secs(300)]);
     Ok(())
 }
 

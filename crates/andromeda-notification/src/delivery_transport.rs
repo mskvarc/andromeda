@@ -20,6 +20,9 @@ pub enum DeliveryDisposition {
         class: FailureClass,
         /// Diagnostic recorded against the delivery, trimmed before it is stored.
         detail: String,
+        /// The wait the endpoint asked for before the next attempt (RFC 9110
+        /// section 10.2.3 `Retry-After`), `None` when it asked for none.
+        retry_after: Option<Duration>,
     },
     /// A retried delivery was not sent, because its Subscription's clause
     /// 5.2.12 `throttling` window or its endpoint's Table 5.2.15-1 `cooldown`

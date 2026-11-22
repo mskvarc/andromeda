@@ -1,14 +1,17 @@
 //! Axum construction of a classified NGSI-LD problem response.
 
 use andromeda_failure_classification::classified_report::ClassifiedReport;
-use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader};
+use andromeda_http_headers::{
+    ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
+    retry_after::RetryAfter,
+};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use axum::{
     Json,
     http::Uri,
     response::{IntoResponse, Response},
 };
-use headers::{HeaderMapExt, RetryAfter};
+use headers::HeaderMapExt;
 use std::time::Duration;
 
 /// A local Axum response wrapper around the framework-independent clause 5.5.3 wire value.
@@ -82,7 +85,7 @@ impl IntoResponse for ProblemResponse {
             response.headers_mut().typed_insert(NgsiLdWarningHeader::new(self.warnings));
         }
         if let Some(retry_after) = self.retry_after {
-            response.headers_mut().typed_insert(RetryAfter::delay(retry_after));
+            response.headers_mut().typed_insert(RetryAfter::Delay(retry_after));
         }
         response
     }

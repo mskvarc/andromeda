@@ -792,6 +792,7 @@ mod tests {
                     DeliveryDisposition::Failed {
                         class: FailureClass::Permanent,
                         detail: "stored payload cannot be evaluated".to_owned(),
+                        retry_after: None,
                     }
                 } else {
                     DeliveryDisposition::Delivered
@@ -932,6 +933,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -945,6 +947,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Permanent,
                     detail: "permanent".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -967,6 +970,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -993,6 +997,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -1023,6 +1028,7 @@ mod tests {
                 let transport = FixedTransport(DeliveryDisposition::Failed {
                     class,
                     detail: "failing".to_owned(),
+                    retry_after: None,
                 });
                 NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), config)?
                     .execute(&CancellationToken::new())
@@ -1037,6 +1043,47 @@ mod tests {
         })
     }
 
+    /// A first failure waits the 5-second first step, or as long as its
+    /// endpoint asked when that is longer, up to the 5-minute
+    /// `max_retry_interval`.
+    #[test]
+    fn a_retried_failure_waits_as_long_as_its_endpoint_asked_up_to_the_longest_delay() -> Result<(), NotificationError> {
+        block_on(async {
+            let mut waits = Vec::new();
+            for requested in [None, Some(Duration::from_secs(1)), Some(Duration::from_secs(60)), Some(Duration::from_hours(1))] {
+                let store = Arc::new(RecordingStore::with_entry(entry()?));
+                drain(
+                    store.clone(),
+                    DeliveryDisposition::Failed {
+                        class: FailureClass::Unavailable,
+                        detail: "transient".to_owned(),
+                        retry_after: requested,
+                    },
+                )?
+                .execute(&CancellationToken::new())
+                .await?;
+                waits.extend(
+                    store
+                        .failed
+                        .lock()
+                        .expect("the retry result lock is not poisoned")
+                        .iter()
+                        .map(|(_, _, step)| step.duration()),
+                );
+            }
+            pretty_assertions::assert_eq!(
+                waits,
+                [
+                    Duration::from_secs(5),
+                    Duration::from_secs(5),
+                    Duration::from_secs(60),
+                    Duration::from_secs(300)
+                ]
+            );
+            Ok(())
+        })
+    }
+
     /// A permanent failure is exhausted on its first attempt.
     #[test]
     fn a_permanent_failure_is_exhausted_on_its_first_attempt() -> Result<(), NotificationError> {
@@ -1047,6 +1094,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Permanent,
                     detail: "permanent".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -1094,6 +1142,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "endpoint refused the notification".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -1138,6 +1187,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -1356,10 +1406,12 @@ mod tests {
                     3 => DeliveryDisposition::Failed {
                         class: FailureClass::Unavailable,
                         detail: "transient".to_owned(),
+                        retry_after: None,
                     },
                     4 => DeliveryDisposition::Failed {
                         class: FailureClass::Permanent,
                         detail: "permanent".to_owned(),
+                        retry_after: None,
                     },
                     _ => DeliveryDisposition::Delivered,
                 }
@@ -1633,6 +1685,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -1660,6 +1713,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "transient".to_owned(),
+                    retry_after: None,
                 },
             )?
             .execute(&CancellationToken::new())
@@ -1806,6 +1860,7 @@ mod tests {
                 DeliveryDisposition::Failed {
                     class: FailureClass::Unavailable,
                     detail: "timed out".to_owned(),
+                    retry_after: None,
                 }
             })
         }

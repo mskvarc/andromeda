@@ -78,6 +78,22 @@ impl DeliveryBackoff {
         Ok(BackoffStep(self.0.delay(retry)))
     }
 
+    /// The wait after the failure of a delivery that had failed
+    /// `attempt_count` attempts before it, when its endpoint asked for
+    /// `requested` (RFC 9110 section 10.2.3 `Retry-After`): the step, or the
+    /// request when that is longer, up to the longest delay of the schedule,
+    /// so an endpoint never holds its Subscription back longer than the
+    /// operator allows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetryNumberError`] when `attempt_count` is negative, which the
+    /// queue never records.
+    pub fn step_honouring(&self, attempt_count: i32, requested: Option<Duration>) -> Result<BackoffStep, RetryNumberError> {
+        let step = self.step(attempt_count)?;
+        Ok(requested.map_or(step, |requested| BackoffStep(step.0.max(requested.min(self.0.ceiling_bound())))))
+    }
+
     /// The wait after a first failure, which a held Subscription's next probe
     /// also waits once its probe is exhausted.
     #[must_use]
@@ -146,6 +162,28 @@ mod tests {
             .map(|attempts| backoff().step(attempts).map(|step| step.duration().as_secs()))
             .collect();
         assert_eq!(waits, [Ok(10), Ok(20), Ok(40), Ok(160), Ok(160)]);
+    }
+
+    /// The schedule's longest delay is 5 s doubled five times, 160 s.
+    #[test]
+    fn a_requested_wait_longer_than_the_step_is_waited_up_to_the_longest_delay() {
+        let waits: Vec<_> = [
+            (0, None),
+            (0, Some(Duration::from_secs(3))),
+            (0, Some(Duration::from_secs(60))),
+            (0, Some(Duration::from_hours(1))),
+            (3, Some(Duration::from_secs(10))),
+            (3, Some(Duration::from_secs(60))),
+        ]
+        .into_iter()
+        .map(|(attempts, requested)| backoff().step_honouring(attempts, requested).map(|step| step.duration().as_secs()))
+        .collect();
+        assert_eq!(waits, [Ok(5), Ok(5), Ok(60), Ok(160), Ok(40), Ok(60)]);
+    }
+
+    #[test]
+    fn a_requested_wait_does_not_excuse_a_negative_attempt_count() {
+        assert!(backoff().step_honouring(-2, Some(Duration::from_secs(60))).is_err());
     }
 
     #[test]

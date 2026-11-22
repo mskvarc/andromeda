@@ -280,7 +280,7 @@
       "path": "notifications.delivery.queue",
       "shape": "named",
       "presence": "default",
-      "description": "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval` up to `notifications.delivery.queue.max_retry_interval`."
+      "description": "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval` up to `notifications.delivery.queue.max_retry_interval`. When an HTTP endpoint answers with `Retry-After` and asks for a longer wait, the retry waits that long instead, never longer than `notifications.delivery.queue.max_retry_interval`."
     },
     {
       "path": "notifications.delivery.retention",

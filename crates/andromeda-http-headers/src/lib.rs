@@ -40,6 +40,7 @@ pub mod preference;
 pub mod preference_applied;
 pub mod quality;
 pub mod received_protocol;
+pub mod retry_after;
 pub mod via;
 pub mod via_comment;
 pub mod warn_text;

@@ -175,6 +175,10 @@ impl SnapshotStatusDeliveryDrain {
         let acknowledgement = match self.transport.deliver_status(&entry).await {
             DeliveryResult::Delivered => self.outbox.acknowledge(&entry, self.worker).await?,
             DeliveryResult::Failed(failure) => {
+                let retry_after = self
+                    .retry_schedule
+                    .step_honouring(entry.attempt_count, failure.retry_after())
+                    .map_err(SnapshotInvariant::NotificationAttemptCount)?;
                 let (failure, max_attempts, detail) = match failure.class() {
                     FailureClass::Unavailable => (
                         SnapshotDeliveryFailure::Retryable,
@@ -192,10 +196,6 @@ impl SnapshotStatusDeliveryDrain {
                         "Snapshot notification delivery failed terminally",
                     ),
                 };
-                let retry_after = self
-                    .retry_schedule
-                    .step(entry.attempt_count)
-                    .map_err(SnapshotInvariant::NotificationAttemptCount)?;
                 let detail = self.error_bound.truncate(detail);
                 self.outbox.fail(&entry, self.worker, failure, max_attempts, retry_after, &detail).await?
             }

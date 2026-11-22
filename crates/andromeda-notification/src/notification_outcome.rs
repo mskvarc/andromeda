@@ -30,7 +30,7 @@ mod tests {
             (400, FailureClass::Permanent),
         ] {
             let failed = DeliveryResult::Failed(EndpointFailure::Rejected {
-                reason: EndpointRejection::HttpStatus { status },
+                reason: EndpointRejection::HttpStatus { status, retry_after: None },
                 class,
             });
             assert_eq!(notification_outcome(&failed), NotificationOutcome::Failure);

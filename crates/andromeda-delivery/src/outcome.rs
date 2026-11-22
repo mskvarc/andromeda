@@ -35,7 +35,23 @@ pub enum EndpointRejection {
     HttpStatus {
         /// The response status code.
         status: u16,
+        /// The wait the answer's `Retry-After` asks for before the next
+        /// request (RFC 9110 section 10.2.3), counted from when the answer
+        /// arrived; `None` when it carries none, or one that is neither a
+        /// count of seconds nor a date.
+        retry_after: Option<Duration>,
     },
+}
+
+impl EndpointRejection {
+    /// The wait the endpoint asked for before the next attempt, `None` when it
+    /// asked for none.
+    #[must_use]
+    pub const fn retry_after(&self) -> Option<Duration> {
+        match self {
+            EndpointRejection::HttpStatus { retry_after, .. } => *retry_after,
+        }
+    }
 }
 
 /// The telemetry [`Outcome`] one delivery attempt represents.
