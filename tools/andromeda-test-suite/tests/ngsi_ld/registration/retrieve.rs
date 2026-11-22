@@ -7,6 +7,7 @@ mod n_csr_ret_9004;
 mod n_csr_ret_9005;
 mod n_csr_ret_9006;
 mod n_csr_ret_9008;
+mod n_csr_ret_9009;
 mod o_csr_ret_0001;
 mod o_csr_ret_0003;
 mod o_csr_ret_0004;

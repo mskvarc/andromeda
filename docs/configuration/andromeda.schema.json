@@ -491,7 +491,7 @@
       "type": "object",
       "properties": {
         "accept_language": {
-          "description": "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities, Temporal Evolutions or context source registrations that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored.",
+          "description": "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities or Temporal Evolutions, or a Query of context source registrations, that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored.",
           "type": "object",
           "properties": {
             "mode": {
