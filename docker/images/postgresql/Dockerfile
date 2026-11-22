@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM postgres:18.6-trixie
+FROM postgres:18.7-trixie
 
 # The key packagecloud serves for the TimescaleDB repository, checked by
 # fingerprint so a key swapped at the source fails the build.
@@ -32,29 +32,30 @@ RUN set -eux; \
 # carries the libraries of earlier releases, which a tenant database an earlier
 # image created loads until that update, so the image keeps the library of
 # every version a supported broker release's image shipped, and the settings
-# check fails one without them. TimescaleDB 2.32.0 supports PostgreSQL up to
-# 18.6, so the base image moves past 18.6 only after a later TimescaleDB. The maintenance controller drives pg_repack's SQL interface
-# itself and only on the release line it was written for, so pg_repack is
-# pinned like the others. timescaledb-tune, in timescaledb-tools, rewrites the
-# server's settings on every start and the entrypoint derives more from them,
-# so a full tag keeps its settings only with the tuner pinned too. The tsl
-# edition's TimescaleDB Toolkit is pinned for the same reason as the
-# extensions: a rebuild of a full tag ships the same one.
+# check fails one without them. TimescaleDB 2.32.1 supports PostgreSQL up to
+# 18.7, so the base image moves past 18.7 only after a later TimescaleDB. The
+# maintenance controller drives pg_repack's SQL interface itself and only on the
+# release line it was written for, so pg_repack is pinned like the others.
+# timescaledb-tune, in timescaledb-tools, rewrites the server's settings on
+# every start and the entrypoint derives more from them, so a full tag keeps its
+# settings only with the tuner pinned too. The tsl edition's TimescaleDB Toolkit
+# is pinned for the same reason as the extensions: a rebuild of a full tag ships
+# the same one.
 #
 # The server stays the base image's: its packages are held, so a package built
 # for a later PostgreSQL fails the build instead of upgrading the server under
 # a tag that names the base image's version. PGDG rebuilds an extension for
 # each PostgreSQL minor release, and a rebuild for a later minor may not run on
 # this server, so PostGIS and pg_repack are pinned to the PGDG revision built
-# for it: PostGIS 3.7.0's revision pgdg13+2 needs symbols 18.6 lacks, and
-# pg_repack 1.5.3's revision 2 requires a server after 18.7.
-ARG TIMESCALEDB_VERSION=2.32.0
+# for it: PostGIS 3.7.0's revision pgdg13+2 and pg_repack 1.5.3's revision 2
+# are the builds for 18.7.
+ARG TIMESCALEDB_VERSION=2.32.1
 ARG POSTGIS_VERSION=3.7.0
-ARG POSTGIS_REVISION=1.pgdg13+1
+ARG POSTGIS_REVISION=1.pgdg13+2
 ARG PG_REPACK_VERSION=1.5.3
-ARG PG_REPACK_REVISION=1.pgdg13+2
-ARG TIMESCALEDB_TUNE_VERSION=0.19.0
-ARG TIMESCALEDB_TOOLKIT_VERSION=1.27.0
+ARG PG_REPACK_REVISION=2.pgdg13+1
+ARG TIMESCALEDB_TUNE_VERSION=0.19.1
+ARG TIMESCALEDB_TOOLKIT_VERSION=1.28.0
 RUN set -eux; \
     apt-mark hold postgresql-18 postgresql-18-jit postgresql-client-18 libpq5; \
     apt-get update; \
@@ -111,5 +112,5 @@ LABEL org.opencontainers.image.title="PostgreSQL with PostGIS and TimescaleDB" \
       org.opencontainers.image.description="PostgreSQL 18 with PostGIS 3 and TimescaleDB 2, tuned for high-throughput time-series ingest" \
       org.opencontainers.image.authors="Matej Škvarč <matej@skvarc.com>" \
       org.opencontainers.image.vendor="Matej Škvarč" \
-      org.opencontainers.image.base.name="docker.io/library/postgres:18.6-trixie" \
+      org.opencontainers.image.base.name="docker.io/library/postgres:18.7-trixie" \
       org.opencontainers.image.licenses="PostgreSQL AND GPL-2.0-or-later AND Apache-2.0 AND LicenseRef-Timescale"
