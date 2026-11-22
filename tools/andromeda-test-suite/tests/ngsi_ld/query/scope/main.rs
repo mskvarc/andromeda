@@ -8,6 +8,8 @@ mod n_qry_scp_0003;
 mod n_qry_scp_0004;
 mod n_qry_scp_0005;
 mod n_qry_scp_0006;
+mod n_qry_scp_0007;
 mod n_qry_scp_4001;
 mod n_qry_scp_4002;
+mod n_qry_scp_4003;
 mod o_qry_scp_9001;
