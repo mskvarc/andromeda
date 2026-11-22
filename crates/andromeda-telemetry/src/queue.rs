@@ -31,6 +31,9 @@ pub enum QueueOutcome {
     /// The item was released unprocessed, without counting an attempt, to wait
     /// for an earlier item it must follow.
     HeldBack,
+    /// The item was released unsent, without counting an attempt, to wait out
+    /// a window its sink must leave between two attempts.
+    Deferred,
     /// The item has failed as many times as the operator threshold names and
     /// stays queued; reported so a wedged sink is visible.
     Stuck,

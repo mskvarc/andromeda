@@ -1,6 +1,11 @@
 //! What can go wrong between this broker and a notification endpoint.
 
-use crate::{connection_failure::ConnectionFailure, http::transport::error_chain_text, oversized_notification::OversizedNotification};
+use crate::{
+    connection_failure::ConnectionFailure,
+    failure_class::FailureClass,
+    http::transport::error_chain_text,
+    oversized_notification::OversizedNotification,
+};
 use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use humantime::format_duration;
 use std::{io, net::IpAddr, sync::Arc, time::Duration};
@@ -108,34 +113,34 @@ impl TransportError {
         }
     }
 
-    /// Whether reattempting the delivery could succeed.
+    /// What the failure says about attempting the same delivery again.
     ///
-    /// Reaching the endpoint failed transiently for connection, timeout, TLS and
-    /// DNS errors, so a later attempt may connect. A payload over the limit, a
-    /// blocked endpoint, or a payload that cannot be serialised will fail the
-    /// same way on every attempt, so retrying only wastes the budget. An HTTP
-    /// client or MQTT TLS configuration that could not be built is a startup
-    /// misconfiguration, not a per-delivery condition, so it is likewise not
-    /// retryable.
+    /// Reaching the endpoint failed for connection, timeout, TLS and DNS
+    /// errors, so a later attempt may connect once it recovers. A payload over
+    /// the limit, a blocked endpoint, or a payload that cannot be serialised
+    /// fails the same way on every attempt, so retrying only wastes the budget.
+    /// An HTTP client or MQTT TLS configuration that could not be built is a
+    /// startup misconfiguration, not a per-delivery condition, so it likewise
+    /// repeats.
     #[must_use]
-    pub const fn is_retryable(&self) -> bool {
+    pub const fn class(&self) -> FailureClass {
         match self {
             TransportError::ConnectionFailed { .. }
             | TransportError::Timeout { .. }
             | TransportError::TlsError { .. }
-            | TransportError::DnsResolutionFailed { .. } => true,
+            | TransportError::DnsResolutionFailed { .. } => FailureClass::Unavailable,
             TransportError::Oversized(_)
             | TransportError::PrivateIpBlocked { .. }
             | TransportError::PayloadSerialization { .. }
             | TransportError::ClientInitializationFailed(_)
-            | TransportError::MqttTlsInitializationFailed(_) => false,
+            | TransportError::MqttTlsInitializationFailed(_) => FailureClass::Permanent,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{connection_failure::ConnectionFailure, error::TransportError};
+    use crate::{connection_failure::ConnectionFailure, error::TransportError, failure_class::FailureClass};
     use std::{error::Error, io, sync::Arc, time::Duration};
     use url::Url;
 
@@ -162,7 +167,7 @@ mod tests {
             failed.to_string(),
             "connection to http://receiver.example/notify failed: connection unhealthy, backoff active"
         );
-        assert!(failed.is_retryable());
+        pretty_assertions::assert_eq!(failed.class(), FailureClass::Unavailable);
     }
 
     #[test]

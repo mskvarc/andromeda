@@ -4,6 +4,7 @@ use crate::{
     connection_failure::ConnectionFailure,
     delivery_deadline::delivery_deadline,
     error::TransportError,
+    failure_class::FailureClass,
     http::config::HttpTransportConfig,
     outcome::{DeliveryOutcome, EndpointRejection, delivery_metric_outcome},
     oversized_notification::OversizedNotification,
@@ -214,7 +215,7 @@ impl HttpTransport {
             );
             Ok(DeliveryOutcome::Rejected {
                 reason: EndpointRejection::HttpStatus { status },
-                retryable: status >= 500 || status == 429,
+                class: FailureClass::of_http_status(status),
             })
         }
     }
@@ -266,6 +267,7 @@ fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> H
 mod tests {
     use crate::{
         error::TransportError,
+        failure_class::FailureClass,
         http::{
             config::HttpTransportConfig,
             transport::{HttpTransport, chain_indicates_tls, error_chain_text, notification_headers},
@@ -536,7 +538,7 @@ mod tests {
             matches!(refused, TransportError::Oversized(OversizedNotification::MaxHttpBody { size, limit: 1024 }) if size == request.body.text().len()),
             "{refused:?}"
         );
-        assert!(!refused.is_retryable(), "every attempt would send the same body");
+        pretty_assertions::assert_eq!(refused.class(), FailureClass::Permanent, "every attempt would send the same body");
     }
 
     /// An error that names only the request, as `reqwest`'s own does.

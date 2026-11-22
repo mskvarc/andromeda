@@ -5,10 +5,11 @@
 //! `acknowledged` common table expression, and its hold piece reads the rows
 //! from it, so a row whose guard refused updates nothing and moves no hold.
 //! The rows a failure or an exhaustion records each carry their own
-//! diagnostic, and a failure its own retry step, bound as parallel arrays and
-//! unnested into a source the update joins on the delivery key. A failure is
-//! due again its step after `CURRENT_TIMESTAMP`, the clock the claim compares
-//! it with (see [`after_transaction_start`]).
+//! diagnostic, and a failure or a deferral its own retry step, bound as
+//! parallel arrays and unnested into a source the update joins on the
+//! delivery key. A failure or a deferral is due again its step after
+//! `CURRENT_TIMESTAMP`, the clock the claim compares it with (see
+//! [`after_transaction_start`]).
 //!
 //! The guard names the worker that holds the lease and requires that lease to
 //! still be live, row by row. A worker whose lease expired while it was
@@ -69,6 +70,11 @@ struct Failure;
 #[iden = "exhaustion"]
 struct Exhaustion;
 
+/// The deferred deliveries a group records, `deferral`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "deferral"]
+struct Deferral;
+
 /// The column of the failed attempts holding each one's retry step in
 /// seconds, `retry_after`.
 #[derive(Iden, Clone, Copy)]
@@ -93,6 +99,15 @@ pub(crate) struct ExhaustedRows<'a> {
     pub(crate) delivery_keys: Vec<i64>,
     /// Each one's diagnostic, already within the stored bound.
     pub(crate) failures: Vec<&'a str>,
+}
+
+/// The deferred deliveries of one group on one branch, as parallel arrays.
+#[derive(Debug, Default)]
+pub(crate) struct DeferredRows {
+    /// The deliveries deferred.
+    pub(crate) delivery_keys: Vec<i64>,
+    /// How long after the acknowledgement each one is due again.
+    pub(crate) retry_steps: Vec<BackoffStep>,
 }
 
 /// Mark the deliveries sent without disturbing their claim pairs, and delete
@@ -252,6 +267,54 @@ pub(crate) fn exhausted_statement(target: &ContextTarget, worker_id: LeaseHolder
     UnnestAliased::new(statement).with_columns(source_alias(), &columns)
 }
 
+/// Release each deferred delivery for an attempt its own step after the
+/// transaction began, leaving its attempt count, its diagnostic and its
+/// Subscription's hold as they are.
+///
+/// ```sql
+/// WITH deferral AS (SELECT f.delivery_key, f.retry_after FROM UNNEST($1::bigint[], $2::float8[]) AS f(delivery_key, retry_after)),
+///      acknowledged AS (UPDATE notification_deliveries SET next_attempt_at = CURRENT_TIMESTAMP + make_interval(secs => deferral.retry_after),
+///                         claimed_by = NULL, lease_until = NULL
+///                       FROM deferral WHERE notification_deliveries.delivery_key = deferral.delivery_key AND <lease guard>
+///                       RETURNING delivery_key, subscription_key)
+/// SELECT acknowledged.delivery_key FROM acknowledged
+/// ```
+///
+/// Nothing was sent, so no attempt is counted and no failure recorded; a
+/// probe stays its Subscription's probe, and the deliveries it holds back
+/// stay set aside.
+pub(crate) fn deferred_statement(target: &ContextTarget, worker_id: LeaseHolder, rows: DeferredRows) -> UnnestAliased<WithQuery> {
+    let retry_seconds: Vec<f64> = rows.retry_steps.into_iter().map(BackoffStep::seconds).collect();
+    let (source, columns) = settled_rows([
+        (
+            NotificationDeliveries::DeliveryKey.into_iden(),
+            PostgresType::BigintArray,
+            Expr::val(rows.delivery_keys),
+        ),
+        (RetryAfter.into_iden(), PostgresType::Float8Array, Expr::val(retry_seconds)),
+    ]);
+    let mut update = acknowledgement(target, worker_id);
+    update
+        .value(
+            NotificationDeliveries::NextAttemptAt,
+            after_transaction_start(Expr::col((Deferral, RetryAfter))),
+        )
+        .value(NotificationDeliveries::ClaimedBy, null())
+        .value(NotificationDeliveries::LeaseUntil, null())
+        .from(Deferral)
+        .and_where(delivery_column(NotificationDeliveries::DeliveryKey).equals((Deferral, NotificationDeliveries::DeliveryKey)));
+    let select = Query::select()
+        .column((Acknowledged, NotificationDeliveries::DeliveryKey))
+        .from(Acknowledged)
+        .to_owned();
+    let statement = WithClause::new()
+        .cte(cte(Deferral, source))
+        .cte(cte(Acknowledged, update))
+        .to_owned()
+        .query(select);
+    UnnestAliased::new(statement).with_columns(source_alias(), &columns)
+}
+
 /// The guarded update of the acknowledged rows, returning each one's key and
 /// its Subscription's for the hold: only rows the worker still holds under a
 /// lease that has not yet expired.
@@ -305,7 +368,15 @@ fn with_acknowledged(source: Option<CommonTableExpression>, update: UpdateStatem
 #[cfg(test)]
 mod tests {
     use crate::{
-        notification_delivery::acknowledge::statements::{ExhaustedRows, FailedRows, delivered_statement, exhausted_statement, failed_statement},
+        notification_delivery::acknowledge::statements::{
+            DeferredRows,
+            ExhaustedRows,
+            FailedRows,
+            deferred_statement,
+            delivered_statement,
+            exhausted_statement,
+            failed_statement,
+        },
         statement_text::text_of,
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -342,6 +413,16 @@ mod tests {
         text_of(&exhausted_statement(target, worker(), rows))
     }
 
+    fn deferred(target: &ContextTarget) -> String {
+        let backoff = DeliveryBackoff::new(BackoffSchedule::new(Duration::from_secs(5), Duration::from_secs(300), Growth::Doubling))
+            .expect("a schedule within the longest step");
+        let rows = DeferredRows {
+            delivery_keys: vec![1, 2],
+            retry_steps: vec![backoff.deferral(Duration::from_secs(60)), backoff.first_step()],
+        };
+        text_of(&deferred_statement(target, worker(), rows))
+    }
+
     fn snapshot() -> ContextTarget {
         let key = SnapshotKey::try_from(5).expect("positive key");
         ContextTarget::Snapshot(SnapshotTarget::published(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")))
@@ -357,7 +438,12 @@ mod tests {
 
     #[test]
     fn every_row_of_a_group_is_guarded_by_the_live_lease_it_was_taken_under() {
-        for sql in [delivered(&ContextTarget::Live), failed(&ContextTarget::Live), exhausted(&ContextTarget::Live)] {
+        for sql in [
+            delivered(&ContextTarget::Live),
+            failed(&ContextTarget::Live),
+            exhausted(&ContextTarget::Live),
+            deferred(&ContextTarget::Live),
+        ] {
             let guard = acknowledgement_of(&sql);
             assert!(guard.contains(r#""notification_deliveries"."claimed_by" = $"#), "{sql}");
             assert!(guard.contains(r#""notification_deliveries"."lease_until" > CURRENT_TIMESTAMP"#), "{sql}");
@@ -493,6 +579,30 @@ mod tests {
             )),
             "{sql}"
         );
+    }
+
+    /// A deferral is due its own step after the transaction began and counts
+    /// no attempt, records no diagnostic and moves no hold.
+    #[test]
+    fn a_group_of_deferrals_reschedules_each_row_and_leaves_its_count_and_hold() {
+        let sql = deferred(&ContextTarget::Live);
+        assert!(
+            sql.starts_with(concat!(
+                r#"WITH "deferral" AS (SELECT "f"."delivery_key", "f"."retry_after" "#,
+                r#"FROM UNNEST($1::bigint[], $2::float8[]) AS f(delivery_key, retry_after))"#
+            )),
+            "{sql}"
+        );
+        let guard = acknowledgement_of(&sql);
+        assert!(
+            guard.contains(r#""next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => "deferral"."retry_after"))"#),
+            "{sql}"
+        );
+        assert!(guard.contains(r#""claimed_by" = NULL, "lease_until" = NULL FROM "deferral""#), "{sql}");
+        assert!(!guard.contains("attempt_count"), "a deferral counts no attempt: {sql}");
+        assert!(!guard.contains("last_error"), "a deferral records no failure: {sql}");
+        assert!(!sql.contains("notification_delivery_holds"), "a deferral moves no hold: {sql}");
+        assert!(sql.ends_with(r#"SELECT "acknowledged"."delivery_key" FROM "acknowledged""#), "{sql}");
     }
 
     #[test]

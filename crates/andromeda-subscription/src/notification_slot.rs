@@ -21,6 +21,7 @@
 use crate::{cooldown::ceiling_for_cooldown, throttle::ceiling_for_throttle};
 use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
 use chrono::{DateTime, Utc};
+use std::time::Duration;
 
 /// How a subscription comes to notify (Table 5.2.12-1 makes `throttling` and
 /// `timeInterval` mutually exclusive).
@@ -113,13 +114,37 @@ impl NotificationSlotGate {
     /// subscription was entitled to.
     #[must_use]
     pub const fn unstamped(self) -> NotificationSlotGate {
-        let ceiling = match self.notification {
+        NotificationSlotGate {
+            notification: NotificationStamp::Unstamped {
+                ceiling: self.throttling_ceiling(),
+            },
+            last_failure: self.last_failure,
+        }
+    }
+
+    /// How long after `now`, the instant the gate was taken at, a claim it
+    /// refused is admitted again: the longer of the subscription's
+    /// `throttling` and its endpoint's `cooldown`, zero for a gate with
+    /// neither.
+    ///
+    /// Every stamp the gate compares is at or before `now`, so once this has
+    /// passed, neither window still covers the stamp that refused the claim.
+    #[must_use]
+    pub fn reopens_after(self, now: DateTime<Utc>) -> Duration {
+        [self.throttling_ceiling(), self.last_failure]
+            .into_iter()
+            .flatten()
+            .filter_map(|ceiling| (now - ceiling).to_std().ok())
+            .max()
+            .unwrap_or_default()
+    }
+
+    /// Latest `last_notification` that still permits a claim (clause 5.2.12
+    /// `throttling`); `None` when the subscription is not throttled.
+    const fn throttling_ceiling(self) -> Option<DateTime<Utc>> {
+        match self.notification {
             NotificationStamp::Throttled { ceiling } | NotificationStamp::Unstamped { ceiling: Some(ceiling) } => Some(ceiling),
             NotificationStamp::WithOutcome | NotificationStamp::Periodic { .. } | NotificationStamp::Unstamped { ceiling: None } => None,
-        };
-        NotificationSlotGate {
-            notification: NotificationStamp::Unstamped { ceiling },
-            last_failure: self.last_failure,
         }
     }
 }
@@ -171,7 +196,8 @@ pub enum NotificationOutcome {
 mod tests {
     use crate::notification_slot::{NotificationCadence, NotificationSlotGate, NotificationStamp};
     use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{TimeDelta, TimeZone, Utc};
+    use std::time::Duration;
 
     const UNTHROTTLED: NotificationCadence = NotificationCadence::OnChange { throttling_secs: None };
 
@@ -194,14 +220,14 @@ mod tests {
         pretty_assertions::assert_eq!(
             throttled.notification,
             NotificationStamp::Throttled {
-                ceiling: now - Duration::seconds(5)
+                ceiling: now - TimeDelta::seconds(5)
             }
         );
         assert!(throttled.last_failure.is_none());
 
         let cooled = NotificationSlotGate::at(now, UNTHROTTLED, Some(cooldown));
         pretty_assertions::assert_eq!(cooled.notification, NotificationStamp::WithOutcome);
-        pretty_assertions::assert_eq!(cooled.last_failure, Some(now - Duration::milliseconds(2_000)));
+        pretty_assertions::assert_eq!(cooled.last_failure, Some(now - TimeDelta::milliseconds(2_000)));
 
         let both = NotificationSlotGate::at(now, throttling, Some(cooldown));
         pretty_assertions::assert_eq!(both.notification, throttled.notification);
@@ -240,6 +266,25 @@ mod tests {
         Ok(())
     }
 
+    /// A refused claim is admitted again once the longer window has passed.
+    #[test]
+    fn a_refused_claim_reopens_after_the_longer_of_the_throttling_and_the_cooldown() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(1_000, 0).single().ok_or("the fixture timestamp must be valid")?;
+        let cooldown = PositiveMilliseconds::try_from(2_500).map_err(|_error| "a positive millisecond count")?;
+        let throttling = NotificationCadence::OnChange { throttling_secs: Some(5.0) };
+        for (gate, window) in [
+            (NotificationSlotGate::at(now, UNTHROTTLED, None), Duration::ZERO),
+            (NotificationSlotGate::at(now, throttling, None), Duration::from_secs(5)),
+            (NotificationSlotGate::at(now, UNTHROTTLED, Some(cooldown)), Duration::from_millis(2_500)),
+            (NotificationSlotGate::at(now, throttling, Some(cooldown)), Duration::from_secs(5)),
+            (NotificationSlotGate::at(now, throttling, Some(cooldown)).unstamped(), Duration::from_secs(5)),
+            (NotificationSlotGate::at(now, NotificationCadence::Periodic, None), Duration::ZERO),
+        ] {
+            pretty_assertions::assert_eq!(gate.reopens_after(now), window, "{gate:?}");
+        }
+        Ok(())
+    }
+
     /// Removing the stamping keeps the ceilings, so the probe refuses what the
     /// claim would have refused.
     #[test]
@@ -252,10 +297,10 @@ mod tests {
         pretty_assertions::assert_eq!(
             gate.notification,
             NotificationStamp::Unstamped {
-                ceiling: Some(now - Duration::seconds(5))
+                ceiling: Some(now - TimeDelta::seconds(5))
             }
         );
-        pretty_assertions::assert_eq!(gate.last_failure, Some(now - Duration::milliseconds(2_000)));
+        pretty_assertions::assert_eq!(gate.last_failure, Some(now - TimeDelta::milliseconds(2_000)));
 
         pretty_assertions::assert_eq!(
             NotificationSlotGate::at(now, UNTHROTTLED, None).unstamped().notification,

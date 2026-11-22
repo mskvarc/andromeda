@@ -16,6 +16,10 @@ pub(super) enum DeliveryFailure {
     /// Every endpoint attempt that failed did so in a way a later attempt may overcome.
     #[error("{} endpoint attempt(s) failed transiently, the first because {}", .0.attempts, .0.first)]
     TransientEndpoints(FailedAttempts),
+    /// An endpoint attempt was answered with a server error the endpoint
+    /// failed on, which a later attempt may overcome.
+    #[error("{} endpoint attempt(s) were answered with a server error, the first because {}", .0.attempts, .0.first)]
+    ServerErrorEndpoints(FailedAttempts),
     /// An endpoint attempt failed in a way no later attempt can overcome.
     #[error("{} endpoint attempt(s) failed permanently, the first because {}", .0.attempts, .0.first)]
     PermanentEndpoints(FailedAttempts),

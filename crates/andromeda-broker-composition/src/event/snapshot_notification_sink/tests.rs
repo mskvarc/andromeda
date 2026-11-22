@@ -7,7 +7,7 @@ use andromeda_configuration::{
     schema::notifications::delivery::{DeliveryConfig, DeliveryMode},
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
-use andromeda_delivery::{dispatch::DeliveryResult, endpoint_failure::EndpointFailure, outcome::EndpointRejection};
+use andromeda_delivery::{dispatch::DeliveryResult, endpoint_failure::EndpointFailure, failure_class::FailureClass, outcome::EndpointRejection};
 use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery};
 use andromeda_snapshot::error::SnapshotError;
@@ -40,6 +40,8 @@ enum Call {
 enum Answer {
     Accepts,
     FailsTransiently,
+    AnswersServerError,
+    RejectsPermanently,
 }
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -58,6 +60,9 @@ struct RecordingQueue {
     leases: Mutex<Vec<Duration>>,
     /// The wait every failure asked for, in order.
     retry_steps: Mutex<Vec<Duration>>,
+    /// The kind and the attempt ceiling every failure was recorded under, in
+    /// order.
+    failures: Mutex<Vec<(SnapshotDeliveryFailure, i32)>>,
 }
 
 impl RecordingQueue {
@@ -111,12 +116,13 @@ impl SnapshotStatusQueue for RecordingQueue {
         &self,
         delivery: &SnapshotStatusDelivery,
         _worker: LeaseHolder,
-        _failure: SnapshotDeliveryFailure,
-        _max_attempts: i32,
+        failure: SnapshotDeliveryFailure,
+        max_attempts: i32,
         retry_after: BackoffStep,
         _detail: &str,
     ) -> Result<LeaseAcknowledgement, SnapshotError> {
         locked(&self.retry_steps).push(retry_after.duration());
+        locked(&self.failures).push((failure, max_attempts));
         Ok(self.guarded(Call::Fail(delivery.id), delivery.id))
     }
 
@@ -145,7 +151,15 @@ impl SnapshotStatusTransport for SlowReceiver {
             Answer::Accepts => DeliveryResult::Delivered,
             Answer::FailsTransiently => DeliveryResult::Failed(EndpointFailure::Rejected {
                 reason: EndpointRejection::HttpStatus { status: 503 },
-                retryable: true,
+                class: FailureClass::Unavailable,
+            }),
+            Answer::AnswersServerError => DeliveryResult::Failed(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus { status: 500 },
+                class: FailureClass::ServerError,
+            }),
+            Answer::RejectsPermanently => DeliveryResult::Failed(EndpointFailure::Rejected {
+                reason: EndpointRejection::HttpStatus { status: 400 },
+                class: FailureClass::Permanent,
             }),
         }
     }
@@ -268,6 +282,35 @@ fn the_drain_hands_the_queue_the_lease_span_and_the_retry_step() -> Result<(), S
     let lease = config.queue.lease_timeout.duration();
     assert_eq!(*locked(&queue.leases), vec![lease, lease], "the claim and the renewal");
     assert_eq!(*locked(&queue.retry_steps), vec![Duration::from_secs(5)]);
+    Ok(())
+}
+
+/// A status notification its endpoint answers with a server error is dead
+/// after the server-error attempts, 5 by default, one whose endpoint is
+/// unavailable after all 18, and one rejected permanently at once.
+#[test]
+fn each_failure_is_recorded_under_the_attempt_ceiling_of_its_class() -> Result<(), SnapshotError> {
+    let mut recorded = Vec::new();
+    for answer in [Answer::FailsTransiently, Answer::AnswersServerError, Answer::RejectsPermanently] {
+        let queue = Arc::new(RecordingQueue::holding([delivery(1)]));
+        let receiver = SlowReceiver {
+            queue: Arc::clone(&queue),
+            answer,
+            takes_over_while_sending: BTreeMap::new(),
+        };
+        let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue);
+        let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config(1))?;
+        block_on(drain.execute())?;
+        recorded.extend(locked(&queue.failures).iter().copied());
+    }
+    assert_eq!(
+        recorded,
+        vec![
+            (SnapshotDeliveryFailure::Retryable, 18),
+            (SnapshotDeliveryFailure::Retryable, 5),
+            (SnapshotDeliveryFailure::Terminal, 18),
+        ]
+    );
     Ok(())
 }
 

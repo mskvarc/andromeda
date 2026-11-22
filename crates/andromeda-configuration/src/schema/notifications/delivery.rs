@@ -181,13 +181,24 @@ pub struct DeliveryConfig {
     ///
     /// While an endpoint fails, only the probe of its held Subscription spends
     /// attempts, so the ceiling is how long the oldest notification survives
-    /// an outage, and how long a notification the endpoint keeps failing holds
-    /// up the ones queued after it. At the default retry delays (5 s doubling
-    /// to 5 min), 18 attempts span 3615 s.
+    /// an outage. At the default retry delays (5 s doubling to 5 min), 18
+    /// attempts span 3615 s.
     #[schemars(
-        description = "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived. While an endpoint keeps failing, the other notifications of its Subscription wait behind the one being retried and spend no attempts. This therefore sets how long an outage the oldest notification survives, and how long a notification the endpoint keeps answering with a server error holds up the ones queued after it. At the default retry delays, 18 attempts span about an hour."
+        description = "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived. While an endpoint keeps failing, the other notifications of its Subscription wait behind the one being retried and spend no attempts. This therefore sets how long an outage the oldest notification survives: an endpoint that cannot be reached, or answers 429, 502, 503 or 504. At the default retry delays, 18 attempts span about an hour."
     )]
     pub max_attempts: NonZeroU32,
+    /// The attempts a queued delivery gets while its endpoint answers it with
+    /// a server error other than 502, 503 or 504; never more than
+    /// `max_attempts`, which applies when it is the lower of the two.
+    ///
+    /// Such an endpoint was reached and failed on this notification, and the
+    /// notifications queued after it wait while it is retried, so it gets
+    /// fewer attempts than an outage does. At the default retry delays, 5
+    /// attempts span 75 s.
+    #[schemars(
+        description = "The attempts a queued notification gets while its endpoint answers it with a server error other than 502, 503 or 504. Such an endpoint was reached and failed on this notification, and the other notifications of its Subscription wait while it is retried, so this sets how long one notification the endpoint keeps failing on holds them up before it is dead-lettered. A delivery never gets more than `notifications.delivery.max_attempts`, which applies when it is the lower of the two. At the default retry delays, 5 attempts span 75 seconds."
+    )]
+    pub max_server_error_attempts: NonZeroU32,
     /// How the queue is polled, claimed and retried. A delivery is retried on
     /// a delay that doubles from `retry_interval` up to `max_retry_interval`.
     #[schemars(
@@ -212,6 +223,7 @@ impl Default for DeliveryConfig {
             max_http_body: NotificationBodyLimit::DEFAULT,
             max_mqtt_packet: MqttPacketLimit::DEFAULT,
             max_attempts: NonZeroU32::MIN.saturating_add(17),
+            max_server_error_attempts: NonZeroU32::MIN.saturating_add(4),
             queue: DurableQueue {
                 retry_interval: HumanDuration::from_secs(5),
                 ..DurableQueue::default()
@@ -248,6 +260,12 @@ mod tests {
         let config = DeliveryConfig::default();
         assert_eq!(config.mode, DeliveryMode::Live);
         assert_eq!(config.private_addresses, PrivateAddresses::Allowed);
+    }
+
+    #[test]
+    fn a_delivery_answered_with_a_server_error_gets_fewer_attempts_by_default_than_an_outage() {
+        let config = DeliveryConfig::default();
+        assert_eq!((config.max_server_error_attempts.get(), config.max_attempts.get()), (5, 18));
     }
 
     #[test]

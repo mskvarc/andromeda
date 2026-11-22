@@ -74,7 +74,7 @@ pub enum BrokerRole {
     /// The terminator's plaintext listener, which redirects to its TLS listener.
     TerminatorPlaintext,
     /// The andromeda stack broker with multi-tenancy disabled, delivering notifications durably with a 4 KiB request
-    /// body limit, a 5 KiB HTTP notification body limit and four attempts.
+    /// body limit, a 5 KiB HTTP notification body limit and four attempts, two for a server error.
     SingleTenant,
     /// The andromeda stack broker delivering notifications in durable mode and holding at most three Snapshots per
     /// Tenant.

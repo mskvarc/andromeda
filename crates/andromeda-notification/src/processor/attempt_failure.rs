@@ -1,11 +1,16 @@
 //! Why notifying one subscription of one committed change failed, and the
-//! failed attempts of one change counted by whether a retry may succeed.
+//! failed attempts of one change counted by what they say about a retry.
 //!
 //! The failure keeps its cause up to the delivery's stored diagnostic, so what
 //! is recorded against a queued delivery says what the log said, not only how
 //! many attempts failed.
 
-use andromeda_delivery::{endpoint::error::EndpointParseError, endpoint_failure::EndpointFailure, notification_body::NotificationWriteError};
+use andromeda_delivery::{
+    endpoint::error::EndpointParseError,
+    endpoint_failure::EndpointFailure,
+    failure_class::FailureClass,
+    notification_body::NotificationWriteError,
+};
 use andromeda_entity::error::EntityError;
 use andromeda_subscription::error::SubscriptionError;
 use std::num::NonZeroUsize;
@@ -45,26 +50,29 @@ pub enum NotificationAttemptFailure {
 }
 
 impl NotificationAttemptFailure {
-    /// Whether a later attempt may succeed.
+    /// What the failure says about a later attempt.
     ///
-    /// A failed read or claim may answer the next attempt; a notification
-    /// that cannot be built or addressed fails the same way every time.
+    /// An endpoint failure keeps the class of its answer. A context document,
+    /// store or linked entity that could not be read may answer the next
+    /// attempt once it recovers, as an unavailable endpoint may; a
+    /// notification that cannot be built or addressed fails the same way every
+    /// time.
     #[must_use]
-    pub const fn is_retryable(&self) -> bool {
+    pub const fn class(&self) -> FailureClass {
         match self {
-            NotificationAttemptFailure::Endpoint(failure) => failure.is_retryable(),
+            NotificationAttemptFailure::Endpoint(failure) => failure.class(),
             NotificationAttemptFailure::ContextUnloadable
             | NotificationAttemptFailure::SlotUnclaimed(_)
-            | NotificationAttemptFailure::LinkedEntitiesUnread(_) => true,
+            | NotificationAttemptFailure::LinkedEntitiesUnread(_) => FailureClass::Unavailable,
             NotificationAttemptFailure::NothingToNotify
             | NotificationAttemptFailure::EndpointUndeliverable(_)
             | NotificationAttemptFailure::NoData
-            | NotificationAttemptFailure::Unwritten(_) => false,
+            | NotificationAttemptFailure::Unwritten(_) => FailureClass::Permanent,
         }
     }
 }
 
-/// The failed attempts of one change that share whether a retry may succeed.
+/// The failed attempts of one change that share a [`FailureClass`].
 #[derive(Debug)]
 pub struct FailedAttempts {
     /// How many attempts failed.
@@ -95,7 +103,7 @@ impl FailedAttempts {
 #[cfg(test)]
 mod tests {
     use crate::processor::attempt_failure::{FailedAttempts, NotificationAttemptFailure};
-    use andromeda_delivery::{endpoint_failure::EndpointFailure, outcome::EndpointRejection};
+    use andromeda_delivery::{endpoint_failure::EndpointFailure, failure_class::FailureClass, outcome::EndpointRejection};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -108,12 +116,19 @@ mod tests {
     }
 
     #[test]
-    fn an_endpoint_failure_reads_as_the_endpoint_failure_and_keeps_its_retryability() {
+    fn an_endpoint_failure_reads_as_the_endpoint_failure_and_keeps_its_class() {
         let rejected = NotificationAttemptFailure::Endpoint(EndpointFailure::Rejected {
-            reason: EndpointRejection::HttpStatus { status: 400 },
-            retryable: false,
+            reason: EndpointRejection::HttpStatus { status: 500 },
+            class: FailureClass::ServerError,
         });
-        assert_eq!(rejected.to_string(), "the endpoint answered HTTP 400");
-        assert!(!rejected.is_retryable());
+        assert_eq!(rejected.to_string(), "the endpoint answered HTTP 500");
+        assert_eq!(rejected.class(), FailureClass::ServerError);
+    }
+
+    #[test]
+    fn a_read_that_may_answer_later_is_unavailability_and_an_unbuildable_notification_permanent() {
+        assert_eq!(NotificationAttemptFailure::ContextUnloadable.class(), FailureClass::Unavailable);
+        assert_eq!(NotificationAttemptFailure::NoData.class(), FailureClass::Permanent);
+        assert_eq!(NotificationAttemptFailure::NothingToNotify.class(), FailureClass::Permanent);
     }
 }

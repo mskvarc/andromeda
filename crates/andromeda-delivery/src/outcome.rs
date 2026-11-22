@@ -1,6 +1,6 @@
 //! What an endpoint said when it was reached.
 
-use crate::error::TransportError;
+use crate::{error::TransportError, failure_class::FailureClass};
 use andromeda_telemetry::operation::Outcome;
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use std::time::Duration;
 ///
 /// Distinct from [`crate::error::TransportError`]: a rejection means the
 /// endpoint is there and said no, which is why it carries its own
-/// retryability rather than leaving the caller to guess from a message.
+/// [`FailureClass`] rather than leaving the caller to guess from a message.
 #[derive(Debug)]
 pub enum DeliveryOutcome {
     /// The endpoint accepted the notification.
@@ -22,8 +22,8 @@ pub enum DeliveryOutcome {
     Rejected {
         /// What the endpoint said.
         reason: EndpointRejection,
-        /// Whether attempting the same delivery again could succeed.
-        retryable: bool,
+        /// What the answer says about attempting the same delivery again.
+        class: FailureClass,
     },
 }
 

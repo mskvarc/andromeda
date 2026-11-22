@@ -1,6 +1,6 @@
 //! Why one notification did not reach the endpoint it was sent to.
 
-use crate::{error::TransportError, outcome::EndpointRejection};
+use crate::{error::TransportError, failure_class::FailureClass, outcome::EndpointRejection};
 
 /// A failed delivery attempt: what the endpoint answered, or why it was not
 /// reached.
@@ -14,8 +14,8 @@ pub enum EndpointFailure {
     Rejected {
         /// What the endpoint answered.
         reason: EndpointRejection,
-        /// Whether attempting the same delivery again could succeed.
-        retryable: bool,
+        /// What the answer says about attempting the same delivery again.
+        class: FailureClass,
     },
     /// The endpoint was not reached, or the notification was refused before it
     /// was sent.
@@ -24,36 +24,42 @@ pub enum EndpointFailure {
 }
 
 impl EndpointFailure {
-    /// Whether reattempting the delivery could succeed.
+    /// What the failure says about attempting the same delivery again.
     #[must_use]
-    pub const fn is_retryable(&self) -> bool {
+    pub const fn class(&self) -> FailureClass {
         match self {
-            EndpointFailure::Rejected { retryable, .. } => *retryable,
-            EndpointFailure::Transport(error) => error.is_retryable(),
+            EndpointFailure::Rejected { class, .. } => *class,
+            EndpointFailure::Transport(error) => error.class(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{endpoint_failure::EndpointFailure, error::TransportError, outcome::EndpointRejection, oversized_notification::OversizedNotification};
+    use crate::{
+        endpoint_failure::EndpointFailure,
+        error::TransportError,
+        failure_class::FailureClass,
+        outcome::EndpointRejection,
+        oversized_notification::OversizedNotification,
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn a_rejection_names_the_status_the_endpoint_answered() {
+    fn a_rejection_names_the_status_the_endpoint_answered_and_keeps_its_class() {
         let rejected = EndpointFailure::Rejected {
             reason: EndpointRejection::HttpStatus { status: 503 },
-            retryable: true,
+            class: FailureClass::Unavailable,
         };
         assert_eq!(rejected.to_string(), "the endpoint answered HTTP 503");
-        assert!(rejected.is_retryable());
+        assert_eq!(rejected.class(), FailureClass::Unavailable);
     }
 
     #[test]
-    fn a_transport_failure_reads_as_the_transport_error_and_keeps_its_retryability() {
+    fn a_transport_failure_reads_as_the_transport_error_and_keeps_its_class() {
         let refusal = OversizedNotification::MaxHttpBody { size: 2048, limit: 1024 };
         let failure = EndpointFailure::from(TransportError::from(refusal));
         assert_eq!(failure.to_string(), refusal.to_string());
-        assert!(!failure.is_retryable());
+        assert_eq!(failure.class(), FailureClass::Permanent);
     }
 }

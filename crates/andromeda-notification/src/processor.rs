@@ -27,7 +27,7 @@ use crate::{
         change_payload::notified_state,
         notification_identity::NotificationIdentity,
         payload::cache::NotificationCompactionCache,
-        subscription_notification::NotifiedChange,
+        subscription_notification::{NotifiedChange, SubscriptionNotified},
     },
 };
 use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};
@@ -38,6 +38,7 @@ use andromeda_delivery::{
         error::EndpointParseError,
         transport::{EndpointTransport, parse_endpoint_transport},
     },
+    failure_class::FailureClass,
 };
 use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::EntityQueryService};
 use andromeda_fan_out::bounded::fan_out_unordered;
@@ -56,7 +57,7 @@ use andromeda_subscription::{
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::StreamExt;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, warn};
 
 /// Subscriptions one committed change notifies at once.
@@ -74,21 +75,24 @@ fn compiled_transport(subscription: &CompiledSubscription) -> Result<EndpointTra
         .inspect_err(|error| debug!(subscription = %subscription.id, %error, "Compiled subscription endpoint is no longer deliverable"))
 }
 
-/// Fold the attempts of one committed change into its aggregate outcome; a
-/// subscription whose throttling window swallowed the notification
-/// contributes nothing.
-fn aggregate_delivery_outcomes(attempts: Vec<Option<Result<(), NotificationAttemptFailure>>>) -> NotificationEvaluationOutcome {
-    attempts
-        .into_iter()
-        .flatten()
-        .fold(NotificationEvaluationOutcome::default(), |mut outcome, attempt| {
-            match attempt {
-                Ok(()) => outcome.delivered += 1,
-                Err(failure) if failure.is_retryable() => FailedAttempts::count(&mut outcome.retryable, failure),
-                Err(failure) => FailedAttempts::count(&mut outcome.terminal, failure),
-            }
-            outcome
-        })
+/// Fold the notifications of one committed change into its aggregate
+/// outcome: each failure under its class, and of the notifications a window
+/// withheld, the longest wait; a subscription owed nothing contributes
+/// nothing.
+fn aggregate_delivery_outcomes(notified: Vec<SubscriptionNotified>) -> NotificationEvaluationOutcome {
+    notified.into_iter().fold(NotificationEvaluationOutcome::default(), |mut outcome, notified| {
+        match notified {
+            SubscriptionNotified::Delivered => outcome.delivered += 1,
+            SubscriptionNotified::Failed(failure) => match failure.class() {
+                FailureClass::Unavailable => FailedAttempts::count(&mut outcome.unavailable, failure),
+                FailureClass::ServerError => FailedAttempts::count(&mut outcome.server_error, failure),
+                FailureClass::Permanent => FailedAttempts::count(&mut outcome.permanent, failure),
+            },
+            SubscriptionNotified::Withheld(window) => outcome.withheld = Some(outcome.withheld.map_or(window, |longest| longest.max(window))),
+            SubscriptionNotified::NotOwed => {}
+        }
+        outcome
+    })
 }
 
 /// Applies subscription and entity changes to entity-notification policy.
@@ -145,11 +149,18 @@ pub struct NotificationProcessorDeps {
 pub struct NotificationEvaluationOutcome {
     /// Endpoints that accepted a notification.
     pub delivered: usize,
-    /// Failures worth retrying, `None` when there were none.
-    pub retryable: Option<FailedAttempts>,
+    /// Failures an unreachable or unavailable endpoint or store explains,
+    /// `None` when there were none.
+    pub unavailable: Option<FailedAttempts>,
+    /// Server errors endpoints answered and failed on, `None` when there were
+    /// none.
+    pub server_error: Option<FailedAttempts>,
     /// Endpoint or payload failures that retry cannot repair, `None` when
     /// there were none.
-    pub terminal: Option<FailedAttempts>,
+    pub permanent: Option<FailedAttempts>,
+    /// Of the notifications a `throttling` or `cooldown` window withheld, the
+    /// longest wait until the window passes; `None` when none was withheld.
+    pub withheld: Option<Duration>,
 }
 
 impl NotificationProcessor {
@@ -244,7 +255,7 @@ impl NotificationProcessor {
             // next attempt.
             Err(error) => {
                 return NotificationEvaluationOutcome {
-                    retryable: Some(FailedAttempts::new(NotificationAttemptFailure::LinkedEntitiesUnread(error))),
+                    unavailable: Some(FailedAttempts::new(NotificationAttemptFailure::LinkedEntitiesUnread(error))),
                     ..NotificationEvaluationOutcome::default()
                 };
             }
@@ -267,13 +278,13 @@ impl NotificationProcessor {
             compaction_cache: &compaction_cache,
             identity,
         };
-        let attempts: Vec<Option<Result<(), NotificationAttemptFailure>>> = fan_out_unordered(matching, NOTIFICATION_CONCURRENCY, |compiled_sub| {
+        let notified: Vec<SubscriptionNotified> = fan_out_unordered(matching, NOTIFICATION_CONCURRENCY, |compiled_sub| {
             let change = &change;
             async move { self.notify_subscription(&compiled_sub, change).await }
         })
         .collect()
         .await;
-        aggregate_delivery_outcomes(attempts)
+        aggregate_delivery_outcomes(notified)
     }
 
     /// Re-read one subscription from the store before the change is matched
