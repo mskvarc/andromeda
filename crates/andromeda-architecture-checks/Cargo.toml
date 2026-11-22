@@ -25,7 +25,8 @@ strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3.0.10", features = ["full", "visit"] }
 thiserror = "2.0.21"
 toml_edit = "0.25.20"
-url = "2.5.9"
+url = { version = "2.5.9", features = ["serde"] }
+url-macro = "0.2.6"
 walkdir = "2.5.1"
 
 [lints]

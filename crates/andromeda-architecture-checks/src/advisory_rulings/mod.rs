@@ -1,65 +1,57 @@
-//! The advisory rulings the broker image's VEX document publishes agree with
-//! the ones `deny.toml` records.
+//! The broker image's VEX document is generated from the advisory rulings, and
+//! the rulings agree with `deny.toml` and `Cargo.lock`.
 //!
 //! `deny.toml` ignores an advisory with the reason the broker is not affected
-//! by it. The OpenVEX document attested beside the image tells scanners the
-//! same ruling, as a `not_affected` statement whose impact statement is that
-//! reason, about the crate version the image links. Scanners that read the
-//! Rust advisory database report every advisory cargo-deny reports, so every
-//! ignore needs a statement. A scanner reports an advisory under one of its
-//! identifiers, the Rust advisory, CVE or GitHub one, and some apply only a
-//! statement named by the identifier they report, so an advisory gets one
-//! statement per identifier, each listing the others as aliases and all ruling
-//! alike.
+//! by it. The rulings file gives, for each ignored advisory, its other
+//! identifiers, the OpenVEX justification and the crate versions the ruling is
+//! about. The OpenVEX document attested beside the image is generated from the
+//! two and checked in, so scanners read every ruling cargo-deny applies, under
+//! every identifier a scanner may report the advisory by, with the reason as
+//! the impact statement. A checked-in document that differs from the generated
+//! one fails the gate, and running it with `ANDROMEDA_REGENERATE=1` writes it.
 //!
-//! The gate holds every ignore to a statement, every statement to an ignore of
-//! one of its identifiers with the same reason, the statements of one advisory
-//! to the same identifiers, justification and crates, and every crate a
-//! statement names to a version `Cargo.lock` holds, so a ruling cannot change,
-//! lapse or move to another crate version in one place alone. A ruling that a
-//! crate's code never runs, or runs only on input no adversary controls, rests
-//! on what the crates linking it call, so its impact statement names each of
-//! them with its version, and the gate fails once the lockfile adds or moves
-//! one, because the ruling then has to be proven again for it. A ruling that
-//! relies on a fixed release of a crate the broker uses names it as
+//! The gate holds every ignore to a ruling and to a reason, every ruling to an
+//! ignore, and every crate version a ruling names to one `Cargo.lock` holds. A
+//! ruling that a crate's code never runs, or runs only on input no adversary
+//! controls, rests on what the crates linking it call, so its reason names
+//! each of them with its version, and the gate fails once the lockfile adds or
+//! moves one, because the ruling then has to be proven again for it. A reason
+//! that relies on a fixed release of a crate the broker uses names it as
 //! `<name> <version> or later`. An ignore covers every version of the crate,
 //! so the gate fails once the lockfile holds no version that high, or one
-//! below it that no statement of the advisory rules on. Each statement
-//! names the broker image in every form scanners match every digest of it by,
-//! under the owner of the workspace's repository, and carries its own
-//! timestamp, so a later change elsewhere in the document leaves its date as
-//! it was.
+//! below it the ruling is not about.
 
 mod advisory_ignores;
 mod broker_image;
 mod disagreement;
 mod impact_text;
 mod locked_crates;
+mod rendering;
+mod rulings_file;
+mod source_repository;
 mod vex_document;
 
 use crate::{
     advisory_rulings::{
         advisory_ignores::advisory_ignores,
-        broker_image::{BrokerImage, ImageForm},
         disagreement::Disagreement,
         impact_text::{names_crate_version, version_floors},
         locked_crates::LockedCrates,
-        vex_document::{Justification, Statement, Status, VexDocument},
+        rendering::document_text,
+        rulings_file::{Ruling, read_rulings},
+        source_repository::SourceRepository,
     },
-    workspace_file::{read_toml_document, read_workspace_file},
+    generated_artifact::assert_checked_in,
+    workspace_file::read_toml_document,
 };
-use packageurl::PackageUrl;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-    ptr,
-    str::FromStr,
-};
-use strum::IntoEnumIterator;
+use std::{collections::BTreeMap, fs, path::Path};
 
 /// The OpenVEX document the release attests to the broker image, relative to
 /// the workspace root.
 const VEX_DOCUMENT: &str = ".vex/andromeda.openvex.json";
+
+/// The rulings file, relative to the workspace root.
+const RULINGS: &str = ".vex/rulings.toml";
 
 /// The cargo-deny configuration, relative to the workspace root.
 const DENY_CONFIGURATION: &str = "deny.toml";
@@ -71,240 +63,114 @@ const LOCKFILE: &str = "Cargo.lock";
 /// the broker image is published under, relative to the workspace root.
 const ROOT_MANIFEST: &str = "Cargo.toml";
 
-/// The package URL type of a crate.
-const CRATE_TYPE: &str = "cargo";
-
-/// Assert that the broker image's VEX document states every advisory ruling of
-/// `deny.toml`, once under each identifier of the advisory, for crate versions
-/// `Cargo.lock` holds.
+/// Assert that the rulings agree with `deny.toml` and `Cargo.lock`, and that
+/// the checked-in VEX document is the one generated from them, or write it
+/// when regenerating.
 ///
 /// # Panics
 ///
-/// Panics when an ignore has no statement, when a statement disagrees with
-/// `deny.toml`, `Cargo.lock` or the other statements of its advisory, when a
-/// product or crate it names is not spelt as a scanner matches it, when the
-/// root manifest names no GitHub repository, or when one of the four files
-/// cannot be read or parsed.
-pub fn assert_vex_statements_repeat_advisory_rulings(workspace_root: &str) {
+/// Panics when a ruling or an ignore disagrees, when the checked-in document
+/// differs from the generated one, when the root manifest names no GitHub
+/// repository, or when one of the files cannot be read or parsed.
+pub fn assert_vex_document_is_generated_from_advisory_rulings(workspace_root: &str) {
     let root = Path::new(workspace_root);
     let mut violations = Vec::new();
     let ignores = read_toml_document(root, DENY_CONFIGURATION, &mut violations).map(|document| advisory_ignores(&document));
+    let rulings = read_toml_document(root, RULINGS, &mut violations).map(|document| read_rulings(&document, RULINGS, &mut violations));
     let locked = read_toml_document(root, LOCKFILE, &mut violations).map(|document| LockedCrates::from_document(&document));
-    let image = read_broker_image(root, &mut violations);
-    let document = read_vex_document(root, &mut violations);
-    if let (Some(ignores), Some(locked), Some(image), Some(document)) = (ignores, locked, image, document) {
-        violations.extend(disagreements(&document, &ignores, &locked, &image).iter().map(ToString::to_string));
+    let source = read_source_repository(root, &mut violations);
+    let (Some(ignores), Some(rulings), Some(locked), Some(source)) = (ignores, rulings, locked, source) else {
+        assert_agreement(&violations);
+        return;
+    };
+    violations.extend(disagreements(&ignores, &rulings, &locked).iter().map(ToString::to_string));
+    assert_agreement(&violations);
+    let checked_in = fs::read_to_string(root.join(VEX_DOCUMENT)).ok();
+    let generated = document_text(&rulings, &ignores, &source, VEX_DOCUMENT, checked_in.as_deref());
+    assert!(generated.is_ok(), "{VEX_DOCUMENT} cannot be generated: {generated:?}");
+    if let Ok(generated) = generated {
+        assert_checked_in(workspace_root, VEX_DOCUMENT, &generated);
     }
+}
+
+/// Assert that nothing disagrees.
+fn assert_agreement(violations: &[String]) {
     assert!(
         violations.is_empty(),
-        "VEX statements that do not repeat an advisory ruling:\n{}",
+        "the advisory rulings do not agree with deny.toml or Cargo.lock:\n{}",
         violations.join("\n")
     );
 }
 
-/// The broker image the root manifest's repository owner publishes, or `None`
-/// with the reason recorded in `violations`.
-fn read_broker_image(root: &Path, violations: &mut Vec<String>) -> Option<BrokerImage> {
+/// The repository the root manifest names, or `None` with the reason recorded
+/// in `violations`.
+fn read_source_repository(root: &Path, violations: &mut Vec<String>) -> Option<SourceRepository> {
     let manifest = read_toml_document(root, ROOT_MANIFEST, violations)?;
-    let image = BrokerImage::from_manifest(&manifest);
-    if image.is_none() {
+    let source = SourceRepository::from_manifest(&manifest);
+    if source.is_none() {
         violations.push(format!(
             "{ROOT_MANIFEST} declares no GitHub repository in [workspace.package], whose owner the broker image is published under"
         ));
     }
-    image
+    source
 }
 
-/// The VEX document, or `None` with the reason recorded in `violations`.
-fn read_vex_document(root: &Path, violations: &mut Vec<String>) -> Option<VexDocument> {
-    let text = read_workspace_file(root, VEX_DOCUMENT, violations)?;
-    match serde_json::from_str(&text) {
-        Ok(document) => Some(document),
-        Err(error) => {
-            violations.push(format!("{VEX_DOCUMENT} does not parse as an OpenVEX document: {error}"));
-            None
-        }
-    }
-}
-
-/// Every way a statement of `document` disagrees with the advisories `ignores`
-/// records, the crates `locked` holds, the broker `image` or the other
-/// statements of its advisory, in statement order, followed by every ignore no
-/// statement names.
-fn disagreements<'a>(
-    document: &'a VexDocument,
-    ignores: &'a BTreeMap<String, Option<String>>,
-    locked: &'a LockedCrates,
-    image: &'a BrokerImage,
-) -> Vec<Disagreement<'a>> {
-    let named = first_statement_by_name(document);
-    let stated = document.statements.iter().flat_map(|statement| {
-        let advisory = statement.vulnerability.name.as_str();
-        let repeated = named
-            .get(advisory)
-            .is_some_and(|first| !ptr::eq(*first, statement))
-            .then_some(Disagreement::Repeated { advisory });
-        repeated
+/// Every way the advisories `ignores` records, the `rulings` and the crates
+/// `locked` holds disagree: ignores first, then rulings, each in advisory
+/// order, then every identifier named more than once.
+fn disagreements<'a>(ignores: &'a BTreeMap<String, Option<String>>, rulings: &'a BTreeMap<String, Ruling>, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+    let of_ignores = ignores.iter().flat_map(|(advisory, reason)| {
+        let unruled = (!rulings.contains_key(advisory)).then_some(Disagreement::IgnoreWithoutRuling { advisory });
+        let unreasoned = reason.is_none().then_some(Disagreement::IgnoredWithoutReason { advisory });
+        unruled.into_iter().chain(unreasoned)
+    });
+    let of_rulings = rulings.iter().flat_map(|(advisory, ruling)| {
+        let unignored = (!ignores.contains_key(advisory)).then_some(Disagreement::RulingNotIgnored { advisory });
+        let reason = ignores.get(advisory).and_then(Option::as_deref);
+        unignored
             .into_iter()
-            .chain(ruling_disagreements(statement, ignores))
-            .chain(alias_disagreements(statement, &named))
-            .chain(product_disagreements(statement, image))
-            .chain(crate_disagreements(statement, locked))
-            .chain(floor_disagreements(statement, locked))
+            .chain(crate_disagreements(advisory, ruling, reason, locked))
+            .chain(reason.into_iter().flat_map(|reason| floor_disagreements(advisory, ruling, reason, locked)))
     });
-    let unstated = ignores
-        .keys()
-        .filter(|ignored| {
-            !document
-                .statements
-                .iter()
-                .any(|statement| statement.vulnerability.identifiers().contains(ignored.as_str()))
-        })
-        .map(|ignored| Disagreement::IgnoreWithoutStatement { advisory: ignored });
-    stated.chain(unstated).collect()
+    of_ignores.chain(of_rulings).chain(repeated_identifiers(rulings)).collect()
 }
 
-/// The first statement of `document` named by each identifier.
-fn first_statement_by_name(document: &VexDocument) -> BTreeMap<&str, &Statement> {
-    document.statements.iter().fold(BTreeMap::new(), |mut named, statement| {
-        named.entry(statement.vulnerability.name.as_str()).or_insert(statement);
-        named
-    })
-}
-
-/// How `statement` disagrees with the ruling `ignores` records for the first
-/// of its identifiers, in sorted order, that `deny.toml` ignores.
-fn ruling_disagreements<'a>(statement: &'a Statement, ignores: &'a BTreeMap<String, Option<String>>) -> Vec<Disagreement<'a>> {
-    let advisory = statement.vulnerability.name.as_str();
-    let ignore = match statement
-        .vulnerability
-        .identifiers()
-        .into_iter()
-        .find_map(|identifier| ignores.get_key_value(identifier))
-    {
-        None => Some(Disagreement::NotIgnored { advisory }),
-        Some((identifier, None)) => Some(Disagreement::IgnoredWithoutReason { advisory, ignored: identifier }),
-        Some((identifier, Some(reason))) => {
-            (statement.impact.as_deref() != Some(reason.as_str())).then_some(Disagreement::ImpactDiffers { advisory, ignored: identifier })
-        }
-    };
-    let status = (statement.status != Status::NotAffected).then_some(Disagreement::NotNotAffected {
-        advisory,
-        status: statement.status,
-    });
-    let justification = statement.justification.is_none().then_some(Disagreement::Unjustified { advisory });
-    let undated = statement.timestamp.is_none().then_some(Disagreement::Undated { advisory });
-    [ignore, status, justification, undated].into_iter().flatten().collect()
-}
-
-/// How the statements the aliases of `statement` name, among the first
-/// statement of each name in `named`, disagree with it: an alias names no
-/// statement, or its statement lists other identifiers, gives another
-/// justification or names other crates.
-fn alias_disagreements<'a>(statement: &'a Statement, named: &BTreeMap<&str, &'a Statement>) -> Vec<Disagreement<'a>> {
-    let advisory = statement.vulnerability.name.as_str();
-    let identifiers = statement.vulnerability.identifiers();
-    statement
-        .vulnerability
-        .aliases
+/// How the crate versions `ruling` is about disagree with the crates `locked`
+/// holds: the lockfile does not hold one, or, for a ruling that rests on what
+/// the linking crates call, a crate linking it goes unnamed in `reason`.
+fn crate_disagreements<'a>(advisory: &'a str, ruling: &'a Ruling, reason: Option<&'a str>, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+    let callers_reason = reason.filter(|_| ruling.justification.rests_on_callers());
+    ruling
+        .crates
         .iter()
-        .filter_map(|alias| {
-            let Some(aliased) = named.get(alias.as_str()) else {
-                return Some(Disagreement::AliasWithoutStatement { advisory, alias });
-            };
-            if aliased.vulnerability.identifiers() != identifiers {
-                Some(Disagreement::AliasesDiffer { advisory, alias })
-            } else if aliased.justification != statement.justification || aliased.subcomponents() != statement.subcomponents() {
-                Some(Disagreement::AliasRulesOtherwise { advisory, alias })
-            } else {
-                None
+        .flat_map(|crate_version| {
+            let (name, version) = (crate_version.name.as_str(), crate_version.version.as_str());
+            if !locked.holds(name, version) {
+                return vec![Disagreement::NotLocked { advisory, name, version }];
             }
+            let Some(reason) = callers_reason else {
+                return Vec::new();
+            };
+            locked
+                .dependents(name, version)
+                .filter(|dependent| !names_crate_version(reason, &dependent.name, &dependent.version))
+                .map(|dependent| Disagreement::DependentUnnamed {
+                    advisory,
+                    name,
+                    version,
+                    dependent: &dependent.name,
+                    dependent_version: &dependent.version,
+                })
+                .collect()
         })
         .collect()
 }
 
-/// How the products of `statement` disagree with the broker `image`: a product
-/// is no form of the image or names no crate inside it, or a form of the image
-/// is named by no product.
-fn product_disagreements<'a>(statement: &'a Statement, image: &'a BrokerImage) -> Vec<Disagreement<'a>> {
-    let advisory = statement.vulnerability.name.as_str();
-    if statement.products.is_empty() {
-        return vec![Disagreement::NoProduct { advisory }];
-    }
-    let forms: BTreeSet<ImageForm> = statement.products.iter().filter_map(|product| image.form_named_by(&product.id)).collect();
-    let foreign = statement
-        .products
-        .iter()
-        .filter(|product| image.form_named_by(&product.id).is_none())
-        .map(|product| Disagreement::ProductNotImage {
-            advisory,
-            product: &product.id,
-            oci: image.purl(ImageForm::Oci),
-            docker: image.purl(ImageForm::Docker),
-        });
-    let missing = ImageForm::iter()
-        .filter(|form| !forms.contains(form))
-        .map(|form| Disagreement::ImageFormMissing {
-            advisory,
-            form: image.purl(form),
-        });
-    let empty = statement
-        .products
-        .iter()
-        .filter(|product| product.subcomponents.is_empty())
-        .map(|product| Disagreement::NoSubcomponent {
-            advisory,
-            product: &product.id,
-        });
-    foreign.chain(missing).chain(empty).collect()
-}
-
-/// How the crates `statement` names inside its products, each once, disagree
-/// with the crates `locked` holds.
-fn crate_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
-    statement
-        .subcomponents()
-        .into_iter()
-        .flat_map(|subcomponent| subcomponent_disagreements(statement, subcomponent, locked))
-        .collect()
-}
-
-/// How the crate version `subcomponent` names disagrees with the crates
-/// `locked` holds: it is no crate version, the lockfile does not hold it, or,
-/// for a ruling that rests on what the linking crates call, a crate linking it
-/// goes unnamed in the impact statement of `statement`.
-fn subcomponent_disagreements<'a>(statement: &'a Statement, subcomponent: &'a str, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
-    let advisory = statement.vulnerability.name.as_str();
-    let purl = PackageUrl::from_str(subcomponent).ok().filter(|purl| purl.ty() == CRATE_TYPE);
-    let Some((name, version)) = purl.as_ref().and_then(|purl| Some((purl.name(), purl.version()?))) else {
-        return vec![Disagreement::SubcomponentNotCrate { advisory, subcomponent }];
-    };
-    if !locked.holds(name, version) {
-        return vec![Disagreement::NotLocked { advisory, subcomponent }];
-    }
-    if !statement.justification.is_some_and(Justification::rests_on_callers) {
-        return Vec::new();
-    }
-    let impact = statement.impact.as_deref().unwrap_or_default();
-    locked
-        .dependents(name, version)
-        .filter(|dependent| !names_crate_version(impact, &dependent.name, &dependent.version))
-        .map(|dependent| Disagreement::DependentUnnamed {
-            advisory,
-            subcomponent,
-            dependent: &dependent.name,
-            version: &dependent.version,
-        })
-        .collect()
-}
-
-/// How the crate versions `locked` holds disagree with each version floor the
-/// impact statement of `statement` relies on: no locked version of the crate
-/// reaches the floor, or one below it is no crate version the statement rules
-/// on.
-fn floor_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
-    let advisory = statement.vulnerability.name.as_str();
-    version_floors(statement.impact.as_deref().unwrap_or_default())
+/// How the crate versions `locked` holds disagree with each version floor
+/// `reason` relies on: no locked version of the crate reaches the floor, or
+/// one below it is no crate version `ruling` is about.
+fn floor_disagreements<'a>(advisory: &'a str, ruling: &'a Ruling, reason: &'a str, locked: &'a LockedCrates) -> Vec<Disagreement<'a>> {
+    version_floors(reason)
         .into_iter()
         .flat_map(|floor| {
             let unreached = (!locked.versions(floor.name).any(|version| floor.admits(version))).then_some(Disagreement::FloorNotLocked {
@@ -314,7 +180,13 @@ fn floor_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates) -
             });
             let unruled = locked
                 .versions(floor.name)
-                .filter(|version| !floor.admits(version) && !rules_on(statement, floor.name, version))
+                .filter(|version| {
+                    !floor.admits(version)
+                        && !ruling
+                            .crates
+                            .iter()
+                            .any(|crate_version| crate_version.name == floor.name && crate_version.version == *version)
+                })
                 .map(|version| Disagreement::BelowFloor {
                     advisory,
                     name: floor.name,
@@ -327,12 +199,21 @@ fn floor_disagreements<'a>(statement: &'a Statement, locked: &'a LockedCrates) -
         .collect()
 }
 
-/// Whether `statement` names the crate `name` at `version` inside any of its
-/// products.
-fn rules_on(statement: &Statement, name: &str, version: &str) -> bool {
-    statement.subcomponents().into_iter().any(|subcomponent| {
-        PackageUrl::from_str(subcomponent).is_ok_and(|purl| purl.ty() == CRATE_TYPE && purl.name() == name && purl.version() == Some(version))
-    })
+/// Every identifier more than one ruling, or one ruling more than once, names,
+/// in sorted order.
+fn repeated_identifiers(rulings: &BTreeMap<String, Ruling>) -> Vec<Disagreement<'_>> {
+    let counts = rulings
+        .values()
+        .flat_map(|ruling| &ruling.identifiers)
+        .fold(BTreeMap::<&str, usize>::new(), |mut counts, identifier| {
+            *counts.entry(identifier.as_str()).or_default() += 1;
+            counts
+        });
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(identifier, _)| Disagreement::IdentifierRepeated { identifier })
+        .collect()
 }
 
 #[cfg(test)]

@@ -70,9 +70,9 @@ RUSTSEC-2024-0370, RUSTSEC-2026-0542 and RUSTSEC-2026-0543 report that proc-macr
 
 ## Redoing a proof
 
-When the gate reports that a crate linking an affected version isn't named in a statement, the ruling hasn't been proven for that crate yet.
+When the gate reports that a crate linking an affected version isn't named in a reason, the ruling hasn't been proven for that crate yet.
 
 1. Run the `cargo tree -i` command above for both targets with the affected crate and version, and add `-e features` to see which feature pulls it in.
 2. Search the new dependent's source, under the cargo registry, for the affected crate's library name. Note every function it calls and every value of the crate's types it makes. Calls into the code an advisory names mean the ruling doesn't hold, and the advisory has to be fixed rather than ignored.
 3. Check that the broker's own TLS paths above still run on a fixed version.
-4. Name the crate and its version in the ignore's reason in `deny.toml`, and copy the reason word for word into the impact statement of each of the advisory's statements. Set the `timestamp` of each of those statements and the document's `last_updated`, and raise the document's `version`. Update this page.
+4. Name the crate and its version in the ignore's reason in `deny.toml`, regenerate the VEX document as [Dependencies](contributing/dependencies.md#ignoring-an-advisory) describes, and update this page.

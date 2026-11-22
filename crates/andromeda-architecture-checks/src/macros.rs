@@ -128,10 +128,10 @@ macro_rules! workspace_architecture {
                 $crate::licence_policy::assert_cargo_about_accepts_the_licences_cargo_deny_allows(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
-            /// Every VEX statement repeats an advisory ruling of `deny.toml` for a crate version the lockfile holds.
+            /// The VEX document is the one generated from the advisory rulings, which agree with `deny.toml` and the lockfile.
             #[test]
-            fn vex_statements_repeat_the_advisory_rulings() {
-                $crate::advisory_rulings::assert_vex_statements_repeat_advisory_rulings(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            fn the_vex_document_is_generated_from_the_advisory_rulings() {
+                $crate::advisory_rulings::assert_vex_document_is_generated_from_advisory_rulings(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
             /// Every checked-in snapshot is taken by a test of its crate.
