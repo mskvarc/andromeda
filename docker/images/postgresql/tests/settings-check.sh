@@ -167,7 +167,7 @@ budget_warning='warning: memory ceilings'
 # The values below are what this tuner version writes, and the entrypoint derives
 # its own settings from them, so another version fails the check.
 tuner_version="$(docker run --rm --entrypoint timescaledb-tune "${run_args[@]}" "$image" --version | awk '{ print $2 }')"
-expect 'timescaledb-tune version' "$tuner_version" 0.19.0
+expect 'timescaledb-tune version' "$tuner_version" 0.19.1
 
 # The tag names the base image's PostgreSQL, which PG_VERSION records.
 expect 'the server is the base image'"'"'s PostgreSQL' \
@@ -221,13 +221,13 @@ expect 'no TimescaleDB scheduler runs in a database holding the extension' \
 	"$(sql limits-2g "SELECT count(*) FROM pg_stat_activity WHERE backend_type LIKE 'TimescaleDB%'")" 0
 expect 'the TimescaleDB launcher stops at start' \
 	"$(logs_mention limits-2g 'TimescaleDB background worker is set to 0')" yes
-# dpkg writes the Toolkit's version as 1:1.27.0~debian13: an epoch, then the
+# dpkg writes the Toolkit's version as 1:1.28.0~debian13: an epoch, then the
 # upstream version, then the distribution suffix.
 toolkit_version="$(docker exec "$prefix-limits-2g" dpkg-query -W -f '${Version}' timescaledb-toolkit-postgresql-18 2> /dev/null || :)"
 toolkit_version="${toolkit_version#*:}"
 toolkit_version="${toolkit_version%%~*}"
 if [ "$license" = timescale ]; then
-	expect 'TimescaleDB Toolkit version' "$toolkit_version" 1.27.0
+	expect 'TimescaleDB Toolkit version' "$toolkit_version" 1.28.0
 else
 	expect 'the apache edition ships no TimescaleDB Toolkit' "$toolkit_version" ''
 fi
