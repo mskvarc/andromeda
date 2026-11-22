@@ -1,5 +1,5 @@
 name: SBOM attestation
-description: Generates an SPDX and a CycloneDX SBOM of each platform image a published image index points at, attests each to its platform image, pushing the attestations to the registry, and uploads the CycloneDX SBOMs as the workflow artifact cyclonedx-sboms for the release to attach. The job checks out the commit, logs in to the registry, sets up buildx and holds attestations, id-token and packages write permission.
+description: Generates an SPDX and a CycloneDX SBOM of each platform image a published image index points at, and attests each to its platform image, pushing the attestations to the registry. The job checks out the commit, logs in to the registry, sets up buildx and holds attestations, id-token and packages write permission.
 
 inputs:
   image:
@@ -8,6 +8,11 @@ inputs:
   digest:
     description: The digest of the image's index.
     required: true
+
+outputs:
+  directory:
+    description: The directory holding the SBOMs, as <name>-linux-<architecture>.spdx.json and <name>-linux-<architecture>.cdx.json, where <name> is the last segment of the image's repository, such as andromeda.
+    value: ${{ steps.sboms.outputs.directory }}
 
 runs:
   using: composite
@@ -23,6 +28,25 @@ runs:
       with:
         syft-version: v1.57.2
 
+    # Syft names an SBOM's subject after the reference it scans, digest included. The last segment of the repository
+    # names it the same in every SBOM of the image, whatever registry and owner publish it.
+    - name: Name the SBOMs
+      id: sboms
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        name="${IMAGE##*/}"
+        directory="${RUNNER_TEMP}/sboms"
+        mkdir -p "$directory"
+        {
+          echo "name=${name}"
+          echo "directory=${directory}"
+          echo "amd64=${directory}/${name}-linux-amd64"
+          echo "arm64=${directory}/${name}-linux-arm64"
+        } >> "$GITHUB_OUTPUT"
+
     # Pulled from the registry by its own digest, a platform image is scanned as it is, whatever the runner's
     # platform. One scan writes both formats, since some SBOM consumers read only CycloneDX. CycloneDX is held at 1.6,
     # so a Syft upgrade, whose default is 1.7, hands no consumer a version its older releases cannot import.
@@ -32,10 +56,10 @@ runs:
         SYFT: ${{ steps.syft.outputs.cmd }}
         SYFT_CHECK_FOR_APP_UPDATE: "false"
         SOURCE: registry:${{ inputs.image }}@${{ steps.platforms.outputs.amd64 }}
-        SBOM: ${{ runner.temp }}/sboms/andromeda-linux-amd64
+        NAME: ${{ steps.sboms.outputs.name }}
+        SBOM: ${{ steps.sboms.outputs.amd64 }}
       run: |
-        mkdir -p "$(dirname "$SBOM")"
-        "$SYFT" scan "$SOURCE" --source-name andromeda -o "spdx-json=${SBOM}.spdx.json" -o "cyclonedx-json@1.6=${SBOM}.cdx.json"
+        "$SYFT" scan "$SOURCE" --source-name "$NAME" -o "spdx-json=${SBOM}.spdx.json" -o "cyclonedx-json@1.6=${SBOM}.cdx.json"
 
     - name: Generate the linux/arm64 SBOMs
       shell: bash
@@ -43,10 +67,10 @@ runs:
         SYFT: ${{ steps.syft.outputs.cmd }}
         SYFT_CHECK_FOR_APP_UPDATE: "false"
         SOURCE: registry:${{ inputs.image }}@${{ steps.platforms.outputs.arm64 }}
-        SBOM: ${{ runner.temp }}/sboms/andromeda-linux-arm64
+        NAME: ${{ steps.sboms.outputs.name }}
+        SBOM: ${{ steps.sboms.outputs.arm64 }}
       run: |
-        mkdir -p "$(dirname "$SBOM")"
-        "$SYFT" scan "$SOURCE" --source-name andromeda -o "spdx-json=${SBOM}.spdx.json" -o "cyclonedx-json@1.6=${SBOM}.cdx.json"
+        "$SYFT" scan "$SOURCE" --source-name "$NAME" -o "spdx-json=${SBOM}.spdx.json" -o "cyclonedx-json@1.6=${SBOM}.cdx.json"
 
     # An SBOM describes one platform image, so it is attested to that image alone. A lookup names the platform image,
     # by its digest or through a tool's platform option, and finds that image's SBOMs and no other's.
@@ -55,7 +79,7 @@ runs:
       with:
         subject-name: ${{ inputs.image }}
         subject-digest: ${{ steps.platforms.outputs.amd64 }}
-        sbom-path: ${{ runner.temp }}/sboms/andromeda-linux-amd64.spdx.json
+        sbom-path: ${{ steps.sboms.outputs.amd64 }}.spdx.json
         push-to-registry: true
 
     - name: Attest the linux/amd64 CycloneDX SBOM
@@ -63,7 +87,7 @@ runs:
       with:
         subject-name: ${{ inputs.image }}
         subject-digest: ${{ steps.platforms.outputs.amd64 }}
-        sbom-path: ${{ runner.temp }}/sboms/andromeda-linux-amd64.cdx.json
+        sbom-path: ${{ steps.sboms.outputs.amd64 }}.cdx.json
         push-to-registry: true
 
     - name: Attest the linux/arm64 SPDX SBOM
@@ -71,7 +95,7 @@ runs:
       with:
         subject-name: ${{ inputs.image }}
         subject-digest: ${{ steps.platforms.outputs.arm64 }}
-        sbom-path: ${{ runner.temp }}/sboms/andromeda-linux-arm64.spdx.json
+        sbom-path: ${{ steps.sboms.outputs.arm64 }}.spdx.json
         push-to-registry: true
 
     - name: Attest the linux/arm64 CycloneDX SBOM
@@ -79,16 +103,5 @@ runs:
       with:
         subject-name: ${{ inputs.image }}
         subject-digest: ${{ steps.platforms.outputs.arm64 }}
-        sbom-path: ${{ runner.temp }}/sboms/andromeda-linux-arm64.cdx.json
+        sbom-path: ${{ steps.sboms.outputs.arm64 }}.cdx.json
         push-to-registry: true
-
-    # The release attaches the CycloneDX SBOMs for consumers that fetch nothing from a registry, and needs them only
-    # until it is published.
-    - name: Hand the CycloneDX SBOMs to the release
-      uses: actions/upload-artifact@v7
-      with:
-        name: cyclonedx-sboms
-        path: ${{ runner.temp }}/sboms/*.cdx.json
-        if-no-files-found: error
-        retention-days: 1
-        overwrite: true

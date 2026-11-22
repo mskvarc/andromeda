@@ -191,11 +191,24 @@ jobs:
           push-to-registry: true
 
       - name: Attest SBOMs
+        id: sboms
         if: ${{ github.event.repository.visibility == 'public' }}
         uses: ./.github/actions/sbom-attestation
         with:
           image: ${{ env.IMAGE }}
           digest: ${{ steps.digest.outputs.digest }}
+
+      # The release attaches the CycloneDX SBOMs for consumers that fetch nothing from a registry, and needs them only
+      # until it is published.
+      - name: Hand the CycloneDX SBOMs to the release
+        if: ${{ github.event.repository.visibility == 'public' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cyclonedx-sboms
+          path: ${{ steps.sboms.outputs.directory }}/*.cdx.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
       - name: Attest VEX
         if: ${{ github.event.repository.visibility == 'public' }}
