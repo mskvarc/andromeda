@@ -16,10 +16,10 @@ The SQL tooling calls two external programs, `pg_format` and Squawk. On macOS, i
 
 ```sh
 brew install pgformatter node
-npm install -g squawk-cli@2.70.0
+npm install -g squawk-cli@2.73.0
 ```
 
-CI runs pg_format 5.11 and Squawk 2.70.0. Another pgFormatter release can lay the migrations out differently, and `andromeda-sql` refuses any Squawk release other than 2.70.0. Building `andromeda-sql` also compiles the PostgreSQL parser, which needs a C compiler and `libclang`. On macOS, the Xcode Command Line Tools provide both. [SQL tooling](../database/sql-tooling.md) covers installing the tools on Linux.
+CI runs pg_format 5.11 and Squawk 2.73.0. Another pgFormatter release can lay the migrations out differently, and `andromeda-sql` refuses any Squawk release other than 2.73.0. Building `andromeda-sql` also compiles the PostgreSQL parser, which needs a C compiler and `libclang`. On macOS, the Xcode Command Line Tools provide both. [SQL tooling](../database/sql-tooling.md) covers installing the tools on Linux.
 
 CI also runs the tests with cargo-nextest, and checks TOML formatting with taplo, unused dependencies with cargo-machete, advisories and licences with cargo-deny, and shell scripts with shellcheck. Install cargo-nextest, taplo, cargo-deny and shellcheck with Homebrew. Homebrew has no cargo-machete formula, so install it with Cargo.
 

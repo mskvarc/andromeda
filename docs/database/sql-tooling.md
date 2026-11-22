@@ -71,13 +71,13 @@ The tool uses the first `pg_format` on `PATH`. To pick a different one, set `PG_
 
 ## Installing Squawk
 
-The tool accepts Squawk 2.70.0 and no other release, because a rule added or changed in another release could pass or fail the migrations differently from CI. Homebrew has no Squawk formula, so on macOS install it with npm, then check that `squawk --version` prints `squawk 2.70.0`.
+The tool accepts Squawk 2.73.0 and no other release, because a rule added or changed in another release could pass or fail the migrations differently from CI. Homebrew has no Squawk formula, so on macOS install it with npm, then check that `squawk --version` prints `squawk 2.73.0`.
 
 ```sh
-npm install -g squawk-cli@2.70.0
+npm install -g squawk-cli@2.73.0
 ```
 
-On Linux, download the `squawk-linux-x64` or `squawk-linux-arm64` binary from the Squawk 2.70.0 release on GitHub and put it on `PATH`.
+On Linux, download the `squawk-linux-x64` or `squawk-linux-arm64` binary from the Squawk 2.73.0 release on GitHub and put it on `PATH`.
 
 The tool uses the first `squawk` on `PATH`. To pick a different one, set `SQUAWK` to its path or to a name on `PATH`.
 

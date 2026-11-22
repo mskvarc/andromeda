@@ -23,7 +23,7 @@ use std::{
 use url::Url;
 
 /// The Squawk release the rules are pinned to.
-pub const PINNED_VERSION: Version = Version::new(2, 70, 0);
+pub const PINNED_VERSION: Version = Version::new(2, 73, 0);
 
 /// The executable looked up on `PATH` when `SQUAWK` is not set.
 const EXECUTABLE_NAME: &str = "squawk";
@@ -279,14 +279,14 @@ mod tests {
         let resolved = Squawk::resolve(&lookup, SquawkConfiguration::at(repository_root())?);
         let message = resolved.as_ref().err().map_or_default(ToString::to_string);
         assert!(matches!(resolved, Err(SquawkError::WrongVersion { .. })), "{resolved:?}");
-        assert!(message.ends_with("is Squawk 2.69.1; the rules are pinned to Squawk 2.70.0"), "{message}");
+        assert!(message.ends_with("is Squawk 2.69.1; the rules are pinned to Squawk 2.73.0"), "{message}");
         Ok(())
     }
 
     #[cfg(unix)]
     #[test]
     fn the_pinned_release_is_accepted() -> Result<(), SquawkError> {
-        let directory = fake_squawk("2.70.0").map_err(SquawkError::Spawn)?;
+        let directory = fake_squawk("2.73.0").map_err(SquawkError::Spawn)?;
         let lookup = ExecutableLookup::new(None, Some(directory.path().as_os_str().to_owned()), directory.path().to_path_buf());
         let resolved = Squawk::resolve(&lookup, SquawkConfiguration::at(repository_root())?);
         assert!(resolved.is_ok(), "{resolved:?}");
