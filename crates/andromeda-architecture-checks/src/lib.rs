@@ -38,6 +38,7 @@ pub mod sql;
 pub mod state_codec_boundary;
 pub mod string_typed_error;
 pub mod swallowed_row_decode;
+pub mod task_runtime_boundary;
 pub mod time_handling;
 pub mod toolchain_pin;
 pub mod type_erased_error;

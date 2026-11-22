@@ -194,6 +194,12 @@ macro_rules! workspace_architecture {
                 $crate::string_typed_error::assert_no_string_typed_errors(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Only the composition depends on the task runtime, which builds no executor, and no policy crate names a task type.
+            #[test]
+            fn tasks_run_on_the_handed_executor_under_the_composition() {
+                $crate::task_runtime_boundary::assert_task_runtime_boundary(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Time values are read and written by the lexicon's `time` module only.
             #[test]
             fn time_values_have_one_owner() {
