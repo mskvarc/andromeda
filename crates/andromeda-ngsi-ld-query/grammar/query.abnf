@@ -24,6 +24,16 @@
 ; is written quoted, and a bare last type holding two colons is refused as
 ; ambiguous.
 ;
+; The rule does not say where a `RegExp` ends, while `;`, `|` and `)` are both
+; query syntax and regular-expression syntax. The parser ends a bare `RegExp`
+; at the first `;` or `|` outside its groups and bracket expressions, or at a
+; `)` that closes none of its groups, so `name~=^Mer(c|z)edes$` is one term and
+; a top-level alternation is written grouped, as `name~=(^Merc|^BMW)`. The
+; JSON whitespace around a bare `RegExp` belongs to the expression. A `RegExp`
+; that opens with `"` is read as a quoted one, which ends at its closing quote
+; and keeps its backslashes as written; a literal leading quote is written
+; `["]`.
+;
 ; `unicodeLetter` and `unicodeNumber` are the Unicode letter and number classes
 ; of the clause 4.6.2 name grammar. `String`, `Number`, `URI`, `dateTime`,
 ; `date`, `time`, `true`, `false` and `RegExp` are the external productions the

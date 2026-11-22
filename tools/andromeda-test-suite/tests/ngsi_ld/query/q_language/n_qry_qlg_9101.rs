@@ -126,4 +126,9 @@ corpus_cases! {
     n_qry_qlg_9213_a_member_of_the_second_of_several_structured_values_is_no_target => "C-113",
     n_qry_qlg_9214_a_value_list_reads_a_member_of_a_single_structured_value_alone => "C-114",
     n_qry_qlg_9215_an_inequality_never_selects_several_structured_values => "C-115",
+    n_qry_qlg_9217_a_bare_pattern_selects_as_the_quoted_one => "C-116",
+    n_qry_qlg_9218_a_bare_negated_pattern_selects_as_the_quoted_one => "C-117",
+    n_qry_qlg_9219_a_bare_pattern_keeps_the_alternation_inside_its_group => "C-118",
+    n_qry_qlg_9220_a_bare_pattern_ends_at_the_parenthesis_closing_its_group_of_terms => "C-119",
+    n_qry_qlg_9221_a_bare_pattern_ends_at_the_disjunction_that_joins_the_next_term => "C-120",
 }

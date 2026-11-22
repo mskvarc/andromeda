@@ -1,6 +1,6 @@
-//! A name, a type or a pattern operand of a `q` filter: a quoted literal, a time value or a bare word.
+//! A name or a type of a `q` filter, written as a quoted literal, a time value or a bare word.
 //!
-//! The same lexical shape stands wherever clause 4.9 puts a name, an entity type or a `RegExp`, and the production that reads it validates it, so the shape is stated once here.
+//! The same lexical shape stands wherever clause 4.9 puts a name or an entity type, and the production that reads it validates it, so the shape is stated once here.
 
 use crate::{
     filter::{

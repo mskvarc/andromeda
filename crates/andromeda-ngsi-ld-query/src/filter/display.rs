@@ -13,7 +13,7 @@ use crate::{
         value_path::ValuePath,
     },
     name_stage::NameStage,
-    pattern::Pattern,
+    pattern::{Pattern, bare_operand::reads_back_bare},
 };
 use andromeda_json_literal::json_text::quoted;
 use std::fmt;
@@ -295,18 +295,24 @@ fn write_scalar(buffer: &mut String, scalar: &Scalar) {
     }
 }
 
-/// Write a `RegExp` operand between double quotes, as written.
+/// Write a `RegExp` operand bare, as clause 4.9 writes it, or between double quotes when the bare form would not read back as the same pattern.
 ///
 /// Clause 4.9 makes `RegExp` its own terminal rather than a `quotedStr`, and
-/// the parser reads the body verbatim, so
-/// escaping it here would change the pattern: `^\w+$` would become `^\\w+$`, a literal backslash followed by `w`s. The verbatim body is always safe to quote
-/// again: a quoted literal ends only at a `"` no backslash escapes, so
-/// every `"` the body holds is still escaped, and a body ending in an odd run of
-/// backslashes is no regular expression either engine compiles.
+/// the parser reads a quoted body verbatim, so escaping it here would change
+/// the pattern, `^\w+$` becoming `^\\w+$`, a literal backslash followed by
+/// `w`s. A pattern that does not read back bare (an empty one, one with
+/// whitespace at either end, or one holding a `;`, `|` or `)` a bare pattern
+/// would end at) came from a quoted operand, whose body ends only at a `"` no
+/// backslash escapes, so quoting it again keeps every `"` it holds escaped.
 fn write_pattern(buffer: &mut String, pattern: &Pattern) {
-    buffer.push('"');
-    buffer.push_str(pattern.as_str());
-    buffer.push('"');
+    let source = pattern.as_str();
+    if reads_back_bare(source) {
+        buffer.push_str(source);
+    } else {
+        buffer.push('"');
+        buffer.push_str(source);
+        buffer.push('"');
+    }
 }
 
 /// Whether `text` reads back, after `==`, as the one bare `URI` operand it is.
@@ -424,8 +430,8 @@ mod tests {
             "moment==12:00:00.500Z..13:00:00Z",
             "moment>=\"12:00:00Z\"",
             "moment==\"12:00:00Z\"..\"13:00:00Z\"",
-            "name~=\"^A.*\"",
-            "name!~=\"^A.*\"",
+            "name~=^A.*",
+            "name!~=^A.*",
             "speed",
         ];
         for shape in shapes {
@@ -513,7 +519,7 @@ mod tests {
             "\"https://example.com/rel\"{Building,Store:\"https://example.com/category\"}==\"x\"",
             "rel{Building,Store:\"https://example.com/category\"}==\"x\"",
             "a{b[c.d]}>=1",
-            "a{b{c}}~=\"^n\"",
+            "a{b{c}}~=^n",
             // A prefixed guard type is quoted so its own colon cannot be read as
             // the one that ends the guard.
             "rel{Building,\"ex:Store\":category}==\"x\"",
@@ -530,19 +536,46 @@ mod tests {
         }
     }
 
-    /// A pattern operand is written back as the client wrote it, backslashes
-    /// and escaped quotes included, because the parser reads it verbatim: a
-    /// stored Subscription's `q` is serialised and re-parsed, and doubling the
-    /// backslashes turned `\w` into a literal backslash followed by `w`.
+    /// A pattern operand is written back bare, as clause 4.9 writes a
+    /// `RegExp`, with its backslashes and escaped quotes as the client wrote
+    /// them, because the parser reads a pattern verbatim. A stored
+    /// Subscription's `q` is serialised and re-parsed, and a doubled backslash
+    /// would turn `\w` into a literal backslash followed by `w`.
     #[test]
-    fn a_pattern_operand_round_trips_with_its_backslashes_as_written() {
+    fn a_pattern_operand_round_trips_bare_with_its_backslashes_as_written() {
+        for (shape, written) in [
+            (r#"name~="^\w+$""#, r"name~=^\w+$"),
+            (r#"name~="^example\.com$""#, r"name~=^example\.com$"),
+            (r#"name!~="\d{4}-\d{2}""#, r"name!~=\d{4}-\d{2}"),
+            (r#"name~="a\"b""#, r#"name~=a\"b"#),
+            (r#"name~="back\\slash""#, r"name~=back\\slash"),
+            (r#"name~="[\s\-]""#, r"name~=[\s\-]"),
+            ("name~=^Mer(c|z)edes$;speed>50", "name~=^Mer(c|z)edes$;speed>50"),
+            ("(name~=^M ; speed>50)", "name~=^M;speed>50"),
+            ("name~=[;|)]x", "name~=[;|)]x"),
+            ("name~=Mercedes Benz", "name~=Mercedes Benz"),
+            ("name~=a\"b", "name~=a\"b"),
+        ] {
+            let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
+            let rendered = parsed.to_string();
+            pretty_assertions::assert_eq!(rendered, written, "serialisation of {shape}");
+            let reparsed = rendered
+                .parse::<Filter<Written>>()
+                .unwrap_or_else(|error| panic!("{rendered} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
+        }
+    }
+
+    /// A pattern the bare form would not read back as itself keeps its quotes.
+    #[test]
+    fn a_pattern_that_a_bare_operand_would_end_early_or_trim_is_written_quoted() {
         for shape in [
-            r#"name~="^\w+$""#,
-            r#"name~="^example\.com$""#,
-            r#"name!~="\d{4}-\d{2}""#,
-            r#"name~="a\"b""#,
-            r#"name~="back\\slash""#,
-            r#"name~="[\s\-]""#,
+            r#"name~="""#,
+            r#"name~="a|b""#,
+            r#"name~="a;b""#,
+            r#"name~=" a""#,
+            r#"name~="a ""#,
+            r#"name~="(?x)a #;b""#,
         ] {
             let parsed = shape.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
             let rendered = parsed.to_string();

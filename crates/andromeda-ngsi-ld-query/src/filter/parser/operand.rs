@@ -21,12 +21,12 @@ use crate::{
             expected,
             quoted_string::{decode_quoted_string, quoted_literal},
             time_value_extent::time_value_extent,
-            word::{Word, extent_while, name_extent, opens_bare_word, word},
+            word::{extent_while, name_extent, opens_bare_word},
         },
         quoting::Quoting,
         scalar::Scalar,
     },
-    pattern::Pattern,
+    pattern::{Pattern, bare_operand::bare_pattern_length},
     query_text::{grammar_fault::GrammarFault, whitespace::Whitespace},
 };
 use andromeda_ngsi_ld_number::JsonNumber;
@@ -210,13 +210,27 @@ pub(super) fn equality_value(input: &mut LocatingSlice<&str>) -> Result<Equality
     Ok(EqualityValue::ValueList(values))
 }
 
-/// Reads the operand of `~=` and `!~=`, which may be quoted or bare.
+/// Reads the operand of `~=` and `!~=`, a pattern written bare or in quotes.
 ///
-/// The operand is compiled here rather than at evaluation time, so a malformed regular expression is a rejected request instead of a filter that quietly matches nothing. Clause 4.9 `QueryTerm =/ Attribute patternOp RegExp` makes `RegExp` its own terminal, "a regular expression as mandated by IEEE 1003.2", not a `quotedStr`: its metacharacters include the backslash, so the body is the pattern as written, and resolving RFC 8259 escapes here would refuse `^example\.com$`.
+/// The operand is compiled here rather than at evaluation time, so a malformed regular expression is a rejected request instead of a filter that quietly matches nothing. Clause 4.9 `QueryTerm =/ Attribute patternOp RegExp` makes `RegExp` its own terminal, "a regular expression as mandated by IEEE 1003.2", with no quotes around it and no `quotedStr` escapes. A pattern that opens with `"` is a quoted one, which ends at its closing quote and keeps its body as written, because the backslash is one of its metacharacters and resolving RFC 8259 escapes would refuse `^example\.com$`. Any other pattern is bare and ends where [`bare_pattern_length`] says.
 pub(super) fn pattern_operand(input: &mut LocatingSlice<&str>) -> Result<Pattern, GrammarFault<FilterError>> {
-    expected(Expectation::PatternString, word)
-        .try_map(|word: Word<'_>| word.text.parse::<Pattern>().map_err(FilterError::from))
+    expected(Expectation::RegularExpression, pattern_text)
+        .try_map(|text: &str| text.parse::<Pattern>().map_err(FilterError::from))
         .parse_next(input)
+}
+
+/// Reads the text of a pattern operand, the body of a quoted one or the whole of a bare one.
+///
+/// Backtracks without consuming when a bare pattern holds no character, and refuses a quoted pattern without its closing quote.
+fn pattern_text<'i>(input: &mut LocatingSlice<&'i str>) -> Result<&'i str, GrammarFault<FilterError>> {
+    if input.peek_finish().starts_with('"') {
+        return quoted_literal(input).map(|literal| literal.body);
+    }
+    match bare_pattern_length(input.peek_finish()) {
+        Ok(0) => Err(ParserError::from_input(input)),
+        Ok(length) => Ok(input.next_slice(length)),
+        Err(error) => Err(GrammarFault::Refused(FilterError::from(error))),
+    }
 }
 
 #[cfg(test)]
@@ -461,29 +475,45 @@ mod tests {
 
     #[test]
     fn a_pattern_operand_is_quoted_or_bare_and_keeps_its_backslashes() {
-        let (result, rest) = read(r#" "^example\.com$";x"#, pattern_operand);
-        pretty_assertions::assert_eq!(result.expect("a quoted pattern").as_str(), r"^example\.com$");
-        pretty_assertions::assert_eq!(rest, ";x");
-        let (result, rest) = read("abc.d", pattern_operand);
-        pretty_assertions::assert_eq!(result.expect("a bare pattern").as_str(), "abc");
-        pretty_assertions::assert_eq!(rest, ".d");
+        for (text, pattern, rest) in [
+            (r#" "^example\.com$";x"#, r"^example\.com$", ";x"),
+            (r#""a|b;c")"#, "a|b;c", ")"),
+            (r"^example\.com$;x", r"^example\.com$", ";x"),
+            ("abc.d", "abc.d", ""),
+            ("^Mer(c|z)edes$|x", "^Mer(c|z)edes$", "|x"),
+            ("^M ;x", "^M", " ;x"),
+            ("1", "1", ""),
+            ("true", "true", ""),
+            (" -)", "-", ")"),
+            ("[\"]Merc[\"]", "[\"]Merc[\"]", ""),
+        ] {
+            let (result, unread) = read(text, pattern_operand);
+            pretty_assertions::assert_eq!(result.unwrap_or_else(|fault| panic!("{text}: {fault:?}")).as_str(), pattern, "{text}");
+            pretty_assertions::assert_eq!(unread, rest, "{text}");
+        }
     }
 
     #[test]
-    fn a_pattern_operand_that_is_no_word_is_refused_where_it_was_required() {
+    fn a_pattern_operand_that_holds_no_character_is_refused_where_it_was_required() {
         for (text, found, position) in [
-            ("1", Found::Character('1'), 0),
-            ("true", Found::Character('t'), 0),
-            (" -", Found::Character('-'), 1),
             ("", Found::EndOfInput, 0),
+            (" ;x", Found::Character(';'), 1),
+            ("|x", Found::Character('|'), 0),
+            (")", Found::Character(')'), 0),
         ] {
             let (result, _) = read(text, pattern_operand);
             let error = refusal(result);
             assert!(
-                matches!(error, FilterError::Expected { expected: Expectation::PatternString, found: refused, position: at } if refused == found && at == position),
+                matches!(error, FilterError::Expected { expected: Expectation::RegularExpression, found: refused, position: at } if refused == found && at == position),
                 "{text}: got {error:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_quoted_pattern_operand_without_its_closing_quote_is_refused() {
+        let (result, _) = read("\"Merc;speed>5", pattern_operand);
+        assert!(matches!(refusal(result), FilterError::UnterminatedString));
     }
 
     /// The equality operand of a filter holding one query term.

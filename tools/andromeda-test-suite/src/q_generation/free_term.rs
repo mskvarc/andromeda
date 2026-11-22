@@ -69,13 +69,18 @@ fn drawn_path() -> BoxedStrategy<String> {
     .boxed()
 }
 
+/// What a drawn pattern is written between: nothing, as clause 4.9 writes a `RegExp`, or the quotes a client may add.
+/// Every pattern of the pool reads back whole written bare.
+const PATTERN_QUOTES: [&str; 2] = ["", "\""];
+
 /// A Query Term over any name: an existence test, an equality, an ordering or a pattern.
 pub fn free_term() -> BoxedStrategy<DrawnQuery> {
     prop_oneof![
         1 => drawn_path(),
         6 => (drawn_path(), select(&["==", "!="][..]), equality_operand()).prop_map(|(path, op, operand)| format!("{path}{op}{operand}")),
         6 => (drawn_path(), select(&[">", ">=", "<", "<="][..]), ordering_operand()).prop_map(|(path, op, operand)| format!("{path}{op}{operand}")),
-        6 => (drawn_path(), select(&["~=", "!~="][..]), select(&PATTERNS[..])).prop_map(|(path, op, pattern)| format!("{path}{op}\"{pattern}\"")),
+        6 => (drawn_path(), select(&["~=", "!~="][..]), select(&PATTERNS[..]), select(&PATTERN_QUOTES[..]))
+            .prop_map(|(path, op, pattern, quote)| format!("{path}{op}{quote}{pattern}{quote}")),
     ]
     .prop_map(DrawnQuery::local)
     .boxed()

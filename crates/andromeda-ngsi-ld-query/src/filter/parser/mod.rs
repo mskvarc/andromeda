@@ -11,9 +11,10 @@
 //! because `q` is not the only parameter that derives from them:
 //! [`value_path`] holds the `ValuePath` axis clause 4.23.3 shares,
 //! [`attribute_path`] the `LinkedEntityRelation` hop, [`operand`] the operand
-//! literals, [`word`] the name, entity type and pattern operand,
+//! literals and the pattern operand, [`word`] the name and entity type,
 //! [`time_value_extent`] where a bare time value ends, and [`quoted_string`]
-//! the quoted literal with its RFC 8259 escapes.
+//! the quoted literal with its RFC 8259 escapes. Where a bare pattern ends is
+//! the pattern's own structure, which the `pattern` module reads.
 
 mod attribute_path;
 pub(in crate::filter) mod operand;
@@ -334,8 +335,8 @@ mod tests {
             ("a>true", Expectation::ComparableValue, Found::Character('t'), 2),
             ("a>= urn:x:y", Expectation::ComparableValue, Found::Character('u'), 4),
             ("a==urn:a.b..urn:c.d", Expectation::ComparableValue, Found::Character('u'), 3),
-            ("a~=1", Expectation::PatternString, Found::Character('1'), 3),
-            ("a!~=", Expectation::PatternString, Found::EndOfInput, 4),
+            ("a~=;b", Expectation::RegularExpression, Found::Character(';'), 3),
+            ("a!~=", Expectation::RegularExpression, Found::EndOfInput, 4),
             ("==1", Expectation::AttributeName, Found::Character('='), 0),
         ] {
             let (term, _) = read_term(text);
@@ -949,14 +950,14 @@ mod tests {
             ("a<1", ordering(OrderingOperator::Less)),
             ("a<=1", ordering(OrderingOperator::LessOrEqual)),
             (
-                r#"a~="x""#,
+                "a~=x",
                 QueryTerm::MatchPattern {
                     path: path(),
                     pattern: pattern(),
                 },
             ),
             (
-                r#"a!~="x""#,
+                "a!~=x",
                 QueryTerm::NotMatchPattern {
                     path: path(),
                     pattern: pattern(),
@@ -1201,13 +1202,60 @@ mod tests {
     }
 
     #[test]
-    fn a_dotted_word_after_an_ordering_or_pattern_operator_still_splits() {
+    fn a_dotted_word_after_an_ordering_operator_splits_and_a_bare_pattern_keeps_its_dots() {
         assert!(matches!("p>a.b".parse::<Filter<Written>>(), Err(FilterError::BareWord)));
-        let error = refusal_of("p~=a.b");
+        pretty_assertions::assert_eq!(patterns_of(&parsed("p~=a.b")), ["a.b"]);
+    }
+
+    /// The pattern of every pattern term of `filter`, in the order the filter holds them.
+    fn patterns_of(filter: &Filter<Written>) -> Vec<String> {
+        match filter {
+            Filter::And(parts) | Filter::Or(parts) => parts.iter().flat_map(patterns_of).collect(),
+            Filter::Term(QueryTerm::MatchPattern { pattern, .. } | QueryTerm::NotMatchPattern { pattern, .. }) => vec![pattern.as_str().to_owned()],
+            Filter::Term(QueryTerm::Exists(_) | QueryTerm::Equality { .. } | QueryTerm::Ordering { .. }) => Vec::new(),
+        }
+    }
+
+    /// Clause 4.9 writes `RegExp` without quotes, and a bare one ends at a `;` or `|` outside its groups and bracket expressions, or at a `)` that closes none of its groups.
+    #[test]
+    fn a_bare_pattern_ends_at_the_delimiter_that_joins_or_closes_its_term() {
+        for (q, patterns) in [
+            ("name~=^Merc", vec!["^Merc"]),
+            ("(name~=^M;speed>50)", vec!["^M"]),
+            ("(name~=^M ; speed>50)", vec!["^M"]),
+            ("name~=^Mer(c|z)edes$|brandName!~=BMW", vec!["^Mer(c|z)edes$", "BMW"]),
+            ("name~=(^Merc|^BMW)", vec!["(^Merc|^BMW)"]),
+            ("name~=[;|)]x;speed>50", vec!["[;|)]x"]),
+            ("name~=Mercedes Benz", vec!["Mercedes Benz"]),
+            ("name~=[\"]Merc[\"]", vec!["[\"]Merc[\"]"]),
+            ("name~=\"^Merc\"", vec!["^Merc"]),
+            ("name~=\"a|b\";speed>50", vec!["a|b"]),
+        ] {
+            pretty_assertions::assert_eq!(patterns_of(&parsed(q)), patterns, "{q}");
+        }
+        assert!(matches!(parsed("(name~=^M;speed>50)"), Filter::And(parts) if parts.len() == 2));
+        assert!(matches!(parsed("name~=^M|speed>50"), Filter::Or(parts) if parts.len() == 2));
+    }
+
+    #[test]
+    fn a_top_level_alternation_in_a_bare_pattern_reads_as_a_second_term() {
+        let error = refusal_of("name~=^Merc|^BMW");
         assert!(
-            matches!(error, FilterError::UnexpectedCharacter { character: '.', position: 4 }),
+            matches!(
+                error,
+                FilterError::Expected {
+                    expected: Expectation::AttributeName,
+                    found: Found::Character('^'),
+                    position: 12
+                }
+            ),
             "got {error:?}"
         );
+    }
+
+    #[test]
+    fn a_quoted_pattern_without_its_closing_quote_is_refused() {
+        assert!(matches!(refusal_of("name~=\"Merc;speed>5"), FilterError::UnterminatedString));
     }
 
     #[test]
