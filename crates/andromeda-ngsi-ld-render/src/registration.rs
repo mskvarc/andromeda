@@ -1,23 +1,20 @@
 //! Presentation logic for context source registration (CSR) responses.
 //!
-//! Applies, over a registration, the members of Table 6.8.3.2-1 that shape the
-//! representation rather than narrow the query: `sysAttrs` and the clause 4.15
-//! `lang` language negotiation. The clause 4.21 `pick` and `omit` projection is
-//! not applied: a registration is not an Entity, and clause 5.2.9 makes its
-//! `type`, `endpoint` and `information` mandatory, so the answer always carries
-//! the whole registration. The clause 4.5.16 `geometryProperty` selection is not
-//! applied either: a registration has no `GeoJSON` representation (clause 6.3.4).
+//! Applies, over a registration, the one member of Table 6.8.3.2-1 that shapes
+//! the representation rather than narrows the query: `sysAttrs`. The clause
+//! 4.21 `pick` and `omit` projection is not applied: a registration is not an
+//! Entity, and clause 5.2.9 makes its `type`, `endpoint` and `information`
+//! mandatory, so the answer always carries the whole registration. The clause
+//! 4.5.16 `geometryProperty` selection is not applied either: a registration has
+//! no `GeoJSON` representation (clause 6.3.4). Nor is the clause 4.15 `lang`
+//! filter: it converts the `LanguageProperty` Attributes of Entities, Table
+//! 5.2.9-1 defines no `LanguageProperty` member, and clause 5.10.2.5 answers
+//! with the registrations as clause 5.2.9 defines them, so a member a client
+//! registered in that shape is written as it was registered.
 
-use crate::{
-    error::{RenderError, RenderedShape},
-    language_negotiation::{NegotiatedProperty, negotiated_entry},
-};
-use andromeda_http_headers::language::LanguageFilter;
-use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_model::{
-    attribute::instance::{Attribute, AttributeValue},
-    registration::ContextSourceRegistration,
-};
+use crate::error::{RenderError, RenderedShape};
+use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde::{
     Serialize,
@@ -32,17 +29,6 @@ fn is_system_timestamp(key: &str) -> bool {
     key == "createdAt" || key == "modifiedAt"
 }
 
-/// Whether a written member is a language map the clause 4.15 `lang`
-/// negotiation applies to.
-fn is_language_shaped(member: JsonPiece<'_>) -> bool {
-    member.kind() == JsonKind::Object
-        && (member.member("languageMap").is_some()
-            || member
-                .member("type")
-                .and_then(JsonPiece::as_str)
-                .is_some_and(|named| named == "LanguageProperty"))
-}
-
 /// Renders a context source registration for an HTTP response.
 ///
 /// Strips the clause 4.8 system timestamps (`createdAt`, `modifiedAt`) unless
@@ -54,27 +40,8 @@ fn is_language_shaped(member: JsonPiece<'_>) -> bool {
 pub struct RegistrationRenderer<'a> {
     /// The registration to render.
     registration: &'a ContextSourceRegistration,
-    /// What the request leaves of the registration's members.
-    selection: MemberSelection<'a>,
-}
-
-/// What a request's `sysAttrs` and `lang` leave of the members of a
-/// registration.
-#[derive(Debug)]
-struct MemberSelection<'a> {
-    /// Whether the clause 4.8 system attributes survive.
+    /// Whether the clause 4.8 system timestamps survive.
     sys_attrs: SysAttrsInclusion,
-    /// The clause 4.15 `lang` preferences, when the request negotiated language.
-    language_filter: Option<&'a LanguageFilter>,
-}
-
-impl MemberSelection<'_> {
-    /// Whether the member `name` is part of the response.
-    ///
-    /// Clause 4.8: `sysAttrs` governs only the system timestamps.
-    fn keeps(&self, name: &str) -> bool {
-        self.sys_attrs == SysAttrsInclusion::Include || !is_system_timestamp(name)
-    }
 }
 
 impl<'a> RegistrationRenderer<'a> {
@@ -83,51 +50,50 @@ impl<'a> RegistrationRenderer<'a> {
     pub const fn new(registration: &'a ContextSourceRegistration) -> RegistrationRenderer<'a> {
         RegistrationRenderer {
             registration,
-            selection: MemberSelection {
-                sys_attrs: SysAttrsInclusion::Strip,
-                language_filter: None,
-            },
+            sys_attrs: SysAttrsInclusion::Strip,
         }
     }
 
     /// Set whether system attributes are included in the response.
     #[must_use]
     pub const fn with_sys_attrs(mut self, sys_attrs: SysAttrsInclusion) -> Self {
-        self.selection.sys_attrs = sys_attrs;
+        self.sys_attrs = sys_attrs;
         self
     }
 
-    /// Set the clause 4.15 `lang` preferences applied to language maps.
-    #[must_use]
-    pub const fn with_language_filter(mut self, language_filter: Option<&'a LanguageFilter>) -> Self {
-        self.selection.language_filter = language_filter;
-        self
-    }
-
-    /// Write the registration and keep what strips and negotiates its members
-    /// when the response is written.
+    /// Write the registration and keep what strips its members when the
+    /// response is written.
     ///
     /// # Errors
     ///
     /// Returns [`RenderError::Serialization`] when the registration cannot be
     /// written, which no registration the broker holds raises.
-    pub fn render(self) -> Result<RenderedRegistration<'a>, RenderError> {
+    pub fn render(self) -> Result<RenderedRegistration, RenderError> {
         let written = to_raw_value(self.registration).map_err(|source| RenderError::serialization(RenderedShape::Resource, source))?;
         Ok(RenderedRegistration {
             written,
-            selection: self.selection,
+            sys_attrs: self.sys_attrs,
         })
     }
 }
 
 /// A registration as a response writes it: the members the request's
-/// `sysAttrs` and `lang` leave, in the order the registration writes them.
+/// `sysAttrs` leaves, in the order the registration writes them.
 #[derive(Debug)]
-pub struct RenderedRegistration<'a> {
+pub struct RenderedRegistration {
     /// The registration, every member of it written.
     written: Box<RawValue>,
-    /// What strips and negotiates the members when they are written out.
-    selection: MemberSelection<'a>,
+    /// Whether the clause 4.8 system timestamps survive.
+    sys_attrs: SysAttrsInclusion,
+}
+
+impl RenderedRegistration {
+    /// Whether the member `name` is part of the response.
+    ///
+    /// Clause 4.8: `sysAttrs` governs only the system timestamps.
+    fn keeps(&self, name: &str) -> bool {
+        self.sys_attrs == SysAttrsInclusion::Include || !is_system_timestamp(name)
+    }
 }
 
 /// A registration whose written form is no JSON object, which its own
@@ -136,22 +102,14 @@ pub struct RenderedRegistration<'a> {
 #[error("a registration is written as a JSON object")]
 struct RegistrationNotAnObject;
 
-impl Serialize for RenderedRegistration<'_> {
+impl Serialize for RenderedRegistration {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let members = JsonPiece::new(&self.written)
             .members()
             .ok_or_else(|| S::Error::custom(RegistrationNotAnObject))?;
         let mut object = serializer.serialize_map(None)?;
-        for (name, value) in members.into_iter().filter(|(name, _)| self.selection.keeps(name)) {
-            if let Some(filter) = self.selection.language_filter.filter(|_| is_language_shaped(value))
-                && let Ok(AttributeValue::Single(attribute)) = serde_json::from_str::<AttributeValue>(value.text())
-                && let Attribute::LanguageProperty(language_property) = &*attribute
-                && let Some(entry) = negotiated_entry(language_property, filter)
-            {
-                object.serialize_entry(&*name, &NegotiatedProperty::from_language_property(language_property, entry))?;
-            } else {
-                object.serialize_entry(&*name, value.raw())?;
-            }
+        for (name, value) in members.into_iter().filter(|(name, _)| self.keeps(name)) {
+            object.serialize_entry(&*name, value.raw())?;
         }
         object.end()
     }
@@ -160,7 +118,6 @@ impl Serialize for RenderedRegistration<'_> {
 #[cfg(test)]
 mod tests {
     use crate::registration::RegistrationRenderer;
-    use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use pretty_assertions::assert_eq;
@@ -206,32 +163,16 @@ mod tests {
         assert_eq!(rendered["information"], json!([{"entities": [{"type": "Vehicle"}]}]));
     }
 
+    /// Table 5.2.9-1 defines no `LanguageProperty` member, so a member
+    /// registered in that shape is written with its whole `languageMap`.
     #[test]
-    fn lang_reduces_a_language_map_member_to_the_preferred_language() {
-        let registration = registration();
-        let filter = LanguageFilter::parse("fr").expect("valid lang filter");
-        let rendered = document_under(RegistrationRenderer::new(&registration).with_language_filter(Some(&filter)));
-        assert_eq!(rendered["label"]["type"], "Property");
-        assert_eq!(rendered["label"]["value"], "Flotte");
-        assert_eq!(rendered["label"]["lang"], "fr");
-    }
-
-    #[test]
-    fn a_language_map_is_left_as_written_without_a_lang_filter() {
+    fn a_language_property_shaped_member_is_written_as_registered() {
         let registration = registration();
         let rendered = document_under(RegistrationRenderer::new(&registration));
         assert_eq!(
             rendered["label"],
             json!({"type": "LanguageProperty", "languageMap": {"en": "Fleet", "fr": "Flotte"}})
         );
-    }
-
-    #[test]
-    fn a_non_language_member_is_left_untouched_by_lang() {
-        let registration = registration();
-        let filter = LanguageFilter::parse("fr").expect("valid lang filter");
-        let rendered = document_under(RegistrationRenderer::new(&registration).with_language_filter(Some(&filter)));
-        assert_eq!(rendered["endpoint"], "http://source:1026/");
     }
 
     /// The members keep the order the registration writes them in, so a body

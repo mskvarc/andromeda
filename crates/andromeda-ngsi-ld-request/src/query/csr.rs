@@ -94,7 +94,11 @@ pub struct CsrQueryParameters {
     /// effect on the answer.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<WrittenProjectionTerm>>,
-    /// Clause-4.15 natural-language selection preferences (`lang`).
+    /// The clause 4.15 language filter (`lang`), checked against its grammar
+    /// as Table 6.8.3.2-1 requires. It has no effect on the answer: the filter
+    /// converts the `LanguageProperty` Attributes of Entities, Table 5.2.9-1
+    /// defines no `LanguageProperty` member, and clause 5.10.2.5 answers with
+    /// the registrations as clause 5.2.9 defines them.
     #[serde(default)]
     pub lang: Option<LanguageFilter>,
     /// The `GeoProperty` a `GeoJSON` response uses as its geometry (`geometryProperty`).

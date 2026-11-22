@@ -4,10 +4,11 @@
 //! 9110 section 12.5.4 lets a server ignore `Accept-Language`, which is what a
 //! conformant broker does: browsers send the header on every request, and a
 //! request without `lang` is answered with whole `languageMap`s. Under the
-//! `accept_language` extension the operations that take `lang` read the header
-//! in its place. `negotiate_accept_language` decodes it once, before the
-//! handler, and keeps the filter as an `AcceptedLanguage` request extension
-//! for [`crate::language`] to hand over when no `lang` names one.
+//! `accept_language` extension the operations whose `lang` converts the
+//! `LanguageProperty` Attributes of Entities read the header in its place.
+//! `negotiate_accept_language` decodes it once, before the handler, and keeps
+//! the filter as an `AcceptedLanguage` request extension for
+//! [`crate::language`] to hand over when no `lang` names one.
 
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_headers::language::{LanguageFilter, LanguageFilterError};
@@ -28,8 +29,8 @@ use thiserror::Error;
 /// The `Vary` member a response chosen by `Accept-Language` names.
 static VARY_ON_LANGUAGE: HeaderValue = HeaderValue::from_static("accept-language");
 
-/// Whether an operation that takes `lang` reads `Accept-Language` in its
-/// absence.
+/// Whether an operation whose `lang` converts `LanguageProperty` Attributes
+/// reads `Accept-Language` in its absence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcceptLanguageReading {
     /// The header stands in for an absent `lang`, and the response varies on it.
@@ -39,8 +40,9 @@ pub enum AcceptLanguageReading {
 }
 
 impl AcceptLanguageReading {
-    /// The route of an operation that takes `lang`, with `Accept-Language`
-    /// read before its handler when the header is honoured.
+    /// The route of an operation whose `lang` converts `LanguageProperty`
+    /// Attributes, with `Accept-Language` read before its handler when the
+    /// header is honoured.
     pub fn negotiate<S>(self, route: MethodRouter<S>) -> MethodRouter<S>
     where
         S: Clone + Send + Sync + 'static,

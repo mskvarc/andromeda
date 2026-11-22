@@ -424,7 +424,7 @@
       "path": "extensions.accept_language",
       "shape": "named",
       "presence": "default",
-      "description": "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities or Temporal Evolutions, or a Query of context source registrations, that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored."
+      "description": "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities or Temporal Evolutions that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored."
     },
     {
       "path": "extensions.q_target_languages",
