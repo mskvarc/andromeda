@@ -3,7 +3,7 @@
 
 use crate::{
     reference::{ReferenceError, json_schema::declared_schema},
-    schema::apply_mode::ApplyMode,
+    schema::{apply_mode::ApplyMode, stability::Stability},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -68,6 +68,10 @@ pub(crate) struct SchemaNode {
     /// Whether every replica behind one load balancer must hold the same value.
     #[serde(default, rename = "x-andromeda-replica-consistent")]
     replica_consistent: bool,
+    /// The stability the node is marked with; `None` on a node that takes
+    /// the stability of the table it lies in.
+    #[serde(default, rename = "x-andromeda-stability")]
+    stability: Option<Stability>,
     /// The short name of the value's type, where the configuration gives one.
     #[serde(default)]
     title: Option<String>,
@@ -127,6 +131,26 @@ impl SchemaNode {
     /// Whether every replica must hold the same value.
     pub(crate) const fn replica_consistent(&self) -> bool {
         self.replica_consistent
+    }
+
+    /// The stability this node is marked with, when it is marked itself.
+    pub(crate) const fn marked_stability(&self) -> Option<Stability> {
+        self.stability
+    }
+
+    /// The stability of the table or key at `path` below this node: the
+    /// marker nearest to it on the way down, so a key takes its table's unless
+    /// it is marked itself, and stable where nothing on the way is marked.
+    pub(crate) fn stability_at<'path>(&self, path: impl IntoIterator<Item = &'path str>) -> Stability {
+        path.into_iter()
+            .scan(self, |node, name| {
+                let child = (*node).child(name)?;
+                *node = child;
+                Some(child.stability)
+            })
+            .flatten()
+            .last()
+            .unwrap_or_default()
     }
 
     /// The node at `path` below this one.

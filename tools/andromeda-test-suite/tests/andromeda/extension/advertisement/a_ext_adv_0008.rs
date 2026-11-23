@@ -25,8 +25,8 @@ async fn a_ext_adv_0008_the_language_ranges_level_advertises_language_tags_and_l
         .send()
         .await?;
     let listed = extensions(&identity)?;
-    expect_that!(&listed, lists_extension("languageTags"));
-    expect_that!(&listed, lists_extension("languageRangeFiltering"));
+    expect_that!(&listed, lists_extension("languageTags/0.1"));
+    expect_that!(&listed, lists_extension("languageRangeFiltering/0.1"));
     let broker = broker::front()?;
     let received = broker
         .with_responses()

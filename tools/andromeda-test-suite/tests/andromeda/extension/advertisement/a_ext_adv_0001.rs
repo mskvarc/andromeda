@@ -20,10 +20,10 @@ async fn a_ext_adv_0001_the_front_broker_advertises_every_enabled_extension() ->
     let identity = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).source_identity().send().await?;
     let listed = extensions(&identity)?;
     expect_that!(listed, not(is_empty()));
-    expect_that!(&listed, lists_extension("temporalDeleteByQuery"));
-    expect_that!(&listed, lists_extension("purgeDatasetScope"));
-    expect_that!(&listed, lists_extension("temporalAggregationGrouping"));
-    expect_that!(&listed, lists_extension("temporalLinkedRetrieval"));
-    expect_that!(&listed, lists_extension("acceptLanguage"));
+    expect_that!(&listed, lists_extension("temporalDeleteByQuery/0.1"));
+    expect_that!(&listed, lists_extension("purgeDatasetScope/0.1"));
+    expect_that!(&listed, lists_extension("temporalAggregationGrouping/0.1"));
+    expect_that!(&listed, lists_extension("temporalLinkedRetrieval/0.1"));
+    expect_that!(&listed, lists_extension("acceptLanguage/0.1"));
     Ok(())
 }

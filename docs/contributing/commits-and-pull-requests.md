@@ -14,6 +14,7 @@ Every commit starts with a [Conventional Commits](https://www.conventionalcommit
 - The scope is optional. When you use one, name the part of the broker it touches, such as `temporal`, `federation`, `query` or `config`, without the `andromeda-` crate prefix.
 - The summary is imperative and lower case, with no final period. It says what changes, and for a change in behaviour, what the broker does afterwards. Write `fix: refuse PUT and PATCH on the entity collection with 405`, not `fix: update handler`.
 - A breaking change adds `!` after the type or scope, and a `BREAKING CHANGE:` footer says what users or operators have to change.
+- A change to an experimental feature, such as HTTP/3 or an experimental extension, takes no `!`, even when it changes or removes what the feature does. An experimental feature may change in any release. Its configuration carries the `x-andromeda-stability` marker that [Configuration](../configuration/configuration.md#changing-a-key) describes.
 - The body explains why, when the header can't.
 
 The issue goes on a line of its own, never in the header. Write `Closes #N` when the commit finishes the issue and `Refs #N` when it is partial or follow-up work.

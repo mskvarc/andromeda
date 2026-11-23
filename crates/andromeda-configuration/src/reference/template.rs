@@ -1,9 +1,12 @@
 //! The commented configuration `configuration generate` writes.
 
-use crate::reference::{
-    ReferenceError,
-    key_listing::{ReferenceEntry, key_listing},
-    schema_node::ChoiceRange,
+use crate::{
+    reference::{
+        ReferenceError,
+        key_listing::{ReferenceEntry, key_listing},
+        schema_node::ChoiceRange,
+    },
+    schema::stability::Stability,
 };
 use textwrap::{Options, WordSeparator, WrapAlgorithm};
 
@@ -33,7 +36,13 @@ pub fn configuration_template() -> Result<String, ReferenceError> {
         lines.push(String::new());
         match entry {
             ReferenceEntry::Table(table) => {
-                lines.extend(comment_lines(table.description.as_deref()));
+                let paragraphs: Vec<&str> = table
+                    .description
+                    .as_deref()
+                    .into_iter()
+                    .chain(table.marked_stability.and_then(Stability::operator_note))
+                    .collect();
+                lines.extend(comment_lines((!paragraphs.is_empty()).then(|| paragraphs.join("\n\n")).as_deref()));
                 lines.push(table.header_line());
                 lines.extend(table.member_lines());
             }
@@ -51,6 +60,7 @@ pub fn configuration_template() -> Result<String, ReferenceError> {
                     .description
                     .as_deref()
                     .into_iter()
+                    .chain(key.marked_stability.and_then(Stability::operator_note))
                     .chain(choices.as_deref())
                     .chain(rules.as_deref())
                     .chain(key.conditions.iter().copied())

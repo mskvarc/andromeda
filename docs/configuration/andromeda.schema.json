@@ -510,7 +510,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "cursor_pagination": {
           "description": "Opaque cursor page pointers, and how a request that names neither `offset` nor `cursor` is paged.",
@@ -547,7 +548,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "mode": {
           "description": "Whether the extensions follow their own tables (`\"configured\"`) or are all forced off (`\"conformance\"`).",
@@ -584,7 +586,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "purge_dataset_scope": {
           "description": "`datasetId` and `deleteAll` on Purge Entities. On, `DELETE /entities` gains the per-`datasetId` precision Delete Attribute already has. Off, a `datasetId` or `deleteAll` there is refused with `InvalidRequest`.",
@@ -606,7 +609,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "q_target_languages": {
           "description": "What a `q` bracket may name as a target language.",
@@ -643,7 +647,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "temporal_aggregation_grouping": {
           "description": "Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.",
@@ -671,7 +676,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "temporal_delete_by_query": {
           "description": "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for. It takes no `join`, so a `q` that crosses a Relationship is refused with `400` `BadRequestData`.",
@@ -699,7 +705,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "temporal_linked_retrieval": {
           "description": "Linked entity retrieval on the temporal operations. On, Retrieve and Query Temporal Evolution and the temporal Entity Map accept `join`, `joinLevel` and `containedBy` and retrieve the linked entities' temporal evolution over the request's window. Off, those parameters are refused with `InvalidRequest`, and a nested projection, a `q` hop or a retrieving `join` in a query body with `BadRequestData`.",
@@ -721,7 +728,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "tenant_management": {
           "description": "Tenant management on `/tenants`. On, the broker serves the tenant collection, per-tenant introspection and suspend or resume through `PATCH isActive`, and advertises them at `/info/sourceIdentity`. No API operation ever drops a tenant's database.",
@@ -743,7 +751,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         }
       },
       "additionalProperties": false
@@ -2506,7 +2515,8 @@
               ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-andromeda-stability": "experimental"
         },
         "idle_timeout": {
           "title": "duration",

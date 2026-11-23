@@ -3,10 +3,12 @@
 //! Andromeda ships a handful of capabilities the NGSI-LD specification does not
 //! define. The rules they follow are:
 //! runtime configuration rather than build features, off by default, reversible,
-//! advertised under a vendor namespace, and never forwarded to a Context Source
-//! that has not advertised support. This crate owns the machinery shared by
-//! every extension: the configuration, the resolved enabled set, the
-//! advertisement, and the conformance-override startup log. It exists so that the
+//! advertised under a vendor namespace with a token that carries an experimental
+//! extension's revision, and never forwarded to a Context Source that has not
+//! advertised support. This crate owns the machinery shared by every extension:
+//! the configuration, the resolved enabled set, each extension's stability, the
+//! advertisement, and the startup log of the conformance override and of the
+//! extensions that are not stable. It exists so that the
 //! HTTP layers that gate the features and the composition that wires them depend
 //! on a neutral leaf rather than on each other. The one domain crate it names is the
 //! query grammar, for the level of `q` target languages the enabled set serves

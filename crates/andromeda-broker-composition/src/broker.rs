@@ -31,7 +31,10 @@ use crate::{
     tenant_factory::BrokerTenantFactory,
 };
 use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration, schema::feature_mode::FeatureMode};
-use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
+use andromeda_extensions::{
+    enabled::EnabledExtensions,
+    startup_log::{log_conformance_override, log_extension_stability},
+};
 use andromeda_http_api::routes::ApiRoutes;
 use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
@@ -318,6 +321,7 @@ async fn construct(
 
     let enabled_extensions = EnabledExtensions::from(&config.extensions);
     log_conformance_override(&config.extensions);
+    log_extension_stability(&config.extensions);
     let pagination = PaginationPolicy::from(&config.extensions);
 
     let accept_language = accept_language_reading(enabled_extensions);

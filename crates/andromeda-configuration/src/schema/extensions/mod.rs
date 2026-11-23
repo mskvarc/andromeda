@@ -145,6 +145,7 @@ pub struct ExtensionsConfig {
     /// beside offset; a fresh request walks by cursor only when
     /// `fresh_requests` says so.
     #[schemars(description = "Opaque cursor page pointers, and how a request that names neither `offset` nor `cursor` is paged.")]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub cursor_pagination: CursorPaginationConfig,
     /// Temporal delete-by-query on `DELETE /temporal/entities`.
     ///
@@ -155,6 +156,7 @@ pub struct ExtensionsConfig {
     #[schemars(
         description = "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for. It takes no `join`, so a `q` that crosses a Relationship is refused with `400` `BadRequestData`."
     )]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub temporal_delete_by_query: TemporalDeleteByQueryConfig,
     /// Grouped temporal aggregation via `aggrGroupBy` and
     /// `format=groupedValues`.
@@ -165,6 +167,7 @@ pub struct ExtensionsConfig {
     /// groups (clause 4.5.2) split rather than refused. Off, `aggrGroupBy` and
     /// `groupedValues` are refused with `InvalidRequest`.
     #[schemars(description = "Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.")]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub temporal_aggregation_grouping: TemporalAggregationGroupingConfig,
     /// Linked Entity retrieval on the temporal operations.
     ///
@@ -179,6 +182,7 @@ pub struct ExtensionsConfig {
     #[schemars(
         description = "Linked entity retrieval on the temporal operations. On, Retrieve and Query Temporal Evolution and the temporal Entity Map accept `join`, `joinLevel` and `containedBy` and retrieve the linked entities' temporal evolution over the request's window. Off, those parameters are refused with `InvalidRequest`, and a nested projection, a `q` hop or a retrieving `join` in a query body with `BadRequestData`."
     )]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub temporal_linked_retrieval: ExtensionSwitch,
     /// `datasetId` and `deleteAll` granularity on entity Purge.
     ///
@@ -189,6 +193,7 @@ pub struct ExtensionsConfig {
     #[schemars(
         description = "`datasetId` and `deleteAll` on Purge Entities. On, `DELETE /entities` gains the per-`datasetId` precision Delete Attribute already has. Off, a `datasetId` or `deleteAll` there is refused with `InvalidRequest`."
     )]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub purge_dataset_scope: ExtensionSwitch,
     /// Tenant management on `/tenants`.
     ///
@@ -200,6 +205,7 @@ pub struct ExtensionsConfig {
     #[schemars(
         description = "Tenant management on `/tenants`. On, the broker serves the tenant collection, per-tenant introspection and suspend or resume through `PATCH isActive`, and advertises them at `/info/sourceIdentity`. No API operation ever drops a tenant's database."
     )]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub tenant_management: ExtensionSwitch,
     /// A `near` geo-query bounded from both sides.
     ///
@@ -211,6 +217,7 @@ pub struct ExtensionsConfig {
     #[schemars(
         description = "A `near` geo-query bounded from both sides. On, a `near` carrying both `minDistance` and `maxDistance` matches the entities between the two, on queries, temporal queries, subscription `geoQ` and registration discovery. Off, the pair is refused with `BadRequestData`."
     )]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub near_distance_band: ExtensionSwitch,
     /// `Accept-Language` read as the clause 4.15 language filter.
     ///
@@ -222,6 +229,7 @@ pub struct ExtensionsConfig {
     #[schemars(
         description = "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities or Temporal Evolutions that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored."
     )]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub accept_language: ExtensionSwitch,
     /// What a `q` bracket may name as a target language.
     ///
@@ -234,6 +242,7 @@ pub struct ExtensionsConfig {
     /// carrying a target language is held to the level every Context Source
     /// it reaches advertises.
     #[schemars(description = "What a `q` bracket may name as a target language.")]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub q_target_languages: QTargetLanguagesConfig,
 }
 

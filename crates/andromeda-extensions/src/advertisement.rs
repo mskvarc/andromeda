@@ -8,6 +8,11 @@
 //! announced under a plain `extensions` key rather than a full vendor IRI: the
 //! rule against squatting the `ngsi-ld:` namespace guards terms that get
 //! expanded against a context, which an extras key is not.
+//!
+//! A stable or deprecated extension is advertised under its plain name. An
+//! experimental one adds its revision, as in `nearDistanceBand/0.2`, and a
+//! broker matches a token only as a whole, so a source on another revision
+//! reads as one that does not serve the extension.
 
 use crate::enabled::{EnabledExtensions, Extension};
 use andromeda_json_literal::{
@@ -24,38 +29,38 @@ use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 pub const EXTENSION_KEY: &str = "extensions";
 
 /// The advertised token for the temporal delete-by-query extension.
-const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporalDeleteByQuery";
+const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporalDeleteByQuery/0.1";
 /// The advertised token for the entity-Purge dataset-scope extension.
-const PURGE_DATASET_SCOPE_TOKEN: &str = "purgeDatasetScope";
+const PURGE_DATASET_SCOPE_TOKEN: &str = "purgeDatasetScope/0.1";
 /// The advertised token for the grouped temporal aggregation extension.
-const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporalAggregationGrouping";
+const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporalAggregationGrouping/0.1";
 /// The advertised token for Linked Entity retrieval on the temporal operations.
 ///
 /// A federating broker reads it off a Context Source's identity before it
 /// forwards a temporal `join` there: a source that does not list it answers
 /// the standard temporal operations only.
-pub const TEMPORAL_LINKED_RETRIEVAL_TOKEN: &str = "temporalLinkedRetrieval";
+pub const TEMPORAL_LINKED_RETRIEVAL_TOKEN: &str = "temporalLinkedRetrieval/0.1";
 /// The advertised token for the tenant-management extension.
-const TENANT_MANAGEMENT_TOKEN: &str = "tenantManagement";
+const TENANT_MANAGEMENT_TOKEN: &str = "tenantManagement/0.1";
 /// The advertised token for the cursorPagination extension.
-const CURSOR_PAGINATION_TOKEN: &str = "cursorPagination";
+const CURSOR_PAGINATION_TOKEN: &str = "cursorPagination/0.1";
 /// The advertised token for the `near` distance band extension.
-const NEAR_DISTANCE_BAND_TOKEN: &str = "nearDistanceBand";
+const NEAR_DISTANCE_BAND_TOKEN: &str = "nearDistanceBand/0.1";
 /// The advertised token for the `Accept-Language` language filter extension.
-const ACCEPT_LANGUAGE_TOKEN: &str = "acceptLanguage";
+const ACCEPT_LANGUAGE_TOKEN: &str = "acceptLanguage/0.1";
 /// The advertised token for every RFC 5646 tag as a `q` target language.
 ///
 /// A federating broker reads it off every Context Source a query reaches
 /// before it forwards a target language no clause 4.9 `AttrName` spells: a
 /// source that does not list it refuses one.
-const LANGUAGE_TAGS_TOKEN: &str = "languageTags";
+const LANGUAGE_TAGS_TOKEN: &str = "languageTags/0.1";
 /// The advertised token for RFC 4647 extended filtering of `q` target
 /// languages.
 ///
 /// A federating broker reads it off every Context Source a query reaches
 /// before it filters by range: a source that does not list it matches a target
 /// language by tag equality only.
-const LANGUAGE_RANGE_FILTERING_TOKEN: &str = "languageRangeFiltering";
+const LANGUAGE_RANGE_FILTERING_TOKEN: &str = "languageRangeFiltering/0.1";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -133,7 +138,7 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
 }
 
 /// The token one extension is advertised under.
-const fn token(extension: Extension) -> &'static str {
+pub(crate) const fn token(extension: Extension) -> &'static str {
     match extension {
         Extension::TemporalDeleteByQuery => TEMPORAL_DELETE_BY_QUERY_TOKEN,
         Extension::PurgeDatasetScope => PURGE_DATASET_SCOPE_TOKEN,
@@ -196,6 +201,7 @@ mod tests {
             advertised_language_targeting,
             advertises,
             enabled_extension_extras,
+            token,
         },
         enabled::{EnabledExtensions, Extension},
     };
@@ -210,10 +216,12 @@ mod tests {
             switch::ExtensionSwitch,
         },
         feature_mode::FeatureMode,
+        stability::Stability,
     };
     use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
-    use std::borrow::Cow;
+    use enumset::EnumSet;
+    use std::{borrow::Cow, collections::BTreeSet};
 
     fn literal(text: &str) -> JsonLiteral {
         JsonLiteral::admit(text).expect("a JSON literal")
@@ -402,7 +410,8 @@ mod tests {
         assert!(advertises(default_extras.as_ref(), Extension::CursorPagination));
     }
 
-    /// Extras spelled any other way advertise nothing.
+    /// Extras spelled any other way advertise nothing, and so does the token
+    /// of another revision, or the extension's name without one.
     #[test]
     fn extras_in_another_spelling_advertise_nothing() {
         for extras in [
@@ -410,8 +419,39 @@ mod tests {
             Some(literal(r#""temporalLinkedRetrieval""#)),
             Some(literal(r#"{"extensions": "temporalLinkedRetrieval"}"#)),
             Some(literal(r#"{"other": ["temporalLinkedRetrieval"]}"#)),
+            Some(literal(r#"{"extensions": ["temporalLinkedRetrieval"]}"#)),
+            Some(literal(r#"{"extensions": ["temporalLinkedRetrieval/0.2"]}"#)),
         ] {
             assert!(!advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval), "{extras:?}");
         }
+    }
+
+    /// A stable or deprecated extension advertises its plain name, and an
+    /// experimental one adds its revision as `/0.n`.
+    #[test]
+    fn every_token_is_spelled_as_its_stability_says() {
+        for extension in EnumSet::<Extension>::all() {
+            let spelled = token(extension);
+            let (name, revision) = spelled.split_once('/').map_or((spelled, None), |(name, revision)| (name, Some(revision)));
+            assert!(!name.is_empty() && name.chars().all(|character| character.is_ascii_alphanumeric()), "{spelled}");
+            let numbered = revision
+                .and_then(|revision| revision.strip_prefix("0."))
+                .is_some_and(|number| !number.is_empty() && !number.starts_with('0') && number.bytes().all(|byte| byte.is_ascii_digit()));
+            match extension.stability() {
+                Stability::Experimental => assert!(numbered, "{spelled}"),
+                Stability::Stable | Stability::Deprecated => pretty_assertions::assert_eq!(revision, None, "{spelled}"),
+            }
+        }
+    }
+
+    /// Each extension has a name of its own, so no revision of one extension
+    /// matches another.
+    #[test]
+    fn no_two_extensions_share_a_token_name() {
+        let names: BTreeSet<&str> = EnumSet::<Extension>::all()
+            .iter()
+            .map(|extension| token(extension).split_once('/').map_or(token(extension), |(name, _)| name))
+            .collect();
+        pretty_assertions::assert_eq!(names.len(), EnumSet::<Extension>::all().len());
     }
 }
