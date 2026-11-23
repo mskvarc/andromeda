@@ -7,7 +7,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
-description = "Generic listener, connection execution and graceful HTTP draining, over plaintext TCP or TLS terminated in process"
+description = "Generic listener, connection execution and graceful HTTP draining, over plaintext TCP, TLS terminated in process, or a local socket"
 
 [lints]
 workspace = true
@@ -22,6 +22,7 @@ httpdate = "1.0.3"
 humantime = "2.4.0"
 hyper = "1.12.0"
 hyper-util = { version = "0.1.21", features = ["http1", "http2", "server-auto", "server-graceful", "service", "tokio"] }
+interprocess = { version = "2.4.9", features = ["tokio"] }
 thiserror = "2.0.21"
 tls-listener = { version = "0.11.2", default-features = false, features = ["rustls-aws-lc", "tokio-net"] }
 tokio = { version = "1.54.1", features = ["net", "sync", "time"] }
@@ -35,5 +36,6 @@ andromeda-server-tls = { workspace = true, features = ["test-identity"] }
 hyper = { version = "1.12.0", features = ["client", "http2"] }
 pretty_assertions = "1.4.1"
 reqwest = { version = "0.13.5", features = ["http2"] }
+tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 tower = { version = "0.5.3", features = ["util"] }

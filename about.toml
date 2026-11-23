@@ -11,3 +11,6 @@ private = { ignore = true }
 
 [notify]
 accepted = ["CC0-1.0"]
+
+[doctest-file]
+accepted = ["0BSD"]

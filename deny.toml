@@ -17,6 +17,16 @@ allow = ["CDLA-Permissive-2.0"]
 name = "notify"
 allow = ["CC0-1.0"]
 
+# Public-domain-equivalent; the named-pipe message receiver of the local socket transport on Windows.
+[[licenses.exceptions]]
+name = "recvmsg"
+allow = ["0BSD"]
+
+# Public-domain-equivalent; a procedural macro of the local socket transport, run only while the broker compiles.
+[[licenses.exceptions]]
+name = "doctest-file"
+allow = ["0BSD"]
+
 [advisories]
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"

@@ -1,9 +1,13 @@
 //! The `[observability]` tables: logging and metrics.
 
-use crate::schema::feature_mode::FeatureMode;
+use crate::{platform_directories::default_log_directory, schema::feature_mode::FeatureMode};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroUsize, path::PathBuf};
+use std::{
+    borrow::Cow,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 use strum::{Display, EnumString};
 
 /// Broker log verbosity.
@@ -92,13 +96,12 @@ pub struct LogFileConfig {
     /// Whether the structured file sink is installed.
     #[schemars(description = "Whether structured records are written to a rotating file.")]
     pub mode: FeatureMode,
-    /// The directory the log files are written to. Left out, the platform
-    /// state directory (falling back to the data directory) under an
-    /// `andromeda` subdirectory.
+    /// The directory the log files are written to. `None` takes the platform
+    /// default that [`default_log_directory`] resolves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         title = "path",
-        description = "Where the log files are written. Left out, they go in an `andromeda` directory in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one."
+        description = "Where the log files are written. Left out, a Linux service outside a user session, a container among them, writes them to `/var/log/andromeda`; in a user session, and on macOS and Windows, they go in an `andromeda` directory in the state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one."
     )]
     pub directory: Option<PathBuf>,
     /// The name of the active log file, before the rotation suffix.
@@ -120,6 +123,15 @@ pub struct LogFileConfig {
     /// Maximum verbosity written to the file, independent of the stdout level.
     #[schemars(description = "The most verbose level written to the file, independent of `observability.log.level`.")]
     pub level: LogLevel,
+}
+
+impl LogFileConfig {
+    /// The directory the log files are written to: the configured one, or the
+    /// platform default.
+    #[must_use]
+    pub fn resolved_directory(&self) -> Cow<'_, Path> {
+        self.directory.as_deref().map_or_else(|| Cow::Owned(default_log_directory()), Cow::Borrowed)
+    }
 }
 
 impl Default for LogFileConfig {
@@ -194,11 +206,31 @@ pub struct ObservabilityConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::{
-        feature_mode::FeatureMode,
-        observability::{LogCompression, LogFileConfig, LogFileFormat, LogRotationInterval, ObservabilityConfig},
+    use crate::{
+        platform_directories::default_log_directory,
+        schema::{
+            feature_mode::FeatureMode,
+            observability::{LogCompression, LogFileConfig, LogFileFormat, LogRotationInterval, ObservabilityConfig},
+        },
     };
-    use std::str::FromStr;
+    use std::{
+        path::{Path, PathBuf},
+        str::FromStr,
+    };
+
+    #[test]
+    fn a_configured_log_directory_is_used_verbatim() {
+        let config = LogFileConfig {
+            directory: Some(PathBuf::from("/srv/andromeda/logs")),
+            ..LogFileConfig::default()
+        };
+        pretty_assertions::assert_eq!(config.resolved_directory(), Path::new("/srv/andromeda/logs"));
+    }
+
+    #[test]
+    fn a_log_directory_left_out_resolves_to_the_platform_default() {
+        pretty_assertions::assert_eq!(LogFileConfig::default().resolved_directory(), default_log_directory());
+    }
 
     #[test]
     fn file_logging_is_disabled_with_gzip_and_daily_retention_by_default() {

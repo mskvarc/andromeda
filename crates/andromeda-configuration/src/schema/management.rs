@@ -7,22 +7,34 @@
 //! or a kubelet is never subject to CORS, CSRF, security headers, body limits
 //! or compression, and so probes and metrics keep answering while the data
 //! plane is saturated or draining.
+//!
+//! Beside whatever network listener the mode chooses, the broker serves
+//! `/livez` and `/readyz` on a local socket in every mode, the channel the
+//! `health` command asks. It is reachable only from the same host, or the same
+//! container, as the user the broker runs as.
 
-use crate::schema::listener_transport::ListenerTransport;
+use crate::{platform_directories::default_runtime_directory, schema::listener_transport::ListenerTransport};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    borrow::Cow,
+    net::{IpAddr, Ipv4Addr},
+    path::{Path, PathBuf},
+};
 use strum::{Display, EnumString};
 
 /// Where, and whether, the broker serves its management endpoints.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Display, EnumString, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
-#[schemars(description = "Whether, and where, the broker serves its management endpoints: `/livez`, `/readyz` and `/metrics`.")]
+#[schemars(description = "Whether, and where, the broker serves its management endpoints on the network: `/livez`, `/readyz` and `/metrics`.")]
 pub enum ManagementMode {
-    /// No management plane is served: the broker answers no probe, the `health`
-    /// command has nothing to ask, and metrics cannot be enabled.
-    #[schemars(description = "Serves no management endpoints, so the broker answers no liveness or readiness probe and the `health` command refuses to run.")]
+    /// No management listener on the network: no network client reaches a
+    /// probe, and metrics cannot be enabled. The local socket still answers
+    /// the `health` command.
+    #[schemars(
+        description = "Serves no management endpoints on the network, so no network client reaches a liveness or readiness probe and metrics cannot be enabled. The local socket still answers the `health` command."
+    )]
     Disabled,
     /// The management endpoints are mounted at the root of the data-plane port,
     /// behind the full inbound stack.
@@ -39,14 +51,17 @@ pub enum ManagementMode {
     SeparatePort,
 }
 
-/// The management plane's topology and listener.
+/// The management plane's topology, its listener and its local socket.
 ///
 /// `host`, `port` and `transport` are read only in [`ManagementMode::SeparatePort`]; in
 /// [`ManagementMode::SharedPort`] the endpoints ride the data-plane listener, and in
-/// [`ManagementMode::Disabled`] no management listener is bound.
+/// [`ManagementMode::Disabled`] no management listener is bound. The local
+/// socket in `local_socket_directory` is served in every mode.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
 #[schemars(deny_unknown_fields)]
-#[schemars(description = "Whether, and where, the broker serves its management endpoints: `/livez`, `/readyz` and `/metrics`.")]
+#[schemars(
+    description = "Whether, and where, the broker serves its management endpoints: `/livez`, `/readyz` and `/metrics` on the network, and the probes on a local socket for the `health` command."
+)]
 pub struct ManagementConfig {
     /// Where the management endpoints are served: `disabled`, `shared-port` or
     /// `separate-port`.
@@ -67,6 +82,26 @@ pub struct ManagementConfig {
         description = "Whether the management listener serves plaintext or terminates TLS with the `[tls]` certificate. Read only when `management.mode` is `\"separate-port\"`."
     )]
     pub transport: ListenerTransport,
+    /// The directory holding the local socket the `health` command asks.
+    /// `None` takes the platform default that [`default_runtime_directory`]
+    /// resolves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        title = "path",
+        description = "The directory holding the local socket that answers the `health` command, served in every mode and named after `server.port`, such as `andromeda-1056.sock`. Left out, a Linux service outside a user session, a container among them, uses `/run/andromeda`; a user session uses `andromeda` in `$XDG_RUNTIME_DIR`, and macOS without one the per-user temporary directory. The broker creates it so that only its own user can open it. A relative path is read from the working directory, of the broker and of the `health` command alike. On Windows the socket is the named pipe `\\\\.\\pipe\\andromeda-<port>` and the directory is not read."
+    )]
+    pub local_socket_directory: Option<PathBuf>,
+}
+
+impl ManagementConfig {
+    /// The directory holding the local socket: the configured one, or the
+    /// platform default.
+    #[must_use]
+    pub fn resolved_local_socket_directory(&self) -> Cow<'_, Path> {
+        self.local_socket_directory
+            .as_deref()
+            .map_or_else(|| Cow::Owned(default_runtime_directory()), Cow::Borrowed)
+    }
 }
 
 impl Default for ManagementConfig {
@@ -78,17 +113,38 @@ impl Default for ManagementConfig {
             host: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             port: 1086,
             transport: ListenerTransport::Plaintext,
+            local_socket_directory: None,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::{
-        listener_transport::ListenerTransport,
-        management::{ManagementConfig, ManagementMode},
+    use crate::{
+        platform_directories::default_runtime_directory,
+        schema::{
+            listener_transport::ListenerTransport,
+            management::{ManagementConfig, ManagementMode},
+        },
     };
-    use std::str::FromStr;
+    use std::{
+        path::{Path, PathBuf},
+        str::FromStr,
+    };
+
+    #[test]
+    fn a_configured_local_socket_directory_is_used_verbatim() {
+        let config = ManagementConfig {
+            local_socket_directory: Some(PathBuf::from("/srv/andromeda/run")),
+            ..ManagementConfig::default()
+        };
+        pretty_assertions::assert_eq!(config.resolved_local_socket_directory(), Path::new("/srv/andromeda/run"));
+    }
+
+    #[test]
+    fn a_local_socket_directory_left_out_resolves_to_the_platform_runtime_directory() {
+        pretty_assertions::assert_eq!(ManagementConfig::default().resolved_local_socket_directory(), default_runtime_directory());
+    }
 
     #[test]
     fn the_default_plane_binds_port_1086_in_plaintext() {

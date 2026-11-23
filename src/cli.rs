@@ -23,12 +23,11 @@ pub(crate) struct Cli {
     pub configuration_file: Option<PathBuf>,
 
     /// Address the HTTP listener binds to, overriding the file and environment.
-    /// The `health` subcommand reads it to find the listener it probes.
     #[arg(short = 'H', long, value_name = "ADDRESS")]
     pub host: Option<IpAddr>,
 
     /// Port the HTTP listener binds to, overriding the file and environment.
-    /// The `health` subcommand reads it to find the listener it probes.
+    /// The `health` subcommand reads it to name the local socket it probes.
     #[arg(short = 'p', long, value_name = "PORT")]
     pub port: Option<u16>,
 
@@ -44,8 +43,8 @@ pub(crate) enum Command {
     #[command(alias = "config")]
     Configuration(ConfigurationArgs),
 
-    /// Probe a running broker's readiness over its configured listener; exit
-    /// with success when it answers ready.
+    /// Probe a running broker's readiness over its local socket; exit with
+    /// success when it answers ready.
     Health,
 }
 

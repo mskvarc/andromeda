@@ -1,33 +1,23 @@
-//! The `health` command: asking a running broker whether it is ready, on the
-//! listener its configuration says answers readiness.
+//! The `health` command: asking a running broker whether it is ready, over the
+//! local socket it serves in every management mode.
 //!
-//! In `separate-port` management mode that is `/readyz` on the management
-//! listener, which keeps answering while the API is saturated or draining; in
-//! `shared-port` mode it is `/readyz` at the root of the API listener. Both
-//! weigh the same indicators and answer 503 when one is down. With the
-//! management plane disabled the broker serves no probe, so the command
-//! refuses to run.
-//!
-//! The probe dials the address the listener binds, which a certificate rarely
-//! names, so it does not verify the certificate of a TLS listener. It carries no
-//! credential and acts on the status code alone, the stance a Kubernetes HTTPS
-//! probe takes.
+//! The socket answers `/readyz` from the same indicators as the management
+//! listener, 503 when one is down. It carries no TLS and no credential and is
+//! reachable only by the user the broker runs as, so the answer does not
+//! depend on `management.mode`, on the listeners' transports or on client
+//! authentication.
 
-use crate::{listener_tls::listener_scheme, outcome::ProcessExitOutcome};
-use andromeda_configuration::schema::{
-    listener_transport::ListenerTransport,
-    management::{ManagementConfig, ManagementMode},
-    server::ServerConfig,
-};
-use andromeda_http_extraction::api_root_scheme::ApiRootScheme;
+use crate::outcome::ProcessExitOutcome;
+use andromeda_configuration::human_duration::HumanDuration;
 use andromeda_http_health::routes::READINESS_PATH;
-use reqwest::{Client, StatusCode, redirect::Policy};
-use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    time::Duration,
-};
+use andromeda_http_server::local_socket_address::LocalSocketAddress;
+use headers::{HeaderMapExt, Host};
+use http::uri::Authority;
+use hyper::{Request, StatusCode, Uri, client::conn::http1};
+use hyper_util::rt::TokioIo;
+use std::{io, path::PathBuf, time::Duration};
 use thiserror::Error;
-use url::{ParseError, Url};
+use tokio::time::timeout;
 
 /// The longest the probe waits for the broker's answer.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -35,36 +25,40 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Why the broker could not be confirmed ready.
 #[derive(Debug, Error)]
 enum ReadinessProbeError {
-    /// The configuration disables the management plane, so no listener
-    /// answers readiness.
-    #[error("the management plane is disabled, so the broker serves no readiness probe")]
-    ManagementDisabled,
-    /// The configured listener address does not form a URL.
-    #[error("the readiness probe address is not a valid url: {0}")]
-    Url(#[from] ParseError),
-    /// The HTTP client could not be built.
-    #[error("the readiness probe client could not be built: {0}")]
-    Client(#[source] reqwest::Error),
-    /// No answer arrived: the listener refused the connection, the handshake
-    /// failed or the timeout passed.
-    #[error("the broker did not answer the readiness probe: {0}")]
-    Request(#[source] reqwest::Error),
+    /// No broker accepted the connection: no socket exists, no broker listens
+    /// on it, or the calling user may not open it.
+    #[error("no broker answers on the local socket {}: {source}", .socket.display())]
+    Connect {
+        /// The socket probed.
+        socket: PathBuf,
+        /// The connection error.
+        source: io::Error,
+    },
+    /// The HTTP exchange over the socket failed.
+    #[error("the readiness exchange over the local socket failed: {0}")]
+    Exchange(#[source] hyper::Error),
+    /// No answer arrived before the probe's deadline.
+    #[error("the broker did not answer the readiness probe on {} within {}", .socket.display(), HumanDuration::new(PROBE_TIMEOUT))]
+    Timeout {
+        /// The socket probed.
+        socket: PathBuf,
+    },
     /// The broker answered with a status other than success.
-    #[error("the broker answered the readiness probe at {url} with {status}")]
+    #[error("the broker answered the readiness probe on {} with {status}", .socket.display())]
     NotReady {
-        /// The probed URL.
-        url: Url,
+        /// The socket probed.
+        socket: PathBuf,
         /// The status the broker answered with.
         status: StatusCode,
     },
 }
 
-/// Probe the broker that `server` and `management` describe, report the result
-/// and return the process outcome.
-pub(crate) async fn probe_reported(server: &ServerConfig, management: &ManagementConfig) -> ProcessExitOutcome {
-    match probe(server, management).await {
-        Ok(url) => {
-            println!("Broker ready: {url}");
+/// Probe the broker listening on `address`, report the result and return the
+/// process outcome.
+pub(crate) async fn probe_reported(address: &LocalSocketAddress) -> ProcessExitOutcome {
+    match probe(address).await {
+        Ok(()) => {
+            println!("Broker ready: {}", address.path().display());
             ProcessExitOutcome::Success
         }
         Err(error) => {
@@ -74,75 +68,57 @@ pub(crate) async fn probe_reported(server: &ServerConfig, management: &Managemen
     }
 }
 
-/// Send one readiness request and return the probed URL when the broker
-/// answered it with success.
+/// Ask the broker on `address` for its readiness, and succeed when it answers
+/// with success.
 ///
 /// # Errors
 ///
-/// Returns a [`ReadinessProbeError`] when the management plane is disabled,
-/// when no URL or client can be built, when no answer arrives, or when the
-/// answer is not a success.
-async fn probe(server: &ServerConfig, management: &ManagementConfig) -> Result<Url, ReadinessProbeError> {
-    let url = readiness_url(server, management)?;
-    // A proxy from the environment would carry a loopback request off the host,
-    // and a redirect would answer for another listener.
-    let client = Client::builder()
-        .no_proxy()
-        .redirect(Policy::none())
-        .timeout(PROBE_TIMEOUT)
-        .tls_danger_accept_invalid_certs(true)
-        .build()
-        .map_err(ReadinessProbeError::Client)?;
-    let status = client.get(url.as_str()).send().await.map_err(ReadinessProbeError::Request)?.status();
+/// Returns a [`ReadinessProbeError`] when no broker accepts the connection,
+/// when the exchange fails or outlasts [`PROBE_TIMEOUT`], or when the answer is
+/// not a success.
+async fn probe(address: &LocalSocketAddress) -> Result<(), ReadinessProbeError> {
+    let socket = || address.path().to_path_buf();
+    let status = timeout(PROBE_TIMEOUT, readiness_status(address))
+        .await
+        .map_err(|_elapsed| ReadinessProbeError::Timeout { socket: socket() })??;
     if status.is_success() {
-        Ok(url)
+        Ok(())
     } else {
-        Err(ReadinessProbeError::NotReady { url, status })
+        Err(ReadinessProbeError::NotReady { socket: socket(), status })
     }
 }
 
-/// The URL of the endpoint that answers readiness under the configured
-/// management topology.
+/// The status the broker on `address` answers `GET /readyz` with, over one
+/// HTTP/1.1 connection.
 ///
 /// # Errors
 ///
-/// Returns [`ReadinessProbeError::ManagementDisabled`] when no listener
-/// answers readiness, and [`ReadinessProbeError::Url`] when the listener
-/// address does not form a URL.
-fn readiness_url(server: &ServerConfig, management: &ManagementConfig) -> Result<Url, ReadinessProbeError> {
-    match management.mode {
-        ManagementMode::SeparatePort => Ok(listener_url(management.host, management.port, management.transport, READINESS_PATH)?),
-        ManagementMode::SharedPort => Ok(listener_url(server.host, server.port, server.transport, READINESS_PATH)?),
-        ManagementMode::Disabled => Err(ReadinessProbeError::ManagementDisabled),
-    }
-}
-
-/// The URL of `path` on the listener bound to `host` and `port` and speaking
-/// `transport`, as a client on the same host reaches it.
-fn listener_url(host: IpAddr, port: u16, transport: ListenerTransport, path: &str) -> Result<Url, ParseError> {
-    let scheme = ApiRootScheme::from(listener_scheme(transport));
-    let address = SocketAddr::new(reachable_host(host), port);
-    Url::parse(&format!("{}://{address}{path}", scheme.as_scheme()))
-}
-
-/// The address a client on the same host reaches a listener bound to `host`
-/// at: a wildcard bind answers on the loopback address of its family.
-const fn reachable_host(host: IpAddr) -> IpAddr {
-    match host {
-        IpAddr::V4(address) if address.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
-        IpAddr::V6(address) if address.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
-        IpAddr::V4(_) | IpAddr::V6(_) => host,
-    }
+/// Returns [`ReadinessProbeError::Connect`] when no broker accepts the
+/// connection and [`ReadinessProbeError::Exchange`] when the exchange fails.
+async fn readiness_status(address: &LocalSocketAddress) -> Result<StatusCode, ReadinessProbeError> {
+    let stream = address.connect().await.map_err(|source| ReadinessProbeError::Connect {
+        socket: address.path().to_path_buf(),
+        source,
+    })?;
+    let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await.map_err(ReadinessProbeError::Exchange)?;
+    let mut request = Request::new(String::new());
+    *request.uri_mut() = Uri::from_static(READINESS_PATH);
+    // HTTP/1.1 requires a Host field (RFC 9112 section 3.2); the socket leads
+    // to one broker, which reads none.
+    request.headers_mut().typed_insert(Host::from(Authority::from_static("localhost")));
+    // The answer is reduced to its status inside the exchange, so its body and
+    // the sender are dropped there and the connection can finish.
+    let exchange = async move { sender.send_request(request).await.map(|response| response.status()) };
+    let (status, closed) = tokio::join!(exchange, connection);
+    let status = status.map_err(ReadinessProbeError::Exchange)?;
+    closed.map_err(ReadinessProbeError::Exchange)?;
+    Ok(status)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::readiness_probe::{ReadinessProbeError, probe, readiness_url};
-    use andromeda_configuration::schema::{
-        listener_transport::ListenerTransport,
-        management::{ManagementConfig, ManagementMode},
-        server::ServerConfig,
-    };
+    use crate::readiness_probe::{ReadinessProbeError, probe};
+    use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::server::ServerConfig};
     use andromeda_health::{
         aggregate::Health,
         component::{ComponentDetail, ComponentName},
@@ -150,13 +126,11 @@ mod tests {
         status::HealthStatus,
     };
     use andromeda_http_health::routes::HealthRoutes;
+    use andromeda_http_server::{execution::serve_local_socket, local_socket_address::LocalSocketAddress, local_socket_listener::LocalSocketListener};
     use async_trait::async_trait;
-    use reqwest::StatusCode;
-    use std::{
-        error::Error,
-        net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    };
-    use tokio::net::TcpListener;
+    use hyper::StatusCode;
+    use std::{error::Error, future::pending};
+    use tempfile::TempDir;
 
     /// An indicator that always reports the status it was built with.
     struct FixedIndicator {
@@ -178,76 +152,27 @@ mod tests {
         }
     }
 
-    /// A management configuration in `separate-port` mode on `port` of the IPv4
-    /// wildcard address.
-    fn separate_port_management(port: u16) -> ManagementConfig {
-        ManagementConfig {
-            port,
-            ..ManagementConfig::default()
-        }
-    }
-
-    /// Serve the management probes over an indicator reporting `status` on an
-    /// ephemeral loopback port, and return that port.
-    async fn serve_management_probes(status: HealthStatus) -> Result<u16, Box<dyn Error>> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let port = listener.local_addr()?.port();
+    /// Serve the probes over an indicator reporting `status` on a local socket
+    /// in `directory`, and return its address.
+    fn serve_probes(directory: &TempDir, status: HealthStatus) -> Result<LocalSocketAddress, Box<dyn Error>> {
+        let address = LocalSocketAddress::new(directory.path(), 1056);
+        let listener = LocalSocketListener::bind(&address)?;
         let router = HealthRoutes::new(Health::builder().with_indicator(FixedIndicator { status }).build()).into_router();
-        tokio::spawn(async move { axum::serve(listener, router).await });
-        Ok(port)
-    }
-
-    #[test]
-    fn the_default_configuration_probes_readyz_on_the_management_port_over_loopback() -> Result<(), Box<dyn Error>> {
-        let url = readiness_url(&ServerConfig::default(), &ManagementConfig::default())?;
-        pretty_assertions::assert_eq!(url.as_str(), "http://127.0.0.1:1086/readyz");
-        Ok(())
-    }
-
-    #[test]
-    fn shared_port_mode_probes_readyz_on_the_api_listener_with_its_transport() -> Result<(), Box<dyn Error>> {
-        let server = ServerConfig {
-            host: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            port: 1443,
-            transport: ListenerTransport::Tls,
-            ..ServerConfig::default()
-        };
-        let management = ManagementConfig {
-            mode: ManagementMode::SharedPort,
-            ..ManagementConfig::default()
-        };
-        pretty_assertions::assert_eq!(readiness_url(&server, &management)?.as_str(), "https://[::1]:1443/readyz");
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn disabled_management_has_no_readiness_probe_to_ask() {
-        let management = ManagementConfig {
-            mode: ManagementMode::Disabled,
-            ..ManagementConfig::default()
-        };
-        assert!(matches!(
-            readiness_url(&ServerConfig::default(), &management),
-            Err(ReadinessProbeError::ManagementDisabled)
-        ));
-        assert!(matches!(
-            probe(&ServerConfig::default(), &management).await,
-            Err(ReadinessProbeError::ManagementDisabled)
-        ));
+        tokio::spawn(async move { serve_local_socket(&ServerConfig::default(), HeaderSectionLimit::MAXIMUM, listener, router, pending()).await });
+        Ok(address)
     }
 
     #[tokio::test]
     async fn a_broker_whose_indicators_are_up_is_ready() -> Result<(), Box<dyn Error>> {
-        let port = serve_management_probes(HealthStatus::Up).await?;
-        let url = probe(&ServerConfig::default(), &separate_port_management(port)).await?;
-        pretty_assertions::assert_eq!(url.port(), Some(port));
+        let directory = TempDir::new()?;
+        probe(&serve_probes(&directory, HealthStatus::Up)?).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn a_broker_with_a_down_indicator_is_not_ready_with_503() -> Result<(), Box<dyn Error>> {
-        let port = serve_management_probes(HealthStatus::Down).await?;
-        let outcome = probe(&ServerConfig::default(), &separate_port_management(port)).await;
+        let directory = TempDir::new()?;
+        let outcome = probe(&serve_probes(&directory, HealthStatus::Down)?).await;
         assert!(matches!(
             outcome,
             Err(ReadinessProbeError::NotReady {
@@ -255,6 +180,14 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_socket_no_broker_serves_fails_to_connect() -> Result<(), Box<dyn Error>> {
+        let directory = TempDir::new()?;
+        let outcome = probe(&LocalSocketAddress::new(directory.path(), 1056)).await;
+        assert!(matches!(outcome, Err(ReadinessProbeError::Connect { .. })));
         Ok(())
     }
 }

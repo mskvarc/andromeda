@@ -12,7 +12,7 @@ use crate::{
     logging,
     outcome::ProcessExitOutcome,
     pending_work_probe::{PendingWorkProbeError, pending_work_probe},
-    planes::assemble_planes,
+    planes::{Planes, assemble_planes},
     postgresql_maintenance::{MaintenanceRegistrationError, register_postgresql_maintenance},
     routes::{
         context_registry::BrokerContextRegistryStateResolver,
@@ -32,7 +32,7 @@ use crate::{
 };
 use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration, schema::feature_mode::FeatureMode};
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
-use andromeda_http_api::{api::HttpApi, management::ManagementApi, routes::ApiRoutes};
+use andromeda_http_api::routes::ApiRoutes;
 use andromeda_http_component_report::routes::ComponentReportRoutes;
 use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
@@ -81,10 +81,8 @@ pub(crate) const MAINTENANCE_PLATFORM_POOL_CONNECTIONS: u32 = 3;
 
 /// HTTP API and process resources whose shutdown begins after traffic drains.
 struct BrokerExecution {
-    /// Fully assembled state-complete HTTP API.
-    api: HttpApi,
-    /// Standalone management-plane service, present only in `separate-port` mode.
-    management: Option<ManagementApi>,
+    /// The assembled data, management and local probe planes.
+    planes: Planes,
     /// Tenant runtimes served by the API.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
     /// Process task scope coordinating cancellation across tenants.
@@ -154,8 +152,7 @@ pub(crate) async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
     // broker became available, captured once here.
     let started_at = Utc::now();
     let BrokerExecution {
-        api,
-        management,
+        planes,
         tenants,
         process_tasks,
     } = match construct(Arc::clone(&config), telemetry, started_at).await {
@@ -166,7 +163,7 @@ pub(crate) async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
         }
     };
     let stop = StopClock::default();
-    let serve_result = listeners::serve(config.as_ref(), api, management, stop.signal()).await;
+    let serve_result = listeners::serve(config.as_ref(), planes, stop.signal()).await;
     match &serve_result {
         Ok(()) => info!(event = "http_traffic_drained", "HTTP listener stopped after draining accepted requests"),
         Err(server_error) => error!(error = %server_error, event = "http_server_failed"),
@@ -361,10 +358,8 @@ async fn construct(
         .pagination(pagination)
         .build();
     let stack = HttpStack::new(config.http.clone(), config.request_limits)?;
-    let (api, management) = assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack);
     Ok(BrokerExecution {
-        api,
-        management,
+        planes: assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack),
         tenants,
         process_tasks,
     })

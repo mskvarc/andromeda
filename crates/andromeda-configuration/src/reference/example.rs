@@ -48,5 +48,6 @@ pub(crate) fn example_configuration() -> Result<BrokerConfig, ReferenceError> {
     config.federation.identity.source_alias = Some(SourceAlias::from_static("broker-a"));
     config.federation.identity.extras = Some(toml::from_str::<SourceExtras>("operator = \"Example Operator\"\n")?);
     config.observability.log.file.directory = Some(PathBuf::from("/var/log/andromeda"));
+    config.management.local_socket_directory = Some(PathBuf::from("/run/andromeda"));
     Ok(config)
 }

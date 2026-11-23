@@ -125,8 +125,10 @@ RUN set -eu; \
             done; \
         done >> /dist/third-party-licenses.md
 
-# Owned by the broker's user in the runtime image, which has no shell to create them.
-RUN mkdir -p /rootfs/etc/andromeda /rootfs/var/lib/andromeda
+# Owned by the broker's user in the runtime image, which has no shell to create them. The runtime directory holds the
+# local socket the health check asks, so only that user may open it.
+RUN mkdir -p /rootfs/etc/andromeda /rootfs/run/andromeda /rootfs/var/lib/andromeda /rootfs/var/log/andromeda \
+    && chmod 0700 /rootfs/run/andromeda
 
 # glibc and libgcc_s are all the broker links dynamically. No shell, no package manager.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime
