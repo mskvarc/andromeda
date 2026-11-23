@@ -55,6 +55,10 @@
 --   further_members      the proof's `@id` and every further member, in
 --                        the structured value encoding of a node holding
 --                        them, NULL when it has none
+--
+-- `created` is served with the decimal point before its fraction, whichever
+-- separator the request used, as clause 4.6.3 admits the comma in requests
+-- only.
 create type data_integrity_proof as (
     created timestamptz,
     created_digits smallint,
