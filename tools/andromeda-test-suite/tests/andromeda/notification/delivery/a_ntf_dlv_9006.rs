@@ -85,17 +85,20 @@ async fn a_ntf_dlv_9006_a_notification_over_the_http_body_limit_fails_once_witho
         verify_that!(subscription.notification().output().times_failed, some(eq(4)))
     })
     .await?;
-    let subscription_2 = broker_notification_limits
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .subscriptions()
-        .retrieve(&subscription_large_id)
-        .send()
-        .await?;
-    let notification = subscription_2.notification().output();
-    expect_that!(notification.status, some(eq(NotificationStatus::Failed)));
-    expect_that!(notification.times_failed, some(eq(1)));
-    expect_that!(notification.last_failure, some(anything()));
-    expect_that!(notification.last_success, none());
+    retried(async || {
+        let subscription_2 = broker_notification_limits
+            .with_accept(Accept::new(NgsiLdMediaType::Json))
+            .subscriptions()
+            .retrieve(&subscription_large_id)
+            .send()
+            .await?;
+        let notification = subscription_2.notification().output();
+        verify_that!(notification.status, some(eq(NotificationStatus::Failed)))?;
+        verify_that!(notification.times_failed, some(eq(1)))?;
+        verify_that!(notification.last_failure, some(anything()))?;
+        verify_that!(notification.last_success, none())
+    })
+    .await?;
     expect_that!(sink.received("large").await?, len(eq(0)));
     broker_notification_limits.subscriptions().delete(&subscription_large_id).send().await?;
     broker_notification_limits.subscriptions().delete(&subscription_unreachable_id).send().await?;

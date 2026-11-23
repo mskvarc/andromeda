@@ -5,6 +5,7 @@ use andromeda_test_suite::{
     body_pattern::BodyPattern,
     broker,
     entity_matcher::{has_attribute, lacks_attribute},
+    eventually::retried,
     namespace::Namespace,
     notification_sink::NotificationSink,
     outcome::Done,
@@ -76,12 +77,15 @@ async fn a_att_del_9234_deleting_every_instance_of_an_attribute_of_50000_instanc
     ];
     sink.wait_for_at_least_where(1, &reported, 1).await?;
     expect_that!(sink.received_where(1, &reported).await?, len(eq(1)));
-    let subscription_2 = broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .subscriptions()
-        .retrieve(&subscription_id)
-        .send()
-        .await?;
-    expect_that!(subscription_2.notification().output().times_sent, some(eq(1)));
+    retried(async || {
+        let subscription_2 = broker
+            .with_accept(Accept::new(NgsiLdMediaType::Json))
+            .subscriptions()
+            .retrieve(&subscription_id)
+            .send()
+            .await?;
+        verify_that!(subscription_2.notification().output().times_sent, some(eq(1)))
+    })
+    .await?;
     Ok(())
 }
