@@ -12,37 +12,28 @@
 -- kept as the `@value`, and leaves every other member, and every document
 -- holding no such string, as it is.
 -- ============================================================================
--- `instant` declared as a `DateTime` when it is a string, any other value
--- unchanged. Temporary, as only the rewrite here calls it.
-create function pg_temp.declared_date_time (instant jsonb)
+-- `document` with the instant at path `instant` declared as a `DateTime` when
+-- it is a string, and unchanged otherwise. Temporary, as only the rewrite
+-- here calls it.
+create function pg_temp.declared_date_time (document jsonb, instant text[])
     returns jsonb
     language sql
     immutable
     parallel safe
-    return case when jsonb_typeof(instant) = 'string' then
-        jsonb_build_object('@type', 'https://uri.etsi.org/ngsi-ld/DateTime', '@value', instant)
+    return case when jsonb_typeof(document #> instant) = 'string' then
+        jsonb_set(document, instant, jsonb_build_object('@type', 'https://uri.etsi.org/ngsi-ld/DateTime', '@value', document #> instant))
     else
-        instant
+        document
     end;
-
--- A time interval with its `startAt` and its `endAt`, when it has one,
--- declared as a `DateTime`, and NULL for an absent interval. Temporary, as
--- only the rewrite here calls it.
-create function pg_temp.declared_time_interval (time_interval jsonb)
-    returns jsonb
-    language sql
-    immutable
-    parallel safe
-    return time_interval || jsonb_strip_nulls(jsonb_build_object('startAt', pg_temp.declared_date_time(time_interval -> 'startAt'), 'endAt', pg_temp.declared_date_time(time_interval -> 'endAt')));
 
 update
     context_source_registrations
 set
-    context_source_properties = context_source_properties || jsonb_strip_nulls(jsonb_build_object('https://uri.etsi.org/ngsi-ld/managementInterval', pg_temp.declared_time_interval(context_source_properties -> 'https://uri.etsi.org/ngsi-ld/managementInterval'), 'https://uri.etsi.org/ngsi-ld/observationInterval', pg_temp.declared_time_interval(context_source_properties -> 'https://uri.etsi.org/ngsi-ld/observationInterval')))
+    context_source_properties = pg_temp.declared_date_time(pg_temp.declared_date_time(pg_temp.declared_date_time(pg_temp.declared_date_time(context_source_properties, '{https://uri.etsi.org/ngsi-ld/managementInterval,startAt}'), '{https://uri.etsi.org/ngsi-ld/managementInterval,endAt}'), '{https://uri.etsi.org/ngsi-ld/observationInterval,startAt}'), '{https://uri.etsi.org/ngsi-ld/observationInterval,endAt}')
 where
     jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/managementInterval,startAt}') = 'string'
     or jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/managementInterval,endAt}') = 'string'
     or jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/observationInterval,startAt}') = 'string'
     or jsonb_typeof(context_source_properties #> '{https://uri.etsi.org/ngsi-ld/observationInterval,endAt}') = 'string';
 
-drop function pg_temp.declared_time_interval, pg_temp.declared_date_time;
+drop function pg_temp.declared_date_time;
