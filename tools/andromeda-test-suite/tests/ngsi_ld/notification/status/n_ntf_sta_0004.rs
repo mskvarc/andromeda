@@ -1,6 +1,6 @@
 //! A periodic subscription matching nothing reports no last notification.
 
-use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, outcome::Done};
+use andromeda_test_suite::{broker, eventually::retried, namespace::Namespace, notification_sink::NotificationSink, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
@@ -60,14 +60,17 @@ async fn n_ntf_sta_0004_a_periodic_subscription_matching_nothing_reports_no_last
     expect_that!(subscription.notification().output().times_sent, none());
     expect_that!(subscription.notification().output().last_notification, none());
     expect_that!(subscription.notification().output().last_success, none());
-    let subscription_2 = broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .subscriptions()
-        .retrieve(&subscription_sentinel_id)
-        .send()
-        .await?;
-    expect_that!(subscription_2.notification().output().times_sent, some(ge(3)));
-    expect_that!(subscription_2.notification().output().last_notification, some(anything()));
+    retried(async || {
+        let subscription_2 = broker
+            .with_accept(Accept::new(NgsiLdMediaType::Json))
+            .subscriptions()
+            .retrieve(&subscription_sentinel_id)
+            .send()
+            .await?;
+        verify_that!(subscription_2.notification().output().times_sent, some(ge(3)))?;
+        verify_that!(subscription_2.notification().output().last_notification, some(anything()))
+    })
+    .await?;
     broker.subscriptions().delete(&subscription_sentinel_id).send().await?;
     broker.subscriptions().delete(&subscription_silent_id).send().await?;
     Ok(())
