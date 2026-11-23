@@ -225,3 +225,54 @@ fn the_descriptor_holds_every_compound_rule_with_every_key_it_names() -> Result<
     }
     Ok(())
 }
+
+/// HTTP/3 and every extension are experimental, so the descriptor marks their
+/// tables and, through each table, its keys. The `extensions.mode` override
+/// that turns them all off, and everything else, is stable.
+#[test]
+fn the_descriptor_gives_every_table_and_key_its_stability() -> Result<(), ReferenceError> {
+    let value = serde_json::to_value(configuration_descriptor()?)?;
+    let experimental =
+        |path: &str| path.split('.').take(2).collect::<Vec<_>>() == ["server", "http3"] || (path.starts_with("extensions.") && path != "extensions.mode");
+    let misplaced: Vec<String> = ["tables", "keys"]
+        .into_iter()
+        .flat_map(|list| value[list].as_array().into_iter().flatten())
+        .filter_map(|item| {
+            let path = item["path"].as_str().unwrap_or_default();
+            let expected = if experimental(path) { "experimental" } else { "stable" };
+            (item["stability"] != expected).then(|| format!("{path} is {}", item["stability"]))
+        })
+        .collect();
+    assert_eq!(misplaced, [] as [String; 0]);
+    Ok(())
+}
+
+/// The note stands once for each marked table, directly above its header, and
+/// not again above each key that takes the table's stability.
+#[test]
+fn the_template_notes_each_experimental_table_once_above_its_header() -> Result<(), ReferenceError> {
+    let template = configuration_template()?;
+    let note = "# This is experimental, so it may change or go away in any release.";
+    let lines: Vec<&str> = template.lines().collect();
+    let followed: Vec<&str> = lines
+        .windows(2)
+        .filter(|pair| pair[0] == note)
+        .map(|pair| pair[1].trim_start_matches("# "))
+        .collect();
+    assert_eq!(
+        followed,
+        [
+            "[server.http3]",
+            "[extensions.cursor_pagination]",
+            "[extensions.temporal_delete_by_query]",
+            "[extensions.temporal_aggregation_grouping]",
+            "[extensions.temporal_linked_retrieval]",
+            "[extensions.purge_dataset_scope]",
+            "[extensions.tenant_management]",
+            "[extensions.near_distance_band]",
+            "[extensions.accept_language]",
+            "[extensions.q_target_languages]",
+        ]
+    );
+    Ok(())
+}

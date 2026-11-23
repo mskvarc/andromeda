@@ -9,6 +9,7 @@ use crate::{
         example::example_configuration,
         schema_node::{Choice, ChoiceRange, SchemaNode},
     },
+    schema::stability::Stability,
     validate::{compound_rule::CompoundRule, compound_rules, declared_rules, rule::Rule},
 };
 use derive_more::Display;
@@ -95,6 +96,8 @@ pub(crate) struct TableEntry {
     pub(crate) state: KeyState,
     /// Its operator description.
     pub(crate) description: Option<String>,
+    /// The stability its schema node is marked with, when it is marked itself.
+    pub(crate) marked_stability: Option<Stability>,
     /// A free table's `key = value` lines, at their default or example.
     pub(crate) members: Vec<String>,
 }
@@ -140,6 +143,9 @@ pub(crate) struct KeyEntry {
     pub(crate) value: String,
     /// Its operator description.
     pub(crate) description: Option<String>,
+    /// The stability its schema node is marked with, when it is marked
+    /// itself rather than through the table it lies in.
+    pub(crate) marked_stability: Option<Stability>,
     /// The values it allows, with what each means; empty for a key that is
     /// no choice.
     pub(crate) choices: Vec<Choice>,
@@ -227,6 +233,7 @@ fn list_table(entries: &mut Vec<ReferenceEntry>, path: &KeyPath, example: &Table
             state,
             value: literal(default.unwrap_or(value)),
             description: described(schema.child(name)),
+            marked_stability: schema.child(name).and_then(SchemaNode::marked_stability),
             choices: schema.child(name).map_or_default(SchemaNode::choices),
             choice_range: schema.child(name).map_or(ChoiceRange::Closed, SchemaNode::choice_range),
             limits: Vec::new(),
@@ -271,6 +278,7 @@ fn table_entry(path: KeyPath, shape: TableShape, state: KeyState, node: Option<&
         shape,
         state,
         description: described(node),
+        marked_stability: node.and_then(SchemaNode::marked_stability),
         members,
     })
 }

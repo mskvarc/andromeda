@@ -19,7 +19,7 @@ use crate::{
         rule_descriptor::{RuleDescriptor, rule_descriptors},
         schema_node::{Choice, SchemaNode},
     },
-    schema::apply_mode::ApplyMode,
+    schema::{apply_mode::ApplyMode, stability::Stability},
     validate::{
         bound::{Quantity, Relation},
         rule::{Limit, Rule},
@@ -51,6 +51,8 @@ struct TableDescriptor {
     presence: KeyState,
     /// The operator description.
     description: String,
+    /// How firmly it holds across releases.
+    stability: Stability,
 }
 
 /// One key.
@@ -60,6 +62,8 @@ struct KeyDescriptor {
     path: String,
     /// The operator description.
     description: String,
+    /// How firmly it holds across releases, its own marker or its table's.
+    stability: Stability,
     /// Whether a change reaches a running broker or takes a restart.
     apply: ApplyMode,
     /// Whether every replica must hold the same value.
@@ -153,6 +157,7 @@ pub fn configuration_descriptor() -> Result<ConfigurationDescriptor, ReferenceEr
         tables: tables
             .into_iter()
             .map(|table| TableDescriptor {
+                stability: schema.stability_at(table.path.segments()),
                 path: table.path.dotted(),
                 shape: table.shape,
                 presence: table.state,
@@ -192,6 +197,7 @@ fn key_descriptor(key: KeyEntry, schema: &SchemaNode, tables: &[TableEntry]) -> 
         }),
         limits: key.limits.iter().copied().map(limit_descriptor).collect(),
         conditions: key.conditions,
+        stability: schema.stability_at(key.path.segments()),
         apply: node.map_or_default(SchemaNode::apply),
         replica_consistent: node.is_some_and(SchemaNode::replica_consistent),
         sensitive: SENSITIVE_KEYS.contains(&path.as_str()),

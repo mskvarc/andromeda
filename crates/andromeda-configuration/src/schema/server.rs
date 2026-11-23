@@ -72,6 +72,7 @@ pub struct ServerConfig {
     pub idle_timeout: HumanDuration,
     /// The HTTP/3 listener sharing this listener's host and port.
     #[schemars(description = "The optional HTTP/3 listener on the same host and port as the API.")]
+    #[schemars(extend("x-andromeda-stability" = "experimental"))]
     pub http3: Http3Config,
 }
 

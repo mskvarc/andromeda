@@ -150,8 +150,8 @@ mod tests {
     /// The advertisement as the extension set spells it.
     fn advertised(extras: Option<&JsonLiteral>) -> LanguageTargeting {
         match extras.map(JsonLiteral::text) {
-            Some(text) if text.contains("\"languageRangeFiltering\"") => LanguageTargeting::LanguageRanges,
-            Some(text) if text.contains("\"languageTags\"") => LanguageTargeting::LanguageTags,
+            Some(text) if text.contains("\"languageRangeFiltering/0.1\"") => LanguageTargeting::LanguageRanges,
+            Some(text) if text.contains("\"languageTags/0.1\"") => LanguageTargeting::LanguageTags,
             Some(_) | None => LanguageTargeting::Specification,
         }
     }
@@ -171,11 +171,11 @@ mod tests {
     }
 
     fn ranges(registration: &str) -> ReachedSource {
-        advertising(registration, r#""languageTags", "languageRangeFiltering""#)
+        advertising(registration, r#""languageTags/0.1", "languageRangeFiltering/0.1""#)
     }
 
     fn tags(registration: &str) -> ReachedSource {
-        advertising(registration, r#""languageTags""#)
+        advertising(registration, r#""languageTags/0.1""#)
     }
 
     #[test]
@@ -228,7 +228,7 @@ mod tests {
         let outcome = negotiated(
             LanguageTargeting::LanguageTags,
             LanguageTargeting::Specification,
-            &[advertising("urn:ngsi-ld:ContextSourceRegistration:d", r#""cursorPagination""#)],
+            &[advertising("urn:ngsi-ld:ContextSourceRegistration:d", r#""cursorPagination/0.1""#)],
             advertised,
         )
         .expect("negotiated");

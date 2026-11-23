@@ -23,7 +23,7 @@ async fn a_ext_adv_0009_the_language_tags_level_advertises_language_tags_alone()
         .source_identity()
         .send()
         .await?;
-    expect_that!(&extensions(&received.outcome)?, lists_extension("languageTags"));
+    expect_that!(&extensions(&received.outcome)?, lists_extension("languageTags/0.1"));
     expect_that!(String::from_utf8_lossy(&received.body), not(contains_substring("languageRangeFiltering")));
     Ok(())
 }

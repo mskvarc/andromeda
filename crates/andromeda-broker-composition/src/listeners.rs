@@ -106,7 +106,13 @@ pub(crate) async fn serve(config: &BrokerConfig, planes: Planes, shutdown: impl 
     let tcp_security = identity.tcp_security(config.server.transport)?;
     let quic_feed = match config.server.http3.mode {
         Http3Mode::Disabled => None,
-        Http3Mode::Enabled => Some(identity.quic_feed()?),
+        Http3Mode::Enabled => {
+            tracing::warn!(
+                event = "experimental_http3_enabled",
+                "HTTP/3 is experimental, so it may change or go away in any release"
+            );
+            Some(identity.quic_feed()?)
+        }
     };
     let management_security = management.as_ref().map(|_| identity.tcp_security(config.management.transport)).transpose()?;
     let local_socket = bind_local_socket(&LocalSocketAddress::configured(&config.server, &config.management))?;

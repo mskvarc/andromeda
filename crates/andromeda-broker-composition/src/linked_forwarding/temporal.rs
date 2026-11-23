@@ -104,6 +104,7 @@ impl RemoteTemporalLinkedSource for LinkedForwarding {
 #[cfg(test)]
 mod tests {
     use crate::linked_forwarding::temporal::{linked_temporal_retrieval_parameters, reach_of};
+    use andromeda_extensions::advertisement::TEMPORAL_LINKED_RETRIEVAL_TOKEN;
     use andromeda_federation::source_identity::SourceConfiguration;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_linked_retrieval::source::RemoteReach;
@@ -191,9 +192,9 @@ mod tests {
     #[test]
     fn remote_reach_is_subgraph_only_for_an_advertising_source() {
         let advertising = SourceConfiguration::Described(Some(
-            JsonLiteral::admit(r#"{"extensions": ["temporalLinkedRetrieval"]}"#).expect("a JSON literal"),
+            JsonLiteral::admit(&format!(r#"{{"extensions": ["{TEMPORAL_LINKED_RETRIEVAL_TOKEN}"]}}"#)).expect("a JSON literal"),
         ));
-        let other = SourceConfiguration::Described(Some(JsonLiteral::admit(r#"{"extensions": ["cursorPagination"]}"#).expect("a JSON literal")));
+        let other = SourceConfiguration::Described(Some(JsonLiteral::admit(r#"{"extensions": ["cursorPagination/0.1"]}"#).expect("a JSON literal")));
         pretty_assertions::assert_eq!(reach_of(slice::from_ref(&advertising)), RemoteReach::Subgraph);
         pretty_assertions::assert_eq!(reach_of(&[other]), RemoteReach::SingleEntity);
         pretty_assertions::assert_eq!(reach_of(&[SourceConfiguration::Described(None)]), RemoteReach::SingleEntity);

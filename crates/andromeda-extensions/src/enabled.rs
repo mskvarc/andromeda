@@ -6,7 +6,10 @@
 //! every gate is what keeps the conformance override in one place: no code path
 //! reads the raw per-feature field, so none of them can forget the override.
 
-use andromeda_configuration::schema::extensions::{ExtensionsConfig, QTargetLanguages};
+use andromeda_configuration::schema::{
+    extensions::{ExtensionsConfig, QTargetLanguages},
+    stability::Stability,
+};
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use enumset::{EnumSet, EnumSetType, enum_set};
 
@@ -39,6 +42,38 @@ pub enum Extension {
     /// RFC 4647 extended ranges as `q` target languages, and extended
     /// filtering of every target language.
     LanguageRangeFiltering,
+}
+
+impl Extension {
+    /// How firmly the extension holds across releases.
+    ///
+    /// A stable extension keeps its token, its parameters and what it does
+    /// when it is on for the whole major version, and a deprecated one is
+    /// removed only in a major release. An experimental one may change or go
+    /// away in any release. Its token adds a revision, `name/0.n`, and `n`
+    /// goes up with every change an existing client or peer could trip over,
+    /// so exact token matching never takes one revision for another. It is
+    /// off by default unless serving it keeps the broker conformant, as the
+    /// opaque page pointers of cursor pagination do, it keeps whatever it
+    /// stores in tables of its own, and a change to it is never marked
+    /// breaking. Promoting it makes its
+    /// token the plain name and keeps the name of its configuration table,
+    /// whose `x-andromeda-stability` marker always says the same as this.
+    #[must_use]
+    pub const fn stability(self) -> Stability {
+        match self {
+            Extension::TemporalDeleteByQuery
+            | Extension::PurgeDatasetScope
+            | Extension::TemporalAggregationGrouping
+            | Extension::TemporalLinkedRetrieval
+            | Extension::TenantManagement
+            | Extension::CursorPagination
+            | Extension::NearDistanceBand
+            | Extension::AcceptLanguage
+            | Extension::LanguageTags
+            | Extension::LanguageRangeFiltering => Stability::Experimental,
+        }
+    }
 }
 
 /// The extensions that are actually on for this process.
@@ -108,6 +143,17 @@ impl EnabledExtensions {
     #[must_use]
     pub const fn all() -> EnabledExtensions {
         EnabledExtensions { enabled: EnumSet::all() }
+    }
+
+    /// The enabled extensions, in the order they are declared.
+    pub fn extensions(&self) -> impl Iterator<Item = Extension> {
+        self.enabled.iter()
+    }
+
+    /// Whether `extension` is enabled.
+    #[must_use]
+    pub fn contains(&self, extension: Extension) -> bool {
+        self.enabled.contains(extension)
     }
 
     /// Whether the temporal delete-by-query extension is enabled.
@@ -185,20 +231,41 @@ impl EnabledExtensions {
 
 #[cfg(test)]
 mod tests {
-    use crate::enabled::EnabledExtensions;
-    use andromeda_configuration::schema::{
-        extensions::{
-            ExtensionsConfig,
-            ExtensionsMode,
-            QTargetLanguages,
-            QTargetLanguagesConfig,
-            bounded::{TemporalAggregationGroupingConfig, TemporalDeleteByQueryConfig},
-            cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
-            switch::ExtensionSwitch,
+    use crate::enabled::{EnabledExtensions, Extension};
+    use andromeda_configuration::{
+        reference::descriptor::configuration_descriptor,
+        schema::{
+            extensions::{
+                ExtensionsConfig,
+                ExtensionsMode,
+                QTargetLanguages,
+                QTargetLanguagesConfig,
+                bounded::{TemporalAggregationGroupingConfig, TemporalDeleteByQueryConfig},
+                cursor_pagination::{CursorPaginationConfig, CursorPaginationMode},
+                switch::ExtensionSwitch,
+            },
+            feature_mode::FeatureMode,
+            stability::Stability,
         },
-        feature_mode::FeatureMode,
     };
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
+    use enumset::EnumSet;
+
+    /// The configuration table each extension is switched on in; both
+    /// target-language extensions share one.
+    const fn table(extension: Extension) -> &'static str {
+        match extension {
+            Extension::TemporalDeleteByQuery => "extensions.temporal_delete_by_query",
+            Extension::PurgeDatasetScope => "extensions.purge_dataset_scope",
+            Extension::TemporalAggregationGrouping => "extensions.temporal_aggregation_grouping",
+            Extension::TemporalLinkedRetrieval => "extensions.temporal_linked_retrieval",
+            Extension::TenantManagement => "extensions.tenant_management",
+            Extension::CursorPagination => "extensions.cursor_pagination",
+            Extension::NearDistanceBand => "extensions.near_distance_band",
+            Extension::AcceptLanguage => "extensions.accept_language",
+            Extension::LanguageTags | Extension::LanguageRangeFiltering => "extensions.q_target_languages",
+        }
+    }
 
     fn both_on() -> ExtensionsConfig {
         ExtensionsConfig {
@@ -355,5 +422,30 @@ mod tests {
         assert!(enabled.accept_language_enabled());
         assert!(enabled.language_tags_enabled());
         assert!(enabled.language_range_filtering_enabled());
+    }
+
+    #[test]
+    fn the_enabled_set_lists_its_extensions() {
+        let listed: Vec<Extension> = EnabledExtensions::from(&ExtensionsConfig::default()).extensions().collect();
+        pretty_assertions::assert_eq!(listed, vec![Extension::CursorPagination]);
+        pretty_assertions::assert_eq!(EnabledExtensions::all().extensions().count(), EnumSet::<Extension>::all().len());
+        pretty_assertions::assert_eq!(EnabledExtensions::none().extensions().count(), 0);
+    }
+
+    /// The configuration reference marks each extension's table with the
+    /// extension's own stability, so the documented keys and the advertised
+    /// token never disagree on it.
+    #[test]
+    fn each_extension_table_is_marked_with_the_extension_stability() {
+        let descriptor = serde_json::to_value(configuration_descriptor().expect("the descriptor")).expect("the descriptor as JSON");
+        for extension in EnumSet::<Extension>::all() {
+            let marked = descriptor["tables"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|listed| listed["path"] == table(extension))
+                .map(|listed| serde_json::from_value::<Stability>(listed["stability"].clone()).expect("a stability"));
+            pretty_assertions::assert_eq!(marked, Some(extension.stability()), "{extension:?}");
+        }
     }
 }

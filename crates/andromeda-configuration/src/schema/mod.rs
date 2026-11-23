@@ -28,6 +28,7 @@ pub mod snapshot;
 pub mod source_alias;
 pub mod source_extras;
 pub mod source_identifier;
+pub mod stability;
 pub mod temporal;
 pub mod tenancy;
 pub mod tls;

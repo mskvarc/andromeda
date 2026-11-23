@@ -71,6 +71,8 @@ request_head_timeout = "30s"
 idle_timeout = "3m"
 
 # The optional HTTP/3 listener on the same host and port as the API.
+#
+# This is experimental, so it may change or go away in any release.
 [server.http3]
 
 # Whether HTTP/3 is served beside the TCP listener. HTTP/3 has no plaintext
@@ -1743,6 +1745,8 @@ mode = "configured"
 
 # Opaque cursor page pointers, and how a request that names neither `offset` nor
 # `cursor` is paged.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.cursor_pagination]
 
 # Whether cursors are offered. Off, collections page by offset only and a
@@ -1763,6 +1767,8 @@ fresh_requests = "offset"
 # scoped history purge the NGSI-LD temporal delete operations have no equivalent
 # for. It takes no `join`, so a `q` that crosses a Relationship is refused with
 # `400` `BadRequestData`.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.temporal_delete_by_query]
 
 # Whether temporal delete-by-query is served on `DELETE /temporal/entities`. It
@@ -1779,6 +1785,8 @@ mode = "disabled"
 max_matches = 100000
 
 # Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.temporal_aggregation_grouping]
 
 # Whether grouped temporal aggregation is served: calendar and cyclic time
@@ -1802,6 +1810,8 @@ max_groups = 10000
 # request's window. Off, those parameters are refused with `InvalidRequest`, and
 # a nested projection, a `q` hop or a retrieving `join` in a query body with
 # `BadRequestData`.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.temporal_linked_retrieval]
 
 # Whether the extension is served. Off, the broker answers as a conformant
@@ -1813,6 +1823,8 @@ mode = "disabled"
 # `datasetId` and `deleteAll` on Purge Entities. On, `DELETE /entities` gains
 # the per-`datasetId` precision Delete Attribute already has. Off, a `datasetId`
 # or `deleteAll` there is refused with `InvalidRequest`.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.purge_dataset_scope]
 
 # Whether the extension is served. Off, the broker answers as a conformant
@@ -1825,6 +1837,8 @@ mode = "disabled"
 # per-tenant introspection and suspend or resume through `PATCH isActive`, and
 # advertises them at `/info/sourceIdentity`. No API operation ever drops a
 # tenant's database.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.tenant_management]
 
 # Whether the extension is served. Off, the broker answers as a conformant
@@ -1837,6 +1851,8 @@ mode = "disabled"
 # `minDistance` and `maxDistance` matches the entities between the two, on
 # queries, temporal queries, subscription `geoQ` and registration discovery.
 # Off, the pair is refused with `BadRequestData`.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.near_distance_band]
 
 # Whether the extension is served. Off, the broker answers as a conformant
@@ -1849,6 +1865,8 @@ mode = "disabled"
 # entities or Temporal Evolutions that carries no `lang` takes its filter from
 # `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the
 # header is ignored.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.accept_language]
 
 # Whether the extension is served. Off, the broker answers as a conformant
@@ -1858,6 +1876,8 @@ mode = "disabled"
 mode = "disabled"
 
 # What a `q` bracket may name as a target language.
+#
+# This is experimental, so it may change or go away in any release.
 [extensions.q_target_languages]
 
 # Whether a `q` bracket may name a language tag. Off, a bracket names only what
