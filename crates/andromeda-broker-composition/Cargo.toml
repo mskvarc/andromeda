@@ -79,11 +79,13 @@ andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["as_ref", "debug", "deref", "display", "from", "into", "is_variant"] }
-etcetera = "0.11.0"
 file-rotate = "0.8.0"
 futures = "0.3.34"
+headers = "0.4.2"
+http = "1.5.0"
+hyper = { version = "1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
-reqwest = { version = "0.13.5", features = ["http2"] }
 sqlx = { version = "0.9.1", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
@@ -110,9 +112,9 @@ axum = "0.8.9"
 bytes = "1.12.2"
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
-http = "1.5.0"
 pretty_assertions = "1.4.1"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+reqwest = { version = "0.13.5", features = ["http2"] }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }
 serial_test = "4.0.1"

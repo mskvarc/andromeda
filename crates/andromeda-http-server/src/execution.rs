@@ -11,12 +11,16 @@ use crate::{
     error::HttpServerError,
     field_section::{HeaderSectionPolicy, refuse_oversized_http1_section},
     listener_security::ListenerSecurity,
+    local_socket_listener::LocalSocketListener,
     request_tracking::track_request,
     staged_close_listener::StagedCloseListener,
     tls_tcp_listener::TlsTcpListener,
     unread_content::announce_close_of_unread_content,
 };
-use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::server::ServerConfig};
+use andromeda_configuration::{
+    header_section_limit::HeaderSectionLimit,
+    schema::{listener_transport::ListenerTransport, server::ServerConfig},
+};
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request},
@@ -106,6 +110,43 @@ where
     }
 }
 
+/// Serve a bound local socket under `config`'s policies until the supplied
+/// shutdown future resolves; `config`'s host, port and transport are not read.
+/// The socket carries no TLS, and a request whose header section is over
+/// `max_header_section` is answered 431.
+///
+/// # Errors
+///
+/// Returns [`HttpServerError::DrainDeadlineExceeded`] when accepted connections are still in
+/// flight once the configured graceful-drain deadline has passed.
+pub async fn serve_local_socket<S, F>(
+    config: &ServerConfig,
+    max_header_section: HeaderSectionLimit,
+    listener: LocalSocketListener,
+    service: S,
+    shutdown: F,
+) -> Result<(), HttpServerError>
+where
+    S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + Sync + 'static,
+    S::Future: Send + 'static,
+    F: Future<Output = ()> + Send,
+{
+    tracing::info!(socket = %listener.path().display(), "local socket accepting connections");
+    let header_section = HeaderSectionPolicy {
+        limit: max_header_section,
+        transport: ListenerTransport::Plaintext,
+    };
+    serve_listener(
+        listener,
+        service,
+        shutdown,
+        ClosePolicy::from(config),
+        ConnectionBounds::from(config),
+        header_section,
+    )
+    .await
+}
+
 /// Serve an already bound listener, allowing composition and tests to control its address.
 ///
 /// Each connection speaks HTTP/1.1 or HTTP/2 as the client chooses, and a
@@ -116,8 +157,8 @@ where
 /// it is done. A connection whose request head is later than `bounds` allow
 /// is ended (see [`crate::clocked_stream`]), and one idle for longer than they
 /// allow is shut down gracefully (see [`crate::connection_lifetime`]). Every
-/// request carries the address of the peer its connection came from as a
-/// `ConnectInfo<SocketAddr>` extension. Once `shutdown` resolves no connection
+/// request carries the peer its connection came from as a `ConnectInfo` of the
+/// listener's address type, `SocketAddr` on TCP. Once `shutdown` resolves no connection
 /// is accepted, and the open ones finish their in-flight requests.
 ///
 /// # Errors
@@ -133,7 +174,8 @@ pub async fn serve_listener<L, S, F>(
     header_section: HeaderSectionPolicy,
 ) -> Result<(), HttpServerError>
 where
-    L: Listener<Addr = SocketAddr>,
+    L: Listener,
+    L::Addr: Copy + Send + Sync + 'static,
     S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + Sync + 'static,
     S::Future: Send + 'static,
     F: Future<Output = ()> + Send,

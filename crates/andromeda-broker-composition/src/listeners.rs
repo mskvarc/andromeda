@@ -7,24 +7,35 @@
 //! `Alt-Svc` header advertising the QUIC endpoint so a client that first arrives
 //! over TCP can upgrade. In `separate-port` management mode a third, TCP-only
 //! listener carries the observability endpoints on their own host and port, with
-//! no QUIC and no `Alt-Svc`. Every listener runs concurrently under one shutdown
-//! token; the first to fail cancels the rest so the process never keeps serving
-//! on a subset of them.
+//! no QUIC and no `Alt-Svc`. In every mode a local socket carries the liveness
+//! and readiness probes the `health` command asks. Every listener runs
+//! concurrently under one shutdown token; the first to fail cancels the rest so
+//! the process never keeps serving on a subset of them.
 //!
 //! Each listener tells the requests it carries which scheme it speaks, so the
 //! URLs the broker mints from a request origin carry `https` exactly when the
 //! request arrived over TLS the broker terminated (see [`crate::listener_tls`]).
 
-use crate::listener_tls::{ListenerTlsError, SharedTlsIdentity, listener_scheme};
+use crate::{
+    listener_tls::{ListenerTlsError, SharedTlsIdentity, listener_scheme},
+    planes::Planes,
+};
 use andromeda_configuration::{
     broker_config::BrokerConfig,
     header_section_limit::HeaderSectionLimit,
-    schema::{http3::Http3Mode, server::ServerConfig},
+    schema::{http3::Http3Mode, listener_transport::ListenerTransport, server::ServerConfig},
 };
-use andromeda_http_api::{api::HttpApi, management::ManagementApi};
+use andromeda_http_api::management::ManagementApi;
 use andromeda_http_extraction::{api_root_scheme::ApiRootScheme, listener_scheme::ListenerScheme};
 use andromeda_http_headers::alt_svc::{AltSvcAdvertisement, InvalidAdvertisement};
-use andromeda_http_server::{close_policy::ClosePolicy, error::HttpServerError, execution::serve as serve_tcp, listener_security::ListenerSecurity};
+use andromeda_http_server::{
+    close_policy::ClosePolicy,
+    error::HttpServerError,
+    execution::{serve as serve_tcp, serve_local_socket},
+    listener_security::ListenerSecurity,
+    local_socket_address::LocalSocketAddress,
+    local_socket_listener::{LocalSocketError, LocalSocketListener},
+};
 use andromeda_http3_server::{
     endpoint::{self, Http3EndpointError},
     execution::{Http3ServeError, serve_endpoint},
@@ -45,6 +56,12 @@ pub(crate) enum ListenerError {
     /// The TCP (HTTP/1.1 and HTTP/2) listener failed.
     #[error(transparent)]
     Tcp(#[from] HttpServerError),
+    /// Another running broker holds the local socket.
+    #[error(transparent)]
+    LocalSocketClaim(#[from] LocalSocketError),
+    /// The local socket failed while serving.
+    #[error("the local socket failed: {0}")]
+    LocalSocket(#[source] HttpServerError),
     /// The shared TLS identity could not be loaded or configured.
     #[error(transparent)]
     Tls(#[from] ListenerTlsError),
@@ -71,19 +88,17 @@ pub(crate) enum ListenerError {
 /// `management` is `Some` (the `separate-port` mode), a third TCP-only listener
 /// serves the observability endpoints on the management host and port, over
 /// the transport `management.transport` says. Every TLS-terminating listener
-/// presents the shared `[tls]` identity, reloaded as its files rotate.
+/// presents the shared `[tls]` identity, reloaded as its files rotate. The
+/// local socket serves the probes of `local_probes` in every mode.
 ///
 /// # Errors
 ///
 /// Returns a [`ListenerError`] when the shared TLS identity cannot be loaded,
-/// when any listener cannot be bound or fails while serving, or when the
-/// HTTP/3 advertisement cannot be built.
-pub(crate) async fn serve(
-    config: &BrokerConfig,
-    api: HttpApi,
-    management: Option<ManagementApi>,
-    shutdown: impl Future<Output = ()> + Send + 'static,
-) -> Result<(), ListenerError> {
+/// when another running broker holds the local socket, when any listener
+/// cannot be bound or fails while serving, or when the HTTP/3 advertisement
+/// cannot be built.
+pub(crate) async fn serve(config: &BrokerConfig, planes: Planes, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<(), ListenerError> {
+    let Planes { api, management, local_probes } = planes;
     let address = SocketAddr::from((config.server.host, config.server.port));
     // Held until every listener has stopped: dropping it stops reloading the
     // certificate files, and each listener keeps the last configuration it had.
@@ -94,6 +109,7 @@ pub(crate) async fn serve(
         Http3Mode::Enabled => Some(identity.quic_feed()?),
     };
     let management_security = management.as_ref().map(|_| identity.tcp_security(config.management.transport)).transpose()?;
+    let local_socket = bind_local_socket(&LocalSocketAddress::configured(&config.server, &config.management))?;
 
     // The HTTP/3 advertisement and router are prepared before the API is
     // consumed into the TCP service, because axum's HTTP/3 adapter drives a
@@ -155,6 +171,12 @@ pub(crate) async fn serve(
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));
     }
 
+    if let Some(socket) = local_socket {
+        let probes = AddExtensionLayer::new(listener_scheme(ListenerTransport::Plaintext)).layer(local_probes.into_service());
+        let local = serve_local_socket(&config.server, max_header_section, socket, probes, wait_for(&shutdown_token));
+        listeners.push(Box::pin(async move { local.await.map_err(ListenerError::LocalSocket) }));
+    }
+
     let result = try_join_all(listeners).await.map(|_outcomes| ());
     drop(identity);
 
@@ -183,12 +205,39 @@ async fn serve_management(
     serve_tcp(&config, max_header_section, security, service, shutdown).await
 }
 
+/// Bind the local socket at `address`, or serve without it.
+///
+/// Another running broker holding the socket is a conflict the broker refuses
+/// to start under, since the `health` command would ask that broker instead.
+/// Any other failure, such as a directory a read-only filesystem does not let
+/// the broker create, leaves the broker serving without the socket: it
+/// carries only the `health` command, which then reports that nothing
+/// answers.
+///
+/// # Errors
+///
+/// Returns [`ListenerError::LocalSocketClaim`] when another running broker
+/// holds the socket.
+fn bind_local_socket(address: &LocalSocketAddress) -> Result<Option<LocalSocketListener>, ListenerError> {
+    match LocalSocketListener::bind(address) {
+        Ok(listener) => Ok(Some(listener)),
+        Err(conflict @ LocalSocketError::InUse { .. }) => Err(ListenerError::from(conflict)),
+        Err(unavailable @ (LocalSocketError::Directory { .. } | LocalSocketError::Lock { .. } | LocalSocketError::Bind { .. })) => {
+            tracing::warn!(event = "local_socket_unavailable", error = %unavailable, "the health command cannot reach this broker");
+            Ok(None)
+        }
+    }
+}
+
 /// A future that resolves when `token` is cancelled, owning a clone of it so it
 /// outlives the borrow of the caller's token.
 fn wait_for(token: &CancellationToken) -> impl Future<Output = ()> + Send + 'static {
     let token = token.clone();
     async move { token.cancelled().await }
 }
+
+#[cfg(test)]
+mod local_socket_tests;
 
 #[cfg(test)]
 mod strict_transport_security_tests;

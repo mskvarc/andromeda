@@ -44,7 +44,7 @@ services:
       ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
       ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
     healthcheck:
-      # Probes the listener the environment configures: the management listener unless a stack disables it.
+      # Asks the broker's local socket, which every management mode serves.
       test: ["CMD", "andromeda", "health"]
       interval: 2s
       timeout: 3s

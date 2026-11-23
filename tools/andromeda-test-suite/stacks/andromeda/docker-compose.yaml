@@ -245,7 +245,8 @@ services:
   # when the endpoint answers a server error, while it waits;
   # the durable broker's tests notify bodies these limits would refuse and wait out its default retries. It fetches no
   # remote @context, so a test sees what a broker without internet access resolves; the front broker's tests serve
-  # the @contexts they name.
+  # the @contexts they name. It serves no management listener, so the runner starting only once it is healthy shows
+  # the health check answering over the local socket alone.
   broker-single-tenant:
     extends:
       <<: *template
@@ -270,6 +271,7 @@ services:
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__RETRY_INTERVAL: "100ms"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__QUEUE__MAX_RETRY_INTERVAL: "1s"
       ANDROMEDA__JSONLD__FETCH__MODE: "disabled"
+      ANDROMEDA__MANAGEMENT__MODE: "disabled"
 
   postgres-edge:
     <<: *postgres

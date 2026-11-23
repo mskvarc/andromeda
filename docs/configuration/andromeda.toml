@@ -183,6 +183,17 @@ port = 1086
 # One of "plaintext", "tls".
 transport = "plaintext"
 
+# The directory holding the local socket that answers the `health` command,
+# served in every mode and named after `server.port`, such as `andromeda-
+# 1056.sock`. Left out, a Linux service outside a user session, a container
+# among them, uses `/run/andromeda`; a user session uses `andromeda` in
+# `$XDG_RUNTIME_DIR`, and macOS without one the per-user temporary directory.
+# The broker creates it so that only its own user can open it. A relative path
+# is read from the working directory, of the broker and of the `health` command
+# alike. On Windows the socket is the named pipe `\\.\pipe\andromeda-<port>` and
+# the directory is not read.
+# local_socket_directory = "/run/andromeda"
+
 # What one request may cost the broker. Every replica of one deployment runs the
 # same values.
 [request_limits]
@@ -1883,9 +1894,11 @@ level = "info"
 # One of "disabled", "enabled".
 mode = "disabled"
 
-# Where the log files are written. Left out, they go in an `andromeda` directory
-# in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or
-# in the data directory on a platform without one.
+# Where the log files are written. Left out, a Linux service outside a user
+# session, a container among them, writes them to `/var/log/andromeda`; in a
+# user session, and on macOS and Windows, they go in an `andromeda` directory in
+# the state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data
+# directory on a platform without one.
 # directory = "/var/log/andromeda"
 
 # The name of the current log file, before the rotation suffix.

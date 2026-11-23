@@ -800,7 +800,7 @@
       "choices": [
         {
           "value": "\"disabled\"",
-          "description": "Serves no management endpoints, so the broker answers no liveness or readiness probe and the `health` command refuses to run."
+          "description": "Serves no management endpoints on the network, so no network client reaches a liveness or readiness probe and metrics cannot be enabled. The local socket still answers the `health` command."
         },
         {
           "value": "\"shared-port\"",
@@ -873,6 +873,20 @@
         }
       ],
       "environment_variable": "ANDROMEDA__MANAGEMENT__TRANSPORT",
+      "limits": [],
+      "conditions": []
+    },
+    {
+      "path": "management.local_socket_directory",
+      "description": "The directory holding the local socket that answers the `health` command, served in every mode and named after `server.port`, such as `andromeda-1056.sock`. Left out, a Linux service outside a user session, a container among them, uses `/run/andromeda`; a user session uses `andromeda` in `$XDG_RUNTIME_DIR`, and macOS without one the per-user temporary directory. The broker creates it so that only its own user can open it. A relative path is read from the working directory, of the broker and of the `health` command alike. On Windows the socket is the named pipe `\\\\.\\pipe\\andromeda-<port>` and the directory is not read.",
+      "apply": "restart",
+      "replica_consistent": false,
+      "sensitive": false,
+      "type_name": "path",
+      "presence": "unset",
+      "value": "\"/run/andromeda\"",
+      "choices": [],
+      "environment_variable": "ANDROMEDA__MANAGEMENT__LOCAL_SOCKET_DIRECTORY",
       "limits": [],
       "conditions": []
     },
@@ -5246,7 +5260,7 @@
     },
     {
       "path": "observability.log.file.directory",
-      "description": "Where the log files are written. Left out, they go in an `andromeda` directory in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one.",
+      "description": "Where the log files are written. Left out, a Linux service outside a user session, a container among them, writes them to `/var/log/andromeda`; in a user session, and on macOS and Windows, they go in an `andromeda` directory in the state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one.",
       "apply": "restart",
       "replica_consistent": false,
       "sensitive": false,

@@ -60,7 +60,7 @@ fn report_management_plane(config: &BrokerConfig) {
         ),
         ManagementMode::Disabled => info!(
             data_plane = %data_plane,
-            "Management plane disabled; no liveness or readiness probe is served"
+            "Management plane disabled on the network; /livez and /readyz answer only on the local socket"
         ),
     }
 }

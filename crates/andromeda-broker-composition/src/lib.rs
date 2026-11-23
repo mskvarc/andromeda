@@ -36,14 +36,15 @@ mod tenant_waker;
 
 use crate::outcome::ProcessExitOutcome;
 use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration};
+use andromeda_http_server::local_socket_address::LocalSocketAddress;
 
 /// Run the configured broker and return its already-reported process outcome.
 pub async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
     broker::run(loaded).await
 }
 
-/// Probe the readiness of the broker `config` describes and return the
-/// already-reported process outcome.
+/// Probe the readiness of the broker `config` describes, over its local
+/// socket, and return the already-reported process outcome.
 pub async fn probe_readiness(config: &BrokerConfig) -> ProcessExitOutcome {
-    readiness_probe::probe_reported(&config.server, &config.management).await
+    readiness_probe::probe_reported(&LocalSocketAddress::configured(&config.server, &config.management)).await
 }
