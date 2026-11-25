@@ -55,6 +55,7 @@ The crate's one test target, `upgrade`, has eight groups of tests.
 - A registry started again keeps its template in place, the same database and locked.
 - A template at the schema v1.0.0 sealed is brought forward in place, the same database and locked again, and a copy of it keeps the template's ledger rows and stands at the current schema.
 - A template a start left unlocked and unmigrated is brought forward and locked in place.
+- A type name v1.0.0 interned that is no IRI, as it stored an `objectType` or a `vocab` written with a `{` or a `%` that two hexadecimal digits do not follow, is read back by the type dictionary after the upgrade, so a tenant holding one still opens.
 - A template whose stamp is ahead of this build, or names another migration set at this build's version, is dropped and built again.
 - Two tenants provisioned one after the other are both copies, sharing the template's ledger instants, and each carries a schema stamp instant of its own. Four tenants provisioned side by side are all copies of the one template.
 - A provisional tenant whose database an earlier provisioning left at the v1.0.0 schema is migrated in that database, which keeps its identity and its v1.0.0 ledger rows.

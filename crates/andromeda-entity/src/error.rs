@@ -210,8 +210,7 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::ReservedAttributeName { .. }
             | EntityRefusal::Proof { .. }
             | EntityRefusal::ProofOnEntity
-            | EntityRefusal::PrefixedAttributeName { .. }
-            | EntityRefusal::PrefixedEntityType { .. }) => EntityError::Validation(EntityValidationReason::Refused(Box::new(refused))),
+            | EntityRefusal::Name(_)) => EntityError::Validation(EntityValidationReason::Refused(Box::new(refused))),
         }
     }
 }

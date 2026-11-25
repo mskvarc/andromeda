@@ -10,6 +10,7 @@ use crate::{
     attribute_instances::RepeatedInstance,
     expanded_value_name::ExpandedValueNameError,
     member_shape::MemberShape,
+    name_refusal::NameRefusal,
     proof::proof_fault::ProofFault,
     refusal_wording::{attribute_prefix, compact_term, forbidden_member_subject},
     scope_refusal::ScopeRefusal,
@@ -20,7 +21,6 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     datatype::recognised::DatatypeError,
-    entity_type_name::EntityTypeName,
     identifier::{Identifier, IdentifierParseError},
     reference::NgsiLdReferenceError,
     unit_code_resolution::UnitCodeRefusal,
@@ -317,20 +317,10 @@ pub enum EntityRefusal {
     /// carrying it, and an entity carries no attribute it could sign.
     #[error("an ngsildproof seals the attribute it is a sub-attribute of, so it cannot stand on the entity")]
     ProofOnEntity,
-    /// An attribute name the request's context reads as a compact IRI breaks
-    /// the clause 4.6.2 grammar after its colon.
-    #[error("'{attribute}' is not an attribute name: the part after the prefix must start with a letter and hold only letters, digits and '_'")]
-    PrefixedAttributeName {
-        /// The name, as the request wrote it.
-        attribute: AttributeName,
-    },
-    /// An entity type the request's context reads as a compact IRI breaks the
-    /// clause 4.6.2 grammar after its colon.
-    #[error("'{entity_type}' is not an entity type name: the part after the prefix must start with a letter and hold only letters, digits and '_'")]
-    PrefixedEntityType {
-        /// The type, as the request wrote it.
-        entity_type: EntityTypeName,
-    },
+    /// A name the request writes breaks the clause 4.6.2 grammar, or expands
+    /// to no IRI under the request's context.
+    #[error(transparent)]
+    Name(#[from] NameRefusal),
 }
 
 impl EntityRefusal {

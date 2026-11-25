@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::Invali
 use andromeda_ngsi_ld_query::{filter::filter_error::FilterError, term_expander::TermExpansionError};
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_snapshot::error::SnapshotError;
 use andromeda_subscription::error::SubscriptionError;
@@ -65,6 +66,9 @@ pub(crate) enum UpgradeTestError {
     /// The broker's tenant registry refused a step.
     #[error("the tenant registry failed")]
     Tenancy(#[from] TenancyError),
+    /// The broker's name dictionary could not read a stored name.
+    #[error("the name dictionary could not be read")]
+    NameLookup(#[from] NameLookupError),
     /// A tenant name the test names is not one.
     #[error("a tenant name could not be read")]
     TenantName(#[from] InvalidTenantName),

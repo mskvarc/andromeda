@@ -9,7 +9,7 @@ use crate::{
     assembly::{
         expanded_value::{expanded_values, literal},
         geometry_node::{geometry_of, geometry_value},
-        member_value::{malformed, null_beside_data, reference_id},
+        member_value::{malformed, null_beside_data, reference, reference_id},
         null_sentinel::{is_deletion, is_list_object_null, is_null},
     },
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
@@ -153,11 +153,7 @@ fn vocab(attribute: &AttributeName, item: &ExpandedItem) -> Result<NgsiLdReferen
         return Err(malformed(attribute, MemberShape::Vocab));
     };
     let id = reference_id(node).ok_or_else(|| malformed(attribute, MemberShape::Vocab))?;
-    id.parse::<NgsiLdReference>().map_err(|source| EntityRefusal::Reference {
-        attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
-        member: MemberShape::Vocab,
-        source,
-    })
+    reference(id, attribute, MemberShape::Vocab)
 }
 
 /// One `json` value: a JSON literal (the core context types `json` `@json`).

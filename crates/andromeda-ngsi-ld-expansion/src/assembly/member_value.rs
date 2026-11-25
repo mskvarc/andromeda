@@ -15,12 +15,13 @@ use andromeda_ngsi_ld_entity::{document::slot::Slot, member_shape::MemberShape, 
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
-    reference::NgsiLdReference,
+    reference::{NgsiLdReference, NgsiLdReferenceError},
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     unit_code_resolution::{UnitCodeRefusal, resolve_unit_code},
 };
 use andromeda_ngsi_ld_vocabulary::keyword;
 use cefact_units::UnitCode;
+use iri_rs::Iri;
 
 /// The refusal of a member not shaped as its expanded form shapes it.
 #[must_use]
@@ -201,11 +202,22 @@ pub(crate) fn references_slot(items: &[ExpandedItem], attribute: &AttributeName,
         .map(Slot::Set)
 }
 
-/// One type reference.
-fn reference(text: &str, attribute: &AttributeName, member: MemberShape) -> Result<NgsiLdReference, EntityRefusal> {
-    text.parse::<NgsiLdReference>().map_err(|source| EntityRefusal::Reference {
+/// One `valueType`, `objectType` or `vocab` reference as expansion left it.
+///
+/// Each names a type or a vocabulary term by an absolute IRI once expanded.
+/// A value that expands to anything else names nothing the store can intern,
+/// and would read back as a different name, so it is refused (clause 4.6.2).
+///
+/// # Errors
+///
+/// Returns [`EntityRefusal::Reference`] for an expansion that is no absolute
+/// IRI or no name.
+pub(crate) fn reference(text: &str, attribute: &AttributeName, member: MemberShape) -> Result<NgsiLdReference, EntityRefusal> {
+    let refused = |source| EntityRefusal::Reference {
         attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         member,
         source,
-    })
+    };
+    Iri::parse(text).map_err(|_| refused(NgsiLdReferenceError::NotAbsolute))?;
+    text.parse::<NgsiLdReference>().map_err(refused)
 }

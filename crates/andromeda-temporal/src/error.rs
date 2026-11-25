@@ -217,8 +217,7 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::ReservedAttributeName { .. }
             | EntityRefusal::Proof { .. }
             | EntityRefusal::ProofOnEntity
-            | EntityRefusal::PrefixedAttributeName { .. }
-            | EntityRefusal::PrefixedEntityType { .. }) => TemporalError::Validation(TemporalValidationReason::Representation(refused)),
+            | EntityRefusal::Name(_)) => TemporalError::Validation(TemporalValidationReason::Representation(refused)),
         }
     }
 }
