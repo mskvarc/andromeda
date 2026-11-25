@@ -3,9 +3,10 @@
 use andromeda_test_suite::{
     bounded_federation::{hold_vehicles, register_peer},
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     identity_matcher::has_id,
     namespace::Namespace,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{http::headers::Accept, registration::RegistrationMode};

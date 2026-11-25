@@ -1,6 +1,6 @@
 //! A registration without mode and operations reads back inclusive and federation ops.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, namespace::Namespace};
+use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

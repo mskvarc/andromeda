@@ -3,9 +3,10 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     linked_temporal_hop::{expect_hop_selects, register_peer, write_parking, write_vehicles},
     namespace::Namespace,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 

@@ -1,6 +1,6 @@
 //! A registration without an id gets a uri retrievable under its location.
 
-use andromeda_test_suite::{broker, config::PeerRole, namespace::Namespace};
+use andromeda_test_suite::{broker, namespace::Namespace, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::{Accept, Location},

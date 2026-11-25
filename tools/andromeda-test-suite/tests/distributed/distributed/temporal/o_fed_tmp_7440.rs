@@ -1,12 +1,6 @@
 //! A peer location observed before the window matches in no broker.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Upserted,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, namespace::Namespace, outcome::Upserted, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

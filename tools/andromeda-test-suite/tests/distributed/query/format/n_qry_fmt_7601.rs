@@ -3,10 +3,11 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     geometry_matcher::geometry,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

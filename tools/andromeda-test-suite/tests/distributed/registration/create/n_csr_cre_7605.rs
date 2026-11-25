@@ -1,6 +1,6 @@
 //! A body without information is bad request data and a taken id already exists.
 
-use andromeda_test_suite::{broker, config::PeerRole, namespace::Namespace, problem::problem, refused_body::expect_bad_request_data};
+use andromeda_test_suite::{broker, namespace::Namespace, peer_role::PeerRole, problem::problem, refused_body::expect_bad_request_data};
 use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::{

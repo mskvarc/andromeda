@@ -3,10 +3,11 @@
 use andromeda_test_suite::{
     answer_warning::warns_first_with,
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     identity_matcher::has_id,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
     problem::answered,
     unchecked_page::entities,
     wire::request_to,

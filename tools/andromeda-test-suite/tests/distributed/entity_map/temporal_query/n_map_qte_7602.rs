@@ -2,9 +2,10 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     outcome::Upserted,
+    peer_role::PeerRole,
     wire::header_value,
     written_json::json_request_to,
 };

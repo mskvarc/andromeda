@@ -3,9 +3,10 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
     problem::problem,
     received_status::ExpectedStatus,
     wire::request_to,

@@ -1,6 +1,6 @@
 //! A registration naming a peer broker answers 201 at its id and reads back its context source info.
 
-use andromeda_test_suite::{broker, config::PeerRole, namespace::Namespace};
+use andromeda_test_suite::{broker, namespace::Namespace, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::{Accept, Location},

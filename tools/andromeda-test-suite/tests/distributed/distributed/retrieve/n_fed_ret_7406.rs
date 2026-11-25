@@ -5,10 +5,11 @@ use andromeda_test_suite::{
     attribute_member::Member,
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     entity_matcher::has_attribute,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

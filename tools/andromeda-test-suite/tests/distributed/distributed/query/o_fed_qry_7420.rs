@@ -3,8 +3,9 @@
 use andromeda_test_suite::{
     bounded_federation::{hold_vehicles, register_peer},
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
+    peer_role::PeerRole,
     problem::problem,
 };
 use googletest::prelude::*;

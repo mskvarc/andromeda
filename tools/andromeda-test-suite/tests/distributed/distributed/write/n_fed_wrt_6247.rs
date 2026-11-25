@@ -1,13 +1,6 @@
 //! Redirect delete removes the entity on the peer broker.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Done,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, namespace::Namespace, outcome::Done, peer_role::PeerRole, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

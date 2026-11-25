@@ -1,6 +1,6 @@
 //! A create whose single exclusive source is the broker itself is loop detected.
 
-use andromeda_test_suite::{broker, config::PeerRole, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, peer_role::PeerRole, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

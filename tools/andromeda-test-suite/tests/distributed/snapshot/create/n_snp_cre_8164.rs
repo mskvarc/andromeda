@@ -4,11 +4,12 @@ use andromeda_test_suite::{
     aggregation_matcher::{has_aggregate, period},
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     evolution_matcher::has_evolution,
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
+    peer_role::PeerRole,
     snapshot_capture::await_status,
     vehicle_fleet::{OBSERVATIONS_PER_VEHICLE, observation_totals, observed_vehicles, record_observed, vehicle_id},
 };

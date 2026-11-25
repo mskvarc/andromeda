@@ -4,10 +4,11 @@ use andromeda_test_suite::{
     bounded_federation::{hold_vehicles, register_peer},
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     eventually::retried,
     identity_matcher::has_id,
     namespace::Namespace,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

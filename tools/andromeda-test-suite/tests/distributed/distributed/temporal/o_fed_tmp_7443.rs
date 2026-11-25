@@ -1,6 +1,6 @@
 //! A local value observed before a window opening after now matches in no broker.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted};
+use andromeda_test_suite::{broker, cleanup::Cleanup, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

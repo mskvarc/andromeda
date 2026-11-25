@@ -4,9 +4,10 @@ use andromeda_test_suite::{
     answered_status::AnsweredStatus,
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     identity_matcher::has_id,
     namespace::Namespace,
+    peer_role::PeerRole,
     snapshot_capture::await_status,
     vehicle_fleet::{create_current, current_vehicles, vehicle_id},
 };

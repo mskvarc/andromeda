@@ -1,6 +1,6 @@
 //! A new registration is notified with the full structure.
 
-use andromeda_test_suite::{broker, config::PeerRole, namespace::Namespace, notification_sink::NotificationSink};
+use andromeda_test_suite::{broker, namespace::Namespace, notification_sink::NotificationSink, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{NgsiLdMediaType, Output},

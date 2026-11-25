@@ -29,7 +29,7 @@ Every broker in every stack runs over a PostgreSQL server of its own. Replicas a
 
 `stacks/base` is one broker plus three Mosquitto brokers (anonymous, password and large-message), whose configurations live in `stacks/mosquitto`.
 
-`stacks/upgrade` is a PostgreSQL server for the rehearsals, a hub broker over a server of its own, a signaller and the runner. The upgrade rehearsals create a database of their own for each test on the rehearsals' server, through the administrative login `stacks/upgrade/runner.env` names, and run no broker. The suite's `upgrade_<area>` tests run against the hub, which the stack describes below.
+`stacks/upgrade` is a PostgreSQL server for the rehearsals, two hub brokers, each over a server of its own, a signaller and the runner. The upgrade rehearsals create a database of their own for each test on the rehearsals' server, through the administrative login `stacks/upgrade/runner.env` names, and run no broker. The suite's `upgrade_<area>` tests run against the hubs, which the stack describes below.
 
 `stacks/multi` has six broker identities, `broker-a` to `broker-f`. A test registers brokers with one another, so each identity a topology names is a broker of its own, and a setting goes on an identity whose tests it doesn't affect. `broker-e` runs temporal Linked Entity retrieval and the language-ranges level of `q_target_languages`. `broker-f` runs the same level with forwarding bounds of 5 distinct entities, 15 source rows and 3 attribute instances, and captures Snapshots two entities per page.
 
@@ -110,9 +110,9 @@ Registrations are global to a broker, so each case keeps to an entity type and e
 
 ### The upgrade stack
 
-The hub starts as `hub-release`, the broker of the release `ANDROMEDA_RELEASE_IMAGE` names (`ghcr.io/mskvarc/andromeda:1.0.0` unless set), over `postgres-hub`. A test places what it needs on the release, then asks the signaller to upgrade the hub (`BrokerProcess::upgrade`). The signaller stops `hub-release`, waiting out its grace period, and starts `hub`, the broker image of the working tree, over the same server. Both answer to the name `hub` and advertise the same origin, so the runner reaches the hub at one address (`BROKERS__FRONT`) before and after, and what the release placed at a context source names the host the upgraded broker serves. `hub` sits under the `upgraded` profile, so `up` never starts it. Its container has to exist for the signaller to start, so it is created before the stack comes up. `run-suite.sh` does that, and by hand it is `docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded create hub`. The signaller runs `stacks/upgrade/signaller/handle` for each request, as the pgbouncer stack's signaller does.
+The hub starts as `hub-release`, the broker of the release `ANDROMEDA_RELEASE_IMAGE` names (`ghcr.io/mskvarc/andromeda:1.0.0` unless set), over `postgres-hub`. A test places what it needs on the release, then asks the signaller to upgrade the hub (`BrokerProcess::upgrade`). The signaller stops `hub-release`, waiting out its grace period, and starts `hub`, the broker image of the working tree, over the same server. Both answer to the name `hub` and advertise the same origin, so the runner reaches the hub at one address (`BROKERS__FRONT`) before and after, and what the release placed at a context source names the host the upgraded broker serves. `hub` sits under the `upgraded` profile, so `up` never starts it. Its container has to exist for the signaller to start, so it is created before the stack comes up. `run-suite.sh` does that, and by hand it is `docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded create hub names-hub`. The signaller runs `stacks/upgrade/signaller/handle` for each request, as the pgbouncer stack's signaller does.
 
-An upgrade can't be undone within a stack, so each `upgrade_<area>` binary holds one test, which runs the whole scenario before and after the upgrade. `a_upg_rcv_0001` waits for the upgraded hub's background pass, which runs a minute after the hub opens its tenant, so `runner.env` sets the delivery deadline to three minutes.
+An upgrade can't be undone within a stack, so each `upgrade_<area>` binary holds one test, which runs the whole scenario before and after the upgrade, and upgrades a hub of its own. The binaries run at once, and a hub two of them shared would be upgraded by whichever asked first, while the other may still be placing what it needs on the release. `upgrade_subscription` upgrades `hub`. `upgrade_query_names` upgrades `names-hub`, which starts as `names-hub-release` over `postgres-names-hub` and answers at `BROKERS__NAMES_HUB`, and the signaller upgrades the hub a request names (`/upgrade-front` or `/upgrade-names-hub`). A new upgrade binary gets a hub of its own in the stack, a role in `runner.env` and a case in the signaller. `a_upg_rcv_0001` waits for the upgraded hub's background pass, which runs a minute after the hub opens its tenant, so `runner.env` sets the delivery deadline to three minutes.
 
 ## Test groups
 
@@ -172,15 +172,15 @@ docker compose -f tools/andromeda-test-suite/stacks/interoperability/docker-comp
 docker compose -f tools/andromeda-test-suite/stacks/interoperability/docker-compose.yaml run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite -p andromeda-test-suite --test interoperability
 ```
 
-The upgrade tree runs under its own profile, `upgrade`, since every other profile leaves the rehearsals out. The upgraded hub's container is created before the stack comes up.
+The upgrade tree runs under its own profile, `upgrade`, since every other profile leaves the rehearsals out. The upgraded hubs' containers are created before the stack comes up.
 
 ```sh
-docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded create hub
+docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded create hub names-hub
 docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml up -d --wait
 docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile upgrade -p andromeda-upgrade-tests --test upgrade -p andromeda-test-suite --test 'upgrade_*'
 ```
 
-A run of the upgrade tree upgrades the hub, so the next run brings the stack down with its databases first, `docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded down -v`.
+A run of the upgrade tree upgrades the hubs, so the next run brings the stack down with its databases first, `docker compose -f tools/andromeda-test-suite/stacks/upgrade/docker-compose.yaml --profile upgraded down -v`.
 
 Nextest keeps its store under the workspace root whatever the target directory is, so every command passes the runner's `stacks/runner/nextest.toml`, which moves the store to `/target/nextest` in the `test-suite-target` volume. `--profile suite-verdict` writes a JUnit report to `/target/nextest/suite-verdict/junit.xml` there, and `--profile upgrade-verdict` to `/target/nextest/upgrade-verdict/junit.xml`. A failing test of the suite prints every exchange it had with a broker.
 

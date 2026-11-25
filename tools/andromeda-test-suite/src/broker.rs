@@ -4,11 +4,12 @@
 //! the broker offers, following no redirect, through no proxy and with no content decoding.
 
 use crate::{
-    config::{BrokerRole, PeerRole, SuiteConfig},
+    config::{BrokerRole, SuiteConfig},
     config_error::ConfigError,
     eventually::{Poll, TimedOut, delivery_deadline, eventually},
     exchange_log::ExchangeLog,
     namespace::{Namespace, NamespaceError},
+    peer_role::PeerRole,
     request_version::RequestVersion,
 };
 use ngsi_ld::{

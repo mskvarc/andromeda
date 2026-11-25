@@ -1,6 +1,6 @@
 //! An entity info id takes precedence over its id pattern.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, identity_matcher::has_id, namespace::Namespace};
+use andromeda_test_suite::{broker, cleanup::Cleanup, identity_matcher::has_id, namespace::Namespace, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

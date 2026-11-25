@@ -3,11 +3,12 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     entity_lookup::with_id,
     entity_matcher::has_attribute,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

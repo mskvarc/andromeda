@@ -3,10 +3,11 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     context_source::ContextSource,
     linked_temporal_hop::{expect_hop_selects, register_parking_source, register_peer, write_parking, write_vehicles},
     namespace::Namespace,
+    peer_role::PeerRole,
     source_answer,
     source_request::SourceRequest,
 };

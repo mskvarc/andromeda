@@ -1,13 +1,6 @@
 //! A full tag is bad request data when a reached source does not advertise language tags.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Done,
-    problem::problem,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, namespace::Namespace, outcome::Done, peer_role::PeerRole, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

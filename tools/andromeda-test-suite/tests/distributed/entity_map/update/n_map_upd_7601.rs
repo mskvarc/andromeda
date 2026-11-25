@@ -2,9 +2,10 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
     problem::{answered, problem},
     received_status::ExpectedStatus,
     written_json::json_request_to,

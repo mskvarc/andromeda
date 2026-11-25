@@ -1,6 +1,6 @@
 //! A deleted registration is gone.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, peer_role::PeerRole, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

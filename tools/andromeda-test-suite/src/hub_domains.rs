@@ -4,7 +4,7 @@
 //! Broker F gathers at most a handful of entities for one forwarded query, so it is no domain: a domain answers the
 //! hub with its whole share.
 
-use crate::config::{BrokerRole, PeerRole};
+use crate::{config::BrokerRole, peer_role::PeerRole};
 
 /// One data domain of the hub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

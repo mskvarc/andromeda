@@ -3,13 +3,14 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     context_source::ContextSource,
     header_matcher::absent,
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
     outcome::Done,
+    peer_role::PeerRole,
     source_answer,
 };
 use googletest::prelude::*;

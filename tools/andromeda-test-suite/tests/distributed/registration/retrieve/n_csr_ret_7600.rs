@@ -1,6 +1,6 @@
 //! A registration reads back and bad or unknown ids are refused.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, namespace::Namespace, problem::problem, wire::request_to};
+use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, peer_role::PeerRole, problem::problem, wire::request_to};
 use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::{

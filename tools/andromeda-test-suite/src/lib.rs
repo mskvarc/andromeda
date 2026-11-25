@@ -135,6 +135,7 @@ pub mod paged_buildings;
 pub mod paged_federation;
 pub mod paged_history;
 pub mod partial_outcome;
+pub mod peer_role;
 pub mod period_grid;
 pub mod periodic_tenants;
 pub mod pool_hold;
