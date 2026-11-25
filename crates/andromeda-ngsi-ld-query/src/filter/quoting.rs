@@ -16,9 +16,8 @@
 /// How a name or literal was written in the query text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Quoting {
-    /// Written bare, so a `:` continues it (a prefixed name carries one), and
-    /// only the unquoted productions
-    /// of clause 4.9's grammar can derive it.
+    /// Written bare, so only the unquoted productions of clause 4.9's grammar
+    /// can derive it.
     Bare,
     /// Written inside double quotes, so it ends exactly where the client ended
     /// it, any colon it contains belongs to it, and clause 4.9's `quotedStr`

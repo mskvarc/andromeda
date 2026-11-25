@@ -1,11 +1,13 @@
-//! A path name may be a prefixed name or an absolute iri.
+//! A prefixed name or an absolute IRI in q goes in double quotes.
 
 use andromeda_test_suite::{
     broker,
+    hosted_context::HostedContext,
     identity_matcher::ids_in_order,
     namespace::Namespace,
     problem::{answered, problem},
-    raw_call::{call, target},
+    quoted_name_query::{context_link, query_by_text},
+    raw_call::target,
     unchecked_call::exchange,
     unchecked_page::entities,
 };
@@ -18,22 +20,37 @@ use ngsi_ld::{
 };
 use std::slice;
 
-/// Pins: a q path name may be a prefixed name the @context defines, an absolute IRI written bare when it holds no dot,
-/// or a name in double quotes, which an IRI holding a dot needs; each selects what the short-hand term selects, and a
-/// dotted IRI left bare is `BadRequestData`
-/// Clause: 4.9, 4.6.2, 5.7.2.4, 6.4.3.2, 6.23.3.1
-/// Recorded: clause 4.9 spells `AttrName` as a letter followed by letters, digits and underscores and calls a path
-/// "always a composition of short hand names"; Andromeda reads a path name with the clause 4.6.2 name grammar, prefixed
-/// form and absolute IRI included, and admits a quoted name so an IRI holding a dot reads as one name
+/// Pins: with an @context holding the prefix ex, q="ex:speed">50, q="https://example.org/<namespace>/speed">50 and,
+/// under an @context holding the term speed for that IRI, q=speed>50 each select the Car whose speed is 80, and
+/// q="urn:x:<namespace>:weight">1000 selects the Car whose weight is 2000; q=ex:speed>50, q=urn:x:<namespace>:weight>1000
+/// and q=https://example.org/<namespace>/speed>50 are each 400 `BadRequestData`
+/// Clause: 4.9, 4.6.2, 5.5.7, 5.7.2.4, 6.4.3.2
+/// Recorded: clause 4.9 spells `AttrName` as a letter followed by letters, digits and underscores, and has every name
+/// expanded as clause 5.5.7 says, which reads a prefixed name and an absolute IRI too; Andromeda keeps all three kinds
+/// of name, reads an unquoted name as exactly the grammar's `AttrName` and any other name as the grammar's
+/// `quotedStr`, whose value is the name, and refuses an unquoted name holding a colon
 #[gtest]
 #[tokio::test]
-async fn a_qry_qlg_9068_a_path_name_may_be_a_prefixed_name_or_an_absolute_iri() -> Result<()> {
+async fn a_qry_qlg_9068_a_prefixed_name_or_an_absolute_iri_in_q_goes_in_double_quotes() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let car_type = namespace.entity_type("Car")?;
     let fast_id = namespace.urn("Car", "fast")?;
     let slow_id = namespace.urn("Car", "slow")?;
-    let context = format!(r#"[{{"ex":"https://example.org/{namespace}/"}},"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"]"#);
+    let prefixed = HostedContext::add(
+        &broker,
+        &Context::Single(ContextEntry::Inline(
+            format!(r#"{{"ex":"https://example.org/{namespace}/"}}"#).parse::<InlineContext>()?,
+        )),
+    )
+    .await?;
+    let termed = HostedContext::add(
+        &broker,
+        &Context::Single(ContextEntry::Inline(
+            format!(r#"{{"speed":"https://example.org/{namespace}/speed"}}"#).parse::<InlineContext>()?,
+        )),
+    )
+    .await?;
     let writer = broker
         .with_context(Context::Multiple(vec![
             ContextEntry::Inline(format!(r#"{{"ex":"https://example.org/{namespace}/"}}"#).parse::<InlineContext>()?),
@@ -50,7 +67,7 @@ async fn a_qry_qlg_9068_a_path_name_may_be_a_prefixed_name_or_an_absolute_iri() 
             .property(weight.clone(), 900)
             .build()?,
         Entity::builder()
-            .id(slow_id)
+            .id(slow_id.clone())
             .entity_type(car_type.clone())
             .property(speed, 20)
             .property(weight, 2000)
@@ -58,51 +75,39 @@ async fn a_qry_qlg_9068_a_path_name_may_be_a_prefixed_name_or_an_absolute_iri() 
     ];
     let created = writer.with_responses().entities().batch_create(&cars).send().await;
     expect_that!(&created, answered(StatusCode::CREATED));
-    // The q model refuses a prefixed name, bare or in double quotes, so the Query document is written as text.
-    for q in ["ex:speed>50", r#""ex:speed">50"#] {
-        let query = format!(
-            r#"{{"type":"Query","entities":[{{"type":"{car_type}"}}],"q":{},"@context":{context}}}"#,
-            serde_json::Value::from(q)
-        );
-        let answer = call(
-            &broker,
-            Method::POST,
-            "entityOperations/query",
-            &[("Content-Type", "application/ld+json"), ("Accept", "application/json")],
-            Some(&query),
-        )
-        .await?;
-        expect_that!(answer.status(), eq(StatusCode::OK));
-        expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&fast_id)));
+    let prefixed_link = context_link(&prefixed)?;
+    let termed_link = context_link(&termed)?;
+    let iri = format!(r#""https://example.org/{namespace}/speed">50"#);
+    // The q model writes a name only as an unquoted AttrName, so each q is sent as written.
+    for (q, link) in [
+        (r#""ex:speed">50"#, Some(&prefixed_link)),
+        (iri.as_str(), None),
+        ("speed>50", Some(&termed_link)),
+    ] {
+        let answer = query_by_text(&broker, &car_type, q, &[], link).await?;
+        expect_that!(answer.status(), eq(StatusCode::OK), "{q}");
+        expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&fast_id)), "{q}");
     }
+    let heavy = format!(r#""urn:x:{namespace}:weight">1000"#);
+    let answer = query_by_text(&broker, &car_type, &heavy, &[], None).await?;
+    expect_that!(answer.status(), eq(StatusCode::OK));
+    expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&slow_id)));
     let car_type_text = car_type.to_string();
-    // The q model refuses a path name that is an absolute IRI, so the queries are sent as written.
-    let dotted = format!(r#""https://example.org/{namespace}/speed">50"#);
-    let dotted_bare = format!("https://example.org/{namespace}/speed>50");
-    let undotted = format!("urn:x:{namespace}:weight<1000");
-    let undotted_quoted = format!(r#""urn:x:{namespace}:weight"<1000"#);
-    for q in [&dotted, &undotted, &undotted_quoted] {
-        let answer = call(
-            &broker,
-            Method::GET,
-            &target("entities", &[("type", car_type_text.as_str()), ("q", q.as_str())]),
-            &[("Accept", "application/json")],
-            None,
-        )
-        .await?;
-        expect_that!(answer.status(), eq(StatusCode::OK));
-        expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&fast_id)));
+    for q in [
+        "ex:speed>50".to_owned(),
+        format!("urn:x:{namespace}:weight>1000"),
+        format!("https://example.org/{namespace}/speed>50"),
+    ] {
+        let refused = broker
+            .send_unchecked(exchange(
+                &broker,
+                Method::GET,
+                &target("entities", &[("type", car_type_text.as_str()), ("q", q.as_str())]),
+                &[("Accept", "application/json")],
+                None,
+            )?)
+            .await;
+        expect_that!(&refused, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData), "{q}");
     }
-    // The q model refuses a path name that is an absolute IRI, so the query is sent as written.
-    let refused = broker
-        .send_unchecked(exchange(
-            &broker,
-            Method::GET,
-            &target("entities", &[("type", car_type_text.as_str()), ("q", dotted_bare.as_str())]),
-            &[("Accept", "application/json")],
-            None,
-        )?)
-        .await;
-    expect_that!(&refused, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     Ok(())
 }

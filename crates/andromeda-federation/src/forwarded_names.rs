@@ -336,6 +336,46 @@ mod tests {
         );
     }
 
+    /// A context body of `members`.
+    fn context(members: &serde_json::Value) -> ContextSpec {
+        ContextSpec::from_body(JsonLiteral::admit(&members.to_string()).expect("an admissible literal"))
+    }
+
+    /// Clause 4.3.6.6 compacts the forwarded query parameters as JSON-LD section 4.1.5 compacts IRIs, so a name the
+    /// forwarding context holds no term for travels as the compact IRI its prefix gives, or as its absolute IRI, and is
+    /// written quoted, since neither is a clause 4.9 `AttrName`.
+    #[tokio::test]
+    async fn a_name_with_no_term_in_the_forwarding_context_travels_quoted() {
+        let engine = engine();
+        let inbound = context(&json!({"brand": "https://example.org/brand"}));
+        let resolver = TermResolver::new(&engine, &inbound);
+        let query = "brand==\"x\"".parse::<Filter<Written>>().expect("a query");
+        for (forwarding, forwarded) in [
+            (json!({"ex": "https://example.org/"}), "\"ex:brand\"==\"x\""),
+            (json!({"velocity": "https://example.org/speed"}), "\"https://example.org/brand\"==\"x\""),
+        ] {
+            let naming = context(&forwarding);
+            let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+                .await
+                .expect("the forwarding context processes");
+            pretty_assertions::assert_eq!(names.q(&query, None).await.expect("rewords").to_string(), forwarded, "{forwarding}");
+        }
+    }
+
+    /// The quotes only delimit a name, so a prefixed name the client wrote quoted expands through the client's prefix.
+    #[tokio::test]
+    async fn a_quoted_prefixed_name_expands_through_the_inbound_prefix() {
+        let engine = engine();
+        let inbound = context(&json!({"ex": "https://example.org/"}));
+        let naming = configured();
+        let resolver = TermResolver::new(&engine, &inbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
+        let query = "\"ex:speed\">50".parse::<Filter<Written>>().expect("a query");
+        pretty_assertions::assert_eq!(names.q(&query, None).await.expect("rewords").to_string(), "velocity>50");
+    }
+
     #[tokio::test]
     async fn names_travel_unchanged_when_the_forwarding_context_is_the_inbound_one() {
         let engine = engine();

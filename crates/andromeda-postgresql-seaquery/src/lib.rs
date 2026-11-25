@@ -69,6 +69,8 @@ pub mod pg_operator;
 pub mod pg_type;
 pub mod pooler_console;
 pub mod postgis;
+#[cfg(feature = "test-support")]
+pub mod query_name_rewrite;
 pub mod queue;
 pub mod relation_copy;
 pub mod relation_lock;

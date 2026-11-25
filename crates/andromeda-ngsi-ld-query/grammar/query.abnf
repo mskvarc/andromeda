@@ -3,7 +3,8 @@
 ; ============================================================================
 ; Mirrors the ABNF of ETSI GS CIM 009 v1.9.1 clause 4.9 verbatim. Every rule is
 ; reproduced exactly as the specification states it; only layout, section
-; headers and these comments are local additions.
+; headers, these comments and the two alternatives marked as Andromeda's under
+; "Lexical" are local additions.
 ;
 ; DOCUMENTATION ONLY. Nothing derives a parser from this file: no
 ; `#[grammar(file = ...)]` attribute references it, and this crate has no build
@@ -27,11 +28,10 @@
 ;
 ; The list types the Entity the hop reaches, and a linked Entity counts only
 ; when one of its types is one of the listed types. Each hop of a chain takes a
-; list of its own. The parser tells a guard from an attribute name by shape: a
-; comma after the first word, a bare first word holding a colon, or a quoted
-; first word followed by a colon opens a guard. A prefixed attribute name there
-; is written quoted, and a bare last type holding two colons is refused as
-; ambiguous.
+; list of its own. A hop's first name followed by a comma or a colon opens the
+; list, which ends at the colon, and any other first name is the leading name
+; of the path inside the braces. No unquoted name holds a colon (see "Lexical"
+; below), so a colon outside quotes always ends the list.
 ;
 ; The rule does not say where a `RegExp` ends, while `;`, `|` and `)` are both
 ; query syntax and regular-expression syntax. The parser ends a bare `RegExp`
@@ -149,16 +149,24 @@ LogicalOp = andOp / orOp
 ; ----------------------------------------------------------------------------
 ; Lexical
 ; ----------------------------------------------------------------------------
-; Attribute and type names are context terms, not IRIs: they are expanded
-; against the request's `@context` before the filter is evaluated (clause 4.9).
-; A name therefore begins with a letter and continues with letters, digits or
-; `_`.
+; Attribute and type names are expanded against the request's `@context`
+; before the filter is evaluated (clause 4.9). Unquoted, a name begins with a
+; letter and continues with letters, digits or `_`.
 
 TermChar = unicodeNumber / unicodeLetter
 TermChar =/ %x5F                                ; _
 AttrName = unicodeLetter *TermChar
 EntityType = unicodeLetter *TermChar
 quotedStr = String                              ; "*char"
+
+; Andromeda's own alternatives, not in clause 4.9: a name no `AttrName` or
+; `EntityType` spells, a prefixed name (clause 4.6.2) or an absolute IRI, is
+; written as a `quotedStr` whose value is the name. Clause 5.5.7 renders a name
+; no term abbreviates as a Fully Qualified Name, and clause 4.3.6.6 compacts a
+; forwarded query into compact IRIs, so a `q` has to carry both. The quotes only
+; delimit, and the name inside is expanded as an unquoted one is.
+AttrName =/ quotedStr
+EntityType =/ quotedStr
 
 ; ============================================================================
 ; Raw projection list (`pick` / `omit`) -- ABNF grammar (clause 4.21)

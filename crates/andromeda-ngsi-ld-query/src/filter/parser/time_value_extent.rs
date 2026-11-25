@@ -7,7 +7,7 @@
 //! letter, so a digit run followed by either separator is a clause 4.6.3
 //! literal rather than a number followed by punctuation.
 
-use crate::filter::parser::word::extent_while;
+use crate::filter::parser::operand::extent_while;
 
 /// The byte length of the time value a digit run opens at the start of `text`, or `None` when the run opens none.
 ///

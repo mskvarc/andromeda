@@ -8,7 +8,7 @@ The tests never reach a broker over the network, and they don't need one. They n
 
 ## What is covered
 
-The crate's one test target, `upgrade`, has seven groups of tests.
+The crate's one test target, `upgrade`, has eight groups of tests.
 
 `seal` covers the conversion of data-integrity seals (see [Data-integrity seals](../data-integrity-seals.md)), which migrations 0032, 0033 and 0034 perform.
 
@@ -86,7 +86,14 @@ The crate's one test target, `upgrade`, has seven groups of tests.
 
 - A `scopeQ` v1.0.0 stored with the bare `/#` beside other Scopes reads back through the broker's own repository as the expression it meant, in a Subscription of the live branch, in the queries and the temporal queries a Snapshot was captured by, and in a Subscription of a Snapshot's branch. `/#,/CompanyA` becomes `/#`, `(/#;/CompanyA),/CompanyB` becomes `/CompanyA,/CompanyB`, and a group holding only `/#` makes the whole query `/#`. A `scopeQ` with no such `/#`, the bare `/#` alone and a group of patterns ending in `/#` included, reads back as stored, and the `q` beside a Snapshot query's `scopeQ` reads back as written.
 
-`subscription` covers the Subscription rows a v1.0.0 tenant stored, whose check on context-source rows migration 0038 adds again without `dataset_ids`, whose `q` this build reads with each pattern written bare and no migration rewrites, and the companions and copies it placed, which migration 0040 lets owe the receiver this build serves.
+`query_name` covers the names holding a colon a v1.0.0 tenant stored unquoted in a `q`, a `csf` or an `orderBy` term, which migration 0044 quotes in the queries of its Snapshots and migration 0045 in the Subscriptions of every branch, the live one and each Snapshot's, with the function of a schema migration 0046 drops.
+
+- The rewrite, judged on its own in a tenant stopped after migration 0044, quotes each unquoted name holding a colon and nothing else. A double-quoted token and everything where an operand stands are copied as they are, the last type of a list glued to the name after it (`Store:category`) stays, and the rewrite applied twice gives what it gives once.
+- The `q`, the `q_written_members` and the `csf` of a Subscription, entity and Context Source Registration Subscriptions alike, read back after the upgrade with each such name quoted, as the filters v1.0.0 read, in the live branch and in a Snapshot's. `urn:x:weight>1000` becomes `"urn:x:weight">1000`, and `rel{urn:x:b}` becomes `rel{"urn:x:b"}`, a hop with no type list, as v1.0.0 read it. A Subscription holding no such name keeps the row version v1.0.0 wrote.
+- The `q` and the `orderBy` terms of the queries a Snapshot was captured by, stored in their creator's spelling, read back quoted. `sensor{ex:humidity}`, which v1.0.0 read as a prefixed attribute, becomes `sensor{"ex:humidity"}`, never the type `ex`, and `ex:speed;desc` becomes `"ex:speed";desc`.
+- The upgrade leaves no `query_name_rewrite` schema, a Snapshot created after it builds its branch through migration 0045 over an empty `subscriptions`, and a tenant that stored no Subscription and no Snapshot upgrades with nothing changed.
+
+`subscription` covers the Subscription rows a v1.0.0 tenant stored, whose check on context-source rows migration 0038 adds again without `dataset_ids`, whose `q` this build reads with each pattern written bare, which needs no migration, and the companions and copies it placed, which migration 0040 lets owe the receiver this build serves.
 
 - A context-source Subscription row holds the `datasetId` its client wrote after the upgrade, and the check still holds `local_only` at its default. The check is added without reading a row, and the rows v1.0.0 stored stay.
 - A `q` v1.0.0 stored with its patterns in quotes reads back through the broker's own repository with each pattern bare, so `~="^Mer(c|z)edes$"` becomes `~=^Mer(c|z)edes$` and a backslash stays as written. A pattern the bare form would end early or trim, such as `"a|b"` or `" Merc"`, keeps its quotes.

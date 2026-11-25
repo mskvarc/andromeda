@@ -25,9 +25,9 @@ pub enum AttributePath<S: NameStage> {
         /// Clause 4.9 writes the production as
         /// `*1(EntityType 1*("," EntityType) ":")` and its EXAMPLE 14 with one
         /// type, so a guard needs one or more comma-separated types, closed by
-        /// a colon. A prefixed attribute name inside the braces is written
-        /// quoted, because a bare `prefix:name` reads as a guard type followed
-        /// by an attribute.
+        /// a colon. No unquoted name holds a colon, so that colon always ends
+        /// the list, and a prefixed name or an absolute IRI inside the braces
+        /// is written quoted, as it is everywhere.
         guard_types: Vec<S::EntityType>,
         /// The attribute path evaluated against the linked entity.
         inner: Box<AttributePath<S>>,

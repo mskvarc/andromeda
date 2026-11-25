@@ -21,7 +21,6 @@ use crate::{
             expected,
             quoted_string::{decode_quoted_string, quoted_literal},
             time_value_extent::time_value_extent,
-            word::{extent_while, name_extent, opens_bare_word},
         },
         quoting::Quoting,
         scalar::Scalar,
@@ -37,15 +36,15 @@ use winnow::{
     stream::{LocatingSlice, Location, Stream},
 };
 
-/// Which characters a bare word runs through, chosen by where the word stands.
+/// Which characters a bare operand word runs through, chosen by where the word stands.
 ///
 /// Clause 4.9 lets a bare `URI` stand only in a `CompEqualityValue`, after `==`
 /// or `!=` and through the `,` and `..` that continue it. Everywhere else a `.`
-/// separates sub-attributes, so a dotted word splits.
+/// ends the word, so a dotted word splits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BareWordExtent {
-    /// The extent of a name, which ends at a `.`: the operand of an ordering operator.
-    Name,
+    /// The extent of a word, which ends at a `.`: the operand of an ordering operator.
+    Word,
     /// The extent of a `URI`, which runs through a `.` unless a second one follows: every member of an equality value.
     Uri,
 }
@@ -54,10 +53,47 @@ impl BareWordExtent {
     /// The byte length of the bare word that opens at the start of `text`.
     fn of(self, text: &str) -> usize {
         match self {
-            BareWordExtent::Name => name_extent(text),
+            BareWordExtent::Word => word_extent(text),
             BareWordExtent::Uri => uri_extent(text),
         }
     }
+}
+
+/// Whether a bare operand word opens at the start of `text`.
+///
+/// A word opens at an alphanumeric character that is no ASCII digit, at `_`, `:` or `/`, and at a `*` that a `-` follows. A digit run opens a number or a time value instead.
+fn opens_operand_word(text: &str) -> bool {
+    let mut characters = text.chars();
+    characters.next().is_some_and(|first| {
+        (first.is_alphanumeric() && !first.is_ascii_digit()) || matches!(first, '_' | ':' | '/') || (first == '*' && characters.as_str().starts_with('-'))
+    })
+}
+
+/// The byte length of the bare operand word that opens at the start of `text` where an ordering operand stands.
+///
+/// The word is the longest run of alphanumeric characters and `_`, `:`, `/`, `-` and `#`, and of a `*` that a `-` precedes or follows. Clause 4.9 derives no such word after an ordering operator, so it is read whole and refused as the one word it is.
+fn word_extent(text: &str) -> usize {
+    let mut previous = None;
+    extent_while(text, |current, following| {
+        let continues = current.is_alphanumeric()
+            || matches!(current, '_' | ':' | '/' | '-' | '#')
+            || (current == '*' && (following.starts_with('-') || previous == Some('-')));
+        previous = Some(current);
+        continues
+    })
+}
+
+/// The byte length of the longest prefix of `text` whose characters all satisfy `continues`, which is given each character with the text after it.
+pub(super) fn extent_while(text: &str, mut continues: impl FnMut(char, &str) -> bool) -> usize {
+    let mut characters = text.chars();
+    let mut extent = 0;
+    while let Some(current) = characters.next() {
+        if !continues(current, characters.as_str()) {
+            break;
+        }
+        extent += current.len_utf8();
+    }
+    extent
 }
 
 /// The byte length of the bare `URI` that opens at the start of `text` (RFC 3986 section 2).
@@ -113,7 +149,7 @@ fn scalar<'i>(extent: BareWordExtent) -> impl Parser<LocatingSlice<&'i str>, Sca
             (Some('"'), _) => quoted_scalar(input),
             (Some('-'), Some(digit)) if digit.is_ascii_digit() => number(input),
             (Some(first), _) if first.is_ascii_digit() => digit_run(input),
-            (Some(_), _) if opens_bare_word(text) => bare_scalar(input, extent),
+            (Some(_), _) if opens_operand_word(text) => bare_scalar(input, extent),
             (Some(_) | None, _) => Err(ParserError::from_input(input)),
         }
     }
@@ -318,7 +354,7 @@ mod tests {
         let (result, rest) = read("true.x", scalar(BareWordExtent::Uri));
         assert!(matches!(refusal(result), FilterError::BareWord));
         pretty_assertions::assert_eq!(rest, "");
-        let (result, rest) = read("true.x", scalar(BareWordExtent::Name));
+        let (result, rest) = read("true.x", scalar(BareWordExtent::Word));
         pretty_assertions::assert_eq!(result.expect("a keyword"), Scalar::Bool(true));
         pretty_assertions::assert_eq!(rest, ".x");
     }
@@ -438,11 +474,11 @@ mod tests {
     }
 
     #[test]
-    fn a_comparable_value_with_the_name_extent_stops_a_bare_word_at_a_dot_and_refuses_booleans_and_uris() {
-        let (result, rest) = read("a.b", comparable_value(BareWordExtent::Name));
+    fn a_comparable_value_with_the_word_extent_stops_a_bare_word_at_a_dot_and_refuses_booleans_and_uris() {
+        let (result, rest) = read("a.b", comparable_value(BareWordExtent::Word));
         assert!(matches!(refusal(result), FilterError::BareWord));
         pretty_assertions::assert_eq!(rest, ".b");
-        let (result, _) = read("true", comparable_value(BareWordExtent::Name));
+        let (result, _) = read("true", comparable_value(BareWordExtent::Word));
         let error = refusal(result);
         assert!(
             matches!(
@@ -455,7 +491,7 @@ mod tests {
             ),
             "got {error:?}"
         );
-        let (result, _) = read(" urn:ngsi-ld:T:a", comparable_value(BareWordExtent::Name));
+        let (result, _) = read(" urn:ngsi-ld:T:a", comparable_value(BareWordExtent::Word));
         let error = refusal(result);
         assert!(
             matches!(
@@ -468,7 +504,7 @@ mod tests {
             ),
             "got {error:?}"
         );
-        let (result, rest) = read("2024-01-01,x", comparable_value(BareWordExtent::Name));
+        let (result, rest) = read("2024-01-01,x", comparable_value(BareWordExtent::Word));
         assert!(result.is_ok());
         pretty_assertions::assert_eq!(rest, ",x");
     }

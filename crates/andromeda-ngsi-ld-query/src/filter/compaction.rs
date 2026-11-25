@@ -419,6 +419,58 @@ mod tests {
         pretty_assertions::assert_eq!(compacted.to_string(), "\"https://other.example/speed\">50;colour==\"red\"");
     }
 
+    /// Clause 5.5.7 renders a name no term matches as its Fully Qualified Name,
+    /// which no `AttrName` spells, so it is written back quoted, dotted or not.
+    #[tokio::test]
+    async fn an_iri_no_term_abbreviates_is_written_back_as_a_quoted_string() {
+        for (stored_text, written) in [
+            ("\"https://other.example/speed\">50", "\"https://other.example/speed\">50"),
+            ("\"urn:x:weight\">1", "\"urn:x:weight\">1"),
+            (
+                "\"https://example.com/a\"{\"https://other.example/T\":\"https://example.com/b\"}",
+                "a{\"https://other.example/T\":b}",
+            ),
+        ] {
+            let compacted = compact_filter(stored(stored_text), &PrefixCompactor).await.expect("compacts");
+            pretty_assertions::assert_eq!(compacted.to_string(), written, "{stored_text}");
+            pretty_assertions::assert_eq!(
+                compacted.to_string().parse::<Filter<Written>>().expect("reads back"),
+                compacted,
+                "{stored_text}"
+            );
+        }
+    }
+
+    /// A context whose prefix `ex` stands for `https://example.org/`, so
+    /// JSON-LD compaction answers the compact IRI `ex:speed`.
+    struct PrefixedCompactor;
+
+    impl TermCompactor for PrefixedCompactor {
+        fn compact_term(&self, name: &AttributeIri) -> impl Future<Output = AttributeName> + Send {
+            ready(
+                name.as_str()
+                    .strip_prefix("https://example.org/")
+                    .map_or_else(|| name.as_str().to_owned(), |local| format!("ex:{local}"))
+                    .parse()
+                    .expect("a compact IRI is an attribute name"),
+            )
+        }
+
+        fn compact_type(&self, name: &EntityTypeIri) -> impl Future<Output = Result<EntityTypeName, NgsiLdReferenceError>> + Send {
+            ready(name.as_str().parse())
+        }
+    }
+
+    /// A compact IRI holds a colon, which no `AttrName` holds, so it is
+    /// written back quoted.
+    #[tokio::test]
+    async fn a_compact_iri_compaction_answers_is_written_back_as_a_quoted_string() {
+        let compacted = compact_filter(stored("\"https://example.org/speed\">50"), &PrefixedCompactor)
+            .await
+            .expect("compacts");
+        pretty_assertions::assert_eq!(compacted.to_string(), "\"ex:speed\">50");
+    }
+
     /// A hop's two halves compact through different vocabularies, the mirror
     /// of expansion: the Relationship is an attribute term, the guard names
     /// entity types.
