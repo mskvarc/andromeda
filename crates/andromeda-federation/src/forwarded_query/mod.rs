@@ -458,13 +458,23 @@ mod tests {
 
     /// Narrow `client` under the core context, where every term equals the last segment of its IRI.
     async fn narrow(client: ClientQuery<'_>, registration: &ContextSourceRegistration, split: SplitEntities) -> Vec<ForwardedQuery> {
+        narrow_answering(client, registration, split, TemporalAnswer::AsRequested).await
+    }
+
+    /// Narrow `client` under the core context, a temporal source asked to answer as `answer` says.
+    async fn narrow_answering(
+        client: ClientQuery<'_>,
+        registration: &ContextSourceRegistration,
+        split: SplitEntities,
+        answer: TemporalAnswer,
+    ) -> Vec<ForwardedQuery> {
         let engine = offline_engine();
         let context = ContextSpec::none();
         let resolver = TermResolver::new(&engine, &context);
         let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
             .await
             .expect("the forwarding context processes");
-        ForwardedQuery::for_registration(client, registration, split, None, TemporalAnswer::AsRequested, &names)
+        ForwardedQuery::for_registration(client, registration, split, None, answer, &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -831,14 +841,17 @@ mod tests {
 
     /// Clause 5.7.4.4: a split temporal query keeps its temporal window, and a
     /// complete one carries the window, the instance limit and the aggregation
-    /// members the local history is rendered with.
+    /// members the local history is rendered with. A split query carrying `q`
+    /// counts its `lastN` over the merged instances that meet `q`, so its
+    /// sources are asked for every instance of the window, the window
+    /// unchanged and no `lastN` or aggregation of their own.
     #[tokio::test]
     async fn a_temporal_query_keeps_its_window_under_split_and_everything_else_when_complete() {
         let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = temporal_query(
             "type=Vehicle&timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-02-01T00:00:00Z&timeproperty=modifiedAt&lastN=2&q=speed%3E50&scopeQ=%2FMadrid&attrs=speed&options=aggregatedValues,sysAttrs&aggrMethods=avg,max&aggrPeriodDuration=PT1H&csf=tier%3D%3D%22gold%22",
         );
-        let split = narrow(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Split).await;
+        let split = narrow_answering(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Split, TemporalAnswer::Instances).await;
         pretty_assertions::assert_eq!(split.len(), 1);
         let split = &split[0];
         let written = split.to_query_string();
@@ -850,7 +863,9 @@ mod tests {
         pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::TimeAt), Some("2024-01-01T00:00:00Z"));
         pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::EndTimeAt), Some("2024-02-01T00:00:00Z"));
         pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::Timeproperty), Some("modifiedAt"));
-        pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::LastN), Some("2"));
+        pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::LastN), None);
+        pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::Format), None);
+        pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::AggrMethods), None);
         pretty_assertions::assert_eq!(split.value_of(ForwardedParameter::Csf), Some("tier==\"gold\""));
 
         let complete = narrow(ClientQuery::TemporalQuery(&query), &block, SplitEntities::Complete).await;

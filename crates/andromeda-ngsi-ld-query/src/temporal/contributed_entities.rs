@@ -10,6 +10,12 @@ pub enum ContributedRendering {
     /// parts the sources answered with.
     #[default]
     Local,
+    /// The local part is rendered with every instance of the window, whatever
+    /// `lastN` or page the query asks for. The merged instances are narrowed
+    /// by `q` and the geo-query first, and `lastN` and the page count only the
+    /// instances that remain (clause 5.7.4.4), so no part may stop short of
+    /// the window on its own.
+    WholeWindow,
     /// The local part is not rendered: the entity is rendered from its merged
     /// instances instead, which is what an aggregated temporal representation
     /// of an entity held in several parts needs (clause 5.7.4.4, "aggregated
@@ -68,8 +74,19 @@ impl ContributedEntities {
     #[must_use]
     pub fn renders_locally(&self, id: &Identifier) -> bool {
         match self.rendering {
-            ContributedRendering::Local => true,
+            ContributedRendering::Local | ContributedRendering::WholeWindow => true,
             ContributedRendering::Merged => !self.contains(id),
+        }
+    }
+
+    /// Whether the local read renders every instance of the window of the
+    /// entity `id`, past any `lastN` or page, which it does for a contributed
+    /// one whose merged instances are narrowed before they are bounded.
+    #[must_use]
+    pub fn reads_whole_window(&self, id: &Identifier) -> bool {
+        match self.rendering {
+            ContributedRendering::WholeWindow => self.contains(id),
+            ContributedRendering::Local | ContributedRendering::Merged => false,
         }
     }
 }
@@ -95,6 +112,18 @@ mod tests {
     fn a_locally_rendered_contribution_is_rendered_by_the_local_read() {
         let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1")], ContributedRendering::Local);
         assert!(contributed.renders_locally(&id("urn:ngsi-ld:Vehicle:1")));
+        assert!(!contributed.reads_whole_window(&id("urn:ngsi-ld:Vehicle:1")));
+    }
+
+    /// Clause 5.7.4.4 bounds the merged instances only once they are
+    /// narrowed, so a contribution narrowed after the merge is read over the
+    /// whole window, and every other entity as the query pages it.
+    #[test]
+    fn a_contribution_narrowed_after_the_merge_is_read_over_the_whole_window() {
+        let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1")], ContributedRendering::WholeWindow);
+        assert!(contributed.renders_locally(&id("urn:ngsi-ld:Vehicle:1")));
+        assert!(contributed.reads_whole_window(&id("urn:ngsi-ld:Vehicle:1")));
+        assert!(!contributed.reads_whole_window(&id("urn:ngsi-ld:Vehicle:2")));
     }
 
     #[test]

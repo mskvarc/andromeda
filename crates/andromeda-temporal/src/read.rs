@@ -262,7 +262,7 @@ mod aggregated_page;
 /// Compacting the histories one read gathered under its request context.
 pub(crate) mod compacted_history;
 /// Whether a temporal read carries the `datasetId` step.
-mod dataset_step;
+pub(crate) mod dataset_step;
 /// Whether a projection leaves a history an Entity member.
 mod entity_members;
 /// Rendering the contributed entities of a split query over their merged instances.

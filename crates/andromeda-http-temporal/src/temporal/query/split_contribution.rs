@@ -8,7 +8,15 @@
 //! deciding it in the store; only the entities a source answered the window
 //! or a Scope probe with are exempt locally and judged here, over every
 //! part, once the sources have answered. An entity holding nothing inside the
-//! window in any part is never answered: the judgement only drops entities.
+//! window in any part is never answered, since the judgement only drops
+//! entities.
+//!
+//! The last step of clause 5.7.4.4 includes "only the Attribute instances (up
+//! to lastN) ... which meet the temporal, query and geoquery restrictions", so
+//! `lastN` and the page count the instances that remain once the kept
+//! entity's merged instances are narrowed. No part may therefore stop at its
+//! own last n instances or its own page, and every part of a contributed
+//! entity is gathered whole before anything is bounded.
 
 use crate::temporal::{
     ProblemResponse,
@@ -50,16 +58,28 @@ pub(crate) enum ContributionShape {
     /// The sources answer in the representation the client asked for, and
     /// their answers are merged with the local one.
     AsAnswered,
-    /// The query asks for an aggregated representation and carries a filter:
-    /// clause 5.7.4.4 renders a contributed entity with the aggregates of its
-    /// merged instances, so the sources answer with every instance of the
-    /// window and the entity is aggregated here.
-    MergedInstances,
+    /// The query is split and carries a filter clause 5.7.4.4 applies after
+    /// the merge: every part of a contributed entity is gathered whole, the
+    /// sources answering every instance of the window and the local read
+    /// reading all of it, and the filters, the narrowing of the instances,
+    /// `lastN` and the page are decided here over the merged instances, which
+    /// the entity is rendered from as the representation says.
+    GatheredWhole(GatheredRepresentation),
     /// The query asks for an aggregated representation and decides no filter
     /// after the merge: an entity held in more than one part is aggregated
     /// here over the instances of every part (clause 5.7.4.4), found as the
     /// deployment's gathering says.
     HubAggregated(AggregationGathering),
+}
+
+/// What an entity gathered whole is rendered as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GatheredRepresentation {
+    /// Its merged instances, narrowed and bounded here.
+    Instances,
+    /// The aggregates of its merged instances, computed here (clause 5.7.4.4,
+    /// "aggregated values of Attribute instances").
+    Aggregates,
 }
 
 impl ContributionShape {
@@ -68,7 +88,8 @@ impl ContributionShape {
     pub(crate) fn of(filtering: SplitEntities, params: &TemporalQueryParameters, gathering: AggregationGathering) -> ContributionShape {
         let aggregated = params.parse_format().is_ok_and(|format| format.is_aggregated());
         match filtering {
-            SplitEntities::Split if aggregated && params.carries_split_filters() => ContributionShape::MergedInstances,
+            SplitEntities::Split if params.carries_split_filters() && aggregated => ContributionShape::GatheredWhole(GatheredRepresentation::Aggregates),
+            SplitEntities::Split if params.carries_split_filters() => ContributionShape::GatheredWhole(GatheredRepresentation::Instances),
             SplitEntities::Split | SplitEntities::Complete if aggregated => ContributionShape::HubAggregated(gathering),
             SplitEntities::Split | SplitEntities::Complete => ContributionShape::AsAnswered,
         }
@@ -78,7 +99,7 @@ impl ContributionShape {
     pub(crate) const fn reach(self) -> HistoryReach {
         match self {
             ContributionShape::AsAnswered | ContributionShape::HubAggregated(AggregationGathering::OverlapsAgain) => HistoryReach::AsAnswered,
-            ContributionShape::MergedInstances | ContributionShape::HubAggregated(AggregationGathering::EveryInstance) => HistoryReach::Complete,
+            ContributionShape::GatheredWhole(_) | ContributionShape::HubAggregated(AggregationGathering::EveryInstance) => HistoryReach::Complete,
         }
     }
 
@@ -88,15 +109,20 @@ impl ContributionShape {
             ContributionShape::AsAnswered | ContributionShape::HubAggregated(AggregationGathering::EveryInstance | AggregationGathering::OverlapsAgain) => {
                 ContributedRendering::Local
             }
-            ContributionShape::MergedInstances => ContributedRendering::Merged,
+            ContributionShape::GatheredWhole(GatheredRepresentation::Instances) => ContributedRendering::WholeWindow,
+            ContributionShape::GatheredWhole(GatheredRepresentation::Aggregates) => ContributedRendering::Merged,
         }
     }
 
     /// Whether the sources' entities join the local ones.
     pub(crate) const fn remote_parts(self) -> RemoteParts {
         match self {
-            ContributionShape::AsAnswered | ContributionShape::HubAggregated(AggregationGathering::OverlapsAgain) => RemoteParts::Merged,
-            ContributionShape::MergedInstances | ContributionShape::HubAggregated(AggregationGathering::EveryInstance) => RemoteParts::RenderedApart,
+            ContributionShape::AsAnswered
+            | ContributionShape::HubAggregated(AggregationGathering::OverlapsAgain)
+            | ContributionShape::GatheredWhole(GatheredRepresentation::Instances) => RemoteParts::Merged,
+            ContributionShape::GatheredWhole(GatheredRepresentation::Aggregates) | ContributionShape::HubAggregated(AggregationGathering::EveryInstance) => {
+                RemoteParts::RenderedApart
+            }
         }
     }
 }
@@ -115,7 +141,7 @@ async fn render_contributions(
     settlement: Option<&SplitSettlement>,
     instance: &Uri,
 ) -> Result<Option<(Vec<TemporalHistory>, Vec<NgsiLdWarning>)>, ProblemResponse> {
-    let (ContributionShape::MergedInstances, Some(history), Some(settlement)) = (shape, request.forwarded, settlement) else {
+    let (ContributionShape::GatheredWhole(GatheredRepresentation::Aggregates), Some(history), Some(settlement)) = (shape, request.forwarded, settlement) else {
         return Ok(None);
     };
     // Every part is merged before a split query's filters are decided, so the local part of a retained entity is in it.
@@ -223,10 +249,11 @@ pub(crate) struct ContributionMerge<'r> {
     pub(crate) contributed: &'r ContributedEntities,
 }
 
-/// Fold what the sources answered into the local entities: the filters
+/// Fold what the sources answered into the local entities, the filters
 /// decided over every contributed entity's gathered parts, the ones they did
-/// not keep dropped, and, for an aggregated representation, the kept ones
-/// rendered over their merged instances (clause 5.7.4.4).
+/// not keep dropped, the merged instances of the kept ones narrowed to those
+/// meeting the restrictions, and, for an aggregated representation, the kept
+/// ones rendered over their merged instances (clause 5.7.4.4).
 ///
 /// # Errors
 ///
@@ -254,6 +281,9 @@ pub(crate) async fn merge_with_contributions(
     let mut merged = merge_forwarded_history(local_entities, forwarded, merge.filtering, merge.shape.remote_parts(), window, instance)?;
     if let Some(settlement) = settlement {
         retain_settled(&mut merged.entities, merge.contributed, &settlement);
+        if let Some(narrowing) = &settlement.narrowing {
+            narrowing.narrow(&mut merged.entities, merge.contributed);
+        }
         merged.warnings.extend(with_linked_resolution_warnings(Vec::new(), &settlement.incomplete));
     }
     if let Some((mut entities, warnings)) = rendered {
@@ -308,7 +338,7 @@ mod tests {
             forwarding::{ForwardedHistory, HistoryReach},
             in_effect_gathering::InEffectGathering,
             merged_history::RemoteParts,
-            split_contribution::{ContributionShape, contributed_entities, retain_settled},
+            split_contribution::{ContributionShape, GatheredRepresentation, contributed_entities, retain_settled},
         },
         test_history::held_history,
     };
@@ -348,6 +378,7 @@ mod tests {
         let settlement = SplitSettlement {
             retained: [id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
             incomplete: Vec::new(),
+            narrowing: None,
         };
         retain_settled(&mut entities, &contributed, &settlement);
         pretty_assertions::assert_eq!(
@@ -411,6 +442,7 @@ mod tests {
         let settlement = SplitSettlement {
             retained: [id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
             incomplete: Vec::new(),
+            narrowing: None,
         };
         retain_settled(&mut entities, &contributed, &settlement);
         pretty_assertions::assert_eq!(
@@ -424,8 +456,9 @@ mod tests {
         serde_urlencoded::from_str(raw).expect("a valid temporal query")
     }
 
-    /// Clause 5.7.4.4: a representation that is no aggregate merges the
-    /// holders' instances as they answered them, whatever the gathering.
+    /// Clause 5.7.4.4: a representation that is no aggregate, of a query
+    /// deciding no filter after the merge, merges the holders' instances as
+    /// they answered them, whatever the gathering.
     #[test]
     fn an_instance_representation_is_merged_as_answered() {
         for gathering in [AggregationGathering::EveryInstance, AggregationGathering::OverlapsAgain] {
@@ -436,17 +469,49 @@ mod tests {
         }
     }
 
-    /// A split aggregated query carrying a value filter decides it over the
-    /// merged instances, so every instance is gathered whatever the gathering.
+    /// Clause 5.7.4.4 counts `lastN` and the page over the instances that
+    /// meet the query and geoquery restrictions, so a split query carrying
+    /// `q` or a geo-query gathers every part whole, in any representation,
+    /// and one carrying neither merges the parts as answered.
     #[test]
-    fn a_split_filtered_aggregate_always_gathers_every_instance() {
-        let filtered = query("format=aggregatedValues&aggrMethods=totalCount&q=speed%3E1");
-        for gathering in [AggregationGathering::EveryInstance, AggregationGathering::OverlapsAgain] {
-            pretty_assertions::assert_eq!(
-                ContributionShape::of(SplitEntities::Split, &filtered, gathering),
-                ContributionShape::MergedInstances
-            );
+    fn a_split_query_carrying_a_filter_gathers_every_part_whole() {
+        let window = "timerel=between&timeAt=2020-08-01T12:00:00Z&endTimeAt=2020-08-01T13:00:00Z&lastN=2";
+        let shapes = [
+            (
+                format!("{window}&q=speed%3E90"),
+                ContributionShape::GatheredWhole(GatheredRepresentation::Instances),
+            ),
+            (
+                format!("{window}&georel=near%3BmaxDistance%3D%3D2000&geometry=Point&coordinates=%5B4.5%2C52.5%5D"),
+                ContributionShape::GatheredWhole(GatheredRepresentation::Instances),
+            ),
+            (window.to_owned(), ContributionShape::AsAnswered),
+            (
+                format!("{window}&format=aggregatedValues&aggrMethods=totalCount&q=speed%3E1"),
+                ContributionShape::GatheredWhole(GatheredRepresentation::Aggregates),
+            ),
+        ];
+        for (raw, expected) in &shapes {
+            for gathering in [AggregationGathering::EveryInstance, AggregationGathering::OverlapsAgain] {
+                pretty_assertions::assert_eq!(ContributionShape::of(SplitEntities::Split, &query(raw), gathering), *expected, "{raw}");
+            }
         }
+    }
+
+    /// An entity gathered whole is read from every source to the end of the
+    /// window, and its local part over the whole window: as instances merged
+    /// with the local ones, or as the aggregate of its merged instances,
+    /// rendered apart.
+    #[test]
+    fn a_gathered_whole_entity_is_read_whole_from_every_part() {
+        let instances = ContributionShape::GatheredWhole(GatheredRepresentation::Instances);
+        pretty_assertions::assert_eq!(instances.reach(), HistoryReach::Complete);
+        pretty_assertions::assert_eq!(instances.rendering(), ContributedRendering::WholeWindow);
+        pretty_assertions::assert_eq!(instances.remote_parts(), RemoteParts::Merged);
+        let aggregates = ContributionShape::GatheredWhole(GatheredRepresentation::Aggregates);
+        pretty_assertions::assert_eq!(aggregates.reach(), HistoryReach::Complete);
+        pretty_assertions::assert_eq!(aggregates.rendering(), ContributedRendering::Merged);
+        pretty_assertions::assert_eq!(aggregates.remote_parts(), RemoteParts::RenderedApart);
     }
 
     /// An aggregated query deciding no filter after the merge aggregates its

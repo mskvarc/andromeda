@@ -183,6 +183,21 @@ impl TemporalDocument {
         });
     }
 
+    /// Keep only the instances `keep` admits, given the attribute each belongs
+    /// to. An attribute `keep` leaves without an instance is removed rather
+    /// than kept empty, because clause 5.7.4.4 represents only the instances
+    /// "which meet the temporal, query and geoquery restrictions" and none of
+    /// that attribute does. An attribute that held no instance before stays.
+    pub fn narrow_instances(&mut self, keep: impl Fn(&AttributeName, &InstanceDocument) -> bool) {
+        self.entity.attributes_mut().retain(|name, member| match member {
+            AttributeMember::Instances(instances) if !instances.is_empty() => {
+                instances.retain(|instance| keep(name, instance));
+                !instances.is_empty()
+            }
+            AttributeMember::Instances(_) | AttributeMember::Remove => true,
+        });
+    }
+
     /// Keep, for every attribute, the `last_n` instances with the most recent
     /// instant on `timeproperty`, in ascending order of it: clause 5.7.3.4
     /// fixes which instants are kept, never the order of the response, and

@@ -31,6 +31,7 @@ use crate::{
     port::read_scope::ScopeReach,
     query_reading::QueryReading,
     service::TemporalService,
+    split_narrowing::SplitNarrowing,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -43,9 +44,13 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_query_evaluation::split_filter::leaf_truths;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem,
+};
 
-/// Which of the contributed entities the filters keep.
+/// Which of the contributed entities the filters keep, and how their merged
+/// instances are narrowed.
 #[derive(Debug, Default)]
 pub struct SplitSettlement {
     /// The contributed entities whose gathered parts satisfy the filters.
@@ -53,6 +58,10 @@ pub struct SplitSettlement {
     /// The holders of a hop target that could not be read, whose parts the
     /// filters were decided without.
     pub incomplete: Vec<LinkedResolutionFailure>,
+    /// How `q` and the geo-query narrow the instances of the retained
+    /// entities once their parts are merged; `None` when the query carries
+    /// none of the filters.
+    pub narrowing: Option<SplitNarrowing>,
 }
 
 impl SplitSettlement {
@@ -111,6 +120,7 @@ impl TemporalService {
             return Ok(SplitSettlement {
                 retained: entity_ids.into_iter().collect(),
                 incomplete: Vec::new(),
+                narrowing: None,
             });
         }
 
@@ -126,7 +136,7 @@ impl TemporalService {
                 .collect::<Result<Vec<_>, _>>()?
         };
         let windowed: Vec<&TemporalDocument> = answered.in_window.iter().copied().chain(&local_links).collect();
-        let hop_reading = if hops.is_empty() {
+        let mut hop_reading = if hops.is_empty() {
             HopReading::default()
         } else {
             self.read_hop_targets(target, params, reading, (&hops, &filter.hop_reads()), &windowed).await?
@@ -155,9 +165,11 @@ impl TemporalService {
             .into_iter()
             .filter(|entity_id| truths.get(entity_id).is_some_and(|held| filter.holds(held)))
             .collect();
+        let incomplete = mem::take(&mut hop_reading.incomplete);
         Ok(SplitSettlement {
             retained,
-            incomplete: hop_reading.incomplete,
+            incomplete,
+            narrowing: Some(SplitNarrowing::new(compiled, hop_reading, truths)),
         })
     }
 }

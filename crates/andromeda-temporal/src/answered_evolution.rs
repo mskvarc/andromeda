@@ -64,19 +64,24 @@ fn counts_in(instance: &InstanceDocument, window: TemporalWindow) -> bool {
     instance.lies_within(window) || instance.instant_on(window.timeproperty).is_none()
 }
 
+/// Whether a leaf reads `instance` over `window`: it lies in the window and
+/// carries a value of its attribute rather than recording its deletion or
+/// holding no value member, which no local history row does.
+pub(crate) fn read_by_leaves(instance: &InstanceDocument, window: TemporalWindow) -> bool {
+    instance.lies_within(window) && instance.value_presence() == ValuePresence::Held
+}
+
 impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
     type Instance = &'a InstanceDocument;
 
-    /// The instances lying in the window that carry a value of the attribute
-    /// rather than recording its deletion or holding no value member, which
-    /// no local history row does.
+    /// The instances [`read_by_leaves`] admits.
     fn attribute_instances(self, attribute: &AttributeIri) -> impl Iterator<Item = &'a InstanceDocument> {
         // The Scope is not an attribute a filter reads.
         let named_scope = attribute.as_str() == expanded_properties::SCOPE.as_str();
         let window = self.window;
         self.document
             .attribute_instances(attribute)
-            .filter(move |instance| !named_scope && instance.lies_within(window) && instance.value_presence() == ValuePresence::Held)
+            .filter(move |instance| !named_scope && read_by_leaves(instance, window))
     }
 
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName> {

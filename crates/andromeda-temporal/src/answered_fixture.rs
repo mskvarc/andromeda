@@ -18,6 +18,7 @@ fn context() -> ContextSpec {
         JsonLiteral::admit(
             &json!({
                 "speed": "https://example.com/speed",
+                "fuelLevel": "https://example.com/fuelLevel",
                 "brand": "https://example.com/brand",
                 "says": "https://example.com/says",
                 "settings": "https://example.com/settings",

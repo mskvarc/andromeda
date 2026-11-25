@@ -17,7 +17,11 @@ use andromeda_ngsi_ld_query::{
     geo::admission::GeoQueryAdmission,
     page_reach::PageReach,
     projection::expanded_projection::ExpandedProjection,
-    temporal::{continuation::TemporalContinuation, instance_page::PageDirection, window::TimeInterval},
+    temporal::{
+        continuation::TemporalContinuation,
+        instance_page::{InstancePage, PageDirection},
+        window::TimeInterval,
+    },
 };
 use andromeda_retry::retry_delay::RetryDelay;
 use chrono::{DateTime, Utc};
@@ -126,6 +130,10 @@ pub struct TemporalQueryResult {
     pub range: Option<TemporalRange>,
     /// Non-fatal warnings encountered during per-entity processing.
     pub warnings: Vec<TemporalQueryWarning>,
+    /// The instances of every attribute stream the read keeps (clause
+    /// 6.3.10), which also cut a contributed entity read over its whole
+    /// window once its parts are merged and narrowed.
+    pub page: InstancePage,
     /// The request's clause 4.21 projection, expanded, which narrows the
     /// members the response writes of every entity.
     pub projection: ExpandedProjection,
