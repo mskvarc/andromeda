@@ -127,10 +127,16 @@ impl<T: Debug + PartialEq> BothWays<T> {
 
     /// The refusal both expansions agree on.
     pub(crate) fn refused(self) -> String {
+        self.refusal().to_string()
+    }
+
+    /// The refusal both expansions agree on, as the processor path raised it,
+    /// which a test matches by its variant.
+    pub(crate) fn refusal(self) -> EntityRefusal {
         match (self.typed, self.processor) {
             (Err(typed), Err(processor)) => {
                 pretty_assertions::assert_eq!(typed.to_string(), processor.to_string());
-                typed.to_string()
+                processor
             }
             (typed, processor) => panic!("expected both to refuse, got {typed:?} and {processor:?}"),
         }
@@ -139,8 +145,14 @@ impl<T: Debug + PartialEq> BothWays<T> {
     /// The refusal of the typed expander, which checks the written names
     /// before either expansion path runs.
     pub(crate) fn refused_before_expansion(self) -> String {
+        self.refusal_before_expansion().to_string()
+    }
+
+    /// The refusal of the typed expander as it was raised, which a test
+    /// matches by its variant.
+    pub(crate) fn refusal_before_expansion(self) -> ExpansionError {
         match self.typed {
-            Err(refusal) => refusal.to_string(),
+            Err(refusal) => refusal,
             Ok(typed) => panic!("expected the written names to be refused, got {typed:?}"),
         }
     }

@@ -43,6 +43,7 @@ pub mod list_object;
 pub mod literal;
 pub mod member_role;
 pub mod member_shape;
+pub mod name_refusal;
 #[cfg(test)]
 mod nesting_probe;
 pub mod node_id;

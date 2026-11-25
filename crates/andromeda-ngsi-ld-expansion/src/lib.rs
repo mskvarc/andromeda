@@ -65,6 +65,8 @@ mod structured_value_name_tests;
 #[cfg(test)]
 mod temporal_tests;
 #[cfg(test)]
+mod unexpandable_reference_tests;
+#[cfg(test)]
 mod value_limit_tests;
 
 #[cfg(test)]

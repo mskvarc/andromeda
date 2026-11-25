@@ -13,7 +13,13 @@
 
 use crate::{
     context_spec::ContextSpec,
-    engine::{context_url::is_full_iri, expansion_context::ExpansionContext, expansion_context_id::ExpansionContextId, processor::JsonLdEngine},
+    engine::{
+        context_url::is_full_iri,
+        expansion_context::ExpansionContext,
+        expansion_context_id::ExpansionContextId,
+        key_expansion::{KeyExpansion, expand_key},
+        processor::JsonLdEngine,
+    },
     error::JsonLdError,
     loader::cache_lifetime::CacheLifetime,
 };
@@ -22,7 +28,7 @@ use jsonld::{
     Id,
     Term,
     ValidId,
-    context_processing::algorithm::{Action, expand_property_key, expand_type_value},
+    context_processing::algorithm::{Action, expand_type_value},
 };
 use moka::{Equivalent, future::Cache};
 use rdfx::vocabulary::no_vocabulary_mut;
@@ -265,11 +271,10 @@ impl JsonLdEngine {
         // A key that expands to anything but an IRI is dropped by expansion
         // (Expansion Algorithm step 13.3), so it names no attribute; a keyword
         // is told apart, since a trailing path reads a member of its name.
-        let expanded = expand_property_key(no_vocabulary_mut(), expansion.active(), term, Action::Keep).map_err(|_rejected| JsonLdError::TermNotExpanded)?;
-        let iri = match expanded.as_deref() {
-            Some(Term::Id(Id::Valid(ValidId::Iri(iri)))) => iri.clone(), // clone: the processor's memoized term stays shared
-            Some(Term::Keyword(_)) => return Err(JsonLdError::TermIsKeyword),
-            Some(Term::Null | Term::Id(Id::Valid(ValidId::Blank(_)) | Id::Invalid(_))) | None => return Err(JsonLdError::TermNotExpanded),
+        let iri = match expand_key(expansion.active(), term) {
+            KeyExpansion::Iri(iri) => iri,
+            KeyExpansion::Keyword => return Err(JsonLdError::TermIsKeyword),
+            KeyExpansion::NoIri => return Err(JsonLdError::TermNotExpanded),
         };
 
         self.term_cache().insert(key.to_owned_key(), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
