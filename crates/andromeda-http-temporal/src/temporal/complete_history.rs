@@ -30,9 +30,11 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::{
     continuation::{PageEdge, TemporalContinuation},
-    instance_page::PageDirection,
-    window::TimeInterval,
+    contributed_entities::ContributedEntities,
+    instance_page::{InstancePage, PageDirection},
+    window::{TemporalWindow, TimeInterval},
 };
+use andromeda_ngsi_ld_render::temporal::page_cut::PageCut;
 use andromeda_temporal::{error::TemporalError, service::TemporalRange};
 use chrono::{DateTime, Utc};
 
@@ -150,13 +152,7 @@ impl HistoryCompleteness {
         }
         // Clause 6.3.10: "backwards" with `lastN`, "forwards" without it.
         let direction = params.last_n.map_or(PageDirection::Forward, |requested| PageDirection::Backward { requested });
-        let local_stop = local.as_ref().and_then(|range| range.observed).map(|(least, most)| Stop {
-            at: match direction {
-                PageDirection::Forward => most,
-                PageDirection::Backward { .. } => least,
-            },
-            side: StopSide::Inclusive,
-        });
+        let local_stop = local.as_ref().and_then(|range| local_stop(range, direction));
         let source_stops = sources.iter().flat_map(|source| {
             source.partial_pages.iter().filter_map(PartialPage::range).map(|range| Stop {
                 at: range.end(),
@@ -192,6 +188,61 @@ impl HistoryCompleteness {
             cut_short,
             fewest_served: None,
         }))
+    }
+
+    /// The completeness of a merge some entities of which, the ones
+    /// `contributed` reads over their whole window, were gathered whole and
+    /// narrowed before the page bounds them (clause 5.7.4.4).
+    ///
+    /// Each such entity is cut as the local read cuts one over `window` under
+    /// `page` (clause 6.3.10), and the cut is a stop beside the others. It is
+    /// inclusive, like the local read's, since every instance at its instant
+    /// is held. A merge holding a gathered entity is bounded like one a source
+    /// answered the window for, even when only a Scope probe answered, so the
+    /// local read's own stop bounds the gathered entities too.
+    pub(crate) fn hold_gathered(
+        self,
+        entities: &[TemporalHistory],
+        contributed: &ContributedEntities,
+        page: InstancePage,
+        window: TemporalWindow,
+    ) -> HistoryCompleteness {
+        if contributed.is_empty() {
+            return self;
+        }
+        let gathered = PageCut::common(entities.iter().filter_map(|entity| match entity {
+            TemporalHistory::Instances(document) if document.id().is_some_and(|entity_id| contributed.reads_whole_window(entity_id)) => {
+                PageCut::of_whole_streams(document, window.timeproperty, page, window.interval)
+            }
+            TemporalHistory::Instances(_) | TemporalHistory::Aggregates(_) => None,
+        }));
+        let gathered_stop = gathered.map(|cut| {
+            (
+                cut.direction,
+                Stop {
+                    at: cut.boundary,
+                    side: StopSide::Inclusive,
+                },
+            )
+        });
+        match self {
+            HistoryCompleteness::Local(local) => {
+                let local_stop = local.as_ref().and_then(|range| Some((range.direction, local_stop(range, range.direction)?)));
+                let interval = local.map_or(window.interval, |range| range.interval);
+                let stop = local_stop
+                    .into_iter()
+                    .chain(gathered_stop)
+                    .reduce(|(direction, held), (_, stop)| (direction, held.tighter(stop, direction)));
+                bounded_at(interval, stop)
+            }
+            HistoryCompleteness::Complete => bounded_at(window.interval, gathered_stop),
+            HistoryCompleteness::UpTo(mut bound) => {
+                if let Some((_, stop)) = gathered_stop {
+                    bound.stop = bound.stop.tighter(stop, bound.direction);
+                }
+                HistoryCompleteness::UpTo(bound)
+            }
+        }
     }
 
     /// Leave out of every merged entity the instances past the bound the
@@ -250,6 +301,35 @@ impl HistoryCompleteness {
             }
         }
     }
+}
+
+/// Where the local read stopped short, paging in `direction`, as its range
+/// `range` reports, which is the most recent instant it served forwards and
+/// the least recent backwards. The local page carries every instance at its
+/// edge instant, so the stop is inclusive.
+fn local_stop(range: &TemporalRange, direction: PageDirection) -> Option<Stop> {
+    let (least, most) = range.observed?;
+    Some(Stop {
+        at: match direction {
+            PageDirection::Forward => most,
+            PageDirection::Backward { .. } => least,
+        },
+        side: StopSide::Inclusive,
+    })
+}
+
+/// The completeness of a merge over `interval` bounded at `stop` in the
+/// direction it pages in, or complete without one.
+fn bounded_at(interval: TimeInterval, stop: Option<(PageDirection, Stop)>) -> HistoryCompleteness {
+    stop.map_or(HistoryCompleteness::Complete, |(direction, stop)| {
+        HistoryCompleteness::UpTo(HistoryBound {
+            interval,
+            direction,
+            stop,
+            cut_short: Vec::new(),
+            fewest_served: None,
+        })
+    })
 }
 
 /// The least and most recent instants any instance of any of `histories`

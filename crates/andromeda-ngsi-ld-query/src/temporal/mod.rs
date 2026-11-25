@@ -8,6 +8,7 @@ pub mod contributed_entities;
 pub mod grouping;
 pub mod history_delete;
 pub mod instance_page;
+pub mod instance_restriction;
 pub mod instance_selection;
 pub mod ordering;
 pub mod period_budget;

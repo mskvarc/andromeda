@@ -201,6 +201,7 @@ pub mod source_extensions;
 pub mod source_ld_json;
 pub mod source_request;
 pub mod spelling_matcher;
+pub mod split_answer;
 pub mod stack_controls;
 pub mod streamed_upload;
 pub mod subscription_document;

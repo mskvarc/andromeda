@@ -19,7 +19,7 @@ use crate::temporal::query::forwarding::ForwardedHistory;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_response::{page_link_targets::PageLinkTargets, page_pointing::PagePointing, pagination::PageOutcome};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow, temporal::contributed_entities::ContributedEntities};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
@@ -102,15 +102,18 @@ impl QueriedPage {
         self.count
     }
 
-    /// What the local store reads, given what the context sources contributed.
+    /// What the local store reads, given what the context sources contributed
+    /// and the entities `contributed` names.
     ///
     /// Clause 5.5.9 cuts the page from the merged collection rather than from
     /// the local rows once context sources contribute, so the local query then
     /// reads from the first row, past no cursor, uncounted, and as many rows as
     /// it takes to tell that the merge exceeds the request's budget (clause
-    /// 4.12). Without a merge the store reads the client's window itself.
-    pub(crate) fn local_read<'page>(&'page self, forwarded: Option<&ForwardedHistory>) -> LocalRead<'page> {
-        match forwarded.filter(|history| history.holds_remote_entities()) {
+    /// 4.12). A contributed entity is bounded only after the merge too, even
+    /// when only a Scope probe answered for it. Without a merge the store
+    /// reads the client's window itself.
+    pub(crate) fn local_read<'page>(&'page self, forwarded: Option<&ForwardedHistory>, contributed: &ContributedEntities) -> LocalRead<'page> {
+        match forwarded.filter(|history| history.holds_remote_entities() || !contributed.is_empty()) {
             Some(history) => LocalRead {
                 window: Cow::Owned(PageWindow::offset(history.local_row_limit(), 0)),
                 count: CountPolicy::Omit,

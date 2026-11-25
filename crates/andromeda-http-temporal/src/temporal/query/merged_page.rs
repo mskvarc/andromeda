@@ -12,8 +12,9 @@ use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, 
 /// with whether the merged collection continues past it.
 ///
 /// Clause 5.7.4.4: `lastN` bounds the instances of the aggregated history, so
-/// it is applied once more over the merged entities; each source only bounded
-/// its own part. Clause 5.5.9 then takes the page from the merged collection
+/// it is applied once more over the merged entities. Each holder bounded only
+/// its own part, and none bounded an entity gathered whole, whose instances
+/// are narrowed first. Clause 5.5.9 then takes the page from the merged collection
 /// rather than from the local rows, and clause 6.3.13 counts the merged
 /// matches rather than the page.
 ///

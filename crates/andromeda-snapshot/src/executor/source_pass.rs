@@ -409,6 +409,7 @@ mod tests {
             SplitSettlement {
                 retained: [identifier(2), identifier(3)].into_iter().collect(),
                 incomplete: Vec::new(),
+                narrowing: None,
             },
         );
         let mut walk = SourceInstanceWalk::new(TimeInterval::After(DateTime::UNIX_EPOCH), TimeProp::Observed, None);

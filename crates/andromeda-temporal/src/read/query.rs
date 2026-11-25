@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::PageWindow,
     projection::attrs_selection::AttrsAdmission,
-    temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
+    temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities, instance_page::InstancePage},
 };
 use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
@@ -94,33 +94,29 @@ impl TemporalService {
             let compactor = self.engine.compactor(context);
             let compactor = EntityCompactor::new(&compactor);
             let mut warnings = Vec::new();
-            let rendered = if compiled.representation.format.is_aggregated() {
-                self.render_aggregated_pages(&scope, entity_ids, &compiled, &entity_types_map, &compactor, &mut warnings)
-                    .await?
+            let (rendered, whole_windows) = if compiled.representation.format.is_aggregated() {
+                let aggregated = self
+                    .render_aggregated_pages(&scope, entity_ids, &compiled, &entity_types_map, &compactor, &mut warnings)
+                    .await?;
+                (aggregated, Vec::new())
             } else {
-                self.render_instance_pages(&scope, entity_ids, &compiled, &entity_types_map, &mut warnings)
-                    .await?
+                let (whole_ids, paged_ids): (Vec<Identifier>, Vec<Identifier>) =
+                    entity_ids.into_iter().partition(|entity_id| compiled.contributed.reads_whole_window(entity_id));
+                let paged = self
+                    .render_instance_pages(&scope, paged_ids, &compiled, &entity_types_map, &mut warnings)
+                    .await?;
+                let whole = self
+                    .render_whole_windows(&scope, whole_ids, &compiled, &entity_types_map, &mut warnings)
+                    .await?;
+                (paged, whole)
             };
 
-            let mut entities = Vec::with_capacity(rendered.len());
+            let mut entities = Vec::with_capacity(rendered.len() + whole_windows.len());
             let mut cut = None;
             let mut overall_min: Option<DateTime<Utc>> = None;
             let mut overall_max: Option<DateTime<Utc>> = None;
             for rendered in rendered {
-                // An entity the window selects no history for is simply not part
-                // of the result set. One the page's common cut emptied is: its
-                // history continues on the next page. So is one only the
-                // `datasetId` parameter emptied: clause 5.7.4.4 applies it at
-                // step S8, after stage one selected the entity, and S8 removes
-                // "all Attributes without remaining Attribute instances", never
-                // the Entity.
-                //
-                // Clause 5.7.4.5 reduces "every Entity within the payload body"
-                // to the members the projection defines. An Entity it would
-                // reduce to none of them was never selected
-                // (`EntitySelection::projected_members`), so none is left out
-                // here, after the page was cut.
-                if rendered.presence == HistoryPresence::Absent && dataset_step == DatasetStep::Absent {
+                if !answers(&rendered, dataset_step) {
                     continue;
                 }
                 cut = cut.or(rendered.cut);
@@ -130,6 +126,14 @@ impl TemporalService {
                 }
                 entities.push(rendered.history);
             }
+            // A whole window is cut once its entity's parts are merged, so it
+            // takes no part in the cut or in the instants the range reports.
+            entities.extend(
+                whole_windows
+                    .into_iter()
+                    .filter(|rendered| answers(rendered, dataset_step))
+                    .map(|rendered| rendered.history),
+            );
 
             let any_truncated = cut.is_some();
             let range = cut.map(|cut| cut.range(compiled.window.interval, overall_min.zip(overall_max)));
@@ -141,6 +145,7 @@ impl TemporalService {
                 any_truncated,
                 range,
                 warnings,
+                page: compiled.instances.page,
                 projection: compiled.projection,
             })
         }
@@ -150,7 +155,50 @@ impl TemporalService {
     }
 }
 
+/// Whether the rendered entity is part of the result set.
+///
+/// An entity the window selects no history for is simply not part of the
+/// result set. One the page's common cut emptied is: its history continues on
+/// the next page. So is one only the `datasetId` parameter emptied: clause
+/// 5.7.4.4 applies it at step S8, after stage one selected the entity, and S8
+/// removes "all Attributes without remaining Attribute instances", never the
+/// Entity.
+///
+/// Clause 5.7.4.5 reduces "every Entity within the payload body" to the
+/// members the projection defines. An Entity it would reduce to none of them
+/// was never selected (`EntitySelection::projected_members`), so none is left
+/// out here, after the page was cut.
+fn answers(rendered: &RenderedTemporalEntity, dataset_step: DatasetStep) -> bool {
+    rendered.presence == HistoryPresence::Present || dataset_step == DatasetStep::Present
+}
+
 impl TemporalService {
+    /// Read every instance of the window of each of `entity_ids`, past the
+    /// page `compiled` asks for. They are the local parts of the contributed
+    /// entities whose merged instances are narrowed, bounded and paged once
+    /// every part is merged (clause 5.7.4.4).
+    ///
+    /// # Errors
+    ///
+    /// As for [`TemporalService::render_instance_pages`].
+    async fn render_whole_windows(
+        &self,
+        scope: &TemporalReadScope<'_>,
+        entity_ids: Vec<Identifier>,
+        compiled: &CompiledTemporalQuery,
+        entity_types_map: &HashMap<Identifier, Vec<EntityTypeName>>,
+        warnings: &mut Vec<TemporalQueryWarning>,
+    ) -> Result<Vec<RenderedTemporalEntity>, TemporalError> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // clone: the page's own read keeps the query's page, and the whole windows are read under a copy paging nothing
+        let mut whole = compiled.clone();
+        whole.instances.page = InstancePage::Whole;
+        let whole = whole;
+        self.render_instance_pages(scope, entity_ids, &whole, entity_types_map, warnings).await
+    }
+
     /// Read the aggregated page of every entity of the response in one read,
     /// then render each at the response's common cut.
     ///

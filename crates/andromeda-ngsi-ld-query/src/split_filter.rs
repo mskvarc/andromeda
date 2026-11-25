@@ -42,6 +42,22 @@ pub enum FilterLeaf<'q> {
     ScopeRequirement(&'q ScopePattern),
 }
 
+impl<'q> FilterLeaf<'q> {
+    /// The Attribute of the Entity under evaluation the leaf reads, which is a
+    /// Query Term's own Attribute or, behind a hop, the Relationship the hop
+    /// crosses from the Entity (the Attribute it ends on is the linked
+    /// Entity's), and the geo-query's `GeoProperty`. A scope requirement reads
+    /// the Entity's Scope, which is no Attribute.
+    #[must_use]
+    pub fn entity_attribute(self) -> Option<&'q AttributeIri> {
+        match self {
+            FilterLeaf::Term(term) => Some(term.hops().first().map_or(term.attribute(), Hop::relationship)),
+            FilterLeaf::Geo(geo) => Some(&geo.geoproperty),
+            FilterLeaf::ScopeRequirement(_) => None,
+        }
+    }
+}
+
 /// The truth of every leaf of a [`SplitFilter`] over one part of an entity, in
 /// the order [`SplitFilter::leaves`] yields the leaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,8 +207,7 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub fn holds(&self, truths: &LeafTruths) -> bool {
         let mut cursor = 0;
-        let q = self.filters.q.is_none_or(|q| reading_holds(q.reading(), truths, &mut cursor));
-        let geo = self.filters.geo.is_none_or(|_| next_truth(truths, &mut cursor));
+        let values = self.values_hold_from(truths, &mut cursor);
         let scope = self.filters.scope.is_none_or(|scope| {
             // Every requirement takes its place in the leaf order whether or
             // not an earlier alternative already held, so the walk folds
@@ -202,7 +217,22 @@ impl<'q> SplitFilter<'q> {
                 all || any
             })
         });
-        q && geo && scope
+        values && scope
+    }
+
+    /// Whether `q` and the geo-query hold for an entity whose leaves hold as
+    /// `truths` says, the scope query left unread.
+    #[must_use]
+    pub fn values_hold(&self, truths: &LeafTruths) -> bool {
+        self.values_hold_from(truths, &mut 0)
+    }
+
+    /// Whether `q` and the geo-query hold over the leaves from `cursor` on,
+    /// advancing it past both.
+    fn values_hold_from(&self, truths: &LeafTruths, cursor: &mut usize) -> bool {
+        let q = self.filters.q.is_none_or(|q| reading_holds(q.reading(), truths, cursor));
+        let geo = self.filters.geo.is_none_or(|_| next_truth(truths, cursor));
+        q && geo
     }
 
     /// The filters the formula is read from.

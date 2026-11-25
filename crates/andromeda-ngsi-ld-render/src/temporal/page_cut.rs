@@ -14,8 +14,12 @@
 
 use crate::temporal::entity::is_scope_attribute;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow};
-use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
+use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, temporal_document::TemporalDocument};
+use andromeda_ngsi_ld_query::temporal::{
+    instance_page::{InstancePage, PageDirection},
+    period_budget::PeriodBudget,
+    window::TimeInterval,
+};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -74,6 +78,60 @@ impl PageCut {
             .filter_map(|stream| match direction {
                 PageDirection::Forward => stream.last,
                 PageDirection::Backward { .. } => stream.first,
+            })
+            .reduce(|left, right| direction.nearer(left, right))?;
+        Some(PageCut { direction, boundary })
+    }
+
+    /// The cut `page` makes of an evolution holding every instance of the
+    /// window `interval` of each of its streams, or `None` when the page keeps
+    /// every instance or no stream holds more than one page.
+    ///
+    /// Each stream is paged as the store pages one (clause 6.3.10). Its edge
+    /// is the instant of its `size`-th instance in the direction of the page,
+    /// and it was cut when it holds an instance beyond that edge. A forward
+    /// page leaves the instances on the inclusive lower bound of `after` and
+    /// `between` (clause 4.11) uncounted, since they are the group the
+    /// previous page ended on. Scope history takes no part, as in
+    /// [`PageCut::of_page`].
+    #[must_use]
+    pub fn of_whole_streams(document: &TemporalDocument, timeproperty: TimeProp, page: InstancePage, interval: TimeInterval) -> Option<PageCut> {
+        let (direction, size) = match page {
+            InstancePage::Whole | InstancePage::LastN { .. } => return None,
+            InstancePage::Forward { size }
+            | InstancePage::Periods {
+                budget: PeriodBudget { periods: size, .. },
+            } => (PageDirection::Forward, size),
+            InstancePage::Backward { size, requested }
+            | InstancePage::PeriodsBackward {
+                budget: PeriodBudget { periods: size, .. },
+                requested,
+            } => (PageDirection::Backward { requested }, size),
+        };
+        let uncounted = match (direction, interval) {
+            (PageDirection::Forward, TimeInterval::After(lower) | TimeInterval::Between { from: lower, .. }) => Some(lower),
+            (PageDirection::Forward, TimeInterval::Unbounded | TimeInterval::Before(_)) | (PageDirection::Backward { .. }, _) => None,
+        };
+        let last_counted = usize::try_from(size).ok()?.checked_sub(1)?;
+        let mut streams: HashMap<StreamKey<'_>, Vec<DateTime<Utc>>> = HashMap::new();
+        for (name, instance) in document.instances().filter(|(name, _)| !is_scope_attribute(name)) {
+            if let Some(instant) = instance.instant_on(timeproperty) {
+                streams.entry((name, instance.dataset_id())).or_default().push(instant);
+            }
+        }
+        let boundary = streams
+            .into_values()
+            .filter_map(|mut instants| {
+                instants.sort_unstable();
+                match direction {
+                    PageDirection::Forward => {}
+                    PageDirection::Backward { .. } => instants.reverse(),
+                }
+                let edge = *instants
+                    .iter()
+                    .filter(|instant| uncounted.is_none_or(|lower| **instant > lower))
+                    .nth(last_counted)?;
+                instants.iter().any(|instant| !direction.holds(edge, *instant)).then_some(edge)
             })
             .reduce(|left, right| direction.nearer(left, right))?;
         Some(PageCut { direction, boundary })
@@ -155,12 +213,26 @@ pub fn largest_simultaneous_group<'a>(rows: impl IntoIterator<Item = &'a Tempora
 #[cfg(test)]
 mod tests {
     use crate::temporal::page_cut::{PageCut, largest_simultaneous_group};
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
+    use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        instance_identity::InstanceIdentity,
+        time::{date_time::NgsiLdDateTime, rendering::instant_text},
+        time_prop::TimeProp,
+    };
+    use andromeda_ngsi_ld_model::{
+        entity_system_times::EntitySystemTimes,
+        temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance, temporal_document::TemporalDocument},
+    };
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
+    use andromeda_ngsi_ld_query::temporal::{
+        instance_page::{InstancePage, PageDirection},
+        window::TimeInterval,
+    };
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{DateTime, Duration, TimeZone, Utc};
+    use indexmap::IndexMap;
     use std::num::NonZeroU32;
     use uuid::Uuid;
 
@@ -347,5 +419,90 @@ mod tests {
         rows.extend((0..2).map(|_| row("fuelLevel", 7, StreamExtent::Whole)));
         pretty_assertions::assert_eq!(largest_simultaneous_group(&rows, TimeProp::Observed), 4);
         pretty_assertions::assert_eq!(largest_simultaneous_group(Vec::<TemporalHistoryRow>::new().iter(), TimeProp::Observed), 0);
+    }
+
+    /// An evolution holding every instance of the window of each stream
+    /// `streams` names, each observed at the minutes given.
+    fn whole_evolution(streams: &[(&str, &[i64])]) -> TemporalDocument {
+        let attributes = streams
+            .iter()
+            .map(|(attribute, minutes)| {
+                let name: AttributeName = format!("https://example.com/{attribute}").parse().expect("valid attribute name");
+                let instances = minutes
+                    .iter()
+                    .map(|offset| {
+                        let observed = instant_text(minute(*offset)).parse::<NgsiLdDateTime>().expect("an instant");
+                        InstanceDocument::builder()
+                            .family(Some(AttributeType::Property))
+                            .observed_at(Some(Slot::Set(observed)))
+                            .build()
+                    })
+                    .collect();
+                (name, AttributeMember::Instances(instances))
+            })
+            .collect::<IndexMap<_, _>>();
+        let entity = EntityDocument::new(
+            Some("urn:ngsi-ld:Vehicle:1".parse().expect("an identifier")),
+            vec!["https://example.com/Vehicle".parse().expect("a type")],
+            None,
+            None,
+            attributes,
+        );
+        TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new())
+    }
+
+    /// The cut a forward page of `size` makes of `document` over `interval`.
+    fn forward_whole(document: &TemporalDocument, size: u32, interval: TimeInterval) -> Option<PageCut> {
+        PageCut::of_whole_streams(document, TimeProp::Observed, InstancePage::Forward { size }, interval)
+    }
+
+    /// Clause 6.3.10: a forward page of 2 over three instances ends at the
+    /// second, and one over two instances leaves nothing out.
+    #[test]
+    fn a_whole_stream_longer_than_the_page_is_cut_at_its_page_edge() {
+        let longer = whole_evolution(&[("speed", &[1, 2, 3])]);
+        pretty_assertions::assert_eq!(
+            forward_whole(&longer, 2, TimeInterval::Unbounded),
+            Some(PageCut {
+                direction: PageDirection::Forward,
+                boundary: minute(2),
+            })
+        );
+        let fitting = whole_evolution(&[("speed", &[1, 2])]);
+        pretty_assertions::assert_eq!(forward_whole(&fitting, 2, TimeInterval::Unbounded), None);
+    }
+
+    /// The instances on the inclusive start of a `between` window ended the
+    /// previous page, so a forward page does not count them.
+    #[test]
+    fn a_forward_page_leaves_the_instances_on_the_window_start_uncounted() {
+        let document = whole_evolution(&[("speed", &[0, 1, 2, 3])]);
+        let interval = TimeInterval::Between {
+            from: minute(0),
+            to: minute(10),
+        };
+        pretty_assertions::assert_eq!(forward_whole(&document, 2, interval).map(|cut| cut.boundary), Some(minute(2)));
+    }
+
+    /// A backward page counts from the most recent instance, and every
+    /// stream is cut at the latest edge of the streams cut.
+    #[test]
+    fn a_backward_page_is_cut_at_the_latest_edge_of_its_cut_streams() {
+        let document = whole_evolution(&[("speed", &[1, 2, 3, 4]), ("fuelLevel", &[5, 6, 7]), ("brand", &[1])]);
+        let page = InstancePage::Backward {
+            size: 2,
+            requested: NonZeroU32::new(5).expect("five"),
+        };
+        let cut = PageCut::of_whole_streams(&document, TimeProp::Observed, page, TimeInterval::Unbounded).expect("a cut");
+        pretty_assertions::assert_eq!(cut.boundary, minute(6));
+    }
+
+    /// A page answering `lastN` in full, or the whole window, cuts nothing.
+    #[test]
+    fn a_complete_page_cuts_no_whole_stream() {
+        let document = whole_evolution(&[("speed", &[1, 2, 3])]);
+        for page in [InstancePage::Whole, InstancePage::LastN { n: NonZeroU32::MIN }] {
+            pretty_assertions::assert_eq!(PageCut::of_whole_streams(&document, TimeProp::Observed, page, TimeInterval::Unbounded), None);
+        }
     }
 }

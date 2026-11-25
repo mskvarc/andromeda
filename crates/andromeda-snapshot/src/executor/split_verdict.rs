@@ -232,6 +232,7 @@ mod tests {
             SplitSettlement {
                 retained: [id(2)].into_iter().collect(),
                 incomplete: Vec::new(),
+                narrowing: None,
             },
         );
         assert!(!verdict.keeps(&id(1)));

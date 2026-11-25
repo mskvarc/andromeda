@@ -22,6 +22,7 @@ use crate::{
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             hub_aggregation::aggregate_at_hub,
             in_effect_gathering::{GatheringRequest, gather_in_effect},
+            merged_history::MergedTemporalHistory,
             merged_page::{MergedPageCut, cut_merged_page},
             page::LocalRead,
             request::TemporalQueryRequest,
@@ -36,8 +37,12 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
-use andromeda_ngsi_ld_query::{projection::attrs_selection::AttrsAdmission, temporal::contributed_entities::ContributedEntities};
+use andromeda_ngsi_ld_query::{
+    projection::attrs_selection::AttrsAdmission,
+    temporal::{contributed_entities::ContributedEntities, instance_page::InstancePage},
+};
 use andromeda_ngsi_ld_render::{response::ResponseRenderer, structural_projection::StructuralProjection};
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_temporal::{
     error::TemporalError,
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange},
@@ -116,7 +121,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let in_effect = gather_in_effect(sources, service, gathering, filtering, forwarded.as_ref()).await?;
 
     let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), in_effect.as_ref(), shape.rendering());
-    let local = page.local_read(forwarded.as_ref());
+    let local = page.local_read(forwarded.as_ref(), &contributed);
     let read = TemporalHistoryRead {
         service: &state.temporal,
         target: &target,
@@ -127,7 +132,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     };
     let (local_result, local_total) = query_local_history(&read, &admitted, &local, &contributed, &uri).await?;
     let answers = forwarded.as_ref().map_or(&[][..], |history| history.sources.as_slice());
-    let mut completeness = HistoryCompleteness::of(&params, local_result.range, answers).with_instance(&uri)?;
+    let completeness = HistoryCompleteness::of(&params, local_result.range, answers).with_instance(&uri)?;
     let contribution = ContributionMerge {
         target: &target,
         params: &params,
@@ -142,9 +147,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let hub_aggregates = aggregate_at_hub(service, sources, gathering, shape, &mut local_entities, forwarded.as_ref()).await?;
     let mut merged = merge_with_contributions(service, contribution, local_entities, forwarded, in_effect, &uri).await?;
     hub_aggregates.replace_in(&mut merged);
+    let completeness = bound_merged_history(&mut merged, completeness, &contributed, local_result.page, &params).with_instance(&uri)?;
     let timeproperty = params.timeproperty_or_default();
-    let cut_short = completeness.trim(&mut merged.entities, timeproperty);
-    merged.warnings.extend(cut_short);
     // Clause 6.3.17: a query evaluated by tag equality because a reached
     // source lacks extended filtering says so.
     merged.warnings.extend(admitted.language.warning);
@@ -225,6 +229,32 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         },
         &uri,
     )
+}
+
+/// Leave out of the merged history the instances past the bound it is
+/// complete up to (clause 6.3.10), with the warnings of the sources whose stop
+/// had to be taken inclusively, and return that completeness.
+///
+/// The page counts a contributed entity's instances only once they are
+/// narrowed (clause 5.7.4.4), so the cut of an entity gathered whole is made
+/// here, beside the others.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::Query`] when the request's temporal window cannot
+/// be read back, which validation has already ruled out.
+fn bound_merged_history(
+    merged: &mut MergedTemporalHistory,
+    completeness: HistoryCompleteness,
+    contributed: &ContributedEntities,
+    page: InstancePage,
+    params: &AdmittedTemporalRequest,
+) -> Result<HistoryCompleteness, TemporalError> {
+    let window = params.window()?;
+    let mut completeness = completeness.hold_gathered(&merged.entities, contributed, page, window);
+    let cut_short = completeness.trim(&mut merged.entities, window.timeproperty);
+    merged.warnings.extend(cut_short);
+    Ok(completeness)
 }
 
 /// Run the local read of the query under `read` and count its matches, logging

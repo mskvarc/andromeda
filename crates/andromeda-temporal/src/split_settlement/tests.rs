@@ -583,6 +583,7 @@ fn a_settlement_drops_only_the_contributed_entities_it_did_not_retain() {
     let settlement = SplitSettlement {
         retained: [id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
         incomplete: Vec::new(),
+        narrowing: None,
     };
     assert!(!settlement.keeps(&contributed, &id("urn:ngsi-ld:Vehicle:1")));
     assert!(settlement.keeps(&contributed, &id("urn:ngsi-ld:Vehicle:2")));

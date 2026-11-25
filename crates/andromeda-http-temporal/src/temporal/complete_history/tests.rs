@@ -17,7 +17,12 @@ use andromeda_ngsi_ld_model::{
     registration::forwarding_mode::ForwardingMode,
     temporal::{StreamExtent, TemporalAggregationRow, aggregated_entity::AggregatedTemporalEntity, temporal_history::TemporalHistory},
 };
-use andromeda_ngsi_ld_query::temporal::{continuation::TemporalContinuation, instance_page::PageDirection, window::TimeInterval};
+use andromeda_ngsi_ld_query::temporal::{
+    continuation::TemporalContinuation,
+    contributed_entities::{ContributedEntities, ContributedRendering},
+    instance_page::{InstancePage, PageDirection},
+    window::{TemporalWindow, TimeInterval},
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::service::TemporalRange;
 use chrono::{DateTime, Duration, Utc};
@@ -366,4 +371,64 @@ async fn a_backward_aggregated_merge_keeps_an_inclusive_bound_and_offers_no_cont
     let reported = completeness.range(&page, TimeProp::Observed).expect("a partial response");
     assert_eq!(reported.observed, Some((at("2020-01-01T03:00:00Z"), at("2020-01-01T06:00:00Z"))));
     assert_eq!(reported.next, None);
+}
+
+/// The entities `Vehicle 1` is gathered whole as, its local part read over
+/// the whole window.
+fn gathered_vehicle() -> ContributedEntities {
+    ContributedEntities::new(["urn:ngsi-ld:Vehicle:1".parse().expect("a valid URI")], ContributedRendering::WholeWindow)
+}
+
+fn window_after_2020() -> TemporalWindow {
+    TemporalWindow::builder().timeproperty(TimeProp::Observed).interval(after_2020()).build()
+}
+
+/// Clause 6.3.10: an entity gathered whole holding three instances of one
+/// stream is cut as the local read cuts a page of two, at its second instant,
+/// and the merge is held to that inclusive stop.
+#[tokio::test]
+async fn an_entity_gathered_whole_bounds_the_merge_at_its_page_edge() {
+    let sources = [source(&[]).await];
+    let completeness = HistoryCompleteness::of(&params(None), None, &sources).expect("a readable window");
+    let mut entities = merged(&["2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z", "2020-01-01T03:00:00Z"]).await;
+    let mut completeness = completeness.hold_gathered(&entities, &gathered_vehicle(), InstancePage::Forward { size: 2 }, window_after_2020());
+    assert_eq!(
+        stop_of(&completeness),
+        Some(Stop {
+            at: at("2020-01-01T02:00:00Z"),
+            side: StopSide::Inclusive
+        })
+    );
+    completeness.trim(&mut entities, TimeProp::Observed);
+    let reported = completeness.range(&entities, TimeProp::Observed).expect("a partial response");
+    assert_eq!(reported.observed, Some((at("2020-01-01T01:00:00Z"), at("2020-01-01T02:00:00Z"))));
+}
+
+/// A merge holding an entity gathered whole is bounded by the local read's
+/// stop even when no source answered the window, only a Scope probe, so the
+/// gathered entity is cut where the local page was.
+#[tokio::test]
+async fn a_gathered_entity_only_a_probe_answered_for_is_held_to_the_local_stop() {
+    let local = local_cut("2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z", PageDirection::Forward);
+    let completeness = HistoryCompleteness::of(&params(None), Some(local), &[]).expect("a readable window");
+    let mut entities = merged(&["2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z", "2020-01-01T03:00:00Z"]).await;
+    let mut completeness = completeness.hold_gathered(&entities, &gathered_vehicle(), InstancePage::Forward { size: 100 }, window_after_2020());
+    completeness.trim(&mut entities, TimeProp::Observed);
+    let reported = completeness.range(&entities, TimeProp::Observed).expect("a partial response");
+    assert_eq!(reported.observed, Some((at("2020-01-01T01:00:00Z"), at("2020-01-01T02:00:00Z"))));
+}
+
+/// A merge no entity of which was gathered whole keeps its completeness.
+#[tokio::test]
+async fn a_merge_gathering_nothing_whole_keeps_its_completeness() {
+    let local = local_cut("2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z", PageDirection::Forward);
+    let completeness = HistoryCompleteness::of(&params(None), Some(local), &[]).expect("a readable window");
+    let entities = merged(&["2020-01-01T01:00:00Z", "2020-01-01T03:00:00Z"]).await;
+    let completeness = completeness.hold_gathered(
+        &entities,
+        &ContributedEntities::default(),
+        InstancePage::Forward { size: 1 },
+        window_after_2020(),
+    );
+    assert!(matches!(completeness, HistoryCompleteness::Local(Some(_))));
 }

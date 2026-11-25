@@ -60,6 +60,8 @@ pub mod port;
 pub mod query_reading;
 pub mod query_warning_reason;
 mod read;
+/// One instance of an Attribute of a merged entity, read on its own by the leaves of a split query's filters.
+mod reduced_instance;
 /// What one reified Scope instance of a Temporal Evolution states.
 mod reified_scope;
 /// The reified Scopes a Temporal Evolution is written with, refused and admitted.
@@ -77,6 +79,8 @@ pub mod scope_observation;
 pub mod service;
 /// The bounds one temporal service applies to what a request may ask of it.
 pub mod service_limits;
+/// Narrowing the merged instances of every entity a source contributed to a split query.
+pub mod split_narrowing;
 /// Deciding a split temporal query's filters over the gathered parts of an entity.
 pub mod split_settlement;
 /// The physical storage policy an operator sets for temporal history.

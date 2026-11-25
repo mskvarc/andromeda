@@ -7,7 +7,7 @@ use andromeda_test_suite::{
     namespace::Namespace,
     outcome::Upserted,
     source_answer,
-    values_matcher::has_values,
+    values_matcher::{has_values, pair},
 };
 use googletest::prelude::*;
 use http::Method;
@@ -19,8 +19,8 @@ use ngsi_ld::{
 };
 
 /// Pins: Query Temporal Evolution of Entities with `splitEntities` true and q speed>50 answers the Entity whose
-/// local speed 40 and source speed 60 together satisfy q, with both instances, and drops the one whose source speed
-/// 45 does not
+/// local speed 40 and source speed 60 together satisfy q, with the instance 60 alone, which meets q, and drops the one
+/// whose source speed 45 does not
 /// Clause: 5.7.4.4
 #[gtest]
 #[tokio::test]
@@ -87,6 +87,6 @@ async fn n_fed_tmp_7425_the_filter_is_checked_against_the_instances_of_every_par
     expect_that!(page.items(), len(eq(1)));
     let values = page.items().first().or_fail()?;
     expect_that!(values.id, eq(&vehicle_id));
-    expect_that!(values, has_values("speed", len(eq(2))));
+    expect_that!(values, has_values("speed", all!(len(eq(1)), contains(pair().value(60)))));
     Ok(())
 }

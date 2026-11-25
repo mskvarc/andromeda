@@ -1,25 +1,22 @@
 //! The Attribute instances the value and geo filters of a temporal query keep
-//! in its representation (clause 5.7.4.4).
+//! in its representation (clause 5.7.4.4), rendered over the history rows of
+//! one Entity.
 //!
-//! The last step of clause 5.7.4.4 includes only the instances "which meet the
-//! temporal, query and geoquery restrictions". An instance of an Attribute
-//! that `q` or the geo-query names meets them when the two still hold with that
-//! Attribute reduced to that instance; an instance of any other Attribute meets
-//! them as its Entity does, which stage 1 decides. A Scope selects Entities
-//! only (clauses 4.19 and 5.7.4.4 step S4), so it narrows nothing.
+//! The rule is [`InstanceRestriction`]'s. An instance of an Attribute that `q`
+//! or the geo-query names is kept when the two still hold with that Attribute
+//! reduced to that instance, and an instance of any other Attribute as its
+//! Entity is, which stage 1 decides.
 //!
 //! An Entity a Context Source contributed to a split query is judged over its
-//! gathered parts, which no statement over one part reads, so its instances
-//! are kept as the window, `attrs` and `datasetId` keep them.
+//! gathered parts, which no statement over one part reads, so its rows are
+//! kept here and its instances narrowed in memory once every part is merged.
 
 use crate::{
     alias::Ah,
     value_filters::{exempting_contributed, windowed_instances},
 };
-use andromeda_ngsi_ld_query::{
-    filter::{compiled_filter::CompiledFilter, reading::filter_reading::FilterReading},
-    temporal::compiled::CompiledTemporalQuery,
-};
+use andromeda_ngsi_ld_lexicon::attribute_iri::AttributeIri;
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, instance_restriction::InstanceRestriction};
 use andromeda_postgresql_query::{
     error::RenderError,
     history_source::{HistoryBranch, HistoryOf},
@@ -45,10 +42,10 @@ pub(crate) fn met_restrictions(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
 ) -> Result<Option<Condition>, RenderError> {
-    let reading = compiled.entities.q.as_ref().map(CompiledFilter::reading);
-    let geo = compiled.entities.geo.as_ref();
-    let geoproperty = geo.and_then(|geo| names.attributes.get_str(geo.geoproperty.as_str()));
-    let reduced_keys = named_attributes(reading, geoproperty, names);
+    let restriction = InstanceRestriction::of(&compiled.entities);
+    let reading = restriction.q();
+    let geo = restriction.geo();
+    let reduced_keys = dictionary_keys(&restriction.narrowed_attributes(), names);
     if reduced_keys.is_empty() {
         return Ok(None);
     }
@@ -69,28 +66,10 @@ pub(crate) fn met_restrictions(
     Ok(Some(exempting_contributed(met, &compiled.contributed, of.entity_id_of_row(Ah))))
 }
 
-/// The dictionary keys of the Attributes of the Entity `reading` names and of
-/// the geo-query's `GeoProperty` key `geoproperty`, each once: every term's own
-/// Attribute, or for a term behind a hop the Relationship the hop crosses from
-/// the Entity, since the Attribute the hop ends on is the linked Entity's. A
-/// name the dictionary never keyed has no history and narrows nothing.
-fn named_attributes(reading: Option<&FilterReading>, geoproperty: Option<AttributeNameKey>, names: &QueryNames) -> Vec<AttributeNameKey> {
-    let mut keys: Vec<AttributeNameKey> = Vec::new();
-    let candidates = reading
-        .into_iter()
-        .flat_map(FilterReading::terms)
-        .filter_map(|term| {
-            names
-                .attributes
-                .get_str(term.hops().first().map_or(term.attribute(), |hop| hop.relationship()).as_str())
-        })
-        .chain(geoproperty);
-    for key in candidates {
-        if !keys.contains(&key) {
-            keys.push(key);
-        }
-    }
-    keys
+/// The dictionary keys of the narrowed `attributes`, in their order. A name
+/// the dictionary never keyed has no history and narrows nothing.
+fn dictionary_keys(attributes: &[&AttributeIri], names: &QueryNames) -> Vec<AttributeNameKey> {
+    attributes.iter().filter_map(|attribute| names.attributes.get_str(attribute.as_str())).collect()
 }
 
 #[cfg(test)]
