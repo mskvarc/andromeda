@@ -11,17 +11,18 @@
 //! because `q` is not the only parameter that derives from them:
 //! [`value_path`] holds the `ValuePath` axis clause 4.23.3 shares,
 //! [`attribute_path`] the `LinkedEntityRelation` hop, [`operand`] the operand
-//! literals and the pattern operand, [`word`] the name and entity type,
-//! [`time_value_extent`] where a bare time value ends, and [`quoted_string`]
-//! the quoted literal with its RFC 8259 escapes. Where a bare pattern ends is
-//! the pattern's own structure, which the `pattern` module reads.
+//! literals, the bare operand word and the pattern operand, [`name`] the name
+//! and entity type, [`time_value_extent`] where a bare time value ends, and
+//! [`quoted_string`] the quoted literal with its RFC 8259 escapes. Where a bare
+//! pattern ends is the pattern's own structure, which the `pattern` module
+//! reads.
 
 mod attribute_path;
+mod name;
 pub(in crate::filter) mod operand;
 mod quoted_string;
 mod time_value_extent;
 mod value_path;
-mod word;
 
 use crate::{
     filter::{
@@ -32,8 +33,8 @@ use crate::{
         operator_spelling::{AND, EQUAL, GREATER, GREATER_OR_EQUAL, LESS, LESS_OR_EQUAL, MATCH, NOT_MATCH, OR, UNEQUAL},
         parser::{
             attribute_path::attribute_path,
+            name::path_name,
             operand::{BareWordExtent, comparable_value, equality_value, pattern_operand},
-            word::word,
         },
         query_term::{OrderingOperator, QueryTerm, SetMembership},
     },
@@ -56,7 +57,7 @@ impl FromStr for Filter<Written> {
     ///
     /// Returns [`FilterError::Empty`] when the input is blank, [`FilterError::Expected`],
     /// [`FilterError::UnexpectedCharacter`], [`FilterError::UnterminatedString`],
-    /// [`FilterError::PathTooDeep`] or one of the literal-typing variants when it is
+    /// [`FilterError::UnquotedColonName`], [`FilterError::PathTooDeep`] or one of the literal-typing variants when it is
     /// outside the clause 4.9 grammar, and [`FilterError::NestedTooDeep`] when its
     /// parentheses nest past [`WRITTEN_NESTING_CEILING`].
     fn from_str(input: &str) -> Result<Filter<Written>, FilterError> {
@@ -182,8 +183,8 @@ const COMPARISONS: [(&str, Comparison); 8] = [
 ///
 /// A path with no operator after it is a bare existence term, and what follows it belongs to the enclosing filter.
 fn query_term(input: &mut LocatingSlice<&str>) -> Result<QueryTerm<Written>, GrammarFault<FilterError>> {
-    let leading = expected(Expectation::AttributeName, word).parse_next(input)?;
-    let path = attribute_path(input, leading.text, 0)?;
+    let leading = expected(Expectation::AttributeName, path_name).parse_next(input)?;
+    let path = attribute_path(input, &leading, 0)?;
     Whitespace::Json.skip::<FilterError>().parse_next(input)?;
     let stands = COMPARISONS.iter().find(|(spelling, _)| input.peek_finish().starts_with(spelling));
     let Some(&(spelling, comparison)) = stands else {
@@ -196,7 +197,7 @@ fn query_term(input: &mut LocatingSlice<&str>) -> Result<QueryTerm<Written>, Gra
             Ok(QueryTerm::Equality { path, membership, value })
         }
         Comparison::Ordering(operator) => {
-            let value = comparable_value(BareWordExtent::Name).parse_next(input)?;
+            let value = comparable_value(BareWordExtent::Word).parse_next(input)?;
             Ok(QueryTerm::Ordering { path, operator, value })
         }
         Comparison::MatchPattern => {
@@ -1045,19 +1046,15 @@ mod tests {
         pretty_assertions::assert_eq!(equality_of("a==true"), EqualityValue::Scalar(Scalar::Bool(true)));
         pretty_assertions::assert_eq!(equality_of("a==false"), EqualityValue::Scalar(Scalar::Bool(false)));
         assert!(matches!("a==truthy".parse::<Filter<Written>>(), Err(FilterError::BareWord)));
-        let error = refusal_of("true==1");
-        assert!(
-            matches!(
-                error,
-                FilterError::Expected {
-                    expected: Expectation::AttributeName,
-                    found: Found::Character('t'),
-                    position: 0
-                }
-            ),
-            "got {error:?}"
-        );
+    }
+
+    /// `true` and `false` are keywords where a value stands, and an `AttrName` where a name stands, so a name spelled
+    /// like a keyword reads back as itself.
+    #[test]
+    fn a_name_spelled_like_a_keyword_is_an_attr_name() {
+        pretty_assertions::assert_eq!(read_back("true==1"), "true==1");
         pretty_assertions::assert_eq!(read_back(r#""true"==1"#), "true==1");
+        pretty_assertions::assert_eq!(parsed("false"), exists("false"));
     }
 
     #[test]
@@ -1142,21 +1139,28 @@ mod tests {
         assert!(matches!(time_value("09:00:00Z"), Scalar::Time(_)));
     }
 
+    /// A prefixed name holds a colon and is written quoted, while a bare `URI` operand runs through its colons.
     #[test]
-    fn a_name_carries_the_punctuation_a_compact_name_needs() {
-        pretty_assertions::assert_eq!(parsed("ngsi-ld:speed_1"), exists("ngsi-ld:speed_1"));
+    fn a_prefixed_name_goes_in_quotes_and_a_uri_operand_keeps_its_colons() {
+        pretty_assertions::assert_eq!(parsed("\"ngsi-ld:speed_1\""), exists("ngsi-ld:speed_1"));
+        assert!(
+            matches!(refusal_of("ngsi-ld:speed_1"), FilterError::UnexpectedCharacter { character: '-', position: 4 }),
+            "an unquoted name ends at the first character outside AttrName"
+        );
         pretty_assertions::assert_eq!(
             equality_of("a==urn:ngsi-ld:Vehicle:A4567"),
             EqualityValue::Scalar(Scalar::Uri("urn:ngsi-ld:Vehicle:A4567".to_owned()))
         );
     }
 
+    /// An absolute IRI where a name stands goes in quotes, and unquoted its scheme is a name directly followed by a colon.
     #[test]
-    fn a_dotted_iri_splits_where_a_name_stands() {
+    fn an_unquoted_iri_where_a_name_stands_is_refused_at_its_first_character() {
         assert!(matches!(
             "https://example.com/Vehicle#speed".parse::<Filter<Written>>(),
-            Err(FilterError::InvalidAttributeName(_))
+            Err(FilterError::UnquotedColonName { position: 0 })
         ));
+        pretty_assertions::assert_eq!(parsed("\"https://example.com/Vehicle#speed\""), exists("https://example.com/Vehicle#speed"));
     }
 
     #[test]
@@ -1379,13 +1383,13 @@ mod tests {
         );
     }
 
-    /// A guard whose last bare type holds two colons is refused where it stands, before a later character that opens nothing.
+    /// An unquoted name after a type list that a colon directly follows is refused at its first character, before a later character that opens nothing.
     #[test]
-    fn an_ambiguous_guard_is_refused_before_a_later_stray_character() {
+    fn an_unquoted_name_holding_a_colon_after_a_type_list_is_refused_before_a_later_stray_character() {
         let error = refusal_of(
             r#"((isParked{r{Vehicle:ex:q"}}~="[0-9]+";"ex:q".brandName.ex:name<=9007199254740993)|"ex:q".speed[en.en]|r{link{r{brandName[*]}}}~="\\d")"#,
         );
-        assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
+        assert!(matches!(error, FilterError::UnquotedColonName { position: 21 }), "got {error:?}");
     }
 
     /// A bare operand in no clause 4.6.3 form and no URI is refused as a bare word, before a later stray character.
@@ -1412,10 +1416,10 @@ mod tests {
         );
     }
 
-    /// A name outside the clause 4.6.2 grammar is refused as that name, before a later stray character.
+    /// A quoted name outside the clause 4.6.2 grammar is refused as that name, before a later stray character.
     #[test]
     fn an_invalid_name_is_refused_before_a_later_stray_character() {
-        let error = refusal_of(r"ngsi-ld=:speed_1");
+        let error = refusal_of(r#""ngsi-ld"=:speed_1"#);
         assert!(
             matches!(error, FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid)),
             "got {error:?}"
@@ -1446,10 +1450,10 @@ mod tests {
     #[test]
     fn a_trailing_member_that_is_no_name_or_language_is_refused_before_a_later_stray_character() {
         let error = refusal_of(
-            r#"(r{Building,Vehicle,Building:r{Building,Vehicle,T1:brandName.a[*]}}!=http://example.com/a;(isParked{"ex:q.brandName.observedAt[zip]}~="[0-9]+";r{Building:observedAt.x_1};"ex:q".observedAt~="a.*"))"#,
+            r#"(r{Building,Vehicle,Building:r{Building,Vehicle,T1:brandName.a[*]}}!=http://example.com/a;(isParked{"ex:q.brandName.observedAt[zip]}~="[e_9-9]+";r{Building:observedAt.x_1};"ex:q".observedAt~="a.*"))"#,
         );
         assert!(
-            matches!(&error, FilterError::InvalidTrailingMember { tag, range: LanguageRangeError::FirstSubtag } if tag.0 == "0-9"),
+            matches!(&error, FilterError::InvalidTrailingMember { tag, range: LanguageRangeError::FirstSubtag } if tag.0 == "e_9-9"),
             "got {error:?}"
         );
     }
@@ -1458,7 +1462,7 @@ mod tests {
     #[test]
     fn a_pattern_that_is_no_regular_expression_is_refused_before_a_later_stray_character() {
         let error = refusal_of(
-            r#"((speed.ex:name==false,false,0|"https://example.com/q".x_1<=""|r{"ex:q"."ex:q"[*]}==2024-01-01..2024-12-31)|link{isParked{x_1."https://example.com/q"}}!=http://example.com/a|("https://example.com/q"~="a.*/|link{x_1.observedAt[*]}~="\\d"|a.speed[*]))"#,
+            r#"((speed."ex:name"==false,false,0|"https://example.com/q".x_1<=""|r{"ex:q"."ex:q"[*]}==2024-01-01..2024-12-31)|link{isParked{x_1."https://example.com/q"}}!=http://example.com/a|("https://example.com/q"~="a.*/|link{x_1.observedAt[*]}~="\\d"|a.speed[*]))"#,
         );
         assert!(matches!(error, FilterError::Pattern(PatternError::Syntax(_))), "got {error:?}");
     }
@@ -1517,7 +1521,7 @@ mod tests {
     /// A pattern operand the regular-expression syntax refuses is refused as that pattern, before a later quotation mark that is never closed.
     #[test]
     fn a_pattern_that_is_no_regular_expression_is_refused_before_a_later_unterminated_quotation_mark() {
-        let error = refusal_of(r#"(link{isParked{Building,Building:link{brandName.x_1.ex:name}}}~="\\d-|r{isParked{Building,T1,T1:speed[*]}}!~="a.*")"#);
+        let error = refusal_of(r#"(link{isParked{Building,Building:link{brandName.x_1."ex:name"}}}~="\\d-|r{isParked{Building,T1,T1:speed[*]}}!~="a.*")"#);
         assert!(matches!(error, FilterError::Pattern(PatternError::Syntax(_))), "got {error:?}");
     }
 
@@ -1535,7 +1539,7 @@ mod tests {
     #[test]
     fn a_stored_filter_with_a_stray_character_inside_a_hop_is_refused_where_the_brace_was_required() {
         let error = refusal_of(
-            r#"r{link{Building,Building,Building:r{Building,T1,T1:"https://example.com/q".observedAt.ex:%}}}<=10|r{T1,T1,Building:speed."https://example.com/q"[en.b]}!=-1,true,true;link{T1:r{isParked{Vehicle:observedAt."https://example.com/q"[*]}}}<9007199254740993;r{Vehicle,T1:isParked{Vehicle:"https://example.com/q"."https://example.com/q"[*]}}"#,
+            r#"r{link{Building,Building,Building:r{Building,T1,T1:"https://example.com/q".observedAt.ex%}}}<=10|r{T1,T1,Building:speed."https://example.com/q"[en.b]}!=-1,true,true;link{T1:r{isParked{Vehicle:observedAt."https://example.com/q"[*]}}}<9007199254740993;r{Vehicle,T1:isParked{Vehicle:"https://example.com/q"."https://example.com/q"[*]}}"#,
         );
         assert!(
             matches!(
@@ -1543,7 +1547,7 @@ mod tests {
                 FilterError::Expected {
                     expected: Expectation::Punctuation(Punctuation::CloseBrace),
                     found: Found::Character('%'),
-                    position: 89
+                    position: 88
                 }
             ),
             "got {error:?}"
@@ -1589,26 +1593,19 @@ mod tests {
         );
     }
 
+    /// JSON whitespace may stand between any two marks, so the colon ending a type list takes it on either side.
     #[test]
-    fn the_guard_colon_keeps_its_whitespace_behaviour() {
-        for written in ["sensor{Device: humidity}==40", "sensor{\"Device\" :humidity}==40"] {
+    fn the_colon_ending_a_type_list_takes_json_whitespace_on_either_side() {
+        for written in [
+            "sensor{Device: humidity}==40",
+            "sensor{\"Device\" :humidity}==40",
+            "sensor{Device :humidity}==40",
+            "sensor{ Device : humidity }==40",
+            "sensor{\"Device\" : humidity}==40",
+        ] {
             let filter = written.parse::<Filter<Written>>().unwrap_or_else(|error| panic!("{written}: {error:?}"));
             pretty_assertions::assert_eq!(filter.to_string(), "sensor{Device:humidity}==40", "{written}");
         }
-        let error = "sensor{Device :humidity}==40"
-            .parse::<Filter<Written>>()
-            .expect_err("a space before a bare type's colon ends the guard's reading");
-        assert!(
-            matches!(
-                error,
-                FilterError::Expected {
-                    expected: Expectation::Punctuation(Punctuation::CloseBrace),
-                    found: Found::Character(':'),
-                    position: 14
-                }
-            ),
-            "got {error:?}"
-        );
     }
 
     #[test]
@@ -1763,8 +1760,8 @@ mod tests {
         pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "a");
     }
 
-    /// A prefixed attribute name at the head of a hop is written quoted, since
-    /// its colon would otherwise end a type guard.
+    /// A prefixed attribute name at the head of a hop is written quoted, as it
+    /// is everywhere, and its colons belong to it.
     #[test]
     fn a_quoted_prefixed_name_inside_a_hop_is_an_attribute_name() {
         let filter = "a{\"prefix:name\"}==\"v\"".parse::<Filter<Written>>().expect("parses");
@@ -1774,13 +1771,13 @@ mod tests {
         pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "prefix:name");
     }
 
-    /// A bare name at the head of a hop holding two colons reads equally well
-    /// as a prefixed type before an attribute or a type before a prefixed
-    /// attribute, so it is refused and the client quotes what it meant.
+    /// No unquoted name holds a colon, so the first colon at the head of a hop
+    /// ends its type list, and the unquoted name after it directly followed by
+    /// a second colon is refused at its first character.
     #[test]
-    fn a_bare_name_with_two_colons_at_the_head_of_a_hop_is_ambiguous() {
+    fn a_second_unquoted_colon_at_the_head_of_a_hop_refuses_the_name_before_it() {
         let error = "rel{ex:Store:category}==\"x\"".parse::<Filter<Written>>().expect_err("must reject");
-        assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
+        assert!(matches!(error, FilterError::UnquotedColonName { position: 7 }), "got {error:?}");
     }
 
     #[test]
@@ -1802,12 +1799,11 @@ mod tests {
         }
     }
 
+    /// A prefixed type of a list is quoted wherever it stands in the list, and
+    /// keeps the colon it holds.
     #[test]
-    fn a_guard_type_that_is_not_the_last_one_keeps_the_colons_it_carries() {
-        // Only the final type can carry the guard's terminating colon, because a
-        // comma says another type follows. A prefixed type written before the
-        // last one is therefore unambiguous and must not be split.
-        let filter = "rel{ex:A,Store:category}==\"x\"".parse::<Filter<Written>>().expect("parses");
+    fn a_quoted_type_that_is_not_the_last_one_keeps_the_colon_it_holds() {
+        let filter = "rel{\"ex:A\",Store:category}==\"x\"".parse::<Filter<Written>>().expect("parses");
         match term_of(&filter) {
             QueryTerm::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -1821,14 +1817,13 @@ mod tests {
         }
     }
 
+    /// The colon after the last unquoted type of a list ends it, so an unquoted
+    /// name after it directly followed by a colon is refused at its first
+    /// character, and quoting the type keeps its colon.
     #[test]
-    fn a_final_guard_type_carrying_two_colons_is_rejected_rather_than_split_by_guesswork() {
-        // `ex:Store:category` could be the prefixed type `ex:Store` followed by
-        // `category`, or the type `ex` followed by the prefixed attribute
-        // `Store:category`. Nothing in the clause 4.9 grammar decides between
-        // them, so the request is rejected and the client quotes what it meant.
+    fn an_unquoted_last_type_is_never_split_and_the_name_after_it_holding_a_colon_is_refused() {
         let error = "rel{Building,ex:Store:category}==\"x\"".parse::<Filter<Written>>().expect_err("must reject");
-        assert!(matches!(error, FilterError::AmbiguousTypeGuard), "got {error:?}");
+        assert!(matches!(error, FilterError::UnquotedColonName { position: 16 }), "got {error:?}");
     }
 
     #[test]

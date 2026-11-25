@@ -156,6 +156,7 @@ pub mod q_selection;
 pub mod query_carriers;
 pub mod query_join;
 pub mod quic_handshake;
+pub mod quoted_name_query;
 pub mod ranked_snapshot;
 pub mod raw_answer;
 pub mod raw_call;

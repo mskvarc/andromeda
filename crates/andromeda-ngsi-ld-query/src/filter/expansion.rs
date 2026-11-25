@@ -569,6 +569,36 @@ mod tests {
         assert_eq!(expanded, stored);
     }
 
+    /// A `@context` holding the term `speed` and the prefix `ex`, both for `https://example.org/`, expanding each name as
+    /// JSON-LD expansion does and nothing else, so a name handed over with its quotes expands to nothing.
+    struct PrefixContext;
+
+    impl TermExpander for PrefixContext {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
+            ready(match term {
+                "speed" | "ex:speed" | "https://example.org/speed" => EXAMPLE_ORG.term_iri("speed"),
+                _ => Err(TermExpansionError::NotExpanded),
+            })
+        }
+
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
+            ready(EXAMPLE_ORG.type_iri(term))
+        }
+    }
+
+    /// The quotes of a name only delimit it, so the expander is handed the name and expands it as clause 5.5.7 says:
+    /// a prefixed name through its prefix, an absolute IRI as itself and a term as the unquoted term.
+    #[tokio::test]
+    async fn a_quoted_name_expands_as_the_name_it_holds() {
+        for q in ["\"ex:speed\">50", "\"https://example.org/speed\">50", "\"speed\">50", "speed>50"] {
+            let expanded = parse_and_expand(Some(q), &JsonKeyAttributes::default(), &PrefixContext)
+                .await
+                .unwrap_or_else(|error| panic!("{q}: {error:?}"))
+                .expect("present");
+            assert_eq!(path_of(&expanded).attribute.as_str(), "https://example.org/speed", "{q}");
+        }
+    }
+
     #[tokio::test]
     async fn nested_hops_are_expanded_at_every_level() {
         let expanded = parse_and_expand(Some("outer{inner{zone}}==\"north\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)

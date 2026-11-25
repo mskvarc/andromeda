@@ -14,6 +14,8 @@ mod fixtures;
 #[cfg(test)]
 mod lockstep;
 #[cfg(test)]
+mod query_name;
+#[cfg(test)]
 mod registration;
 #[cfg(test)]
 mod scope_query;

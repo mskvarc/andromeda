@@ -37,7 +37,7 @@ use crate::{
             complete,
             entry_refusal,
             expected,
-            word::{opens_bare_word, word},
+            name::{path_name, unquoted_extent},
         },
         target_language::TargetLanguage,
         trailing_group::{MemberPath, TrailingGroup},
@@ -47,7 +47,7 @@ use crate::{
     query_text::{grammar_fault::GrammarFault, whitespace::Whitespace},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 use winnow::{
     Parser,
     stream::{LocatingSlice, Stream},
@@ -126,8 +126,8 @@ pub(super) fn value_path(input: &mut LocatingSlice<&str>, leading: &str, depth: 
 
 /// Reads a whole value path standing on its own: the path, then the end of the text.
 fn standalone_path(input: &mut LocatingSlice<&str>) -> Result<ValuePath<Written>, GrammarFault<FilterError>> {
-    let leading = expected(Expectation::AttributeName, word).parse_next(input)?;
-    let path = value_path(input, leading.text, 0)?;
+    let leading = expected(Expectation::AttributeName, path_name).parse_next(input)?;
+    let path = value_path(input, &leading, 0)?;
     complete(input)?;
     Ok(path)
 }
@@ -142,30 +142,78 @@ fn dotted_name(input: &mut LocatingSlice<&str>) -> Result<Option<AttributeName>,
         return Ok(None);
     }
     let _separator = input.next_token();
-    let name = expected(Expectation::AttributeName, word).parse_next(input)?;
-    attribute_name(name.text).map(Some).map_err(GrammarFault::Refused)
+    let name = expected(Expectation::AttributeName, path_name).parse_next(input)?;
+    attribute_name(&name).map(Some).map_err(GrammarFault::Refused)
+}
+
+/// The first member of a trailing `[...]` group: a name, or the language tag or range only a target language spells.
+enum FirstMember<'i> {
+    /// A name opening a `DottedPath` of members.
+    Name(Cow<'i, str>),
+    /// A word running past the name it opens with, through a `-` or a `*`, which an RFC 5646 tag or an RFC 4647 range spells.
+    Language(&'i str),
+}
+
+/// Reads the first member of a trailing group, which is a language tag or range when its unquoted word runs past the name it opens with.
+///
+/// Backtracks without consuming when neither a name nor a language word opens at the start.
+fn first_member<'i>(input: &mut LocatingSlice<&'i str>) -> Result<FirstMember<'i>, GrammarFault<FilterError>> {
+    let text = input.peek_finish();
+    let language = language_extent(text);
+    if !text.starts_with('"') && language > unquoted_extent(text) {
+        return Ok(FirstMember::Language(input.next_slice(language)));
+    }
+    path_name(input).map(FirstMember::Name)
+}
+
+/// The byte length of the language tag or range word that opens at the start of `text`, zero when none opens there.
+///
+/// The word opens at an alphabetic character or at a `*` that a `-` follows, and is the longest run of alphanumeric characters, `_` and `-`, and of a `*` that a `-` precedes or follows, the `*` subtag of an RFC 4647 extended language range (`de-*-DE`, `*-GB`, `en-*`). A lone `*` stays the `[*]` every-language marker.
+fn language_extent(text: &str) -> usize {
+    let opens = text
+        .chars()
+        .next()
+        .is_some_and(|first| (first.is_alphanumeric() && !first.is_ascii_digit()) || (first == '*' && text[1..].starts_with('-')));
+    if !opens {
+        return 0;
+    }
+    let mut previous = None;
+    let mut characters = text.chars();
+    let mut extent = 0;
+    while let Some(current) = characters.next() {
+        let continues =
+            current.is_alphanumeric() || matches!(current, '_' | '-') || (current == '*' && (characters.as_str().starts_with('-') || previous == Some('-')));
+        if !continues {
+            break;
+        }
+        previous = Some(current);
+        extent += current.len_utf8();
+    }
+    extent
 }
 
 /// Reads the inside of a trailing `[...]` group.
 ///
-/// `[*]` is the every-language marker. Otherwise the group is the clause 4.9 `DottedPath` of members, unless its one name is outside the clause 4.6.2 name grammar: Annex C.5.13.2 writes a target language there (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell. Every reading parses; which ones a request may carry is the `q_target_languages` level's to say.
+/// `[*]` is the every-language marker. Otherwise the group is the clause 4.9 `DottedPath` of members, unless its first word is no name: Annex C.5.13.2 writes a target language there (`marque[en-GB]`), which only an RFC 5646 tag or an RFC 4647 range can spell. Every reading parses; which ones a request may carry is the `q_target_languages` level's to say.
 fn trailing_group(input: &mut LocatingSlice<&str>, depth: usize) -> Result<TrailingGroup, GrammarFault<FilterError>> {
     Whitespace::Json.skip::<FilterError>().parse_next(input)?;
     let text = input.peek_finish();
-    if text.starts_with('*') && !opens_bare_word(text) {
+    if text.starts_with('*') && !text[1..].starts_with('-') {
         let _marker = input.next_token();
         return Ok(TrailingGroup::AllLanguages);
     }
-    let first = expected(Expectation::AttributeName, word).parse_next(input)?;
-    let member = match attribute_name(first.text) {
-        Ok(member) => member,
-        Err(name_error) => {
-            Whitespace::Json.skip::<FilterError>().parse_next(input)?;
-            if input.peek_token() == Some(']') {
-                return first.text.parse::<TargetLanguage>().map(TrailingGroup::Language).map_err(GrammarFault::Refused);
+    let member = match expected(Expectation::AttributeName, first_member).parse_next(input)? {
+        FirstMember::Name(name) => attribute_name(&name).map_err(GrammarFault::Refused)?,
+        FirstMember::Language(word) => match attribute_name(word) {
+            Ok(member) => member,
+            Err(name_error) => {
+                Whitespace::Json.skip::<FilterError>().parse_next(input)?;
+                if input.peek_token() == Some(']') {
+                    return word.parse::<TargetLanguage>().map(TrailingGroup::Language).map_err(GrammarFault::Refused);
+                }
+                return Err(GrammarFault::Refused(name_error));
             }
-            return Err(GrammarFault::Refused(name_error));
-        }
+        },
     };
     let mut members = vec![member];
     while let Some(name) = dotted_name(input)? {
@@ -290,7 +338,7 @@ mod tests {
     /// The name is read and validated where it stands, so it is refused before a later quotation mark that is never closed.
     #[test]
     fn an_invalid_name_is_refused_before_a_later_unterminated_quotation_mark() {
-        let error = refusal("a-\"");
+        let error = refusal("\"a-\"\"");
         assert!(
             matches!(error, FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid)),
             "got {error:?}"
@@ -353,7 +401,7 @@ mod tests {
     /// Input after a complete path is refused at its first character, before any later lexical fault.
     #[test]
     fn input_after_a_complete_path_is_refused_at_its_first_character_before_a_later_lexical_fault() {
-        for (text, character, position) in [("ex:q\"", '"', 4), ("a]-", ']', 1), ("a..b@", '.', 1)] {
+        for (text, character, position) in [("\"ex:q\"\"", '"', 6), ("a]-", ']', 1), ("a..b@", '.', 1)] {
             let error = refusal(text);
             assert!(
                 matches!(error, FilterError::UnexpectedCharacter { character: found, position: at } if found == character && at == position),
@@ -408,7 +456,7 @@ mod tests {
             ("a. 1", Found::Character('1'), 3),
             ("a[", Found::EndOfInput, 2),
             ("a[]", Found::Character(']'), 2),
-            ("true", Found::Character('t'), 0),
+            (":a", Found::Character(':'), 0),
         ] {
             let error = text.parse::<ValuePath<Written>>().expect_err("a name is required");
             assert!(
@@ -462,18 +510,22 @@ mod tests {
         );
     }
 
-    /// A prefixed name is one `AttrName`, so the dot after it still separates
-    /// segments rather than being swallowed into the name.
+    /// A prefixed name is written quoted, so it is one segment and the dot after
+    /// it still separates segments, while unquoted it is refused at its first
+    /// character.
     #[test]
-    fn a_prefixed_name_stays_one_segment_of_a_dotted_path() {
-        let (attribute, sub_attributes, members) = spelled("ex:address[city]");
+    fn a_quoted_prefixed_name_stays_one_segment_of_a_dotted_path() {
+        let (attribute, sub_attributes, members) = spelled("\"ex:address\"[city]");
         assert_eq!(attribute, "ex:address");
         assert_eq!(sub_attributes, Vec::<String>::new());
         assert_eq!(members, vec!["city".to_owned()]);
 
-        let (attribute, sub_attributes, _) = spelled("ex:a.b");
+        let (attribute, sub_attributes, _) = spelled("\"ex:a\".b");
         assert_eq!(attribute, "ex:a");
         assert_eq!(sub_attributes, vec!["b".to_owned()]);
+
+        let error = refusal("ex:a.b");
+        assert!(matches!(error, FilterError::UnquotedColonName { position: 0 }), "got {error:?}");
     }
 
     /// An expanded path round-trips through the parser because its IRIs are

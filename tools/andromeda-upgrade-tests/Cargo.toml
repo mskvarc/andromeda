@@ -29,6 +29,7 @@ andromeda-architecture-checks.workspace = true
 andromeda-configuration.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-query.workspace = true
 andromeda-postgresql-attribute-instance.workspace = true
 andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-seaquery = { workspace = true, features = ["test-support"] }

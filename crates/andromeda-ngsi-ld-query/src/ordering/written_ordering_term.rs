@@ -164,7 +164,7 @@ mod tests {
             "name.observedAt",
             "address[city]",
             "sensor.rawdata[airquality.particulate]",
-            "ex:address[city]",
+            "\"ex:address\"[city]",
             "name;desc",
             "name.observedAt;desc",
             "location;dist-asc",

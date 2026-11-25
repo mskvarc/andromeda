@@ -2,10 +2,11 @@
 //! client writes them.
 //!
 //! The generator covers every operator, every operand type, ranges and value
-//! lists, dotted, bracketed and wildcard paths, hops up to three deep with no
-//! type list, a list of one type or a list of several with or without JSON
-//! whitespace between its marks, each before a value path or a further hop, and
-//! groups nested up to four deep. Every URI operand
+//! lists, dotted, bracketed and wildcard paths, names unquoted and quoted at
+//! every position, hops up to three deep with no type list or a list of one
+//! type or several, with or without JSON whitespace between its marks, each
+//! before a value path or a further hop, and groups nested up to four deep.
+//! Every URI operand
 //! is in its normalised spelling, because a lone operand in another spelling
 //! is rewritten into a value list of both spellings when it is parsed.
 
@@ -15,26 +16,14 @@ use proptest::{
     sample::select,
 };
 
-/// Attribute names, a prefixed name, a quoted IRI and a quoted prefixed name
-/// among them. A bare prefixed name at the head of a hop is the type of a
-/// guard and the attribute after it.
-const NAMES: [&str; 8] = [
-    "a",
-    "speed",
-    "brandName",
-    "x_1",
-    "observedAt",
-    "ex:name",
-    "\"https://example.com/q\"",
-    "\"ex:q\"",
-];
+/// Names of every position a path names: unquoted `AttrName`s, and a quoted
+/// absolute IRI and a quoted prefixed name, the two spellings no `AttrName`
+/// holds.
+const NAMES: [&str; 7] = ["a", "speed", "brandName", "x_1", "observedAt", "\"https://example.com/q\"", "\"ex:q\""];
 
-/// The names of [`NAMES`] a hop's path may open with after a type guard: a
-/// bare prefixed name there leaves the parser two colons, and it refuses it.
-const AFTER_GUARD_NAMES: [&str; 7] = ["a", "speed", "brandName", "x_1", "observedAt", "\"https://example.com/q\"", "\"ex:q\""];
-
-/// Entity types of a hop guard.
-const TYPES: [&str; 3] = ["T1", "Vehicle", "Building"];
+/// Entity types of a hop's type list: unquoted `EntityType`s, and a quoted
+/// prefixed name and a quoted absolute IRI.
+const TYPES: [&str; 5] = ["T1", "Vehicle", "Building", "\"ex:T\"", "\"https://example.com/T\""];
 
 /// Numbers in the forms clause 4.9 takes from RFC 8259.
 const NUMBERS: [&str; 8] = ["0", "-1", "10", "2.5", "1e3", "-0.25", "9007199254740993", "1.0"];
@@ -116,19 +105,16 @@ fn attribute(depth: u32) -> BoxedStrategy<String> {
 /// type list, a list of one type or a list of several, so every hop of a chain
 /// takes a list of its own.
 fn hop(depth: u32) -> BoxedStrategy<String> {
-    let inner = |names: &'static [&'static str]| {
+    let inner = || {
         if depth > 1 {
-            prop_oneof![value_path(names), hop(depth - 1)].boxed()
+            prop_oneof![value_path(&NAMES), hop(depth - 1)].boxed()
         } else {
-            value_path(names)
+            value_path(&NAMES)
         }
     };
-    let guard = prop_oneof![
-        select(&TYPES[..]).prop_map(|guard| format!("{guard}:")),
-        (vec(select(&TYPES[..]), 2..4), select(&["", " "][..]))
-            .prop_map(|(guards, space)| format!("{space}{}{space}:{space}", guards.join(&format!("{space},{space}")))),
-    ];
-    let head = prop_oneof![(Just(String::new()), inner(&NAMES)), (guard, inner(&AFTER_GUARD_NAMES))];
+    let guard = (vec(select(&TYPES[..]), 1..4), select(&["", " "][..]))
+        .prop_map(|(guards, space)| format!("{space}{}{space}:{space}", guards.join(&format!("{space},{space}"))));
+    let head = prop_oneof![(Just(String::new()), inner()), (guard, inner())];
     (select(&["r", "isParked", "link"][..]), head)
         .prop_map(|(relationship, (guard, inner))| format!("{relationship}{{{guard}{inner}}}"))
         .boxed()

@@ -4,6 +4,7 @@ use andromeda_configuration::schema::db_name_prefix::DbNamePrefixError;
 use andromeda_context_space::snapshot_key::SnapshotKeyError;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::InvalidTenantName};
+use andromeda_ngsi_ld_query::{filter::filter_error::FilterError, term_expander::TermExpansionError};
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_snapshot::error::SnapshotError;
@@ -76,6 +77,12 @@ pub(crate) enum UpgradeTestError {
     /// registration the test builds.
     #[error("a context source property document could not be written")]
     PropertyDocument(#[from] JsonLiteralError),
+    /// A stored filter is no `q` this build reads.
+    #[error("a stored filter could not be read")]
+    Filter(#[from] FilterError),
+    /// A stored filter names a name that is no absolute IRI.
+    #[error("a stored filter names no absolute IRI")]
+    TermExpansion(#[from] TermExpansionError),
     /// A row the test needs is missing.
     #[error("the row for {what} is missing")]
     Missing {
