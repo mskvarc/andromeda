@@ -162,6 +162,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query-evaluation",
         "andromeda-ngsi-ld-representation",
         "andromeda-postgresql-pool",
+        "andromeda-postgresql-seaquery",
     ],
     allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }

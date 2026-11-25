@@ -28,9 +28,11 @@ pub mod claimed_event;
 pub mod claimed_event_read;
 /// Reaping delivered rows and the events they leave behind.
 pub mod cleanup;
+/// Queueing the deliveries one write's notification events owe.
+pub(crate) mod delivery_insert;
 /// Which commit a stored notification event records the instant of.
 pub mod event_commit;
-/// Writing one write's notification events and their deliveries.
+/// Writing one write's notification events, then the deliveries they owe.
 pub mod event_insert;
 /// The candidates of a claim that serves the Subscriptions with the fewest deliveries in flight first.
 pub(crate) mod fewest_in_flight;

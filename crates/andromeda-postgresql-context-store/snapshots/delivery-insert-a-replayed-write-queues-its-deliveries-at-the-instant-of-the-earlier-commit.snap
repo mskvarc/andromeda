@@ -1,0 +1,47 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/delivery_insert.rs
+---
+INSERT INTO
+  "notification_deliveries" (
+    "event_key",
+    "subscription_key",
+    "next_attempt_at",
+    "held_at",
+    "committed_at",
+    "event_ordinal"
+  )
+SELECT
+  "p"."event_key",
+  "s"."subscription_key",
+  $1,
+  (
+    CASE
+      WHEN (
+        EXISTS (
+          SELECT
+            "h"."subscription_key"
+          FROM
+            "notification_delivery_holds" AS "h"
+          WHERE
+            "h"."subscription_key" = "s"."subscription_key"
+          FOR KEY SHARE
+        )
+      ) THEN CURRENT_TIMESTAMP
+      ELSE NULL
+    END
+  ),
+  $2,
+  "p"."event_ordinal"
+FROM
+  UNNEST($3::bigint[], $4::integer[], $5::bigint[]) AS p(event_key, event_ordinal, subscription_key)
+  INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key"
+FOR KEY SHARE
+  OF "s"
+ON CONFLICT
+  ("event_key", "subscription_key")
+DO NOTHING
+1: ChronoDateTimeUtc '2025-01-27 21:00:00.000000 +00:00'
+2: ChronoDateTimeUtc '2025-01-27 21:00:00.000000 +00:00'
+3: Array ARRAY [42,42,43]
+4: Array ARRAY [0,0,1]
+5: Array ARRAY [1,2,1]

@@ -115,7 +115,7 @@ pub(crate) struct DeferredRows {
 ///
 /// ```sql
 /// WITH acknowledged AS (UPDATE notification_deliveries SET delivered_at = CURRENT_TIMESTAMP
-///                       WHERE delivery_key = ANY($1) AND <lease guard> RETURNING delivery_key, subscription_key),
+///                       WHERE delivery_key = ANY($1) AND <lease guard> RETURNING delivery_key, subscription_key, committed_at, event_ordinal),
 ///      released AS (<released_on_delivery>)
 /// SELECT acknowledged.delivery_key, released.subscription_key
 /// FROM acknowledged LEFT JOIN released ON released.subscription_key = acknowledged.subscription_key
@@ -155,7 +155,7 @@ pub(crate) fn delivered_statement(target: &ContextTarget, worker_id: LeaseHolder
 ///                         next_attempt_at = CURRENT_TIMESTAMP + make_interval(secs => failure.retry_after),
 ///                         claimed_by = NULL, lease_until = NULL
 ///                       FROM failure WHERE notification_deliveries.delivery_key = failure.delivery_key AND <lease guard>
-///                       RETURNING delivery_key, subscription_key),
+///                       RETURNING delivery_key, subscription_key, committed_at, event_ordinal),
 ///      taken AS (<taken_on_failure>)
 /// SELECT acknowledged.delivery_key, taken.subscription_key, taken.delivery_key
 /// FROM acknowledged INNER JOIN taken ON taken.subscription_key = acknowledged.subscription_key
@@ -216,7 +216,7 @@ pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, r
 ///                         exhausted_at = CURRENT_TIMESTAMP, last_error = exhaustion.last_error,
 ///                         claimed_by = NULL, lease_until = NULL
 ///                       FROM exhaustion WHERE notification_deliveries.delivery_key = exhaustion.delivery_key AND <lease guard>
-///                       RETURNING delivery_key, subscription_key),
+///                       RETURNING delivery_key, subscription_key, committed_at, event_ordinal),
 ///      probed AS (<probed_on_exhaustion>)
 /// SELECT acknowledged.delivery_key, probed.subscription_key
 /// FROM acknowledged LEFT JOIN probed ON probed.delivery_key = acknowledged.delivery_key
@@ -276,7 +276,7 @@ pub(crate) fn exhausted_statement(target: &ContextTarget, worker_id: LeaseHolder
 ///      acknowledged AS (UPDATE notification_deliveries SET next_attempt_at = CURRENT_TIMESTAMP + make_interval(secs => deferral.retry_after),
 ///                         claimed_by = NULL, lease_until = NULL
 ///                       FROM deferral WHERE notification_deliveries.delivery_key = deferral.delivery_key AND <lease guard>
-///                       RETURNING delivery_key, subscription_key)
+///                       RETURNING delivery_key, subscription_key, committed_at, event_ordinal)
 /// SELECT acknowledged.delivery_key FROM acknowledged
 /// ```
 ///
@@ -315,9 +315,10 @@ pub(crate) fn deferred_statement(target: &ContextTarget, worker_id: LeaseHolder,
     UnnestAliased::new(statement).with_columns(source_alias(), &columns)
 }
 
-/// The guarded update of the acknowledged rows, returning each one's key and
-/// its Subscription's for the hold: only rows the worker still holds under a
-/// lease that has not yet expired.
+/// The guarded update of the acknowledged rows, returning each one's key, its
+/// Subscription's for the hold and where its change falls in the
+/// Subscription's order for the choice of a probe: only rows the worker still
+/// holds under a lease that has not yet expired.
 fn acknowledgement(target: &ContextTarget, worker_id: LeaseHolder) -> UpdateStatement {
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
@@ -326,6 +327,8 @@ fn acknowledgement(target: &ContextTarget, worker_id: LeaseHolder) -> UpdateStat
         .returning(Query::returning().columns([
             (NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey),
             (NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey),
+            (NotificationDeliveries::Table, NotificationDeliveries::CommittedAt),
+            (NotificationDeliveries::Table, NotificationDeliveries::EventOrdinal),
         ]))
         .to_owned()
 }
@@ -382,6 +385,7 @@ mod tests {
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_notification::delivery_backoff::DeliveryBackoff;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
     use std::time::Duration;
     use uuid::Uuid;
@@ -394,15 +398,20 @@ mod tests {
         text_of(&delivered_statement(target, worker(), vec![1, 2]))
     }
 
-    fn failed(target: &ContextTarget) -> String {
+    /// Two failed attempts, the first retried after the first step and the
+    /// second after the step of its third attempt.
+    fn failed_rows() -> FailedRows<'static> {
         let backoff = DeliveryBackoff::new(BackoffSchedule::new(Duration::from_secs(5), Duration::from_secs(300), Growth::Doubling))
             .expect("a schedule within the longest step");
-        let rows = FailedRows {
+        FailedRows {
             delivery_keys: vec![1, 2],
             failures: vec!["boom", "bang"],
             retry_steps: vec![backoff.first_step(), backoff.step(3).expect("a recorded attempt count")],
-        };
-        text_of(&failed_statement(target, worker(), rows).expect("a buildable statement"))
+        }
+    }
+
+    fn failed(target: &ContextTarget) -> String {
+        text_of(&failed_statement(target, worker(), failed_rows()).expect("a buildable statement"))
     }
 
     fn exhausted(target: &ContextTarget) -> String {
@@ -534,20 +543,16 @@ mod tests {
         );
     }
 
-    /// Two failures of one Subscription in a group take one hold: the one
-    /// queued first is the probe, and the other is set aside behind it.
+    /// Two failures of one Subscription in a group take one hold: the one of
+    /// the earlier change, by commit instant and write position, is the
+    /// probe, and the other is set aside behind it. A Subscription held
+    /// already keeps its probe, and its hold row stays locked to the end of
+    /// the transaction.
     #[test]
     fn a_group_of_failures_takes_one_hold_per_subscription_or_finds_it() {
-        let sql = failed(&ContextTarget::Live);
-        assert!(
-            sql.contains(concat!(
-                r#""taken" AS (INSERT INTO "notification_delivery_holds" ("subscription_key", "delivery_key") "#,
-                r#"SELECT DISTINCT ON ("subscription_key") "subscription_key", "delivery_key" FROM "acknowledged" "#,
-                r#"ORDER BY "subscription_key" ASC, "delivery_key" ASC ON CONFLICT ("subscription_key") "#,
-                r#"DO UPDATE SET "delivery_key" = "notification_delivery_holds"."delivery_key" "#,
-                r#"RETURNING "subscription_key", "delivery_key")"#
-            )),
-            "{sql}"
+        assert_statement_snapshot!(
+            "acknowledge-a-group-of-failures-takes-one-hold-per-subscription-or-finds-it",
+            failed_statement(&ContextTarget::Live, worker(), failed_rows()).expect("a buildable statement")
         );
     }
 

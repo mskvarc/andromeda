@@ -282,20 +282,23 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
         .to_owned()
 }
 
-/// Whether a newer delivery of the claimed row's Subscription is still
-/// queued, held or not:
+/// Whether a delivery of the claimed row's Subscription notifying a later
+/// change is still queued, held or not:
 ///
 /// ```sql
 /// EXISTS (SELECT 1 FROM notification_deliveries AS later
 ///         WHERE later.subscription_key = notification_deliveries.subscription_key
-///           AND later.delivery_key > notification_deliveries.delivery_key
-///           AND later.delivered_at IS NULL AND later.exhausted_at IS NULL)
+///           AND later.delivered_at IS NULL AND later.exhausted_at IS NULL
+///           AND (later.committed_at, later.event_ordinal, later.delivery_key)
+///             > (notification_deliveries.committed_at, notification_deliveries.event_ordinal, notification_deliveries.delivery_key))
 /// ```
 ///
 /// A delivery a `throttling` window withholds is superseded by such a row.
-/// `idx_notification_deliveries_subscription` leads with the Subscription and
-/// orders the rows of each `held_at` by key, so the probe stops at the first
-/// newer row.
+/// Later means a later change ([`NotificationDeliveries::CHANGE_ORDER`]), not
+/// a greater key, which a connection's cached block of keys can give an
+/// earlier change. `idx_notification_deliveries_change_order` holds the
+/// queued rows of each Subscription in that order, so the probe is one range
+/// scan that stops at the first later row.
 fn newer_queued(target: &ContextTarget) -> SimpleExpr {
     Expr::exists(
         Query::select()
@@ -304,13 +307,18 @@ fn newer_queued(target: &ContextTarget) -> SimpleExpr {
             .and_where(
                 Expr::col((Later, NotificationDeliveries::SubscriptionKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
             )
-            .and_where(
-                Expr::col((Later, NotificationDeliveries::DeliveryKey)).gt(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey))),
-            )
             .and_where(Expr::col((Later, NotificationDeliveries::DeliveredAt)).is_null())
             .and_where(Expr::col((Later, NotificationDeliveries::ExhaustedAt)).is_null())
+            .and_where(change_position(Later).gt(change_position(NotificationDeliveries::Table)))
             .to_owned(),
     )
+}
+
+/// `(<table>.committed_at, <table>.event_ordinal, <table>.delivery_key)`: where
+/// the change a delivery of `table` notifies falls in its Subscription's
+/// order.
+fn change_position(table: impl Iden + Copy + 'static) -> Expr {
+    Expr::tuple(NotificationDeliveries::CHANGE_ORDER.map(|column| Expr::col((table, column))))
 }
 
 /// `SELECT delivery_key ... FOR UPDATE SKIP LOCKED`: the first `batch_size`
@@ -372,6 +380,7 @@ mod tests {
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_notification::delivery_claim_order::{DeliveryClaimOrder, InFlightCeiling};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::PostgresQueryBuilder;
     use std::num::NonZeroU32;
     use uuid::Uuid;
@@ -467,22 +476,23 @@ mod tests {
         assert!(!predicate.contains("EXISTS"), "{sql}");
     }
 
-    /// A delivery a throttling window withholds is dropped only for a newer
-    /// one still queued, so each claimed row says whether its Subscription
-    /// has one, held or not.
+    /// A delivery a throttling window withholds is dropped only for one of a
+    /// later change still queued, so each claimed row says whether its
+    /// Subscription has one, held or not. Later is the change's commit
+    /// instant, then its write position, never the key alone, which a
+    /// connection's cached block of keys can give an earlier change.
     #[test]
-    fn the_claim_says_whether_a_newer_delivery_of_the_subscription_is_still_queued() {
-        let sql = claim_sql(&ContextTarget::Live);
-        assert!(
-            sql.contains(concat!(
-                r#"EXISTS(SELECT 1 FROM "notification_deliveries" AS "later" "#,
-                r#"WHERE "later"."subscription_key" = "notification_deliveries"."subscription_key" "#,
-                r#"AND "later"."delivery_key" > "notification_deliveries"."delivery_key" AND "later"."delivered_at" IS NULL "#,
-                r#"AND "later"."exhausted_at" IS NULL)"#
-            )),
-            "{sql}"
+    fn the_claim_says_whether_a_delivery_of_a_later_change_of_the_subscription_is_still_queued() {
+        assert_statement_snapshot!(
+            "claim-a-claimed-row-says-whether-a-later-change-of-its-subscription-is-queued",
+            claim_statement(
+                &ContextTarget::Live,
+                LeaseHolder::from(Uuid::nil()),
+                BATCH_SIZE,
+                DeliveryClaimOrder::Queue,
+                30.0
+            )
         );
-        assert!(!sql.contains(r#""later"."held_at""#), "a held delivery is queued too: {sql}");
     }
 
     #[test]
