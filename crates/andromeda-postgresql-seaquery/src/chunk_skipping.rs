@@ -67,9 +67,23 @@ pub fn enable_chunk_skipping(hypertable: &str, column: &str) -> SimpleExpr {
     )
 }
 
+/// `disable_chunk_skipping(<hypertable>::regclass, <column>::name)`: remove
+/// every registration of `column` on `hypertable` and every chunk range kept
+/// for it.
+///
+/// Both names are bound values. The call fails when `column` is not
+/// registered.
+#[must_use]
+pub fn disable_chunk_skipping(hypertable: &str, column: &str) -> SimpleExpr {
+    Expr::cust_with_exprs(
+        "disable_chunk_skipping($1, $2)",
+        [cast(Expr::val(hypertable), PostgresType::Regclass), cast(Expr::val(column), PostgresType::Name)],
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::chunk_skipping::{chunk_skipping_columns_statement, enable_chunk_skipping};
+    use crate::chunk_skipping::{chunk_skipping_columns_statement, disable_chunk_skipping, enable_chunk_skipping};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -94,6 +108,16 @@ mod tests {
             .to_owned()
             .build(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT enable_chunk_skipping($1::regclass, $2::name)");
+        assert_eq!(values.0.len(), 2, "{sql}");
+    }
+
+    #[test]
+    fn a_column_is_unregistered_with_both_names_bound() {
+        let (sql, values) = Query::select()
+            .expr(disable_chunk_skipping("attribute_history", "created_at"))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT disable_chunk_skipping($1::regclass, $2::name)");
         assert_eq!(values.0.len(), 2, "{sql}");
     }
 }

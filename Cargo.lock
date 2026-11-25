@@ -2574,6 +2574,7 @@ dependencies = [
  "andromeda-snapshot",
  "andromeda-subscription",
  "andromeda-subscription-forwarding",
+ "andromeda-temporal",
  "andromeda-tenancy",
  "chrono",
  "pretty_assertions",
