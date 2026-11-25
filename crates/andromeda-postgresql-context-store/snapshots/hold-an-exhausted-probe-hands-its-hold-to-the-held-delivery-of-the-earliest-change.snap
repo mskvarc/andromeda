@@ -10,6 +10,8 @@ WITH
   WHERE
     "subscription_key" = $1
     AND "held_at" IS NOT NULL
+    AND "delivered_at" IS NULL
+    AND "exhausted_at" IS NULL
   ORDER BY
     "committed_at" ASC,
     "event_ordinal" ASC,

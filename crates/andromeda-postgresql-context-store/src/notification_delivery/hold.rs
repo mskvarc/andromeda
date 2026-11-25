@@ -228,6 +228,7 @@ pub(crate) fn probed_on_exhaustion(target: &ContextTarget) -> CommonTableExpress
 ///
 /// ```sql
 /// WITH successor AS (SELECT delivery_key FROM notification_deliveries WHERE subscription_key = $1 AND held_at IS NOT NULL
+///                      AND delivered_at IS NULL AND exhausted_at IS NULL
 ///                    ORDER BY committed_at, event_ordinal, delivery_key LIMIT 1),
 ///      handed_over AS (UPDATE notification_delivery_holds SET delivery_key = successor.delivery_key FROM successor
 ///                      WHERE notification_delivery_holds.subscription_key = $1),
@@ -239,16 +240,20 @@ pub(crate) fn probed_on_exhaustion(target: &ContextTarget) -> CommonTableExpress
 /// ```
 ///
 /// The successor waits one retry step like any retry, so the endpoint still
-/// sees one attempt per step across the hand-over. A held delivery is still
-/// queued, so `idx_notification_deliveries_change_order` returns the
-/// Subscription's held rows in change order and the successor is the first
-/// of them.
+/// sees one attempt per step across the hand-over. A held delivery is always
+/// still queued, and the select says so (`delivered_at` and `exhausted_at`
+/// NULL) because PostgreSQL proves the predicate of
+/// `idx_notification_deliveries_change_order` from a statement's own
+/// conditions alone. The index then returns the Subscription's held rows in
+/// change order, and the successor is the first of them.
 pub(crate) fn hand_over_statement(target: &ContextTarget, subscription_key: i64, probe_after: BackoffStep) -> WithQuery {
     let successor = Query::select()
         .column(NotificationDeliveries::DeliveryKey)
         .from(table_of(target, NotificationDeliveries::Table))
         .and_where(Expr::col(NotificationDeliveries::SubscriptionKey).eq(subscription_key))
         .and_where(Expr::col(NotificationDeliveries::HeldAt).is_not_null())
+        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
+        .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
         .order_by_columns(NotificationDeliveries::CHANGE_ORDER.map(|column| (column, Order::Asc)))
         .limit(1)
         .to_owned();
