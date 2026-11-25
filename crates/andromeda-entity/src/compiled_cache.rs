@@ -356,6 +356,14 @@ mod tests {
         assert_ne!(key("q=opens%3D%3D09:30:00Z").await, key("q=opens%3D%3D%2209:30:00Z%22").await);
     }
 
+    /// The key holds `q` as the writer renders it, so two filters rendered
+    /// alike would share one compilation. `"urn:x:a;b">50` is one name and
+    /// `"urn:x:a";b>50` a name and a second Query Term.
+    #[tokio::test]
+    async fn one_name_holding_a_semicolon_and_two_query_terms_produce_different_keys() {
+        assert_ne!(key("q=%22urn:x:a%3Bb%22%3E50").await, key("q=%22urn:x:a%22%3Bb%3E50").await);
+    }
+
     #[tokio::test]
     async fn different_parameters_produce_different_keys() {
         assert_ne!(key("q=speed>50").await, key("q=speed>10").await);
