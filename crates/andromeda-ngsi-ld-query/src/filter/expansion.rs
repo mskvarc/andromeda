@@ -368,9 +368,12 @@ mod tests {
         reference::NgsiLdReferenceError,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::{DATASET_ID, OBJECT_TYPE, VALUE_TYPE};
-    use iri_rs::IriBuf;
+    use iri_rs::{IriBuf, iri};
     use pretty_assertions::assert_eq;
-    use std::{collections::HashSet, future::Future};
+    use std::{
+        collections::HashSet,
+        future::{Future, ready},
+    };
 
     /// Prefixes every term but the three core members a path can end on, so a
     /// test can see exactly which positions were rewritten.
@@ -527,6 +530,43 @@ mod tests {
             },
             other @ (Filter::And(_) | Filter::Or(_) | Filter::Term(_)) => panic!("expected an equality query term, got {other:?}"),
         }
+    }
+
+    /// The names of clause 4.9 EXAMPLE 14 under `https://example.org/`.
+    const EXAMPLE_ORG: NamespaceExpander = NamespaceExpander::uniform(iri!("https://example.org/"));
+
+    /// A `@context` defining the attributes `sensor` and `humidity` and the entity type `Device` of clause 4.9 EXAMPLE 14, and nothing else, so a type expanded as an attribute or an attribute expanded as a type expands to nothing.
+    struct Example14Context;
+
+    impl TermExpander for Example14Context {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
+            ready(match term {
+                "sensor" | "humidity" => EXAMPLE_ORG.term_iri(term),
+                _ => Err(TermExpansionError::NotExpanded),
+            })
+        }
+
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, TermExpansionError>> + Send {
+            ready(match term {
+                "Device" => EXAMPLE_ORG.type_iri(term),
+                _ => Err(TermExpansionError::NotExpanded),
+            })
+        }
+    }
+
+    /// Clause 5.7.2.4 expands type and Attribute names, and a type of a hop's list names an entity type as one of a type selection does (clause 4.17).
+    #[tokio::test]
+    async fn a_type_list_of_one_type_expands_through_the_entity_type_vocabulary() {
+        let expanded = parse_and_expand(Some("sensor{Device:humidity}==40"), &JsonKeyAttributes::default(), &Example14Context)
+            .await
+            .expect("expands")
+            .expect("present");
+        let stored = "\"https://example.org/sensor\"{\"https://example.org/Device\":\"https://example.org/humidity\"}==40"
+            .parse::<Filter<Written>>()
+            .expect("parses")
+            .into_expanded()
+            .expect("absolute names");
+        assert_eq!(expanded, stored);
     }
 
     #[tokio::test]

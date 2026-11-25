@@ -4,6 +4,8 @@ mod n_lnk_ntf_0001;
 mod n_lnk_ntf_0002;
 mod n_lnk_ntf_0003;
 mod n_lnk_ntf_0004;
+mod n_lnk_ntf_0005;
+mod n_lnk_ntf_0006;
 mod n_lnk_ntf_5001;
 mod n_lnk_ntf_5002;
 mod n_lnk_ntf_9003;

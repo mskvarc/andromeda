@@ -2,8 +2,10 @@
 //! client writes them.
 //!
 //! The generator covers every operator, every operand type, ranges and value
-//! lists, dotted, bracketed and wildcard paths, hops up to three deep with and
-//! without a type guard, and groups nested up to four deep. Every URI operand
+//! lists, dotted, bracketed and wildcard paths, hops up to three deep with no
+//! type list, a list of one type or a list of several with or without JSON
+//! whitespace between its marks, each before a value path or a further hop, and
+//! groups nested up to four deep. Every URI operand
 //! is in its normalised spelling, because a lone operand in another spelling
 //! is rewritten into a value list of both spellings when it is parsed.
 
@@ -111,7 +113,8 @@ fn attribute(depth: u32) -> BoxedStrategy<String> {
 }
 
 /// A hop, and up to `depth - 1` hops within it, into a value path, with no
-/// type guard, a guard of one type or a guard of several.
+/// type list, a list of one type or a list of several, so every hop of a chain
+/// takes a list of its own.
 fn hop(depth: u32) -> BoxedStrategy<String> {
     let inner = |names: &'static [&'static str]| {
         if depth > 1 {
@@ -122,7 +125,8 @@ fn hop(depth: u32) -> BoxedStrategy<String> {
     };
     let guard = prop_oneof![
         select(&TYPES[..]).prop_map(|guard| format!("{guard}:")),
-        vec(select(&TYPES[..]), 2..4).prop_map(|guards| format!("{}:", guards.join(","))),
+        (vec(select(&TYPES[..]), 2..4), select(&["", " "][..]))
+            .prop_map(|(guards, space)| format!("{space}{}{space}:{space}", guards.join(&format!("{space},{space}")))),
     ];
     let head = prop_oneof![(Just(String::new()), inner(&NAMES)), (guard, inner(&AFTER_GUARD_NAMES))];
     (select(&["r", "isParked", "link"][..]), head)

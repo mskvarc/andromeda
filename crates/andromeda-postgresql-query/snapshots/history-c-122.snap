@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "e"."id"
+FROM
+  "entities" AS "e"
+WHERE
+  FALSE

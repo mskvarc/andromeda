@@ -15,10 +15,19 @@
 ; is checked against; keep the two in step when the specification changes.
 ;
 ; All three attribute axes are implemented, including the `{}` linked-entity
-; traversal (`LinkedEntityRelation` / `LinkedEntityPath` below). The rule spells
-; its optional type constraint with two or more comma-separated types, while
-; clause 4.9 EXAMPLE 14 writes it with one (`sensor{Device:humidity}`), so the
-; parser admits one or more. It tells a guard from an attribute name by shape: a
+; traversal (`LinkedEntityRelation` / `LinkedEntityPath` below). The parser
+; reads `LinkedEntityPath` with two corrections. The rule asks for two or more
+; comma-separated types (`1*(%x2C EntityType)`) and attaches the list only to
+; the alternative that continues with a further hop, while clause 4.9 EXAMPLE 14
+; writes one type before the compared attribute (`sensor{Device:humidity}`).
+; The parser admits one type or more, before a further hop or a plain path:
+;
+;   LinkedEntityPath = *1(EntityType *(%x2C EntityType) %x3A)
+;                      (AttrName %x7B LinkedEntityPath %x7D / ValuePath)
+;
+; The list types the Entity the hop reaches, and a linked Entity counts only
+; when one of its types is one of the listed types. Each hop of a chain takes a
+; list of its own. The parser tells a guard from an attribute name by shape: a
 ; comma after the first word, a bare first word holding a colon, or a quoted
 ; first word followed by a colon opens a guard. A prefixed attribute name there
 ; is written quoted, and a bare last type holding two colons is refused as

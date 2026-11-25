@@ -5,8 +5,8 @@
 //! to answer exactly the Entities the corpus names.
 //!
 //! The Entities are of the namespace's type `T_<token>`, which keeps a case's queries and notifications to its own
-//! Entities. The corpus writes that type `T` where a hop guard names it, so a guard `{T:` is read as the namespace's
-//! type.
+//! Entities. The corpus writes that type `T` where a hop's type list names it first, so a list opening `{T:` or `{T,`
+//! is read as one naming the namespace's type.
 
 use crate::{
     broker,
@@ -168,7 +168,11 @@ pub async fn expect_corpus_case(id: &str) -> Result<()> {
     let broker = broker::front()?;
     let entities = CorpusEntities::under(&namespace)?;
     let documents = entities.documents()?;
-    let q = case.q.replace(&format!("{{{CORPUS_TYPE}:"), &format!("{{{}:", entities.entity_type.as_str()));
+    let typed = entities.entity_type.as_str();
+    let q = case
+        .q
+        .replace(&format!("{{{CORPUS_TYPE}:"), &format!("{{{typed}:"))
+        .replace(&format!("{{{CORPUS_TYPE},"), &format!("{{{typed},"));
     let mut selects = Vec::with_capacity(case.selects.len());
     for entity in case.selects {
         selects.push(entities.id(*entity)?);

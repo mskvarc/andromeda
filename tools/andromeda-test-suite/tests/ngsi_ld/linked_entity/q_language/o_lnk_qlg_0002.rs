@@ -11,11 +11,13 @@ use ngsi_ld::{
 /// Pins: an Entity Type list before the colon in a q hop restricts the Linked Entity to those types: a target of
 /// another type does not admit its root even when its attribute matches
 /// Clause: 4.9, 4.5.23
-/// Recorded: clause 4.9 EXAMPLE 14 writes the list as a "hint for the required Entity Type `[...]` so only such
-/// NGSI-LD Entities need to be considered", and its ABNF admits the list only before a further hop
-/// (`LinkedEntityPath` = *1(EntityType 1*("," `EntityType`) ":") `AttrName` "{" `LinkedEntityPath` "}"), not before
-/// the compared attribute as EXAMPLE 14 writes it; whether the hint must exclude a target of another type is left
-/// open. Andromeda accepts the EXAMPLE 14 form and reads the list as a restriction
+/// Recorded: the clause 4.9 ABNF of `LinkedEntityPath` slips twice. `1*("," EntityType)` asks for two types or more,
+/// and the list stands only before a further hop, while EXAMPLE 14 writes one type before the compared attribute
+/// (`sensor{Device:humidity}==40`) and the prose speaks of "the required Entity Type". Andromeda reads the rule as
+/// `*1(EntityType *("," EntityType) ":") (AttrName "{" LinkedEntityPath "}" / ValuePath)`. The clause calls the list a
+/// "hint" so that "only such NGSI-LD Entities need to be considered", and Andromeda reads it as a restriction: a broker
+/// that ignored it would answer differently from one that applied it, and q has no other test of a linked Entity's own
+/// type
 #[gtest]
 #[tokio::test]
 async fn o_lnk_qlg_0002_an_entity_type_list_in_a_hop_restricts_the_linked_entity() -> Result<()> {

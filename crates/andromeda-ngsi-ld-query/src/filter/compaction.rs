@@ -347,9 +347,10 @@ mod tests {
     }
 
     /// The suite's operators and path shapes: every operand kind, every
-    /// operator, the three local axes, a guarded and an unguarded hop, and the
-    /// boolean structure with an explicit group.
-    const SHAPES: [&str; 20] = [
+    /// operator, the three local axes, hops with a list of one type or two and
+    /// without one, a chain whose hops each take a list, and the boolean
+    /// structure with an explicit group.
+    const SHAPES: [&str; 22] = [
         "speed>50",
         "speed>=50",
         "speed<50",
@@ -367,6 +368,8 @@ mod tests {
         "address[city]==\"Berlin\"",
         "sensor.rawdata[airquality.particulate]==40",
         "isParkedIn{Building,Store:category}==\"x\"",
+        "sensor{Device:humidity}==40",
+        "a{T1:b{T2:c}}",
         "(a|b);c{d{e}}==5",
         "reading.valueType==\"String\"",
         "reading.objectType!=\"Device\",\"Sensor\"",

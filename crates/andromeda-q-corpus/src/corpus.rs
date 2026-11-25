@@ -3,14 +3,17 @@
 use crate::corpus_entity::CorpusEntity::{self, E1, E2, E3, E4, E5, E7, E8, E9, E10, E11, E12, E13, E14, E15, E16, E17, E18, E19, E20};
 
 /// Whether a filter reads a Linked Entity, which Query Entities admits only
-/// with `join` and `joinLevel` 1 (clause 5.7.2.4) and a Subscription with no
-/// bound.
+/// with `join` and a `joinLevel` reaching its deepest hop (clause 5.7.2.4) and
+/// a Subscription with no bound.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Traversal {
     /// The filter reads the Entity's own Attributes.
     Local,
-    /// The filter reads through one Relationship.
+    /// The filter reads through one Relationship, so `joinLevel` 1 reaches it.
     OneHop,
+    /// The filter reads through a Relationship of the Entity one Relationship
+    /// reaches, so `joinLevel` 2 reaches it.
+    TwoHops,
 }
 
 /// One filter of the corpus and the Entities it selects.
@@ -213,6 +216,8 @@ pub const CORPUS: &[CorpusCase] = &[
     local("C-118", "s~=^ab(c|x)$", &[E1]),
     local("C-119", "(n>15;s~=^ab)", &[E2]),
     local("C-120", "s~=^abc$|n>15", &[E1, E2, E5]),
+    hop("C-121", "link{T,Other:n}>5", &[E17]),
+    hop("C-122", "link{Other,Else:n}>5", &[]),
 ];
 
 #[cfg(test)]
