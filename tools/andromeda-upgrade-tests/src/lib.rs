@@ -39,6 +39,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-snapshot",
         "andromeda-subscription",
         "andromeda-subscription-forwarding",
+        "andromeda-temporal",
         "andromeda-tenancy",
     ],
     allow_production_dependencies: ["sqlx"],

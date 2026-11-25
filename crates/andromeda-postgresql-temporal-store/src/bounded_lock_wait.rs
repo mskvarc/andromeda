@@ -20,16 +20,22 @@ use sea_query::{Query, SelectStatement};
 use sqlx::{PgConnection, PgPool};
 use std::ops::ControlFlow;
 
-/// A storage-policy write: one statement or one command.
+/// A storage-policy write: one statement, one command, or a read and the
+/// writes it decides, all in the one transaction it is given.
 pub(crate) trait BoundedWrite: Sync {
+    /// What the write reports once its transaction commits.
+    type Outcome: Send;
+
     /// Run the write on `connection`.
-    fn execute(&self, connection: &mut PgConnection) -> impl Future<Output = Result<(), sqlx::Error>> + Send;
+    fn execute(&self, connection: &mut PgConnection) -> impl Future<Output = Result<Self::Outcome, sqlx::Error>> + Send;
 }
 
 /// A write that is a statement with bound values.
 pub(crate) struct StatementWrite<S>(pub(crate) S);
 
 impl<S: Statement + Sync> BoundedWrite for StatementWrite<S> {
+    type Outcome = ();
+
     async fn execute(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
         self.0.to_query().execute(connection).await.map(drop)
     }
@@ -39,18 +45,21 @@ impl<S: Statement + Sync> BoundedWrite for StatementWrite<S> {
 pub(crate) struct CommandWrite<C>(pub(crate) C);
 
 impl<C: Command + Sync> BoundedWrite for CommandWrite<C> {
+    type Outcome = ();
+
     async fn execute(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
         self.0.to_query().execute(connection).await.map(drop)
     }
 }
 
 /// Run `write` in a transaction whose lock waits end after
-/// [`SCHEMA_CHANGE_LOCK_TIMEOUT`], running it again while the lock is refused.
+/// [`SCHEMA_CHANGE_LOCK_TIMEOUT`], running it again while the lock is refused,
+/// and report the outcome of the run that committed.
 ///
 /// # Errors
 ///
 /// Returns the write's error, or the refused lock once every attempt is spent.
-pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, write: &impl BoundedWrite) -> Result<(), sqlx::Error> {
+pub(crate) async fn execute_with_bounded_lock_wait<W: BoundedWrite>(pool: &PgPool, write: &W) -> Result<W::Outcome, sqlx::Error> {
     let mut run = SCHEMA_CHANGE_LOCK_RETRY.start(&TokioRetryDelay);
     loop {
         let outcome = execute_under_lock_timeout(pool, write).await;
@@ -62,11 +71,12 @@ pub(crate) async fn execute_with_bounded_lock_wait(pool: &PgPool, write: &impl B
 
 /// Run `write` once, in a transaction whose lock waits end after
 /// [`SCHEMA_CHANGE_LOCK_TIMEOUT`].
-async fn execute_under_lock_timeout(pool: &PgPool, write: &impl BoundedWrite) -> Result<(), sqlx::Error> {
+async fn execute_under_lock_timeout<W: BoundedWrite>(pool: &PgPool, write: &W) -> Result<W::Outcome, sqlx::Error> {
     let mut transaction = pool.begin().await?;
     lock_timeout_statement().to_query().execute(&mut *transaction).await?;
-    write.execute(&mut transaction).await?;
-    transaction.commit().await
+    let outcome = write.execute(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(outcome)
 }
 
 /// `SELECT set_config('lock_timeout', '<n>ms', true)`.

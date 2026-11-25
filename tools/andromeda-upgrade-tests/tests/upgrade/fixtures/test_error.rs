@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::Invali
 use andromeda_ngsi_ld_query::{filter::filter_error::FilterError, term_expander::TermExpansionError};
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
+use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_snapshot::error::SnapshotError;
 use andromeda_subscription::error::SubscriptionError;
 use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
@@ -83,6 +84,9 @@ pub(crate) enum UpgradeTestError {
     /// A stored filter names a name that is no absolute IRI.
     #[error("a stored filter names no absolute IRI")]
     TermExpansion(#[from] TermExpansionError),
+    /// The temporal store refused to bring history to its storage policy.
+    #[error("the temporal store failed")]
+    Temporal(#[from] TemporalStoreError),
     /// A row the test needs is missing.
     #[error("the row for {what} is missing")]
     Missing {
