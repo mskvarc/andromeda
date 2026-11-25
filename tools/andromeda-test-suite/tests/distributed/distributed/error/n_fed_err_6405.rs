@@ -1,12 +1,6 @@
 //! A batch create into a redirect cycle reports the loop and is stored by no broker.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, namespace::Namespace, peer_role::PeerRole, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

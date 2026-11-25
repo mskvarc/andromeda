@@ -1,6 +1,6 @@
 //! A type only a registration promises is listed.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, namespace::Namespace, problem::answered};
+use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, peer_role::PeerRole, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

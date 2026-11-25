@@ -3,9 +3,10 @@
 use andromeda_test_suite::{
     body_json::{json_count, json_equals},
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     outcome::Upserted,
+    peer_role::PeerRole,
     problem::answered,
     query_join::with_join,
 };

@@ -33,7 +33,7 @@ case "$tree" in
         stack=upgrade
         targets=('andromeda-upgrade-tests::upgrade' 'andromeda-test-suite::upgrade_*')
         profile=upgrade-verdict
-        upgraded=(hub)
+        upgraded=(hub names-hub)
         ;;
     *) echo "unknown tree: ${tree}" >&2; exit 2 ;;
 esac

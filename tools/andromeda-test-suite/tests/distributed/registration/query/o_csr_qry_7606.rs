@@ -3,8 +3,8 @@
 use andromeda_test_suite::{
     body_json::{json_count, json_equals},
     broker,
-    config::PeerRole,
     namespace::Namespace,
+    peer_role::PeerRole,
     raw_answer::send_raw,
     raw_call::target,
     wire::request_to,

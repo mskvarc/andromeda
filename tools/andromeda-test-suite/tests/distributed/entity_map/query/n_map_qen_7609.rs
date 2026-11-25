@@ -1,12 +1,6 @@
 //! A posted query creates a map of local and peer entities.
 
-use andromeda_test_suite::{
-    broker,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Done,
-    received_status::ExpectedStatus,
-};
+use andromeda_test_suite::{broker, config::BrokerRole, namespace::Namespace, outcome::Done, peer_role::PeerRole, received_status::ExpectedStatus};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

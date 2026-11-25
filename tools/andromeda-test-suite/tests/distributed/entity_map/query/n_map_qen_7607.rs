@@ -1,12 +1,6 @@
 //! A limit above the candidates maps every local and peer entity.
 
-use andromeda_test_suite::{
-    broker,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Done,
-    wire::request_to,
-};
+use andromeda_test_suite::{broker, config::BrokerRole, namespace::Namespace, outcome::Done, peer_role::PeerRole, wire::request_to};
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
 use ngsi_ld::{

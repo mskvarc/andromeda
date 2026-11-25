@@ -23,9 +23,9 @@ use ngsi_ld::{
 };
 
 /// Pins: a Subscription the hub created on v1.0.0 with q=speed>50 under an @context mapping speed to
-/// urn:<namespace>:speed, which v1.0.0 stored as the unquoted dot-free IRI, is retrieved once the hub runs the working
-/// tree under that @context with speed>50 and with no Link header with "urn:<namespace>:speed">50, and notifies for
-/// the creation of a Car whose speed is 80
+/// urn:<namespace>:speed, which v1.0.0 retrieves with no Link header as the unquoted urn:<namespace>:speed>50, is
+/// retrieved once the hub runs the working tree under that @context with speed>50 and with no Link header with
+/// "urn:<namespace>:speed">50, and notifies for the creation of a Car whose speed is 80
 /// Clause: 4.9, 5.5.7, 5.8.3, 5.8.6
 /// Recorded: v1.0.0 wrote a name unquoted unless it held a dot, a space or a quote; the upgrade quotes every stored
 /// name holding a colon, which this build reads only as a `quotedStr`
@@ -33,7 +33,7 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_reads_back_quoted_and_still_notifies() -> Result<()> {
     let namespace = Namespace::fresh();
-    let hub = broker::front()?;
+    let hub = broker::client(BrokerRole::NamesHub)?;
     let sink = NotificationSink::start().await?;
     let iri = format!("urn:{namespace}:speed");
     let termed = HostedContext::add(
@@ -52,8 +52,12 @@ async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(1)?).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
     writer.subscriptions().create(&subscription).send().await?;
+    let unquoted_iri = format!("{iri}>50");
+    let released = retrieve_by_text(&hub, &subscription_id, None).await?;
+    expect_that!(released.status(), eq(StatusCode::OK));
+    expect_that!(released.body(), json_equals("$.q", unquoted_iri.as_str()));
 
-    BrokerProcess::of(BrokerRole::Front)?.upgrade().await?;
+    BrokerProcess::of(BrokerRole::NamesHub)?.upgrade().await?;
     // The q model reads a name only as an unquoted AttrName, so the Subscription is read as written.
     let termed_link = context_link(&termed)?;
     let quoted_iri = format!(r#""{iri}">50"#);

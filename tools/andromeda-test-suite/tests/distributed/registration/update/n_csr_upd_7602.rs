@@ -1,12 +1,6 @@
 //! A registration held only by the peer is resource not found.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    problem::problem,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, namespace::Namespace, peer_role::PeerRole, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

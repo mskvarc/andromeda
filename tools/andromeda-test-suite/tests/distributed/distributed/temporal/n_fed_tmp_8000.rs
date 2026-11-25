@@ -2,11 +2,12 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
     outcome::Upserted,
+    peer_role::PeerRole,
     values_matcher::{has_values, pair},
 };
 use googletest::prelude::*;

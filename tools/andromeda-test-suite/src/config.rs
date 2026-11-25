@@ -11,6 +11,7 @@ use crate::{
     config_error::{ConfigError, ConfigKey},
     host_name::HostName,
     mqtt_settings::MqttSettings,
+    peer_role::PeerRole,
     pooling_settings::PoolingSettings,
     server_settings::ServerSettings,
     stack_controls::StackControls,
@@ -156,25 +157,9 @@ pub enum BrokerRole {
     /// The pgbouncer stack broker behind a pooler with two server connections per database, only the test of first
     /// writes into new tenants while the wake reconciliation pass probes them uses.
     FirstWrite,
-}
-
-/// A broker as another broker of the stack reaches it: what a registration `endpoint` names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, IntoStaticStr)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
-pub enum PeerRole {
-    /// Broker A of the multi-broker stacks.
-    A,
-    /// Broker B of the multi-broker stacks.
-    B,
-    /// Broker C of the multi-broker stacks.
-    C,
-    /// Broker D of the multi-broker stacks.
-    D,
-    /// Broker E of the multi-broker stacks.
-    E,
-    /// Broker F of the multi stack.
-    F,
+    /// The upgrade stack hub only the query-name upgrade test places its release data on and upgrades: an upgrade
+    /// cannot be undone, so no two upgrade tests share a hub.
+    NamesHub,
 }
 
 /// The configuration of the stack the tests run against.
@@ -401,10 +386,11 @@ impl SuiteConfig {
 mod tests {
     use crate::{
         budget::Budget,
-        config::{BrokerRole, PeerRole, SuiteConfig},
+        config::{BrokerRole, SuiteConfig},
         config_error::{ConfigError, ConfigKey},
         database_name::DatabaseName,
         front_route::callback_host,
+        peer_role::PeerRole,
     };
     use figment2::{Figment, providers::Serialized, value::Value};
     use googletest::prelude::*;

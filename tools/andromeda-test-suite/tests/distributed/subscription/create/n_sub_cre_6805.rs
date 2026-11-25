@@ -4,12 +4,12 @@ use andromeda_test_suite::{
     body_pattern::BodyPattern,
     broker,
     cleanup::Cleanup,
-    config::PeerRole,
     context_source::ContextSource,
     forwarded_body,
     namespace::Namespace,
     notification_sink::NotificationSink,
     nth::nth,
+    peer_role::PeerRole,
     source_answer,
     source_request::SourceRequest,
 };

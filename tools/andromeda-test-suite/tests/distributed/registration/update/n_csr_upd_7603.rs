@@ -1,6 +1,6 @@
 //! A mode outside its values is bad request data and an unknown id on delete not found.
 
-use andromeda_test_suite::{broker, config::PeerRole, namespace::Namespace, problem::problem, written_json::json_request_to};
+use andromeda_test_suite::{broker, namespace::Namespace, peer_role::PeerRole, problem::problem, written_json::json_request_to};
 use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::{

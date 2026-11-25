@@ -4,10 +4,11 @@ use andromeda_test_suite::{
     aggregation_matcher::{has_aggregate, period},
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     nth::nth,
     outcome::Upserted,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

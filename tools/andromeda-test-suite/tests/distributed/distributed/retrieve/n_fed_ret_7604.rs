@@ -4,11 +4,12 @@ use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     entity_matcher::has_attribute,
     namespace::Namespace,
     nth::nth,
     outcome::Done,
+    peer_role::PeerRole,
     received_status::ExpectedStatus,
 };
 use googletest::prelude::*;

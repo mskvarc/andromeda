@@ -4,9 +4,9 @@ use andromeda_test_suite::{
     body_pattern::BodyPattern,
     broker,
     cleanup::Cleanup,
-    config::PeerRole,
     namespace::Namespace,
     notification_sink::NotificationSink,
+    peer_role::PeerRole,
     problem::answered,
 };
 use googletest::prelude::*;

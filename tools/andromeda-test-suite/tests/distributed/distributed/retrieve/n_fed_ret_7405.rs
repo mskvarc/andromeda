@@ -4,10 +4,11 @@ use andromeda_test_suite::{
     attribute_matcher::{geo_property, property},
     attribute_member::Member,
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     entity_matcher::{has_attribute, has_instance, has_instances},
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

@@ -1,12 +1,6 @@
 //! An undeliverable notification sets last failure and status failed.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{PeerRole, SuiteConfig},
-    eventually::retried,
-    namespace::Namespace,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, eventually::retried, namespace::Namespace, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

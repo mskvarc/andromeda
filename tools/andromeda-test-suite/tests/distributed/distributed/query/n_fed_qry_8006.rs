@@ -1,13 +1,6 @@
 //! One query answers the local entity and the entities of three peers.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    identity_matcher::has_id,
-    namespace::Namespace,
-    outcome::Done,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::BrokerRole, identity_matcher::has_id, namespace::Namespace, outcome::Done, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

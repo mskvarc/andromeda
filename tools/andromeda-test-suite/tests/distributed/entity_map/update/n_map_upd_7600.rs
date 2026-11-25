@@ -1,12 +1,6 @@
 //! An expiry reads back with the map intact.
 
-use andromeda_test_suite::{
-    broker,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Done,
-    received_status::ExpectedStatus,
-};
+use andromeda_test_suite::{broker, config::BrokerRole, namespace::Namespace, outcome::Done, peer_role::PeerRole, received_status::ExpectedStatus};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

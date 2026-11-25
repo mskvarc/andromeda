@@ -2,10 +2,11 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     identity_matcher::has_id,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
     problem::answered,
     unchecked_page::entities,
 };

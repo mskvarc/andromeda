@@ -1,6 +1,6 @@
 //! A delivered notification sets times sent last success and status ok.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, eventually::retried, namespace::Namespace, notification_sink::NotificationSink};
+use andromeda_test_suite::{broker, cleanup::Cleanup, eventually::retried, namespace::Namespace, notification_sink::NotificationSink, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

@@ -4,10 +4,11 @@ use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     attribute_member::Member,
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     evolution_matcher::{has_evolution, lacks_evolution},
     namespace::Namespace,
     outcome::Upserted,
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

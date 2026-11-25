@@ -3,12 +3,13 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     entity_matcher::has_attribute,
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
     outcome::Done,
+    peer_role::PeerRole,
     problem::answered,
     written_json::json_request_to,
 };

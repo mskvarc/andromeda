@@ -1,6 +1,6 @@
 //! The initial notification of existing registrations is newly matching.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, namespace::Namespace, notification_sink::NotificationSink};
+use andromeda_test_suite::{broker, cleanup::Cleanup, namespace::Namespace, notification_sink::NotificationSink, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{NgsiLdMediaType, Output},

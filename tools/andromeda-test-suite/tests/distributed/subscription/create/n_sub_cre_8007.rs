@@ -4,10 +4,11 @@ use andromeda_test_suite::{
     answered_status::AnsweredStatus,
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     notification_sink::NotificationSink,
     outcome::Done,
+    peer_role::PeerRole,
     problem::answered,
 };
 use futures::future::join_all;

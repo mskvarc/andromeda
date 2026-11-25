@@ -1,11 +1,6 @@
 //! A promised type is described with its type name.
 
-use andromeda_test_suite::{
-    broker,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-    outcome::Done,
-};
+use andromeda_test_suite::{broker, config::BrokerRole, namespace::Namespace, outcome::Done, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

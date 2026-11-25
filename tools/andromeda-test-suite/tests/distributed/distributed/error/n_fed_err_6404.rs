@@ -3,8 +3,9 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
+    peer_role::PeerRole,
     problem::{answered, problem},
 };
 use googletest::prelude::*;

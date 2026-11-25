@@ -4,9 +4,10 @@ use andromeda_test_suite::{
     bounded_federation::{hold_vehicle_histories, register_temporal_peer},
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     outcome::Done,
+    peer_role::PeerRole,
     snapshot_capture::{SnapshotQuery, await_query_problem},
 };
 use googletest::prelude::*;

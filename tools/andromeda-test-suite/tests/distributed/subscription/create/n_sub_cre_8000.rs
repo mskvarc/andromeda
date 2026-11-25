@@ -3,12 +3,13 @@
 use andromeda_test_suite::{
     body_pattern::BodyPattern,
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     identity_matcher::has_id,
     namespace::Namespace,
     notification_sink::NotificationSink,
     nth::nth,
     outcome::Done,
+    peer_role::PeerRole,
     problem::answered,
 };
 use googletest::prelude::*;

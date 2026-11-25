@@ -3,9 +3,10 @@
 use andromeda_test_suite::{
     body_json::{json_count, json_equals, json_exists},
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     namespace::Namespace,
     outcome::Upserted,
+    peer_role::PeerRole,
     wire::request_to,
 };
 use bytes::Bytes;

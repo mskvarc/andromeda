@@ -1,6 +1,6 @@
 //! The five brokers of the interoperability stack, by the names the ETSI cases give them.
 
-use andromeda_test_suite::config::{BrokerRole, PeerRole};
+use andromeda_test_suite::{config::BrokerRole, peer_role::PeerRole};
 use strum::{Display, EnumIter};
 
 /// A broker of the stack: b1 is the front broker every case talks to, b2 to b5 the context sources behind it.

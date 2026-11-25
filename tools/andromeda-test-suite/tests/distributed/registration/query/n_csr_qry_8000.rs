@@ -1,12 +1,6 @@
 //! A discovered registration names the peer endpoint that holds the entity.
 
-use andromeda_test_suite::{
-    broker,
-    config::{BrokerRole, PeerRole},
-    identity_matcher::has_id,
-    namespace::Namespace,
-    outcome::Done,
-};
+use andromeda_test_suite::{broker, config::BrokerRole, identity_matcher::has_id, namespace::Namespace, outcome::Done, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,

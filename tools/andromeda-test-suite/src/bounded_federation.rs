@@ -3,9 +3,9 @@
 
 use crate::{
     broker::{self, BrokerClient},
-    config::PeerRole,
     namespace::Namespace,
     outcome::{Done, Upserted},
+    peer_role::PeerRole,
 };
 use googletest::prelude::*;
 use ngsi_ld::{

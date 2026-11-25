@@ -2,8 +2,8 @@
 
 use andromeda_test_suite::{
     broker,
-    config::PeerRole,
     namespace::Namespace,
+    peer_role::PeerRole,
     problem::{answered, problem},
 };
 use googletest::prelude::*;

@@ -2,10 +2,11 @@
 
 use andromeda_test_suite::{
     broker,
-    config::{BrokerRole, PeerRole},
+    config::BrokerRole,
     context_source::ContextSource,
     forwarded_head,
     namespace::Namespace,
+    peer_role::PeerRole,
     source_answer,
 };
 use googletest::prelude::*;

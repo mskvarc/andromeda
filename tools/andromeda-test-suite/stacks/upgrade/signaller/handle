@@ -1,5 +1,5 @@
 #!/bin/sh
-# Answers one request of the signaller by upgrading the hub, stopping the broker of the release and starting the broker of the working tree over the same database.
+# Answers one request of the signaller by upgrading the hub it names, stopping the broker of the release and starting the broker of the working tree over the same database.
 read -r _ target _ || exit 0
 while read -r header; do
   [ "$header" = "$(printf '\r')" ] && break
@@ -10,10 +10,13 @@ project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.pr
 container_of() {
   docker ps -aq --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$1"
 }
-status='200 OK'
+# Each hub is upgraded by one test only, and its release serves as `<hub>-release` until then.
 case "$target" in
-  # docker stop waits out the release's grace period, so the upgraded broker never shares the database with it.
-  /upgrade-front) body=$(docker stop "$(container_of hub-release)" 2>&1 && docker start "$(container_of hub)" 2>&1) || status='500 Internal Server Error' ;;
+  /upgrade-front) hub=hub ;;
+  /upgrade-names-hub) hub=names-hub ;;
   *) printf 'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'; exit 0 ;;
 esac
+status='200 OK'
+# docker stop waits out the release's grace period, so the upgraded broker never shares the database with it.
+body=$(docker stop "$(container_of "$hub-release")" 2>&1 && docker start "$(container_of "$hub")" 2>&1) || status='500 Internal Server Error'
 printf 'HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s' "$status" "${#body}" "$body"

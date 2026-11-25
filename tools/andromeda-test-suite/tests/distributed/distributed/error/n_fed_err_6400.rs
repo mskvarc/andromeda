@@ -1,11 +1,6 @@
 //! An exclusive registration looping back yields a loop warning.
 
-use andromeda_test_suite::{
-    answer_warning::warns_with,
-    broker,
-    config::{BrokerRole, PeerRole},
-    namespace::Namespace,
-};
+use andromeda_test_suite::{answer_warning::warns_with, broker, config::BrokerRole, namespace::Namespace, peer_role::PeerRole};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::{Accept, WarningCode},

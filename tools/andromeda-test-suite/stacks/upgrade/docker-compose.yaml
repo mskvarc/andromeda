@@ -12,6 +12,10 @@ name: test-suite-upgrade
 # `hub` sits under the `upgraded` profile, so `up` never starts it, and its container is created before `up` (as
 # run-suite.sh does) for the signaller to start. Both answer to the name `hub` and advertise the same origin, so what the
 # release placed at a context source names the host the upgraded broker serves.
+#
+# An upgrade cannot be undone, and the upgrade test binaries run at once, so each one upgrades a hub of its own:
+# `hub` is the subscription test's, and `names-hub` (`names-hub-release`, then `names-hub`, over `postgres-names-hub`)
+# the query-name test's.
 
 x-template: &template
   file: ../templates/docker-compose.yaml
@@ -23,6 +27,14 @@ x-hub-environment: &hub-environment
   ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:hub"
   ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "hub"
   ANDROMEDA__SERVER__PUBLIC_URL: "http://hub:1071"
+
+# The query-name test's hub's settings, the same before and after the upgrade.
+x-names-hub-environment: &names-hub-environment
+  ANDROMEDA__SERVER__PORT: "1071"
+  ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-names-hub:5432/andromeda"
+  ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:names-hub"
+  ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "names-hub"
+  ANDROMEDA__SERVER__PUBLIC_URL: "http://names-hub:1071"
 
 services:
   postgres:
@@ -67,6 +79,41 @@ services:
         condition: service_healthy
     environment: *hub-environment
 
+  postgres-names-hub:
+    extends:
+      <<: *template
+      service: postgres
+
+  names-hub-release:
+    image: ${ANDROMEDA_RELEASE_IMAGE:-ghcr.io/mskvarc/andromeda:1.0.0}
+    pull_policy: missing
+    restart: unless-stopped
+    stop_grace_period: 70s
+    depends_on:
+      postgres-names-hub:
+        condition: service_healthy
+    environment: *names-hub-environment
+    networks:
+      default:
+        aliases:
+          - names-hub
+    healthcheck:
+      test: ["CMD", "andromeda", "health"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+
+  names-hub:
+    extends:
+      <<: *template
+      service: broker
+    profiles: ["upgraded"]
+    depends_on:
+      postgres-names-hub:
+        condition: service_healthy
+    environment: *names-hub-environment
+
   signaller:
     image: docker:29-cli
     entrypoint: ["nc", "-lk", "-p", "8080", "-e", "/signaller/handle"]
@@ -87,6 +134,8 @@ services:
       postgres:
         condition: service_healthy
       hub-release:
+        condition: service_healthy
+      names-hub-release:
         condition: service_healthy
       signaller:
         condition: service_healthy
