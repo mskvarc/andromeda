@@ -5,3 +5,4 @@ mod a_sub_qry_0008;
 mod a_sub_qry_9084;
 mod a_sub_qry_9085;
 mod a_sub_qry_9086;
+mod a_sub_qry_9087;
