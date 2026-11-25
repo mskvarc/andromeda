@@ -42,6 +42,8 @@ pub mod json_key_attributes;
 pub mod language_matching;
 pub mod language_range;
 pub mod language_targeting;
+#[cfg(test)]
+mod linked_entity_path_tests;
 pub mod nested_names;
 pub mod operand_coercion;
 pub mod operator_spelling;

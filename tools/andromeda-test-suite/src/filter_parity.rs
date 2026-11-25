@@ -136,6 +136,7 @@ pub(crate) async fn queried_ids(broker: &BrokerClient, entity_type: &EntityTypeN
     let (join, join_level) = match filter.request.traversal {
         Traversal::Local => (None, None),
         Traversal::OneHop => (Some(Join::Inline), Some(NonZeroU32::MIN)),
+        Traversal::TwoHops => (Some(Join::Inline), NonZeroU32::new(2)),
     };
     let page = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))

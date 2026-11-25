@@ -1075,6 +1075,53 @@ mod tests {
         assert_statement_snapshot!("projection-a-two-level-hop-guards-each-linked-entity-by-its-own-types", statement);
     }
 
+    /// Clause 4.9 EXAMPLE 14 writes one type before the compared attribute
+    /// (`sensor{Device:humidity}==40`), the statement the in-memory cases of a
+    /// list of one type before a plain path are checked beside.
+    #[test]
+    fn a_list_of_one_type_before_a_plain_path_tests_the_linked_entitys_types_for_that_type() {
+        let statement = render(&format!(
+            "{}{{{}:{}}}==\"commercial\"",
+            quoted(IS_PARKED_IN),
+            quoted("https://example.com/Building"),
+            quoted(CATEGORY)
+        ));
+        assert_statement_snapshot!(
+            "projection-a-list-of-one-type-before-a-plain-path-tests-the-linked-entitys-types-for-that-type",
+            statement
+        );
+    }
+
+    /// A list of one type before a further hop types the Entity the outer hop
+    /// reaches, and the inner hop takes none.
+    #[test]
+    fn a_list_of_one_type_before_a_further_hop_tests_the_entity_the_outer_hop_reaches() {
+        let statement = render(&format!(
+            "{}{{{}:{}{{{}}}}}",
+            quoted("https://example.com/outer"),
+            quoted("https://example.com/Building"),
+            quoted("https://example.com/inner"),
+            quoted("https://example.com/zone")
+        ));
+        assert_statement_snapshot!(
+            "projection-a-list-of-one-type-before-a-further-hop-tests-the-entity-the-outer-hop-reaches",
+            statement
+        );
+    }
+
+    /// A list whose one type the dictionary never recorded admits no linked
+    /// Entity, so the term selects nothing.
+    #[test]
+    fn a_list_of_one_unrecorded_type_reaches_no_linked_entity() {
+        let statement = render(&format!(
+            "{}{{{}:{}}}==\"commercial\"",
+            quoted(IS_PARKED_IN),
+            quoted("https://example.com/Warehouse"),
+            quoted(CATEGORY)
+        ));
+        assert_statement_snapshot!("projection-a-list-of-one-unrecorded-type-reaches-no-linked-entity", statement);
+    }
+
     /// The terms of a disjunction that each read one attribute's rows share one
     /// probe of the instance rows, so the planner can drive it from one bitmap
     /// over every arm; the members of a structured value each arm also reads

@@ -167,4 +167,6 @@ corpus_cases! {
     c_118_a_bare_pattern_keeps_the_alternation_inside_its_group => "C-118",
     c_119_a_bare_pattern_ends_at_the_parenthesis_closing_its_group_of_terms => "C-119",
     c_120_a_bare_pattern_ends_at_the_disjunction_that_joins_the_next_term => "C-120",
+    c_121_a_list_of_two_types_admits_a_linked_entity_of_either => "C-121",
+    c_122_a_list_of_two_types_skips_a_linked_entity_of_neither => "C-122",
 }

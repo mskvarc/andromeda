@@ -1463,6 +1463,145 @@ fn a_type_guard_admits_only_a_linked_entity_of_a_listed_type() {
     assert!(!holds_linked(&guarded, &vehicle_parked_in(DOWNTOWN), &warehouse));
 }
 
+/// `q` with its names, the types of its hops among them, expanded under the example namespace.
+fn example(q: &str) -> Filter<Expanded> {
+    EXAMPLE_NAMESPACE
+        .expanded(q.parse::<Filter<Written>>().expect("parses"))
+        .expect("the names expand")
+}
+
+/// The weather station `urn:x` of clause 4.9 EXAMPLE 14, whose `sensor` Relationship names one of `objects` in each instance, every instance after the first with a `datasetId` of its own.
+fn station(objects: &[&str]) -> Value {
+    let instances: Vec<Value> = objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| match index {
+            0 => serde_json::json!({"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": object}]}),
+            _ => serde_json::json!({
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": object}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": format!("urn:ngsi-ld:Dataset:{index}")}]
+            }),
+        })
+        .collect();
+    serde_json::json!([{
+        "@id": "urn:x",
+        "@type": ["https://example.com/WeatherStation"],
+        "https://example.com/sensor": instances
+    }])
+}
+
+/// The linked Entity `id` of the example `types`, whose `humidity` is `humidity`.
+fn sensing(id: &str, types: &[&str], humidity: i32) -> Value {
+    let types: Vec<String> = types.iter().map(|name| format!("https://example.com/{name}")).collect();
+    serde_json::json!({
+        "@id": id,
+        "@type": types,
+        "https://example.com/humidity": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": humidity}]}]
+    })
+}
+
+/// Clause 4.9 EXAMPLE 14 writes one type before the compared attribute: the linked Entity of that type counts.
+#[test]
+fn a_list_of_one_type_selects_through_a_linked_entity_of_that_type() {
+    let linked = [sensing("urn:y", &["Device"], 40)];
+    assert!(holds_linked(&example("sensor{Device:humidity}==40"), &station(&["urn:y"]), &linked));
+}
+
+#[test]
+fn a_list_of_one_type_selects_nothing_through_a_linked_entity_of_another_type() {
+    let linked = [sensing("urn:y", &["Thermometer"], 40)];
+    assert!(!holds_linked(&example("sensor{Device:humidity}==40"), &station(&["urn:y"]), &linked));
+}
+
+#[test]
+fn a_linked_entity_counts_when_one_of_its_types_is_listed() {
+    let linked = [sensing("urn:y", &["Device", "Thermometer"], 40)];
+    assert!(holds_linked(&example("sensor{Device:humidity}==40"), &station(&["urn:y"]), &linked));
+}
+
+/// Several types are alternatives, as a comma is in a type selection (clause 4.17).
+#[test]
+fn a_linked_entity_counts_when_its_type_is_any_of_the_listed_ones() {
+    let linked = [sensing("urn:y", &["Station"], 40)];
+    assert!(holds_linked(&example("sensor{Device,Station:humidity}==40"), &station(&["urn:y"]), &linked));
+}
+
+/// A `ListRelationship` names every Entity of its list, and the list filters each one by its own type.
+#[test]
+fn a_list_relationship_reaches_only_the_listed_entities_of_a_listed_type() {
+    let entity = serde_json::json!([{
+        "@id": "urn:x",
+        "@type": ["https://example.com/WeatherStation"],
+        "https://example.com/sensor": [{
+            "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [
+                {"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:y1"}]},
+                {"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:y2"}]}
+            ]}]
+        }]
+    }]);
+    let linked = [sensing("urn:y1", &["Thermometer"], 40), sensing("urn:y2", &["Device"], 30)];
+    assert!(!holds_linked(&example("sensor{Device:humidity}==40"), &entity, &linked));
+    assert!(holds_linked(&example("sensor{Device:humidity}==30"), &entity, &linked));
+}
+
+/// A list of one type stands before a further hop, and types the Entity the outer hop reaches.
+#[test]
+fn a_list_of_one_type_before_a_further_hop_types_the_entity_the_outer_hop_reaches() {
+    let entity = serde_json::json!([{
+        "@id": "urn:x",
+        "@type": ["https://example.com/A"],
+        "https://example.com/a": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:y"}]}]
+    }]);
+    let linked = [
+        serde_json::json!({
+            "@id": "urn:y",
+            "@type": ["https://example.com/T"],
+            "https://example.com/b": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:z"}]}]
+        }),
+        serde_json::json!({
+            "@id": "urn:z",
+            "@type": ["https://example.com/Z"],
+            "https://example.com/c": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+        }),
+    ];
+    assert!(holds_linked(&example("a{T:b{c}}"), &entity, &linked));
+    assert!(!holds_linked(&example("a{U:b{c}}"), &entity, &linked));
+}
+
+/// A list of two types stands before a plain path.
+#[test]
+fn a_list_of_two_types_before_a_plain_path_selects_through_an_entity_of_either() {
+    let entity = serde_json::json!([{
+        "@id": "urn:x",
+        "@type": ["https://example.com/A"],
+        "https://example.com/a": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:y"}]}]
+    }]);
+    let linked = [serde_json::json!({
+        "@id": "urn:y",
+        "@type": ["https://example.com/T1"],
+        "https://example.com/b": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+    })];
+    assert!(holds_linked(&example("a{T1,T2:b}==1"), &entity, &linked));
+    assert!(!holds_linked(&example("a{T2,T3:b}==1"), &entity, &linked));
+}
+
+/// A listed type the `@context` expands to an IRI no Entity carries admits no linked Entity.
+#[test]
+fn a_listed_type_no_entity_carries_admits_no_linked_entity() {
+    let linked = [sensing("urn:y", &["Device"], 40)];
+    assert!(!holds_linked(&example("sensor{Sensor:humidity}==40"), &station(&["urn:y"]), &linked));
+}
+
+/// A hop follows every `datasetId` instance of the Relationship, and the list types the Entity each instance names.
+#[test]
+fn a_list_filters_the_entity_each_dataset_instance_names() {
+    let entity = station(&["urn:device", "urn:thermometer"]);
+    let both_humid = [sensing("urn:device", &["Device"], 40), sensing("urn:thermometer", &["Thermometer"], 40)];
+    assert!(holds_linked(&example("sensor{Device:humidity}==40"), &entity, &both_humid));
+    let only_thermometer_humid = [sensing("urn:device", &["Device"], 30), sensing("urn:thermometer", &["Thermometer"], 40)];
+    assert!(!holds_linked(&example("sensor{Device:humidity}==40"), &entity, &only_thermometer_humid));
+}
+
 /// An object naming no entity the source holds reaches nothing, so neither
 /// a comparison nor an existence test through it holds.
 #[test]

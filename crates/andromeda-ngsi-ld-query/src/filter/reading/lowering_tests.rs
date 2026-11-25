@@ -224,6 +224,41 @@ fn a_hop_guarded_by_one_type_keeps_its_guard() {
     assert_eq!(term.attribute(), &iri("a"));
 }
 
+/// The types of a hop's list.
+fn types(texts: &[&str]) -> Vec<EntityTypeIri> {
+    texts
+        .iter()
+        .map(|text| format!("https://example.com/{text}").parse::<EntityTypeIri>().expect("an absolute IRI"))
+        .collect()
+}
+
+/// A list of two types before a plain path stays on the hop, and the compared attribute is the plain path's.
+#[test]
+fn a_list_of_two_types_before_a_plain_path_stays_on_the_hop() {
+    let term = term("a{T1,T2:b}==1");
+    let [hop] = term.hops() else {
+        panic!("one hop: {:?}", term.hops());
+    };
+    assert_eq!(hop.relationship(), &iri("a"));
+    assert_eq!(hop.guard_types(), types(&["T1", "T2"]));
+    assert_eq!(term.attribute(), &iri("b"));
+    assert_eq!(term.sub_attributes(), Vec::<AttributeName>::new());
+    assert_eq!(term.terminal(), &Terminal::OwnValue);
+}
+
+/// A list of one type before a path with a trailing group keeps its type on the hop and the group on the inner path.
+#[test]
+fn a_list_of_one_type_before_a_trailing_group_keeps_the_group_on_the_inner_path() {
+    let term = term("a{T:b[c]}==1");
+    let [hop] = term.hops() else {
+        panic!("one hop: {:?}", term.hops());
+    };
+    assert_eq!(hop.relationship(), &iri("a"));
+    assert_eq!(hop.guard_types(), types(&["T"]));
+    assert_eq!(term.attribute(), &iri("b"));
+    assert_eq!(term.terminal(), &Terminal::Members(members(&["c"])));
+}
+
 /// Clause 4.9 makes each name after the first "a (sub)Property or
 /// (sub)Relationship", and a Property's value member is neither: a compound
 /// value is entered through the trailing group. The segment is a sub-attribute
