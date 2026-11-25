@@ -1881,6 +1881,7 @@ dependencies = [
  "futures",
  "hex",
  "indexmap 2.14.2",
+ "insta",
  "iri-rs",
  "mediatype",
  "pretty_assertions",

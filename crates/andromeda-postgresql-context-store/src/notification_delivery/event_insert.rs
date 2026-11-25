@@ -1,10 +1,11 @@
-//! Writing one write's notification events and their deliveries.
+//! Writing one write's notification events, then the deliveries they owe.
 
 use crate::{
     entity_state_record::state_record::{EntityStateRecord, record_of},
     error::ContextStoreError,
     notification_delivery::{
         change_code::{stored_change_kind, stored_lifecycle},
+        delivery_insert::queue_owed_deliveries,
         event_commit::EventCommit,
         rows::NewNotificationEvent,
     },
@@ -16,20 +17,15 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
 use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::{
-    notification::{NotificationDeliveries, NotificationDeliveryHolds, NotificationEvents},
-    subscriptions::Subscriptions,
-};
+use andromeda_postgresql_schema::notification::NotificationEvents;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     external_arguments::{ExternalArguments, ExternallyBound},
     pg_array::nullable_array,
     pg_type::PostgresType,
-    statement::Statement,
-    unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockType, OnConflict, Query, SimpleExpr};
+use sea_query::{Expr, InsertStatement, Keyword, OnConflict, Query, SimpleExpr};
 use sqlx::{Postgres, Transaction};
 
 /// Persist the notification events of one write and the deliveries they owe.
@@ -41,7 +37,7 @@ use sqlx::{Postgres, Transaction};
 /// Two statements, however many events and subscribers the write has: the
 /// events are inserted in one statement and their surrogate keys read back,
 /// then every `(event, subscription)` pair the write owes is inserted in one
-/// set-write from a pair of parallel arrays. sea-query cannot express a
+/// set-write from parallel arrays ([`queue_owed_deliveries`]). sea-query cannot express a
 /// single data-modifying CTE (`WITH inserted AS (INSERT … RETURNING)
 /// INSERT …`), and the two statements inside the one transaction are
 /// equivalent: the second names only the event keys the first returned.
@@ -90,35 +86,7 @@ pub async fn insert_events_in_tx(
     // then owed its deliveries.
     let inserted: Vec<(i64, i32)> = ExternallyBound::new(insert, external).into_query_as().fetch_all(&mut **tx).await?;
 
-    let (event_keys, subscription_keys) = owed_deliveries(events, &inserted);
-    if event_keys.is_empty() {
-        return Ok(());
-    }
-    insert_deliveries_statement(target, event_keys, subscription_keys, commit)?
-        .to_query()
-        .execute(&mut **tx)
-        .await?;
-
-    Ok(())
-}
-
-/// The parallel arrays of every delivery the inserted events owe: one
-/// `(event key, subscription key)` pair per matched subscription of each event
-/// actually written, in event-then-matcher order.
-fn owed_deliveries(events: &[NewNotificationEvent<'_>], inserted: &[(i64, i32)]) -> (Vec<i64>, Vec<i64>) {
-    inserted
-        .iter()
-        .filter_map(|(event_key, ordinal)| events.iter().find(|event| matches_ordinal(event, *ordinal)).map(|event| (*event_key, event)))
-        .flat_map(|(event_key, event)| event.subscription_keys.iter().map(move |key| (event_key, key.get())))
-        .unzip()
-}
-
-/// Whether `event` occupies `ordinal` within its write.
-///
-/// The ordinal is unique per write by `uq_notification_events_write_identity`,
-/// so the match is one-to-one with the returned row.
-fn matches_ordinal(event: &NewNotificationEvent<'_>, ordinal: i32) -> bool {
-    event.ordinal.as_i32().is_ok_and(|value| value == ordinal)
+    queue_owed_deliveries(tx, target, events, &inserted, commit).await
 }
 
 /// The values one event row binds.
@@ -266,143 +234,15 @@ fn insert_events_statement<'a>(
     Ok(statement)
 }
 
-/// The `UNNEST(…) AS p(event_key, subscription_key)` source the delivery
-/// set-write reads its pairs from.
-///
-/// The delivery statement names the source's alias after these columns, which
-/// must match what the projection reads.
-fn pair_source() -> (Alias, [UnnestColumn; 2]) {
-    (
-        Alias::new("p"),
-        [
-            UnnestColumn::new(NotificationDeliveries::EventKey, PostgresType::BigintArray),
-            UnnestColumn::new(NotificationDeliveries::SubscriptionKey, PostgresType::BigintArray),
-        ],
-    )
-}
-
-/// Insert every delivery a write owes in one statement, from parallel arrays of
-/// event keys and subscription keys.
-///
-/// The pairs are joined against `subscriptions` on the surrogate key so a
-/// subscription that vanished between the match and this insert contributes no
-/// row (the delivery's foreign key would otherwise refuse the whole write); the
-/// event it leaves behind is later reaped as an orphan.
-///
-/// The join alone does not close the race under READ COMMITTED: it reads the
-/// subscriptions as of the statement's snapshot, so a deletion committing after
-/// that snapshot but before the foreign-key check of the inserted row would
-/// still refuse the write. `FOR KEY SHARE OF s` takes the row lock that check
-/// takes, at the join: a deletion in flight is waited for, after which the
-/// re-checked row is gone and contributes nothing, and a deletion arriving
-/// later waits for this transaction and cascades onto the rows it wrote. The
-/// lock is the weakest row lock there is, so it blocks only deletions and key
-/// changes of the subscription, never its ordinary updates. Every delivery starts
-/// due at the instant of the commit that made its change, read from the
-/// store's clock, so the queue's ordering reflects the order changes were
-/// committed in and a broker whose clock runs ahead of the store's does not
-/// hold the delivery back from a claim. One queued for a held Subscription
-/// starts set aside ([`held_at_insert`]).
-///
-/// A change owes each subscription one delivery (clause 5.8.6), which
-/// `uq_notification_deliveries_event_subscription` holds:
-/// `ON CONFLICT (event_key, subscription_key) DO NOTHING` drops a pair the
-/// queue already holds, or one the arrays name twice, rather than queueing the
-/// notification a second time.
-fn insert_deliveries_statement(
-    target: &ContextTarget,
-    event_keys: Vec<i64>,
-    subscription_keys: Vec<i64>,
-    commit: EventCommit,
-) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
-    let (pairs, columns) = pair_source();
-    let aliased = pairs.clone(); // clone: the statement consumes the alias, so the column mapping takes this copy.
-    let subscription = Alias::new("s");
-    let source = Query::select()
-        .column((pairs.clone(), NotificationDeliveries::EventKey))
-        .column((subscription.clone(), Subscriptions::SubscriptionKey))
-        .expr(commit.value())
-        .expr(held_at_insert(target, &subscription))
-        .from_function(
-            unnest_call([(&columns[0], Expr::val(event_keys)), (&columns[1], Expr::val(subscription_keys))]),
-            pairs.clone(),
-        )
-        .join_as(
-            JoinType::InnerJoin,
-            table_of(target, Subscriptions::Table),
-            subscription.clone(),
-            // clone: sea-query takes each alias by value, so the join copies it and the locking clause takes the original.
-            Expr::col((subscription.clone(), Subscriptions::SubscriptionKey)).equals((pairs, NotificationDeliveries::SubscriptionKey)),
-        )
-        .lock_with_tables(LockType::KeyShare, [subscription])
-        .to_owned();
-    let mut statement = Query::insert();
-    statement
-        .into_table(table_of(target, NotificationDeliveries::Table))
-        .columns([
-            NotificationDeliveries::EventKey,
-            NotificationDeliveries::SubscriptionKey,
-            NotificationDeliveries::NextAttemptAt,
-            NotificationDeliveries::HeldAt,
-        ])
-        .select_from(source)?
-        .on_conflict(
-            OnConflict::columns([NotificationDeliveries::EventKey, NotificationDeliveries::SubscriptionKey])
-                .do_nothing()
-                .to_owned(),
-        );
-    Ok(UnnestAliased::new(statement).with_columns(aliased, &columns))
-}
-
-/// The `held_at` a delivery is queued with: the queueing instant when its
-/// Subscription, joined as `subscription`, is held behind a probe, NULL
-/// otherwise.
-///
-/// ```sql
-/// CASE WHEN EXISTS (SELECT h.subscription_key FROM notification_delivery_holds AS h
-///                   WHERE h.subscription_key = s.subscription_key FOR KEY SHARE)
-///      THEN CURRENT_TIMESTAMP ELSE NULL END
-/// ```
-///
-/// A delivery queued behind a hold is set aside from the start, so it never
-/// enters the claim index for the claim to step over until the probe's next
-/// failure. It is never the probe: a probe is a delivery that was attempted.
-///
-/// The key-share lock is what keeps such a row from outliving its hold. The
-/// release deletes the hold, which waits for this transaction to commit, and
-/// takes the Subscription's set-aside rows back in a later statement that sees
-/// this one's rows. A hold whose deletion is in flight is waited for and then
-/// read as gone, so the delivery is queued unheld. A hold still being taken is
-/// not seen, so the delivery is queued unheld and the claim's own hold check
-/// keeps it back until the probe's next failure sets it aside.
-fn held_at_insert(target: &ContextTarget, subscription: &Alias) -> SimpleExpr {
-    let hold = Alias::new("h");
-    // clone: sea-query takes each alias by value, so the column list keeps a copy of the key.
-    let hold_key = (hold.clone(), NotificationDeliveryHolds::SubscriptionKey);
-    let hold_row = Query::select()
-        .column(hold_key.clone())
-        .from_as(table_of(target, NotificationDeliveryHolds::Table), hold)
-        .and_where(Expr::col(hold_key).equals((subscription.clone(), Subscriptions::SubscriptionKey)))
-        .lock(LockType::KeyShare)
-        .to_owned();
-    CaseStatement::new()
-        .case(Expr::exists(hold_row), Expr::current_timestamp())
-        .finally(Keyword::Null)
-        .into()
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        notification_delivery::{
-            event_commit::EventCommit,
-            event_insert::{EventRow, insert_deliveries_statement, insert_events_statement, owed_deliveries},
-            rows::NewNotificationEvent,
-        },
-        statement_text::text_of,
+    use crate::notification_delivery::{
+        event_commit::EventCommit,
+        event_insert::{EventRow, insert_events_statement},
+        rows::NewNotificationEvent,
     };
     use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal, write_record::WriteRecord};
-    use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         entity_types::EntityTypes,
@@ -642,95 +482,5 @@ mod tests {
         assert!(row.entity_created_at.is_none() && row.entity_modified_at.is_none() && row.entity_expires_at.is_none());
         let sql = statement(&[event(&entity, &change, 1, &[1], &current)]);
         assert!(sql.contains("::entity_state_record, NULL, $9, $10, $11)"), "{sql}");
-    }
-
-    #[test]
-    fn every_delivery_of_every_written_event_is_inserted_from_one_pair_of_arrays() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], EventCommit::ThisTransaction).expect("a valid insert"));
-        assert!(
-            sql.contains(r#"INSERT INTO "notification_deliveries" ("event_key", "subscription_key", "next_attempt_at", "held_at")"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r"FROM UNNEST($1::bigint[], $2::bigint[]) AS p(event_key, subscription_key)"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key""#), "{sql}");
-    }
-
-    /// A claim compares a due instant with the store's clock, so a fresh
-    /// delivery starts due at its own transaction's instant on that clock,
-    /// the instant its event records as `committed_at`, and binds none.
-    #[test]
-    fn a_delivery_of_this_transaction_starts_due_at_the_transactions_instant() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
-        assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key", NOW(), (CASE"#), "{sql}");
-    }
-
-    /// A replay queues the change an earlier commit made, so its delivery
-    /// starts due at that commit's instant, already read from the store's
-    /// clock when the change was first committed.
-    #[test]
-    fn a_replayed_delivery_starts_due_at_the_instant_of_the_commit_that_made_the_change() {
-        let earlier = EventCommit::Earlier(StoreInstant::new(Utc::now()));
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], earlier).expect("a valid insert"));
-        assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key", $1, (CASE"#), "{sql}");
-        assert!(sql.contains(r"FROM UNNEST($2::bigint[], $3::bigint[])"), "{sql}");
-    }
-
-    #[test]
-    fn the_delivery_insert_key_share_locks_only_the_subscriptions_it_joins() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
-        assert!(sql.contains(r#"FOR KEY SHARE OF "s" ON CONFLICT"#), "{sql}");
-    }
-
-    #[test]
-    fn a_delivery_queued_for_a_held_subscription_is_written_already_set_aside() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
-        assert!(
-            sql.contains(concat!(
-                r#"(CASE WHEN (EXISTS(SELECT "h"."subscription_key" FROM "notification_delivery_holds" AS "h" "#,
-                r#"WHERE "h"."subscription_key" = "s"."subscription_key" FOR KEY SHARE)) "#,
-                r#"THEN CURRENT_TIMESTAMP ELSE NULL END)"#
-            )),
-            "{sql}"
-        );
-    }
-
-    #[test]
-    fn a_snapshot_branch_delivery_reads_the_holds_of_its_own_branch() {
-        let key = SnapshotKey::try_from(5).expect("positive key");
-        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
-        let branch = ContextTarget::Snapshot(SnapshotTarget::published(key, id));
-        let sql = text_of(&insert_deliveries_statement(&branch, vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
-        assert!(sql.contains(r#"FROM "snap_5"."notification_delivery_holds" AS "h""#), "{sql}");
-    }
-
-    /// Clause 5.8.6 notifies a change once per subscription, so a pair the
-    /// queue already holds is not queued a second time.
-    #[test]
-    fn a_change_already_queued_for_a_subscription_is_not_queued_again() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42], vec![1, 1], EventCommit::ThisTransaction).expect("a valid insert"));
-        assert!(sql.ends_with(r#"ON CONFLICT ("event_key", "subscription_key") DO NOTHING"#), "{sql}");
-    }
-
-    #[test]
-    fn the_owed_pairs_follow_event_then_matcher_order_and_skip_events_a_replay_did_not_write() {
-        let entity = entity();
-        let snapshot = vehicle();
-        let change = change(EntityLifecycle::Modified);
-        let events = [
-            event(&entity, &change, 3, &[5, 6], &snapshot),
-            event(&entity, &change, 4, &[7], &snapshot),
-            event(&entity, &change, 5, &[8], &snapshot),
-        ];
-        let inserted = [(100_i64, 3_i32), (101, 5)];
-        let (event_keys, subscription_keys) = owed_deliveries(&events, &inserted);
-        pretty_assertions::assert_eq!(event_keys, vec![100, 100, 101]);
-        pretty_assertions::assert_eq!(subscription_keys, vec![5, 6, 8]);
     }
 }

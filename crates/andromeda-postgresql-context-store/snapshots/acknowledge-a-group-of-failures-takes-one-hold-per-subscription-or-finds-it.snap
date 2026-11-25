@@ -1,0 +1,66 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/acknowledge/statements.rs
+---
+WITH
+"failure" AS (
+  SELECT
+    "f"."delivery_key",
+    "f"."last_error",
+    "f"."retry_after"
+  FROM
+    UNNEST($1::bigint[], $2::text[], $3::float8[]) AS f(delivery_key, last_error, retry_after)
+),
+"acknowledged" AS (
+  UPDATE
+    "notification_deliveries"
+  SET
+    "attempt_count" = "notification_deliveries"."attempt_count" + $4,
+    "last_error" = "failure"."last_error",
+    "next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => "failure"."retry_after")),
+    "claimed_by" = NULL,
+    "lease_until" = NULL
+  FROM
+    "failure"
+  WHERE
+    "notification_deliveries"."claimed_by" = $5
+    AND "notification_deliveries"."lease_until" > CURRENT_TIMESTAMP
+    AND "notification_deliveries"."delivery_key" = "failure"."delivery_key"
+  RETURNING
+    "notification_deliveries"."delivery_key",
+    "notification_deliveries"."subscription_key",
+    "notification_deliveries"."committed_at",
+    "notification_deliveries"."event_ordinal"
+),
+"taken" AS (
+  INSERT INTO
+    "notification_delivery_holds" ("subscription_key", "delivery_key")
+  SELECT DISTINCT
+    ON ("subscription_key") "subscription_key",
+    "delivery_key"
+  FROM
+    "acknowledged"
+  ORDER BY
+    "subscription_key" ASC,
+    "committed_at" ASC,
+    "event_ordinal" ASC,
+    "delivery_key" ASC
+  ON CONFLICT
+    ("subscription_key")
+  DO UPDATE SET
+    "delivery_key" = "notification_delivery_holds"."delivery_key"
+  RETURNING
+    "subscription_key",
+    "delivery_key"
+)
+SELECT
+  "acknowledged"."delivery_key",
+  "taken"."subscription_key",
+  "taken"."delivery_key"
+FROM
+  "acknowledged"
+  INNER JOIN "taken" ON "taken"."subscription_key" = "acknowledged"."subscription_key"
+1: Array ARRAY [1,2]
+2: Array ARRAY ['boom','bang']
+3: Array ARRAY [5,40]
+4: Int 1
+5: Uuid '00000000-0000-0000-0000-000000000000'

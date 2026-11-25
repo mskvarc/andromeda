@@ -10,9 +10,12 @@
 //! An attempt that reaches the endpoint deletes the hold and releases the
 //! deliveries it set aside, each with the attempt count and the due instant it
 //! had, so they go out in the order they were queued. A probe that runs out of
-//! attempts hands the hold to the delivery set aside first, due one retry step
-//! after the hand-over on the store's clock; a hold with nothing left to hand
-//! over is deleted.
+//! attempts hands the hold to the held delivery of the earliest change, due
+//! one retry step after the hand-over on the store's clock; a hold with nothing
+//! left to hand over is deleted. Earliest is the order of
+//! [`NotificationDeliveries::CHANGE_ORDER`], the change's commit instant and
+//! write position, never the key alone, which a connection's cached block of
+//! keys can give a later change.
 //!
 //! An acknowledgement changes the holds in two statements of its own
 //! transaction. The first records the outcomes and locks the hold rows, by
@@ -117,13 +120,13 @@ pub(crate) struct HeldSubscription {
 /// ```sql
 /// taken AS (INSERT INTO notification_delivery_holds (subscription_key, delivery_key)
 ///           SELECT DISTINCT ON (subscription_key) subscription_key, delivery_key FROM acknowledged
-///           ORDER BY subscription_key, delivery_key
+///           ORDER BY subscription_key, committed_at, event_ordinal, delivery_key
 ///           ON CONFLICT (subscription_key) DO UPDATE SET delivery_key = notification_delivery_holds.delivery_key
 ///           RETURNING subscription_key, delivery_key)
 /// ```
 ///
-/// The failed delivery queued first becomes its Subscription's probe unless
-/// the Subscription is held already; one row per Subscription, because a
+/// The failed delivery of the earliest change becomes its Subscription's
+/// probe unless the Subscription is held already; one row per Subscription, because a
 /// conflict may move a row only once per statement. The conflict branch
 /// rewrites the probe it finds, so the existing hold comes back and its row
 /// stays locked to the end of the transaction. The other failures of the
@@ -219,13 +222,13 @@ pub(crate) fn probed_on_exhaustion(target: &ContextTarget) -> CommonTableExpress
     cte(Probed, probed)
 }
 
-/// Hand the hold of `subscription_key` to the delivery it set aside first, due
-/// `probe_after` once the transaction began, or delete it when it set none
-/// aside.
+/// Hand the hold of `subscription_key` to the delivery of the earliest change
+/// it set aside, due `probe_after` once the transaction began, or delete it
+/// when it set none aside.
 ///
 /// ```sql
 /// WITH successor AS (SELECT delivery_key FROM notification_deliveries WHERE subscription_key = $1 AND held_at IS NOT NULL
-///                    ORDER BY held_at, delivery_key LIMIT 1),
+///                    ORDER BY committed_at, event_ordinal, delivery_key LIMIT 1),
 ///      handed_over AS (UPDATE notification_delivery_holds SET delivery_key = successor.delivery_key FROM successor
 ///                      WHERE notification_delivery_holds.subscription_key = $1),
 ///      dropped AS (DELETE FROM notification_delivery_holds WHERE subscription_key = $1 AND NOT EXISTS (SELECT 1 FROM successor)),
@@ -236,15 +239,17 @@ pub(crate) fn probed_on_exhaustion(target: &ContextTarget) -> CommonTableExpress
 /// ```
 ///
 /// The successor waits one retry step like any retry, so the endpoint still
-/// sees one attempt per step across the hand-over.
+/// sees one attempt per step across the hand-over. A held delivery is still
+/// queued, so `idx_notification_deliveries_change_order` returns the
+/// Subscription's held rows in change order and the successor is the first
+/// of them.
 pub(crate) fn hand_over_statement(target: &ContextTarget, subscription_key: i64, probe_after: BackoffStep) -> WithQuery {
     let successor = Query::select()
         .column(NotificationDeliveries::DeliveryKey)
         .from(table_of(target, NotificationDeliveries::Table))
         .and_where(Expr::col(NotificationDeliveries::SubscriptionKey).eq(subscription_key))
         .and_where(Expr::col(NotificationDeliveries::HeldAt).is_not_null())
-        .order_by(NotificationDeliveries::HeldAt, Order::Asc)
-        .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
+        .order_by_columns(NotificationDeliveries::CHANGE_ORDER.map(|column| (column, Order::Asc)))
         .limit(1)
         .to_owned();
     let handed_over = Query::update()
@@ -312,7 +317,7 @@ fn take_hold(target: &ContextTarget) -> Result<InsertStatement, ContextStoreErro
                 .columns([NotificationDeliveries::SubscriptionKey, NotificationDeliveries::DeliveryKey])
                 .from(Acknowledged)
                 .order_by(NotificationDeliveries::SubscriptionKey, Order::Asc)
-                .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
+                .order_by_columns(NotificationDeliveries::CHANGE_ORDER.map(|column| (column, Order::Asc)))
                 .to_owned(),
         )?
         .on_conflict(
@@ -350,6 +355,7 @@ mod tests {
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_notification::delivery_backoff::{BackoffStep, DeliveryBackoff};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_retry::schedule::BackoffSchedule;
     use std::time::Duration;
 
@@ -397,31 +403,15 @@ mod tests {
         );
     }
 
-    /// The hold passes to the delivery set aside first, which rejoins the
-    /// claim order one step after the transaction began, on the clock the
-    /// claim compares it with; with none set aside the hold goes.
+    /// The hold passes to the held delivery of the earliest change, by commit
+    /// instant and write position, which rejoins the claim order one step
+    /// after the transaction began, on the clock the claim compares it with;
+    /// with none set aside the hold goes.
     #[test]
-    fn an_exhausted_probe_hands_its_hold_to_the_delivery_set_aside_first() {
-        let sql = text_of(&hand_over_statement(&ContextTarget::Live, 7, first_step()));
-        assert!(
-            sql.starts_with(concat!(
-                r#"WITH "successor" AS (SELECT "delivery_key" FROM "notification_deliveries" WHERE "subscription_key" = $1 "#,
-                r#"AND "held_at" IS NOT NULL ORDER BY "held_at" ASC, "delivery_key" ASC LIMIT 1) , "#,
-                r#""handed_over" AS (UPDATE "notification_delivery_holds" SET "delivery_key" = "successor"."delivery_key" "#,
-                r#"FROM "successor" WHERE "notification_delivery_holds"."subscription_key" = $2) , "#,
-                r#""dropped" AS (DELETE FROM "notification_delivery_holds" WHERE "subscription_key" = $3 "#,
-                r#"AND (NOT EXISTS(SELECT $4 FROM "successor"))) , "#,
-                r#""revived" AS (UPDATE "notification_deliveries" SET "held_at" = NULL, "#,
-                r#""next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => $5)) "#
-            )),
-            "{sql}"
-        );
-        assert!(
-            sql.ends_with(concat!(
-                r#"FROM "successor" WHERE "notification_deliveries"."delivery_key" = "successor"."delivery_key") "#,
-                r#"SELECT "delivery_key" FROM "successor""#
-            )),
-            "{sql}"
+    fn an_exhausted_probe_hands_its_hold_to_the_held_delivery_of_the_earliest_change() {
+        assert_statement_snapshot!(
+            "hold-an-exhausted-probe-hands-its-hold-to-the-held-delivery-of-the-earliest-change",
+            hand_over_statement(&ContextTarget::Live, 7, first_step())
         );
     }
 

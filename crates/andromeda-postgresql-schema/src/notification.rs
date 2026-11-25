@@ -4,7 +4,8 @@
 //! state a subscriber must be told about, written once inside the transaction
 //! that produced the change. `notification_deliveries` is the mutable work
 //! queue built from those events: one row per matched subscription, carrying
-//! the lease a worker claims it under and the retry bookkeeping.
+//! the lease a worker claims it under, the retry bookkeeping and the order of
+//! the change it notifies.
 //! `notification_delivery_holds` names, for each Subscription whose endpoint is
 //! failing, the one delivery a claim may still take.
 
@@ -74,6 +75,24 @@ pub enum NotificationDeliveries {
     ClaimedBy,
     /// Instant the current lease expires
     LeaseUntil,
+    /// Store transaction timestamp of the commit that made the change, as the delivery's event records it
+    CommittedAt,
+    /// Position of the delivery's event within its write, as the event records it
+    EventOrdinal,
+}
+
+impl NotificationDeliveries {
+    /// The columns that order a Subscription's deliveries by the changes they
+    /// notify: the commit instant, then the position within the write, then
+    /// the key, which decides only between deliveries alike in both. The
+    /// key alone is no order: each connection draws keys from a block of its
+    /// own, and a replay queues the change of an earlier commit after later
+    /// ones.
+    pub const CHANGE_ORDER: [NotificationDeliveries; 3] = [
+        NotificationDeliveries::CommittedAt,
+        NotificationDeliveries::EventOrdinal,
+        NotificationDeliveries::DeliveryKey,
+    ];
 }
 
 /// The `notification_delivery_holds` table - the probe of each Subscription whose endpoint is failing.
@@ -127,6 +146,16 @@ mod tests {
         assert_eq!(NotificationDeliveries::LastError.to_string(), "last_error");
         assert_eq!(NotificationDeliveries::ClaimedBy.to_string(), "claimed_by");
         assert_eq!(NotificationDeliveries::LeaseUntil.to_string(), "lease_until");
+        assert_eq!(NotificationDeliveries::CommittedAt.to_string(), "committed_at");
+        assert_eq!(NotificationDeliveries::EventOrdinal.to_string(), "event_ordinal");
+    }
+
+    #[test]
+    fn deliveries_are_ordered_by_commit_instant_then_write_position_then_key() {
+        assert_eq!(
+            NotificationDeliveries::CHANGE_ORDER.map(|column| column.to_string()),
+            ["committed_at", "event_ordinal", "delivery_key"]
+        );
     }
 
     #[test]

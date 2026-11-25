@@ -7,10 +7,7 @@ use crate::{
     config_error::ConfigError,
     database_name::DatabaseName,
 };
-use andromeda_postgresql_schema::{
-    notification::{NotificationDeliveries, NotificationEvents},
-    subscriptions::Subscriptions,
-};
+use andromeda_postgresql_schema::{notification::NotificationDeliveries, subscriptions::Subscriptions};
 use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
 use ngsi_ld::subscription::SubscriptionId;
@@ -51,7 +48,7 @@ pub struct QueuedDelivery {
     pub delivered_at: Option<DateTime<Utc>>,
     /// When it ran out of attempts; `None` while it has some left.
     pub exhausted_at: Option<DateTime<Utc>>,
-    /// The instant of the commit that made the change it notifies, as its event records it.
+    /// The instant of the commit that made the change it notifies, as the delivery records it from its event.
     pub committed_at: DateTime<Utc>,
 }
 
@@ -91,7 +88,8 @@ impl DeliveryQueue {
         Ok(DeliveryQueue { pool })
     }
 
-    /// The deliveries queued for `subscription`, in the order they were queued.
+    /// The deliveries queued for `subscription`, in the order of the changes they notify: by commit instant, then by
+    /// position within the write, as the broker orders them.
     ///
     /// # Errors
     ///
@@ -108,8 +106,8 @@ impl DeliveryQueue {
     }
 }
 
-/// `SELECT d.attempt_count, d.next_attempt_at, d.held_at, d.delivered_at, d.exhausted_at, e.committed_at FROM
-/// notification_deliveries d JOIN notification_events e ... JOIN subscriptions s ... WHERE s.id = $1 ORDER BY
+/// `SELECT d.attempt_count, d.next_attempt_at, d.held_at, d.delivered_at, d.exhausted_at, d.committed_at FROM
+/// notification_deliveries d JOIN subscriptions s ... WHERE s.id = $1 ORDER BY d.committed_at, d.event_ordinal,
 /// d.delivery_key`.
 fn deliveries_statement(subscription: &SubscriptionId) -> SelectStatement {
     Query::select()
@@ -120,21 +118,17 @@ fn deliveries_statement(subscription: &SubscriptionId) -> SelectStatement {
                 NotificationDeliveries::HeldAt,
                 NotificationDeliveries::DeliveredAt,
                 NotificationDeliveries::ExhaustedAt,
+                NotificationDeliveries::CommittedAt,
             ]
             .map(|column| (NotificationDeliveries::Table, column)),
         )
-        .column((NotificationEvents::Table, NotificationEvents::CommittedAt))
         .from(NotificationDeliveries::Table)
-        .inner_join(
-            NotificationEvents::Table,
-            Expr::col((NotificationEvents::Table, NotificationEvents::EventKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
-        )
         .inner_join(
             Subscriptions::Table,
             Expr::col((Subscriptions::Table, Subscriptions::SubscriptionKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
         )
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).eq(subscription.as_str()))
-        .order_by((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey), Order::Asc)
+        .order_by_columns(NotificationDeliveries::CHANGE_ORDER.map(|column| ((NotificationDeliveries::Table, column), Order::Asc)))
         .to_owned()
 }
 
@@ -146,7 +140,7 @@ fn queued_delivery(row: &PgRow) -> Result<QueuedDelivery, sqlx::Error> {
         held_at: row.try_get(NotificationDeliveries::HeldAt.unquoted())?,
         delivered_at: row.try_get(NotificationDeliveries::DeliveredAt.unquoted())?,
         exhausted_at: row.try_get(NotificationDeliveries::ExhaustedAt.unquoted())?,
-        committed_at: row.try_get(NotificationEvents::CommittedAt.unquoted())?,
+        committed_at: row.try_get(NotificationDeliveries::CommittedAt.unquoted())?,
     })
 }
 
@@ -158,7 +152,7 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     #[gtest]
-    fn the_deliveries_of_a_subscription_are_read_beside_their_events_in_queue_order() -> Result<()> {
+    fn the_deliveries_of_a_subscription_are_read_in_the_order_of_the_changes_they_notify() -> Result<()> {
         let subscription = SubscriptionId::try_from("urn:ngsi-ld:Subscription:s")?;
         let (sql, _) = deliveries_statement(&subscription).build(PostgresQueryBuilder);
         verify_that!(
@@ -166,11 +160,11 @@ mod tests {
             eq(concat!(
                 r#"SELECT "notification_deliveries"."attempt_count", "notification_deliveries"."next_attempt_at", "#,
                 r#""notification_deliveries"."held_at", "notification_deliveries"."delivered_at", "#,
-                r#""notification_deliveries"."exhausted_at", "notification_events"."committed_at" "#,
+                r#""notification_deliveries"."exhausted_at", "notification_deliveries"."committed_at" "#,
                 r#"FROM "notification_deliveries" "#,
-                r#"INNER JOIN "notification_events" ON "notification_events"."event_key" = "notification_deliveries"."event_key" "#,
                 r#"INNER JOIN "subscriptions" ON "subscriptions"."subscription_key" = "notification_deliveries"."subscription_key" "#,
-                r#"WHERE "subscriptions"."id" = $1 ORDER BY "notification_deliveries"."delivery_key" ASC"#
+                r#"WHERE "subscriptions"."id" = $1 ORDER BY "notification_deliveries"."committed_at" ASC, "#,
+                r#""notification_deliveries"."event_ordinal" ASC, "notification_deliveries"."delivery_key" ASC"#
             ))
         )
     }

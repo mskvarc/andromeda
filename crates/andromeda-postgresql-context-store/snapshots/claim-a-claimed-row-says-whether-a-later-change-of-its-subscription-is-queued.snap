@@ -1,0 +1,84 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/claim.rs
+---
+UPDATE
+  "notification_deliveries"
+SET
+  "claimed_by" = $1,
+  "lease_until" = CURRENT_TIMESTAMP + (make_interval(secs => $2))
+FROM
+  "subscriptions" AS "s"
+WHERE
+  "notification_deliveries"."delivery_key" = ANY(
+    ARRAY (
+      SELECT
+        "delivery_key"
+      FROM
+        "notification_deliveries"
+      WHERE
+        "delivered_at" IS NULL
+        AND "exhausted_at" IS NULL
+        AND "held_at" IS NULL
+        AND GREATEST(
+          "next_attempt_at",
+          COALESCE("lease_until", '-infinity'::timestamptz)
+        ) <= CURRENT_TIMESTAMP
+        AND (
+          "subscription_key" <> ALL (
+            ARRAY (
+              SELECT
+                "subscription_key"
+              FROM
+                "notification_delivery_holds"
+            )
+          )
+          OR "delivery_key" = ANY(
+            ARRAY (
+              SELECT
+                "delivery_key"
+              FROM
+                "notification_delivery_holds"
+            )
+          )
+        )
+      ORDER BY
+        GREATEST(
+          "next_attempt_at",
+          COALESCE("lease_until", '-infinity'::timestamptz)
+        ) ASC,
+        "delivery_key" ASC
+      LIMIT
+        10
+      FOR UPDATE
+        SKIP LOCKED
+    )
+  )
+  AND "s"."subscription_key" = "notification_deliveries"."subscription_key"
+RETURNING
+  "notification_deliveries"."delivery_key",
+  "s"."id",
+  "notification_deliveries"."attempt_count",
+  "notification_deliveries"."next_attempt_at",
+  "notification_deliveries"."event_key",
+  EXISTS (
+    SELECT
+      $3
+    FROM
+      "notification_deliveries" AS "later"
+    WHERE
+      "later"."subscription_key" = "notification_deliveries"."subscription_key"
+      AND "later"."delivered_at" IS NULL
+      AND "later"."exhausted_at" IS NULL
+      AND (
+        "later"."committed_at",
+        "later"."event_ordinal",
+        "later"."delivery_key"
+      ) > (
+        "notification_deliveries"."committed_at",
+        "notification_deliveries"."event_ordinal",
+        "notification_deliveries"."delivery_key"
+      )
+  )
+1: Uuid '00000000-0000-0000-0000-000000000000'
+2: Double 30
+3: Int 1
