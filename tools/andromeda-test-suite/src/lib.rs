@@ -70,6 +70,7 @@ pub mod eviction;
 pub mod evolution_answer;
 pub mod evolution_matcher;
 pub mod exact_length;
+pub mod example_prefix;
 pub mod exchange_log;
 pub mod federation_ops_source;
 mod filter_parity;

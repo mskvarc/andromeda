@@ -4,17 +4,16 @@ use andromeda_test_suite::{
     attribute_matcher::property,
     broker,
     entity_matcher::has_attribute,
+    example_prefix::{UNEXPANDABLE_NAME, under_example_prefix},
     namespace::Namespace,
     outcome::Done,
     problem::problem,
-    wire::request_to,
 };
-use bytes::Bytes;
 use googletest::prelude::*;
-use http::{HeaderValue, Method, StatusCode, header::CONTENT_TYPE};
+use http::StatusCode;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{Entity, ErrorType, NgsiLdMediaType, Value},
+    http::{UncheckedDocument, headers::Accept, operation::MergeEntity},
+    model::{Entity, EntityFragment, ErrorType, Lossless, NgsiLdMediaType, Value},
 };
 
 /// Pins: Merge Entity whose @context defines the prefix ex, setting temperature to 30 beside an attribute named ex:a{b,
@@ -34,14 +33,17 @@ async fn o_ent_mrg_9024_a_merge_naming_an_attribute_that_expands_to_no_iri_is_ba
         .property("temperature", Value::Number("21".parse()?))
         .build()?;
     broker.entities().create(&building).send().await?.done()?;
-    // The name is the point of the test and the model refuses it, so the body is sent as written.
-    let request = request_to(&broker, Method::PATCH, &format!("entities/{building_id}"))?
-        .append_header(CONTENT_TYPE, HeaderValue::from_static("application/ld+json"))
-        .body(Bytes::from_static(
-            br#"{"temperature": {"type": "Property", "value": 30}, "ex:a{b": {"type": "Property", "value": 1}, "@context": {"ex": "http://example.org/"}}"#,
-        ));
-    let answer = broker.send_unchecked(request).await;
-    expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
+    let writer = under_example_prefix(&broker)?;
+    let fragment = EntityFragment::builder().property("temperature", 30).property("placeholder", 1).build()?;
+    // The model refuses a name that expands to no IRI, so the attribute is renamed to it.
+    let document = UncheckedDocument::try_from(fragment.render(Lossless::Normalized))?.rename_member("placeholder", UNEXPANDABLE_NAME);
+    let request = writer
+        .unchecked(&MergeEntity::builder().id(&building_id).fragment(&fragment).build())?
+        .document(&document);
+    expect_that!(
+        &writer.send_unchecked(request).await,
+        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
+    );
     let retrieved = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .entities()
