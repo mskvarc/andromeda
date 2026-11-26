@@ -76,3 +76,5 @@ mod o_tmp_ups_9025;
 mod o_tmp_ups_9028;
 mod o_tmp_ups_9030;
 mod o_tmp_ups_9031;
+mod o_tmp_ups_9095;
+mod o_tmp_ups_9096;
