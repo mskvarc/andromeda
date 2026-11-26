@@ -1,7 +1,8 @@
 //! The columns history skips chunks on, registered when the broker opens a
 //! tenant: each one exactly once, whether two opens of the tenant run at once
 //! or v1.0.0 left a column registered twice, so a history write that needs a
-//! new chunk lands.
+//! new chunk lands, and an open that finds them registered writes no
+//! registration.
 
 use crate::fixtures::{
     current_state::{insert_entity, intern_attribute},
@@ -20,7 +21,12 @@ use andromeda_postgresql_seaquery::{
     setting::Setting,
     statement::Statement,
 };
-use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, hypertable_policy::HypertableName, repo::TemporalRepository};
+use andromeda_postgresql_temporal_store::{
+    columnstore_capability::ColumnstoreSupport,
+    hypertable_policy::HypertableName,
+    repo::TemporalRepository,
+    storage_policy::PolicyReconciliation,
+};
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use andromeda_upgrade_tests::{upgrade_database::UpgradeDatabase, upgrade_server::UpgradeServer};
 use pretty_assertions::assert_eq;
@@ -171,6 +177,30 @@ async fn a_column_v1_0_0_registered_twice_is_registered_once_when_the_tenant_ope
     write_history(&second, stream_key).await?;
     first.close().await;
     second.close().await;
+    database.drop_database().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_tenant_whose_columns_are_each_registered_once_is_opened_without_a_registration_write() -> Result<(), UpgradeTestError> {
+    let server = UpgradeServer::from_environment()?;
+    let mut database = UpgradeDatabase::create(&server).await?;
+    database.migrate_to_current().await?;
+    record_ranges_by_default(&database).await?;
+    let pool = open_tenant_pool(&server, database.database_name()).await?;
+    let store = temporal_store(&pool).await?;
+    store.reconcile_storage_policy(&policy()).await?;
+    assert_eq!(registrations(&pool).await?, each_declared_once());
+    let reopened = store.reconcile_storage_policy(&policy()).await?;
+    assert!(
+        reopened
+            .hypertables
+            .iter()
+            .all(|reconciliation| reconciliation.chunk_skipping == PolicyReconciliation::Unchanged),
+        "{reopened:?}"
+    );
+    assert_eq!(registrations(&pool).await?, each_declared_once());
+    pool.close().await;
     database.drop_database().await?;
     Ok(())
 }
