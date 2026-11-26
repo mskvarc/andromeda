@@ -19,7 +19,7 @@ use ngsi_ld::{
     http::headers::Accept,
     model::{Context, ContextEntry, Entity, InlineContext, Lossless, NgsiLdMediaType},
     query::q,
-    subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
+    subscription::{Endpoint, EntitySubscription, NotificationParams, NotificationTrigger, Subscription},
 };
 
 /// Pins: a Subscription the hub created on v1.0.0 with q=speed>50 under an @context mapping speed to
@@ -55,7 +55,7 @@ async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_
     writer.subscriptions().create(&subscription).send().await?;
     // The q model reads a name only as an unquoted AttrName, so a q naming the IRI is read as received.
     let unquoted_iri = format!("{iri}>50");
-    let released = retrieved_as_received(&hub, &subscription_id).await?;
+    let released = retrieved_as_received(&hub, &subscription_id, EntitySubscription).await?;
     expect_that!(released.body(), json_equals("$.q", unquoted_iri.as_str()));
 
     BrokerProcess::of(BrokerRole::NamesHub)?.upgrade().await?;
@@ -67,7 +67,7 @@ async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_
         .await?;
     expect_that!(retrieved.q(), some(eq(&speed_above_50)));
     let quoted_iri = format!(r#""{iri}">50"#);
-    let received = retrieved_as_received(&hub, &subscription_id).await?;
+    let received = retrieved_as_received(&hub, &subscription_id, EntitySubscription).await?;
     expect_that!(received.body(), json_equals("$.q", quoted_iri.as_str()));
     let fast_id = namespace.urn("Car", "fast")?;
     let fast = Entity::builder().id(fast_id.clone()).entity_type(car_type).property("speed", 80).build()?;

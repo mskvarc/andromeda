@@ -5,3 +5,4 @@ mod a_csr_qry_0004;
 mod a_csr_qry_0005;
 mod a_csr_qry_0022;
 mod a_csr_qry_0023;
+mod a_csr_qry_9100;

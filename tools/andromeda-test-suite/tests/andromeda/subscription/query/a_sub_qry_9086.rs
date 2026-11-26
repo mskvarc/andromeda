@@ -16,7 +16,7 @@ use ngsi_ld::{
     http::{QueryParameter, headers::Accept, operation::QueryEntities},
     model::{Context, ContextEntry, Entity, EntityTypeName, InlineContext, Lossless, NgsiLdMediaType},
     query::{Join, builders::SelectorTypeBuilder, q},
-    subscription::{Endpoint, NotificationParams, Subscription},
+    subscription::{Endpoint, EntitySubscription, NotificationParams, Subscription},
 };
 use std::{num::NonZeroU32, slice};
 
@@ -84,7 +84,7 @@ async fn a_sub_qry_9086_a_subscription_q_hop_with_a_type_list_reads_back_quoted_
     expect_that!(typed_page.items(), ids_in_order(slice::from_ref(&station_id)));
     let expanded = format!(r#""{vocabulary}/sensor"{{"{vocabulary}/Device":"{vocabulary}/humidity"}}==40"#);
     // The q model reads a name only as an unquoted AttrName, so the q naming IRIs is read and sent as written.
-    let received = retrieved_as_received(&broker, &subscription_id).await?;
+    let received = retrieved_as_received(&broker, &subscription_id, EntitySubscription).await?;
     expect_that!(received.body(), json_equals("$.q", expanded.as_str()));
     let joined = QueryEntities::builder()
         .entity_type(&selection)

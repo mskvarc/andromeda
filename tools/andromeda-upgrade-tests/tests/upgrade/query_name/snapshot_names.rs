@@ -1,7 +1,7 @@
-//! The `q` and the `orderBy` terms of the clause 5.2.23 Queries a v1.0.0
-//! Snapshot was captured by, stored in the spelling their creator wrote, read
-//! back after the upgrade with each name holding a colon quoted, as the
-//! filters v1.0.0 read.
+//! The `q`, the `csf` and the `orderBy` terms of the clause 5.2.23 Queries a
+//! v1.0.0 Snapshot was captured by, stored in the spelling their creator
+//! wrote, read back after the upgrade with each name holding a colon quoted,
+//! as the filters v1.0.0 read.
 
 use crate::fixtures::{
     rehearsal::at_v1_0_0,
@@ -37,25 +37,33 @@ const ORDER_BY: [(&str, &str); 3] = [
     ("name", "name"),
 ];
 
-/// The Queries v1.0.0 stored for the Snapshot, one for each stored `q`, each ordered by every stored term.
+/// The `csf` v1.0.0 stored beside the one this build reads, an unquoted
+/// absolute IRI and a prefixed name, one in each Query term.
+const CSF: (&str, &str) = (r#"urn:x:tier=="gold";ex:region=="north""#, r#""urn:x:tier"=="gold";"ex:region"=="north""#);
+
+/// The Queries v1.0.0 stored for the Snapshot, one for each stored `q`, each
+/// with the stored `csf` and ordered by every stored term.
 fn stored_queries() -> Value {
     let order_by: Vec<&str> = ORDER_BY.iter().map(|(stored, _)| *stored).collect();
+    let (csf, _) = CSF;
     Value::Array(
         QUERIES
             .iter()
-            .map(|(stored, _)| json!({"type": "Query", "q": stored, "ordering": {"orderBy": order_by}}))
+            .map(|(stored, _)| json!({"type": "Query", "q": stored, "csf": csf, "ordering": {"orderBy": order_by}}))
             .collect(),
     )
 }
 
-/// Expects `queries` to hold one Query for each stored `q`, in order, each with the `q` and the `orderBy` terms this build reads.
+/// Expects `queries` to hold one Query for each stored `q`, in order, each with the `q`, the `csf` and the `orderBy` terms this build reads.
 fn expect_queries_read_back(queries: Option<&[Query]>, member: &str) -> Result<(), UpgradeTestError> {
     let queries = queries.ok_or(UpgradeTestError::Missing {
         what: "the queries of a Snapshot",
     })?;
     assert_eq!(queries.len(), QUERIES.len(), "{member}");
+    let (_, csf) = CSF;
     for (query, (stored, read)) in queries.iter().zip(QUERIES) {
         assert_eq!(query.q.as_ref().map(ToString::to_string).as_deref(), Some(read), "{member} stored as {stored}");
+        assert_eq!(query.csf.as_ref().map(ToString::to_string).as_deref(), Some(csf), "{member} stored as {stored}");
         let terms: Vec<String> = query
             .ordering
             .as_ref()
