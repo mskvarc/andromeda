@@ -160,6 +160,9 @@ pub enum BrokerRole {
     /// The upgrade stack hub only the query-name upgrade test places its release data on and upgrades: an upgrade
     /// cannot be undone, so no two upgrade tests share a hub.
     NamesHub,
+    /// The upgrade stack hub only the type-name upgrade test places its release data on and upgrades, for the same
+    /// reason.
+    TypesHub,
 }
 
 /// The configuration of the stack the tests run against.

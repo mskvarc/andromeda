@@ -389,3 +389,7 @@ path = "tests/upgrade/query_names/main.rs"
 [[test]]
 name = "upgrade_subscription"
 path = "tests/upgrade/subscription/main.rs"
+
+[[test]]
+name = "upgrade_type_names"
+path = "tests/upgrade/type_names/main.rs"
