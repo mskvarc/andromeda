@@ -1,4 +1,4 @@
-//! An appended `objectType` or `vocab` the request's @context expands to no IRI is bad request data.
+//! An appended `valueType`, `objectType` or `vocab` the request's @context expands to no IRI is bad request data.
 
 use andromeda_test_suite::{
     broker,
@@ -12,18 +12,18 @@ use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::{UncheckedDocument, headers::Accept, operation::AppendAttributes},
-    model::{Attribute, Entity, EntityFragment, ErrorType, Input, Lossless, NgsiLdMediaType, RawJson, Relationship, VocabProperty, VocabTerm},
+    model::{Attribute, Entity, EntityFragment, ErrorType, Input, Lossless, NgsiLdMediaType, Property, RawJson, Relationship, VocabProperty, VocabTerm},
 };
 
-/// Pins: Append Attributes whose @context defines the prefix ex, adding a Relationship owner whose objectType or a
-/// `VocabProperty` category whose vocab is `ex:a{b`, `ex:%`, `urn:x:{` or `https://example.org/{`, answers 400
-/// `BadRequestData` for each, and the Building holds neither owner nor category
-/// Clause: 4.5.3.2, 4.6.2, 5.6.3.4
+/// Pins: Append Attributes whose @context defines the prefix ex, adding a Property speed whose valueType, a
+/// Relationship owner whose objectType or a `VocabProperty` category whose vocab is `ex:a{b`, `ex:%`, `urn:x:{` or
+/// `https://example.org/{`, answers 400 `BadRequestData` for each, and the Building holds no speed, owner or category
+/// Clause: 4.5.2.2, 4.5.3.2, 4.6.2, 5.6.3.4
 /// Recorded: Andromeda refuses a type or vocabulary term its @context expands to no absolute IRI, which would
 /// otherwise be stored as a name that reads back as another
 #[gtest]
 #[tokio::test]
-async fn o_att_app_9017_an_appended_object_type_or_vocab_that_expands_to_no_iri_is_bad_request_data() -> Result<()> {
+async fn o_att_app_9017_an_appended_value_type_object_type_or_vocab_that_expands_to_no_iri_is_bad_request_data() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let building_id = namespace.urn("Building", "appended")?;
@@ -35,7 +35,12 @@ async fn o_att_app_9017_an_appended_object_type_or_vocab_that_expands_to_no_iri_
     broker.entities().create(&building).send().await?.done()?;
     let writer = under_example_prefix(&broker)?;
     let placeholder: VocabTerm = "ex:Placeholder".parse()?;
-    let families: [(&str, Attribute<Input>, &str); 2] = [
+    let families: [(&str, Attribute<Input>, &str); 3] = [
+        (
+            "speed",
+            Attribute::from(Property::builder(1).value_type(placeholder.clone()).build()?),
+            "valueType",
+        ),
         (
             "owner",
             Attribute::from(Relationship::builder(namespace.urn("Person", "o")?).object_type(placeholder.clone()).build()?),
@@ -68,6 +73,7 @@ async fn o_att_app_9017_an_appended_object_type_or_vocab_that_expands_to_no_iri_
         .retrieve(&building_id)
         .send()
         .await?;
+    expect_that!(retrieved.body(), lacks_attribute("speed"));
     expect_that!(retrieved.body(), lacks_attribute("owner"));
     expect_that!(retrieved.body(), lacks_attribute("category"));
     Ok(())

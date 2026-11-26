@@ -34,3 +34,4 @@ mod o_bat_upd_9003;
 mod o_bat_upd_9004;
 mod o_bat_upd_9010;
 mod o_bat_upd_9017;
+mod o_bat_upd_9018;
