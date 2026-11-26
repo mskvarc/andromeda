@@ -9,14 +9,18 @@ use andromeda_test_suite::{
     nth::nth,
     outcome::Done,
     problem::answered,
-    quoted_name_query::{context_link, query_by_text},
-    unchecked_page::entities,
+    written_parameters::send_written,
 };
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{UncheckedDocument, operation::CreateSubscription},
+    http::{
+        QueryParameter,
+        UncheckedDocument,
+        operation::{CreateSubscription, QueryEntities},
+    },
     model::{Context, ContextEntry, Entity, InlineContext, Lossless, NgsiLdMediaType},
+    query::builders::SelectorTypeBuilder,
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
 use std::slice;
@@ -73,8 +77,9 @@ async fn a_qry_qlg_9073_a_quoted_prefixed_name_selects_alike_in_a_subscription_a
     expect_that!(notification.subscription_id(), eq(&subscription_id));
     expect_that!(notification.data().as_slice(), len(eq(1)));
     expect_that!(notification.data().as_slice(), nth(0, has_id(&fast_id)));
-    let answer = query_by_text(&broker, &car_type, r#""ex:speed">50"#, &[], Some(&context_link(&prefixed)?)).await?;
-    expect_that!(answer.status(), eq(StatusCode::OK));
-    expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&fast_id)));
+    let selection = SelectorTypeBuilder::from(&car_type).build()?;
+    let query = QueryEntities::builder().entity_type(&selection).format(Lossless::Normalized).build();
+    let page = send_written(&linked, &query, &[(QueryParameter::Q, r#""ex:speed">50"#)]).await?;
+    expect_that!(page.items(), ids_in_order(slice::from_ref(&fast_id)));
     Ok(())
 }

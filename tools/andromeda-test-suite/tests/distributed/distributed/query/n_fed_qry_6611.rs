@@ -7,22 +7,22 @@ use andromeda_test_suite::{
     context_source::ContextSource,
     namespace::Namespace,
     problem::answered,
-    quoted_name_query::query_by_text,
     remote_context::RemoteContexts,
     source_answer,
     source_request::SourceRequest,
+    written_parameters::send_written,
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
-use iri_rs::IriRefBuf;
 use ngsi_ld::{
     http::{
+        QueryParameter,
         UncheckedDocument,
-        headers::{Accept, Link},
-        operation::RegisterContextSource,
+        headers::Accept,
+        operation::{QueryEntities, RegisterContextSource},
     },
-    model::{Context, NgsiLdMediaType, RawJson},
-    query::q,
+    model::{Context, Lossless, NgsiLdMediaType, RawJson},
+    query::{builders::SelectorTypeBuilder, q},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
 };
 
@@ -104,10 +104,10 @@ async fn n_fed_qry_6611_a_forwarded_q_quotes_a_name_the_forwarding_context_has_n
         .received_matching(&SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/entities").query("q", quoted_iri.as_str()))
         .await?;
     expect_that!(forwarded, len(eq(1)));
-    // The q model writes a name only as an unquoted AttrName, so the query is sent as written.
-    let link = Link::try_json_ld_context(IriRefBuf::new(contexts.url("jc/client.jsonld")?.to_string())?)?;
-    let answer = query_by_text(&broker, &bus_type, r#""ex:brand"=="x""#, &[], Some(&link)).await?;
-    expect_that!(answer.status(), eq(StatusCode::OK));
+    // The q model writes a name only as an unquoted AttrName, so the q naming a prefixed name is set as written.
+    let buses = SelectorTypeBuilder::from(&bus_type).build()?;
+    let query = QueryEntities::builder().entity_type(&buses).format(Lossless::Normalized).build();
+    send_written(&linked, &query, &[(QueryParameter::Q, r#""ex:brand"=="x""#)]).await?;
     let travelled = source
         .received_matching(&SourceRequest::new(Method::GET, "/b/ngsi-ld/v1/entities").query("q", r#""ex:brand"=="x""#))
         .await?;

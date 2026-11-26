@@ -7,14 +7,15 @@ use andromeda_test_suite::{
     namespace::Namespace,
     outcome::Done,
     problem::problem,
-    quoted_name_query::{context_link, get_as_written},
-    raw_call::target,
-    unchecked_call::exchange,
-    unchecked_page::entities,
+    written_parameters::{send_written, written_request},
 };
 use googletest::prelude::*;
-use http::{Method, StatusCode};
-use ngsi_ld::model::{Context, ContextEntry, Entity, ErrorType, InlineContext};
+use http::StatusCode;
+use ngsi_ld::{
+    http::{QueryParameter, operation::QueryEntities},
+    model::{Context, ContextEntry, Entity, ErrorType, InlineContext, Lossless},
+    query::{builders::SelectorTypeBuilder, ordering},
+};
 
 /// Pins: orderBy="ex:speed" under an @context holding the prefix ex orders the Cars as orderBy=speed does under an
 /// @context holding the term speed for the same IRI, and orderBy=ex:speed is 400 `BadRequestData`
@@ -40,28 +41,29 @@ async fn a_qry_ord_9014_a_quoted_prefixed_name_orders_as_the_term_for_the_same_i
             .build()?;
         writer.entities().create(&car).send().await?.done()?;
     }
-    let car_type_text = car_type.to_string();
-    // The ordering model writes a name only as an unquoted AttrName, so each orderBy is sent as written.
-    for (order_by, hosted) in [(r#""ex:speed""#, &prefixed), ("speed", &termed)] {
-        let answer = get_as_written(
-            &broker,
-            "entities",
-            &[("type", car_type_text.as_str()), ("orderBy", order_by)],
-            Some(&context_link(hosted)?),
-        )
-        .await?;
-        expect_that!(answer.status(), eq(StatusCode::OK), "{order_by}");
-        expect_that!(entities(&answer)?.as_slice(), ids_in_order(&ids), "{order_by}");
-    }
-    let refused = broker
-        .send_unchecked(exchange(
-            &broker,
-            Method::GET,
-            &target("entities", &[("type", car_type_text.as_str()), ("orderBy", "ex:speed")]),
-            &[("Accept", "application/json")],
-            None,
-        )?)
-        .await;
-    expect_that!(&refused, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
+    let selection = SelectorTypeBuilder::from(&car_type).build()?;
+    let by_speed = ordering::by("speed").build()?;
+    let termed_query = QueryEntities::builder()
+        .entity_type(&selection)
+        .ordering(&by_speed)
+        .format(Lossless::Normalized)
+        .build();
+    let termed_page = send_written(&writer, &termed_query, &[]).await?;
+    expect_that!(termed_page.items(), ids_in_order(&ids));
+    let query = QueryEntities::builder().entity_type(&selection).format(Lossless::Normalized).build();
+    // The ordering model writes a name only as an unquoted AttrName, so an orderBy naming a prefixed name is set as
+    // written.
+    let prefixed_page = send_written(
+        &broker.with_context(Context::Single(prefixed.entry()?))?,
+        &query,
+        &[(QueryParameter::OrderBy, r#""ex:speed""#)],
+    )
+    .await?;
+    expect_that!(prefixed_page.items(), ids_in_order(&ids));
+    let request = written_request(&broker, &query, &[(QueryParameter::OrderBy, "ex:speed")])?;
+    expect_that!(
+        &broker.send_unchecked(request).await,
+        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
+    );
     Ok(())
 }
