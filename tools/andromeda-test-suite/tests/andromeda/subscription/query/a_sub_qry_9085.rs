@@ -8,14 +8,14 @@ use andromeda_test_suite::{
     identity_matcher::ids_in_order,
     namespace::Namespace,
     outcome::Done,
-    quoted_name_query::{context_link, query_by_text, retrieve_by_text},
-    unchecked_page::entities,
+    received_subscription::retrieved_as_received,
+    written_parameters::send_written,
 };
 use googletest::prelude::*;
-use http::StatusCode;
 use ngsi_ld::{
-    model::{Context, ContextEntry, Entity, InlineContext, NgsiLdMediaType},
-    query::q,
+    http::{QueryParameter, headers::Accept, operation::QueryEntities},
+    model::{Context, ContextEntry, Entity, InlineContext, Lossless, NgsiLdMediaType},
+    query::{builders::SelectorTypeBuilder, q, q::Query},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 use std::slice;
@@ -54,21 +54,35 @@ async fn a_sub_qry_9085_a_subscription_q_reads_back_in_the_reader_terms_and_quot
         .notification(NotificationParams::builder(Endpoint::builder(format!("{unreachable}/notify")).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
     writer.subscriptions().create(&subscription).send().await?;
+    let selection = SelectorTypeBuilder::from(&car_type).build()?;
+    let renamed_reader = broker.with_context(Context::Single(renamed.entry()?))?;
+    for (reader, read) in [(&writer, "speed>50"), (&renamed_reader, "velocity>50")] {
+        let expected: Query = read.parse()?;
+        let retrieved = reader
+            .with_accept(Accept::new(NgsiLdMediaType::Json))
+            .subscriptions()
+            .retrieve(&subscription_id)
+            .send()
+            .await?;
+        expect_that!(retrieved.q(), some(eq(&expected)), "{read}");
+        let query = QueryEntities::builder()
+            .entity_type(&selection)
+            .q(&expected)
+            .format(Lossless::Normalized)
+            .build();
+        let page = send_written(reader, &query, &[]).await?;
+        expect_that!(page.items(), ids_in_order(slice::from_ref(&fast_id)), "{read}");
+    }
+    let prefixed_reader = broker.with_context(Context::Single(prefixed.entry()?))?;
     let quoted_iri = format!(r#""{iri}">50"#);
-    let readers = [
-        (Some(context_link(&termed)?), "speed>50"),
-        (None, quoted_iri.as_str()),
-        (Some(context_link(&prefixed)?), r#""ex:speed">50"#),
-        (Some(context_link(&renamed)?), "velocity>50"),
-    ];
-    // The q model reads a name only as an unquoted AttrName, so the Subscription and the queries are sent as written.
-    for (link, read) in &readers {
-        let retrieved = retrieve_by_text(&broker, &subscription_id, link.as_ref()).await?;
-        expect_that!(retrieved.status(), eq(StatusCode::OK), "{read}");
-        expect_that!(retrieved.body(), json_equals("$.q", *read), "{read}");
-        let selected = query_by_text(&broker, &car_type, read, &[], link.as_ref()).await?;
-        expect_that!(selected.status(), eq(StatusCode::OK), "{read}");
-        expect_that!(entities(&selected)?.as_slice(), ids_in_order(slice::from_ref(&fast_id)), "{read}");
+    let query = QueryEntities::builder().entity_type(&selection).format(Lossless::Normalized).build();
+    // The q model reads a name only as an unquoted AttrName, so a q naming an IRI or a prefixed name is read and sent as
+    // written.
+    for (reader, read) in [(&broker, quoted_iri.as_str()), (&prefixed_reader, r#""ex:speed">50"#)] {
+        let retrieved = retrieved_as_received(reader, &subscription_id).await?;
+        expect_that!(retrieved.body(), json_equals("$.q", read), "{read}");
+        let page = send_written(reader, &query, &[(QueryParameter::Q, read)]).await?;
+        expect_that!(page.items(), ids_in_order(slice::from_ref(&fast_id)), "{read}");
     }
     broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())

@@ -12,11 +12,11 @@ use andromeda_test_suite::{
     notification_sink::NotificationSink,
     nth::nth,
     outcome::Done,
-    quoted_name_query::{context_link, retrieve_by_text},
+    received_subscription::retrieved_as_received,
 };
 use googletest::prelude::*;
-use http::StatusCode;
 use ngsi_ld::{
+    http::headers::Accept,
     model::{Context, ContextEntry, Entity, InlineContext, Lossless, NgsiLdMediaType},
     query::q,
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
@@ -44,28 +44,31 @@ async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_
     let writer = hub.with_context(Context::Single(termed.entry()?))?;
     let car_type = namespace.entity_type("Car")?;
     let subscription_id = namespace.subscription_id(1)?;
+    let speed_above_50 = q::attr("speed").gt(50).build()?;
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([car_type.as_str()])
         .notification_triggers([NotificationTrigger::EntityCreated])
-        .q(q::attr("speed").gt(50).build()?)
+        .q(speed_above_50.clone())
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(1)?).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
     writer.subscriptions().create(&subscription).send().await?;
+    // The q model reads a name only as an unquoted AttrName, so a q naming the IRI is read as received.
     let unquoted_iri = format!("{iri}>50");
-    let released = retrieve_by_text(&hub, &subscription_id, None).await?;
-    expect_that!(released.status(), eq(StatusCode::OK));
+    let released = retrieved_as_received(&hub, &subscription_id).await?;
     expect_that!(released.body(), json_equals("$.q", unquoted_iri.as_str()));
 
     BrokerProcess::of(BrokerRole::NamesHub)?.upgrade().await?;
-    // The q model reads a name only as an unquoted AttrName, so the Subscription is read as written.
-    let termed_link = context_link(&termed)?;
+    let retrieved = writer
+        .with_accept(Accept::new(NgsiLdMediaType::Json))
+        .subscriptions()
+        .retrieve(&subscription_id)
+        .send()
+        .await?;
+    expect_that!(retrieved.q(), some(eq(&speed_above_50)));
     let quoted_iri = format!(r#""{iri}">50"#);
-    for (link, read) in [(Some(&termed_link), "speed>50"), (None, quoted_iri.as_str())] {
-        let retrieved = retrieve_by_text(&hub, &subscription_id, link).await?;
-        expect_that!(retrieved.status(), eq(StatusCode::OK), "{read}");
-        expect_that!(retrieved.body(), json_equals("$.q", read), "{read}");
-    }
+    let received = retrieved_as_received(&hub, &subscription_id).await?;
+    expect_that!(received.body(), json_equals("$.q", quoted_iri.as_str()));
     let fast_id = namespace.urn("Car", "fast")?;
     let fast = Entity::builder().id(fast_id.clone()).entity_type(car_type).property("speed", 80).build()?;
     writer.entities().create(&fast).send().await?.done()?;

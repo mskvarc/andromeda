@@ -6,17 +6,15 @@ use andromeda_test_suite::{
     identity_matcher::ids_in_order,
     namespace::Namespace,
     problem::{answered, problem},
-    quoted_name_query::{context_link, query_by_text},
-    raw_call::target,
-    unchecked_call::exchange,
-    unchecked_page::entities,
+    written_parameters::{send_written, written_request},
 };
 use googletest::prelude::*;
-use http::{Method, StatusCode};
+use http::StatusCode;
 use iri_rs::IriRefBuf;
 use ngsi_ld::{
-    http::ContextDelivery,
-    model::{AttributeName, Context, ContextEntry, Entity, ErrorType, InlineContext},
+    http::{ContextDelivery, QueryParameter, operation::QueryEntities},
+    model::{AttributeName, Context, ContextEntry, Entity, ErrorType, InlineContext, Lossless},
+    query::{builders::SelectorTypeBuilder, q::Query},
 };
 use std::slice;
 
@@ -75,39 +73,37 @@ async fn a_qry_qlg_9068_a_prefixed_name_or_an_absolute_iri_in_q_goes_in_double_q
     ];
     let created = writer.with_responses().entities().batch_create(&cars).send().await;
     expect_that!(&created, answered(StatusCode::CREATED));
-    let prefixed_link = context_link(&prefixed)?;
-    let termed_link = context_link(&termed)?;
+    let selection = SelectorTypeBuilder::from(&car_type).build()?;
+    let query = QueryEntities::builder().entity_type(&selection).format(Lossless::Normalized).build();
+    let prefixed_reader = broker.with_context(Context::Single(prefixed.entry()?))?;
     let iri = format!(r#""https://example.org/{namespace}/speed">50"#);
-    // The q model writes a name only as an unquoted AttrName, so each q is sent as written.
-    for (q, link) in [
-        (r#""ex:speed">50"#, Some(&prefixed_link)),
-        (iri.as_str(), None),
-        ("speed>50", Some(&termed_link)),
-    ] {
-        let answer = query_by_text(&broker, &car_type, q, &[], link).await?;
-        expect_that!(answer.status(), eq(StatusCode::OK), "{q}");
-        expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&fast_id)), "{q}");
+    // The q model writes a name only as an unquoted AttrName, so a q naming a prefixed name or an IRI is set as written.
+    for (q, reader) in [(r#""ex:speed">50"#, &prefixed_reader), (iri.as_str(), &broker)] {
+        let page = send_written(reader, &query, &[(QueryParameter::Q, q)]).await?;
+        expect_that!(page.items(), ids_in_order(slice::from_ref(&fast_id)), "{q}");
     }
+    let speed_above_50: Query = "speed>50".parse()?;
+    let termed_query = QueryEntities::builder()
+        .entity_type(&selection)
+        .q(&speed_above_50)
+        .format(Lossless::Normalized)
+        .build();
+    let termed_page = send_written(&broker.with_context(Context::Single(termed.entry()?))?, &termed_query, &[]).await?;
+    expect_that!(termed_page.items(), ids_in_order(slice::from_ref(&fast_id)));
     let heavy = format!(r#""urn:x:{namespace}:weight">1000"#);
-    let answer = query_by_text(&broker, &car_type, &heavy, &[], None).await?;
-    expect_that!(answer.status(), eq(StatusCode::OK));
-    expect_that!(entities(&answer)?.as_slice(), ids_in_order(slice::from_ref(&slow_id)));
-    let car_type_text = car_type.to_string();
+    let heavy_page = send_written(&broker, &query, &[(QueryParameter::Q, heavy.as_str())]).await?;
+    expect_that!(heavy_page.items(), ids_in_order(slice::from_ref(&slow_id)));
     for q in [
         "ex:speed>50".to_owned(),
         format!("urn:x:{namespace}:weight>1000"),
         format!("https://example.org/{namespace}/speed>50"),
     ] {
-        let refused = broker
-            .send_unchecked(exchange(
-                &broker,
-                Method::GET,
-                &target("entities", &[("type", car_type_text.as_str()), ("q", q.as_str())]),
-                &[("Accept", "application/json")],
-                None,
-            )?)
-            .await;
-        expect_that!(&refused, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData), "{q}");
+        let request = written_request(&broker, &query, &[(QueryParameter::Q, q.as_str())])?;
+        expect_that!(
+            &broker.send_unchecked(request).await,
+            problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData),
+            "{q}"
+        );
     }
     Ok(())
 }
