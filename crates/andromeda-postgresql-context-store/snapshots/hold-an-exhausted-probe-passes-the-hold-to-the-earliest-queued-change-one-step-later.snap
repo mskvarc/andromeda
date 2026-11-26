@@ -1,0 +1,59 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/hold/hand_over.rs
+---
+WITH
+"probe" AS (
+  SELECT
+    "delivery_key"
+  FROM
+    "notification_deliveries"
+  WHERE
+    "subscription_key" = $1
+    AND "delivered_at" IS NULL
+    AND "exhausted_at" IS NULL
+  ORDER BY
+    "committed_at" ASC,
+    "event_ordinal" ASC,
+    "delivery_key" ASC
+  LIMIT
+    1
+),
+"dropped" AS (
+  DELETE FROM
+    "notification_delivery_holds"
+  WHERE
+    "subscription_key" = $2
+    AND (
+      NOT EXISTS (
+        SELECT
+          "delivery_key"
+        FROM
+          "probe"
+      )
+    )
+),
+"revived" AS (
+  UPDATE
+    "notification_deliveries"
+  SET
+    "held_at" = NULL,
+    "next_attempt_at" = GREATEST(
+      "notification_deliveries"."next_attempt_at",
+      CURRENT_TIMESTAMP + (make_interval(secs => $3))
+    )
+  FROM
+    "probe"
+  WHERE
+    "notification_deliveries"."delivery_key" = "probe"."delivery_key"
+    AND (
+      "lease_until" IS NULL
+      OR "lease_until" <= CURRENT_TIMESTAMP
+    )
+)
+SELECT
+  "delivery_key"
+FROM
+  "probe"
+1: BigInt 7
+2: BigInt 7
+3: Double 5

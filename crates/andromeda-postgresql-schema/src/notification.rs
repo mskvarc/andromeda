@@ -6,8 +6,9 @@
 //! queue built from those events: one row per matched subscription, carrying
 //! the lease a worker claims it under, the retry bookkeeping and the order of
 //! the change it notifies.
-//! `notification_delivery_holds` names, for each Subscription whose endpoint is
-//! failing, the one delivery a claim may still take.
+//! `notification_delivery_holds` names each Subscription whose endpoint is
+//! failing; a claim may still take its probe, its queued delivery first in
+//! change order.
 
 use sea_query::Iden;
 
@@ -67,7 +68,7 @@ pub enum NotificationDeliveries {
     DeliveredAt,
     /// Instant the worker gave the delivery up for good, `NULL` unless dead-lettered
     ExhaustedAt,
-    /// Instant the delivery was set aside behind its Subscription's probe, `NULL` while it is claimable
+    /// Instant the delivery was set aside behind its Subscription's probe, `NULL` while it is in the claim order
     HeldAt,
     /// Diagnostic recorded by the last failed attempt (shared claimable-queue contract)
     LastError,
@@ -95,15 +96,13 @@ impl NotificationDeliveries {
     ];
 }
 
-/// The `notification_delivery_holds` table - the probe of each Subscription whose endpoint is failing.
+/// The `notification_delivery_holds` table - the Subscriptions whose endpoint is failing; a held Subscription's probe is its earliest queued change.
 #[derive(Iden, Clone, Copy)]
 pub enum NotificationDeliveryHolds {
     /// Table name: `notification_delivery_holds`
     Table,
     /// The held Subscription, also the primary key
     SubscriptionKey,
-    /// The probe: the one delivery of the Subscription a claim may take while the hold lasts
-    DeliveryKey,
 }
 
 #[cfg(test)]
@@ -162,6 +161,5 @@ mod tests {
     fn notification_delivery_holds_table_and_columns() {
         assert_eq!(NotificationDeliveryHolds::Table.to_string(), "notification_delivery_holds");
         assert_eq!(NotificationDeliveryHolds::SubscriptionKey.to_string(), "subscription_key");
-        assert_eq!(NotificationDeliveryHolds::DeliveryKey.to_string(), "delivery_key");
     }
 }

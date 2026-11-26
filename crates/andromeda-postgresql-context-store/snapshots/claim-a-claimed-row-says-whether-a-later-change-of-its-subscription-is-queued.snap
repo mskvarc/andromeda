@@ -32,12 +32,25 @@ WHERE
                 "notification_delivery_holds"
             )
           )
-          OR "delivery_key" = ANY(
-            ARRAY (
+          OR (
+            NOT EXISTS (
               SELECT
-                "delivery_key"
+                $3
               FROM
-                "notification_delivery_holds"
+                "notification_deliveries" AS "earlier"
+              WHERE
+                "earlier"."subscription_key" = "notification_deliveries"."subscription_key"
+                AND "earlier"."delivered_at" IS NULL
+                AND "earlier"."exhausted_at" IS NULL
+                AND (
+                  "earlier"."committed_at",
+                  "earlier"."event_ordinal",
+                  "earlier"."delivery_key"
+                ) < (
+                  "notification_deliveries"."committed_at",
+                  "notification_deliveries"."event_ordinal",
+                  "notification_deliveries"."delivery_key"
+                )
             )
           )
         )
@@ -62,7 +75,7 @@ RETURNING
   "notification_deliveries"."event_key",
   EXISTS (
     SELECT
-      $3
+      $4
     FROM
       "notification_deliveries" AS "later"
     WHERE
@@ -82,3 +95,4 @@ RETURNING
 1: Uuid '00000000-0000-0000-0000-000000000000'
 2: Double 30
 3: Int 1
+4: Int 1

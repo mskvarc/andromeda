@@ -29,9 +29,11 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-configuration",
+        "andromeda-context-commit",
         "andromeda-json-literal",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
+        "andromeda-notification",
         "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-seaquery",

@@ -21,22 +21,19 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::hold::{
         Acknowledged,
-        Probed,
-        Released,
-        Taken,
         acknowledged_beside,
         cte,
+        hand_over::{ExhaustedProbe, exhausted_probes},
         null,
-        probed_on_exhaustion,
-        released_on_delivery,
-        taken_on_failure,
+        release::{Released, released_on_delivery},
+        take::{Taken, taken_on_failure},
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationDeliveryHolds};
+use andromeda_postgresql_schema::notification::NotificationDeliveries;
 use andromeda_postgresql_seaquery::{
     clock::after_transaction_start,
     pg_array::{any, text_array},
@@ -134,12 +131,7 @@ pub(crate) fn delivered_statement(target: &ContextTarget, worker_id: LeaseHolder
         None,
         update,
         released_on_delivery(target),
-        acknowledged_beside(
-            Released,
-            &[NotificationDeliveryHolds::SubscriptionKey],
-            JoinType::LeftJoin,
-            (NotificationDeliveryHolds::SubscriptionKey, NotificationDeliveries::SubscriptionKey),
-        ),
+        acknowledged_beside(Released, JoinType::LeftJoin, NotificationDeliveries::SubscriptionKey),
     )
 }
 
@@ -157,9 +149,12 @@ pub(crate) fn delivered_statement(target: &ContextTarget, worker_id: LeaseHolder
 ///                       FROM failure WHERE notification_deliveries.delivery_key = failure.delivery_key AND <lease guard>
 ///                       RETURNING delivery_key, subscription_key, committed_at, event_ordinal),
 ///      taken AS (<taken_on_failure>)
-/// SELECT acknowledged.delivery_key, taken.subscription_key, taken.delivery_key
+/// SELECT acknowledged.delivery_key, taken.subscription_key
 /// FROM acknowledged INNER JOIN taken ON taken.subscription_key = acknowledged.subscription_key
 /// ```
+///
+/// Each held Subscription's queue is set aside behind its probe by a
+/// statement of its own once the hold is locked.
 ///
 /// # Errors
 ///
@@ -196,19 +191,14 @@ pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, r
         Some(cte(Failure, source)),
         update,
         taken_on_failure(target)?,
-        acknowledged_beside(
-            Taken,
-            &[NotificationDeliveryHolds::SubscriptionKey, NotificationDeliveryHolds::DeliveryKey],
-            JoinType::InnerJoin,
-            (NotificationDeliveryHolds::SubscriptionKey, NotificationDeliveries::SubscriptionKey),
-        ),
+        acknowledged_beside(Taken, JoinType::InnerJoin, NotificationDeliveries::SubscriptionKey),
     );
     Ok(UnnestAliased::new(statement).with_columns(source_alias(), &columns))
 }
 
 /// Count each final attempt, stamp the exhaustion instant, record its
-/// diagnostic, release its claim for good, and lock the holds the deliveries
-/// were the probes of.
+/// diagnostic, release its claim for good, and lock the holds of the
+/// Subscriptions whose probes the deliveries were.
 ///
 /// ```sql
 /// WITH exhaustion AS (SELECT f.delivery_key, f.last_error FROM UNNEST($1::bigint[], $2::text[]) AS f(delivery_key, last_error)),
@@ -217,9 +207,9 @@ pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, r
 ///                         claimed_by = NULL, lease_until = NULL
 ///                       FROM exhaustion WHERE notification_deliveries.delivery_key = exhaustion.delivery_key AND <lease guard>
 ///                       RETURNING delivery_key, subscription_key, committed_at, event_ordinal),
-///      probed AS (<probed_on_exhaustion>)
-/// SELECT acknowledged.delivery_key, probed.subscription_key
-/// FROM acknowledged LEFT JOIN probed ON probed.delivery_key = acknowledged.delivery_key
+///      exhausted_probe AS (<exhausted_probes>)
+/// SELECT acknowledged.delivery_key, exhausted_probe.subscription_key
+/// FROM acknowledged LEFT JOIN exhausted_probe ON exhausted_probe.delivery_key = acknowledged.delivery_key
 /// ```
 ///
 /// Exhaustion is a decision the worker takes, on a failure no retry can fix
@@ -256,13 +246,8 @@ pub(crate) fn exhausted_statement(target: &ContextTarget, worker_id: LeaseHolder
     let statement = with_acknowledged(
         Some(cte(Exhaustion, source)),
         update,
-        probed_on_exhaustion(target),
-        acknowledged_beside(
-            Probed,
-            &[NotificationDeliveryHolds::SubscriptionKey],
-            JoinType::LeftJoin,
-            (NotificationDeliveryHolds::DeliveryKey, NotificationDeliveries::DeliveryKey),
-        ),
+        exhausted_probes(target),
+        acknowledged_beside(ExhaustedProbe, JoinType::LeftJoin, NotificationDeliveries::DeliveryKey),
     );
     UnnestAliased::new(statement).with_columns(source_alias(), &columns)
 }
@@ -317,8 +302,8 @@ pub(crate) fn deferred_statement(target: &ContextTarget, worker_id: LeaseHolder,
 
 /// The guarded update of the acknowledged rows, returning each one's key, its
 /// Subscription's for the hold and where its change falls in the
-/// Subscription's order for the choice of a probe: only rows the worker still
-/// holds under a lease that has not yet expired.
+/// Subscription's order, which tells whether an exhausted row was the probe:
+/// only rows the worker still holds under a lease that has not yet expired.
 fn acknowledgement(target: &ContextTarget, worker_id: LeaseHolder) -> UpdateStatement {
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
@@ -473,32 +458,12 @@ mod tests {
 
     /// A row whose guard refused is missing from `acknowledged`, so the
     /// statement returns no row for it, and each row returned carries the
-    /// hold of its own Subscription.
+    /// hold its delivery released, if any.
     #[test]
-    fn every_statement_returns_the_rows_it_recorded_beside_their_own_holds() {
-        let delivered = delivered(&ContextTarget::Live);
-        assert!(
-            delivered.ends_with(concat!(
-                r#"SELECT "acknowledged"."delivery_key", "released"."subscription_key" FROM "acknowledged" "#,
-                r#"LEFT JOIN "released" ON "released"."subscription_key" = "acknowledged"."subscription_key""#
-            )),
-            "{delivered}"
-        );
-        let failed = failed(&ContextTarget::Live);
-        assert!(
-            failed.ends_with(concat!(
-                r#"SELECT "acknowledged"."delivery_key", "taken"."subscription_key", "taken"."delivery_key" FROM "acknowledged" "#,
-                r#"INNER JOIN "taken" ON "taken"."subscription_key" = "acknowledged"."subscription_key""#
-            )),
-            "{failed}"
-        );
-        let exhausted = exhausted(&ContextTarget::Live);
-        assert!(
-            exhausted.ends_with(concat!(
-                r#"SELECT "acknowledged"."delivery_key", "probed"."subscription_key" FROM "acknowledged" "#,
-                r#"LEFT JOIN "probed" ON "probed"."delivery_key" = "acknowledged"."delivery_key""#
-            )),
-            "{exhausted}"
+    fn a_group_of_deliveries_returns_each_row_it_recorded_beside_the_hold_it_released() {
+        assert_statement_snapshot!(
+            "acknowledge-a-group-of-deliveries-returns-each-row-it-recorded-beside-the-hold-it-released",
+            delivered_statement(&ContextTarget::Live, worker(), vec![1, 2])
         );
     }
 
@@ -543,11 +508,11 @@ mod tests {
         );
     }
 
-    /// Two failures of one Subscription in a group take one hold: the one of
-    /// the earlier change, by commit instant and write position, is the
-    /// probe, and the other is set aside behind it. A Subscription held
-    /// already keeps its probe, and its hold row stays locked to the end of
-    /// the transaction.
+    /// Failures of one Subscription in a group take one hold, naming the
+    /// Subscription alone; a Subscription held already finds its hold, whose
+    /// row stays locked to the end of the transaction. Each recorded row is
+    /// returned beside the Subscription it holds, and a row whose guard
+    /// refused is missing.
     #[test]
     fn a_group_of_failures_takes_one_hold_per_subscription_or_finds_it() {
         assert_statement_snapshot!(
@@ -572,17 +537,19 @@ mod tests {
         assert!(guard.contains(r#""claimed_by" = NULL, "lease_until" = NULL FROM "exhaustion""#), "{sql}");
     }
 
-    /// Only a probe's exhaustion finds a hold, which it locks before the
-    /// hand-over reads the deliveries set aside.
+    /// An exhausted delivery finds its Subscription's hold only when no queued
+    /// delivery of the Subscription notifies an earlier change, as the
+    /// statement's snapshot shows the queue, so only the probe's exhaustion
+    /// locks the hold before the hand-over reads the queue again.
     #[test]
-    fn a_group_of_exhaustions_locks_the_holds_its_probes_held() {
-        let sql = exhausted(&ContextTarget::Live);
-        assert!(
-            sql.contains(concat!(
-                r#""probed" AS (SELECT "subscription_key", "delivery_key" FROM "notification_delivery_holds" WHERE "delivery_key" IN "#,
-                r#"(SELECT "delivery_key" FROM "acknowledged") FOR UPDATE)"#
-            )),
-            "{sql}"
+    fn a_group_of_exhaustions_locks_the_hold_of_each_subscription_whose_probe_it_exhausted() {
+        let rows = ExhaustedRows {
+            delivery_keys: vec![1, 2],
+            failures: vec!["boom", "bang"],
+        };
+        assert_statement_snapshot!(
+            "acknowledge-a-group-of-exhaustions-locks-the-hold-of-each-subscription-whose-probe-it-exhausted",
+            exhausted_statement(&ContextTarget::Live, worker(), rows)
         );
     }
 

@@ -5,6 +5,7 @@ use andromeda_context_space::snapshot_key::SnapshotKeyError;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::InvalidTenantName};
 use andromeda_ngsi_ld_query::{filter::filter_error::FilterError, term_expander::TermExpansionError};
+use andromeda_notification::{delivery_backoff::DeliveryBackoffError, delivery_lease::LeaseTermError, error::NotificationError};
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
@@ -91,6 +92,15 @@ pub(crate) enum UpgradeTestError {
     /// The temporal store refused to bring history to its storage policy.
     #[error("the temporal store failed")]
     Temporal(#[from] TemporalStoreError),
+    /// The broker's delivery queue refused a round.
+    #[error("the delivery queue failed")]
+    Notification(#[from] NotificationError),
+    /// A lease term the test names is not one.
+    #[error("a lease term could not be built")]
+    LeaseTerm(#[from] LeaseTermError),
+    /// A retry schedule the test names is not one a delivery is retried on.
+    #[error("a retry schedule could not be built")]
+    Backoff(#[from] DeliveryBackoffError),
     /// A row the test needs is missing.
     #[error("the row for {what} is missing")]
     Missing {

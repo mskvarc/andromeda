@@ -10,7 +10,7 @@
 //! leased, so its cost follows the number of Subscriptions with queued rows,
 //! never the depth of any backlog.
 
-use crate::notification_delivery::claim::delivery_claimable_at;
+use crate::notification_delivery::{change_order::queued_earlier, claim::delivery_claimable_at};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::delivery_claim_order::InFlightCeiling;
@@ -129,8 +129,8 @@ fn next_queued(target: &ContextTarget, after: Option<SimpleExpr>) -> SelectState
 }
 
 /// The first `batch_size` due rows of the walked Subscription in claim order
-/// that no other transaction holds, locked, leaving out every row but the
-/// probe of a held Subscription.
+/// that no other transaction holds, locked, leaving out every row of a held
+/// Subscription but its probe, its queued delivery first in change order.
 ///
 /// The Subscription is bounded from both sides rather than matched, and the
 /// rows are ordered by it first: with an equality the planner drops the key
@@ -140,10 +140,10 @@ fn next_queued(target: &ContextTarget, after: Option<SimpleExpr>) -> SelectState
 /// returns this order without a sort.
 ///
 /// The hold is read once for the Subscription, not once per row: either the
-/// Subscription is not held, or the row is its probe. Spelled as that
-/// disjunction, the planner reads the index range in claim order and stops at
-/// the first rows; a per-row test it rates as rare would make it read and
-/// sort a whole backlog to find one.
+/// Subscription is not held, or the row is its probe ([`queued_earlier`]).
+/// Spelled as that disjunction, the hold-absence arm first, the planner reads
+/// the index range in claim order and stops at the first rows; a per-row test
+/// it rates as rare would make it read and sort a whole backlog to find one.
 fn head(target: &ContextTarget, batch_size: NonZeroU32) -> SelectStatement {
     Query::select()
         .column(NotificationDeliveries::DeliveryKey)
@@ -161,11 +161,8 @@ fn head(target: &ContextTarget, batch_size: NonZeroU32) -> SelectStatement {
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
         .cond_where(
             Condition::any()
-                .add(Expr::exists(hold(target, Expr::val(1))).not())
-                .add(Expr::col(NotificationDeliveries::DeliveryKey).eq(scalar_subquery(hold(
-                    target,
-                    Expr::col((NotificationDeliveryHolds::Table, NotificationDeliveryHolds::DeliveryKey)),
-                )))),
+                .add(Expr::exists(hold(target)).not())
+                .add(queued_earlier(target, NotificationDeliveries::Table).not()),
         )
         .order_by((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey), Order::Asc)
         .order_by_expr(delivery_claimable_at(), Order::Asc)
@@ -175,12 +172,11 @@ fn head(target: &ContextTarget, batch_size: NonZeroU32) -> SelectStatement {
         .to_owned()
 }
 
-/// `SELECT <value> FROM notification_delivery_holds WHERE` the walked
-/// Subscription is held: one row, whose `delivery_key` is its probe, the one
-/// row of it a claim may take, or no row when it is not held.
-fn hold(target: &ContextTarget, value: SimpleExpr) -> SelectStatement {
+/// `SELECT 1 FROM notification_delivery_holds WHERE` the walked Subscription
+/// is held: one row, or none when it is not held.
+fn hold(target: &ContextTarget) -> SelectStatement {
     Query::select()
-        .expr(value)
+        .expr(Expr::val(1))
         .from(table_of(target, NotificationDeliveryHolds::Table))
         .and_where(
             Expr::col((NotificationDeliveryHolds::Table, NotificationDeliveryHolds::SubscriptionKey)).equals((Queued, NotificationDeliveries::SubscriptionKey)),
@@ -270,10 +266,11 @@ struct InFlight;
 
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::fewest_in_flight::fewest_in_flight_candidates;
+    use crate::notification_delivery::fewest_in_flight::{fewest_in_flight_candidates, head};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_notification::delivery_claim_order::InFlightCeiling;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::PostgresQueryBuilder;
     use std::num::NonZeroU32;
     use uuid::Uuid;
@@ -319,16 +316,15 @@ mod tests {
         );
     }
 
+    /// A held Subscription's head is only its probe, the queued delivery with
+    /// no queued delivery of an earlier change before it, and the
+    /// hold-absence arm comes first so the planner reads the index range in
+    /// claim order.
     #[test]
-    fn a_held_subscription_offers_only_its_probe_as_its_head() {
-        let sql = sql(&ContextTarget::Live);
-        assert!(
-            sql.contains(concat!(
-                r#"((NOT EXISTS(SELECT 1 FROM "notification_delivery_holds" WHERE "notification_delivery_holds"."subscription_key" = "#,
-                r#""queued"."subscription_key")) OR "delivery_key" = (SELECT "notification_delivery_holds"."delivery_key" "#,
-                r#"FROM "notification_delivery_holds" WHERE "notification_delivery_holds"."subscription_key" = "queued"."subscription_key"))"#
-            )),
-            "{sql}"
+    fn a_held_subscription_offers_only_its_earliest_queued_change_as_its_head() {
+        assert_statement_snapshot!(
+            "fewest-in-flight-a-held-subscription-offers-only-its-earliest-queued-change-as-its-head",
+            head(&ContextTarget::Live, NonZeroU32::MIN)
         );
     }
 

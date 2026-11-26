@@ -2559,11 +2559,13 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
+ "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-json-literal",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
+ "andromeda-notification",
  "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
  "andromeda-postgresql-context-store",

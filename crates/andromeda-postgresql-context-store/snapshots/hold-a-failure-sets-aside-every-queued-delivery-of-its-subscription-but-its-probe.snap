@@ -1,0 +1,54 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/hold/take.rs
+---
+WITH
+"probe" AS (
+  SELECT
+    "delivery_key"
+  FROM
+    "notification_deliveries"
+  WHERE
+    "subscription_key" = $1
+    AND "delivered_at" IS NULL
+    AND "exhausted_at" IS NULL
+  ORDER BY
+    "committed_at" ASC,
+    "event_ordinal" ASC,
+    "delivery_key" ASC
+  LIMIT
+    1
+),
+"taken_back" AS (
+  UPDATE
+    "notification_deliveries"
+  SET
+    "held_at" = NULL
+  FROM
+    "probe"
+  WHERE
+    "notification_deliveries"."delivery_key" = "probe"."delivery_key"
+    AND "notification_deliveries"."held_at" IS NOT NULL
+)
+UPDATE
+  "notification_deliveries"
+SET
+  "held_at" = CURRENT_TIMESTAMP,
+  "claimed_by" = NULL,
+  "lease_until" = NULL
+WHERE
+  "subscription_key" = $2
+  AND "held_at" IS NULL
+  AND "delivered_at" IS NULL
+  AND "exhausted_at" IS NULL
+  AND (
+    "lease_until" IS NULL
+    OR "lease_until" <= CURRENT_TIMESTAMP
+  )
+  AND "delivery_key" <> (
+    SELECT
+      "delivery_key"
+    FROM
+      "probe"
+  )
+1: BigInt 7
+2: BigInt 7

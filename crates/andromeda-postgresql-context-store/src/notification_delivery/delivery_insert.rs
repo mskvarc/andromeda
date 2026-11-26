@@ -7,7 +7,7 @@
 
 use crate::{
     error::ContextStoreError,
-    notification_delivery::{event_commit::EventCommit, rows::NewNotificationEvent},
+    notification_delivery::{change_order::queued_before_change, event_commit::EventCommit, rows::NewNotificationEvent},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
@@ -129,7 +129,8 @@ fn pair_source() -> (Alias, [UnnestColumn; 3]) {
 /// store's clock, so the queue's ordering reflects the order changes were
 /// committed in and a broker whose clock runs ahead of the store's does not
 /// hold the delivery back from a claim. One queued for a held Subscription
-/// starts set aside ([`held_at_insert`]).
+/// starts set aside unless it is the Subscription's probe
+/// ([`held_at_insert`]).
 ///
 /// Each delivery records the commit instant and the write position of the
 /// change it notifies, which order its Subscription's deliveries
@@ -150,7 +151,12 @@ fn insert_deliveries_statement(target: &ContextTarget, owed: OwedDeliveries, com
         .column((pairs.clone(), NotificationDeliveries::EventKey))
         .column((subscription.clone(), Subscriptions::SubscriptionKey))
         .expr(commit.value())
-        .expr(held_at_insert(target, &subscription))
+        .expr(held_at_insert(
+            target,
+            &subscription,
+            commit.value(),
+            Expr::col((pairs.clone(), NotificationDeliveries::EventOrdinal)),
+        ))
         .expr(commit.value())
         .column((pairs.clone(), NotificationDeliveries::EventOrdinal))
         .from_function(
@@ -191,38 +197,56 @@ fn insert_deliveries_statement(target: &ContextTarget, owed: OwedDeliveries, com
 }
 
 /// The `held_at` a delivery is queued with: the queueing instant when its
-/// Subscription, joined as `subscription`, is held behind a probe, NULL
-/// otherwise.
+/// Subscription, joined as `subscription`, is held and a queued delivery of
+/// it notifies a change before the delivery's own, committed at
+/// `committed_at` in write position `event_ordinal`; NULL otherwise.
 ///
 /// ```sql
 /// CASE WHEN EXISTS (SELECT h.subscription_key FROM notification_delivery_holds AS h
 ///                   WHERE h.subscription_key = s.subscription_key FOR KEY SHARE)
+///        AND <queued_before_change of s at (committed_at, event_ordinal)>
 ///      THEN CURRENT_TIMESTAMP ELSE NULL END
 /// ```
 ///
 /// A delivery queued behind a hold is set aside from the start, so it never
-/// enters the claim index for the claim to step over until the probe's next
-/// failure. It is never the probe: a probe is a delivery that was attempted.
+/// enters the claim index for the claim to step over until the next failure,
+/// unless it is the probe. Its write may have begun before the changes
+/// already queued and so commit a change that sorts before them; then no
+/// queued delivery precedes it, it is the Subscription's queued delivery first
+/// in change order, and it stays in the claim order as the probe.
 ///
-/// The key-share lock is what keeps such a row from outliving its hold. The
-/// release deletes the hold, which waits for this transaction to commit, and
-/// takes the Subscription's set-aside rows back in a later statement that sees
-/// this one's rows. A hold whose deletion is in flight is waited for and then
-/// read as gone, so the delivery is queued unheld. A hold still being taken is
-/// not seen, so the delivery is queued unheld and the claim's own hold check
-/// keeps it back until the probe's next failure sets it aside.
-fn held_at_insert(target: &ContextTarget, subscription: &Alias) -> SimpleExpr {
+/// Earlier is strictly before on the commit instant and the write position
+/// alone, since the new row's key is drawn only as it is inserted. When a
+/// queued delivery ties with the new one on both and nothing precedes them,
+/// the new row is queued unheld, the keys decide which of the two is the
+/// probe, and the claim's own probe test keeps the other back; when something
+/// precedes the tied row, it precedes the new one too, which is set aside.
+/// The deliveries one write queues for one Subscription all compare with the
+/// rows queued before the statement, so each of them earlier than all of
+/// those is queued unheld; only the first in change order is the probe, and
+/// the claim offers no other.
+///
+/// The key-share lock is what keeps a set-aside row from outliving its hold.
+/// The release deletes the hold, which waits for this transaction to commit,
+/// and takes the Subscription's set-aside rows back in a later statement that
+/// sees this one's rows. A hold whose deletion is in flight is waited for and
+/// then read as gone, so the delivery is queued unheld. A hold still being
+/// taken is not seen, so the delivery is queued unheld and the claim's own
+/// probe test keeps it back until the next failure sets it aside.
+fn held_at_insert(target: &ContextTarget, subscription: &Alias, committed_at: SimpleExpr, event_ordinal: SimpleExpr) -> SimpleExpr {
     let hold = Alias::new("h");
     // clone: sea-query takes each alias by value, so the column list keeps a copy of the key.
     let hold_key = (hold.clone(), NotificationDeliveryHolds::SubscriptionKey);
+    let subscription_key = (subscription.clone(), Subscriptions::SubscriptionKey);
     let hold_row = Query::select()
         .column(hold_key.clone())
         .from_as(table_of(target, NotificationDeliveryHolds::Table), hold)
-        .and_where(Expr::col(hold_key).equals((subscription.clone(), Subscriptions::SubscriptionKey)))
+        .and_where(Expr::col(hold_key).equals(subscription_key.clone()))
         .lock(LockType::KeyShare)
         .to_owned();
+    let preceded = queued_before_change(target, Expr::col(subscription_key), committed_at, event_ordinal);
     CaseStatement::new()
-        .case(Expr::exists(hold_row), Expr::current_timestamp())
+        .case(Expr::exists(hold_row).and(preceded), Expr::current_timestamp())
         .finally(Keyword::Null)
         .into()
 }
@@ -257,8 +281,9 @@ mod tests {
     /// Each delivery starts due at the transaction's instant, the instant its
     /// event records as `committed_at`, and records that instant and its
     /// event's write position, which order the Subscription's queue. One
-    /// queued for a held Subscription is written set aside, and a pair the
-    /// queue already holds is not queued again (clause 5.8.6).
+    /// queued for a held Subscription is written set aside unless no queued
+    /// delivery of the Subscription notifies an earlier change, and a pair
+    /// the queue already holds is not queued again (clause 5.8.6).
     #[test]
     fn a_fresh_write_queues_every_delivery_it_owes_in_one_set_write() {
         assert_statement_snapshot!(

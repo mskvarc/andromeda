@@ -1,0 +1,40 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/acknowledge/statements.rs
+---
+WITH
+"acknowledged" AS (
+  UPDATE
+    "notification_deliveries"
+  SET
+    "delivered_at" = CURRENT_TIMESTAMP
+  WHERE
+    "notification_deliveries"."claimed_by" = $1
+    AND "notification_deliveries"."lease_until" > CURRENT_TIMESTAMP
+    AND "notification_deliveries"."delivery_key" = ANY($2)
+  RETURNING
+    "notification_deliveries"."delivery_key",
+    "notification_deliveries"."subscription_key",
+    "notification_deliveries"."committed_at",
+    "notification_deliveries"."event_ordinal"
+),
+"released" AS (
+  DELETE FROM
+    "notification_delivery_holds"
+  WHERE
+    "subscription_key" IN (
+      SELECT
+        "subscription_key"
+      FROM
+        "acknowledged"
+    )
+  RETURNING
+    "subscription_key"
+)
+SELECT
+  "acknowledged"."delivery_key",
+  "released"."subscription_key"
+FROM
+  "acknowledged"
+  LEFT JOIN "released" ON "released"."subscription_key" = "acknowledged"."subscription_key"
+1: Uuid '00000000-0000-0000-0000-000000000000'
+2: Array ARRAY [1,2]

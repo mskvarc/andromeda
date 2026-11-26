@@ -20,6 +20,8 @@ pub mod acknowledge;
 pub mod branches;
 /// The numbers `notification_events` stores one entity change as.
 pub(crate) mod change_code;
+/// Where the change a delivery notifies falls in its Subscription's order.
+pub(crate) mod change_order;
 /// Leasing due deliveries, then reading back the events they answer.
 pub mod claim;
 /// The events one delivery claim read back, each decoded once.
