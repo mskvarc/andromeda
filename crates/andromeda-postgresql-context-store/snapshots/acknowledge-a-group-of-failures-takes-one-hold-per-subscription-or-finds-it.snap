@@ -33,29 +33,21 @@ WITH
 ),
 "taken" AS (
   INSERT INTO
-    "notification_delivery_holds" ("subscription_key", "delivery_key")
+    "notification_delivery_holds" ("subscription_key")
   SELECT DISTINCT
-    ON ("subscription_key") "subscription_key",
-    "delivery_key"
+    "subscription_key"
   FROM
     "acknowledged"
-  ORDER BY
-    "subscription_key" ASC,
-    "committed_at" ASC,
-    "event_ordinal" ASC,
-    "delivery_key" ASC
   ON CONFLICT
     ("subscription_key")
   DO UPDATE SET
-    "delivery_key" = "notification_delivery_holds"."delivery_key"
+    "subscription_key" = "notification_delivery_holds"."subscription_key"
   RETURNING
-    "subscription_key",
-    "delivery_key"
+    "subscription_key"
 )
 SELECT
   "acknowledged"."delivery_key",
-  "taken"."subscription_key",
-  "taken"."delivery_key"
+  "taken"."subscription_key"
 FROM
   "acknowledged"
   INNER JOIN "taken" ON "taken"."subscription_key" = "acknowledged"."subscription_key"

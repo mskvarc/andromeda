@@ -16,11 +16,14 @@
 //! Each settlement also moves the hold of its delivery's Subscription
 //! ([`crate::notification_delivery::hold`]) in the same transaction: a
 //! retried failure takes it, a delivery releases it and an exhausted probe
-//! hands it over, while a deferral leaves it where it is. The settlements of
-//! one group were in flight together, so no order between them is owed; the
-//! deliveries are recorded first, then the failures, then the exhaustions,
-//! then the deferrals, and each sees the holds as the kinds before it left
-//! them, as it would had it arrived after them.
+//! passes it to the earliest change still queued, while a deferral leaves it
+//! where it is. The settlements of one group were in flight together, so no
+//! order between them is owed; the deliveries are recorded first, then the
+//! failures, then the exhaustions, then the deferrals, and each sees the holds
+//! as the kinds before it left them, as it would had it arrived after them.
+//! The probe is always the held Subscription's queued delivery first in change
+//! order, so neither that order nor the rounds a Subscription's failures land
+//! in decide which delivery probes.
 //!
 //! The failure diagnostic arrives already trimmed to the length the schema
 //! accepts, because the bound is a delivery-policy decision the notification
@@ -34,7 +37,7 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         acknowledge::statements::{DeferredRows, ExhaustedRows, FailedRows, deferred_statement, delivered_statement, exhausted_statement, failed_statement},
-        hold::{HeldSubscription, hand_over_statement, resume_statement, set_aside_statement},
+        hold::{hand_over::hand_over_statement, release::resume_statement, take::set_aside_statement},
     },
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
@@ -162,8 +165,8 @@ async fn record_delivered(
     Ok(rows.into_iter().map(|(key, _)| key).collect())
 }
 
-/// Record the failed attempts of `rows` and set the rest of each held
-/// Subscription's queue aside; returns the keys recorded.
+/// Record the failed attempts of `rows` and set aside each held
+/// Subscription's queue but its probe; returns the keys recorded.
 async fn record_failed(
     connection: &mut PgConnection,
     target: &ContextTarget,
@@ -174,29 +177,26 @@ async fn record_failed(
         return Ok(Vec::new());
     }
     let statement = failed_statement(target, worker_id, rows)?;
-    let recorded: Vec<(i64, i64, i64)> = observe_statement(
+    let recorded: Vec<(i64, i64)> = observe_statement(
         ObservedStatement::NotificationDeliveryAcknowledge,
         statement.to_query_as().fetch_all(&mut *connection),
     )
     .await?;
-    let held: BTreeSet<(i64, i64)> = recorded.iter().map(|(_, subscription, probe)| (*subscription, *probe)).collect();
-    for (subscription_key, probe_delivery_key) in held {
-        let held = HeldSubscription {
-            subscription_key,
-            probe_delivery_key,
-        };
+    let held: BTreeSet<i64> = recorded.iter().map(|(_, subscription_key)| *subscription_key).collect();
+    for subscription_key in held {
         observe_statement(
             ObservedStatement::NotificationDeliveryHold,
-            set_aside_statement(target, held).to_query().execute(&mut *connection),
+            set_aside_statement(target, subscription_key).to_query().execute(&mut *connection),
         )
         .await?;
     }
-    Ok(recorded.into_iter().map(|(key, _, _)| key).collect())
+    Ok(recorded.into_iter().map(|(key, _)| key).collect())
 }
 
-/// Record the exhausted deliveries of `rows` and hand each hold one of them
-/// was the probe of to its successor, due the step `next_probes` names for
-/// that probe after the transaction began; returns the keys recorded.
+/// Record the exhausted deliveries of `rows` and pass each hold one of them
+/// was the probe of to the Subscription's queued delivery first in change
+/// order, due the step `next_probes` names for that probe after the
+/// transaction began; returns the keys recorded.
 async fn record_exhausted(
     connection: &mut PgConnection,
     target: &ContextTarget,

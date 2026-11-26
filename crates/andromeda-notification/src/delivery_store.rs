@@ -24,13 +24,13 @@
 //! records no delivery twice and claims nothing twice.
 //!
 //! An endpoint that fails holds its Subscription's queue: a retryable failure
-//! makes the failed delivery the Subscription's probe, the one delivery of the
-//! Subscription a claim still returns, and sets the others aside with their
-//! attempt counts unchanged. A delivered attempt releases them in the order
-//! they were queued, and a probe that is exhausted hands the hold to the
-//! delivery set aside first. However long the backlog behind an endpoint that
-//! never answers, it costs one attempt per retry step, and the deliveries of
-//! every other Subscription keep the slots.
+//! leaves the Subscription's probe, its delivery of the earliest change still
+//! owed, the one delivery of the Subscription a claim still returns, and sets
+//! the others aside with their attempt counts unchanged. A delivered attempt
+//! releases them in the order they were queued, and a probe that is exhausted
+//! passes the hold to the delivery of the next change. However long the
+//! backlog behind an endpoint that never answers, it costs one attempt per
+//! retry step, and the deliveries of every other Subscription keep the slots.
 
 use crate::{
     delivery_round::{ClaimRequest, SettledRound},
@@ -48,8 +48,9 @@ pub trait DeliveryStore: Send + Sync + 'static {
     ///
     /// Each settlement moves the hold of its Subscription with it: a
     /// delivered settlement releases its Subscription's hold, a failed one
-    /// takes it and sets the rest of the Subscription's queue aside, and an
-    /// exhausted probe hands the hold to the delivery set aside first. The
+    /// takes it and sets aside the Subscription's queue but its delivery of
+    /// the earliest change still owed, and an exhausted probe passes the hold
+    /// to the earliest queued delivery. The
     /// settlements of one group were in flight together, so no order between
     /// them is owed: the queue may record them in any order that gives each
     /// the effect it would have alone. The claim comes after them and sees

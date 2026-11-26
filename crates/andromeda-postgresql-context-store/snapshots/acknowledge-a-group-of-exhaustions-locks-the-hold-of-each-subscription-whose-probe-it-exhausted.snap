@@ -1,0 +1,73 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/acknowledge/statements.rs
+---
+WITH
+"exhaustion" AS (
+  SELECT
+    "f"."delivery_key",
+    "f"."last_error"
+  FROM
+    UNNEST($1::bigint[], $2::text[]) AS f(delivery_key, last_error)
+),
+"acknowledged" AS (
+  UPDATE
+    "notification_deliveries"
+  SET
+    "attempt_count" = "notification_deliveries"."attempt_count" + $3,
+    "exhausted_at" = CURRENT_TIMESTAMP,
+    "last_error" = "exhaustion"."last_error",
+    "claimed_by" = NULL,
+    "lease_until" = NULL
+  FROM
+    "exhaustion"
+  WHERE
+    "notification_deliveries"."claimed_by" = $4
+    AND "notification_deliveries"."lease_until" > CURRENT_TIMESTAMP
+    AND "notification_deliveries"."delivery_key" = "exhaustion"."delivery_key"
+  RETURNING
+    "notification_deliveries"."delivery_key",
+    "notification_deliveries"."subscription_key",
+    "notification_deliveries"."committed_at",
+    "notification_deliveries"."event_ordinal"
+),
+"exhausted_probe" AS (
+  SELECT
+    "acknowledged"."delivery_key",
+    "held"."subscription_key"
+  FROM
+    "acknowledged"
+    INNER JOIN "notification_delivery_holds" AS "held" ON "held"."subscription_key" = "acknowledged"."subscription_key"
+  WHERE
+    NOT EXISTS (
+      SELECT
+        $5
+      FROM
+        "notification_deliveries" AS "earlier"
+      WHERE
+        "earlier"."subscription_key" = "acknowledged"."subscription_key"
+        AND "earlier"."delivered_at" IS NULL
+        AND "earlier"."exhausted_at" IS NULL
+        AND (
+          "earlier"."committed_at",
+          "earlier"."event_ordinal",
+          "earlier"."delivery_key"
+        ) < (
+          "acknowledged"."committed_at",
+          "acknowledged"."event_ordinal",
+          "acknowledged"."delivery_key"
+        )
+    )
+  FOR UPDATE
+    OF "held"
+)
+SELECT
+  "acknowledged"."delivery_key",
+  "exhausted_probe"."subscription_key"
+FROM
+  "acknowledged"
+  LEFT JOIN "exhausted_probe" ON "exhausted_probe"."delivery_key" = "acknowledged"."delivery_key"
+1: Array ARRAY [1,2]
+2: Array ARRAY ['boom','bang']
+3: Int 1
+4: Uuid '00000000-0000-0000-0000-000000000000'
+5: Int 1

@@ -27,6 +27,7 @@ use crate::{
     error::ContextStoreError,
     notification_delivery::{
         branches::is_reaped_branch,
+        change_order::{queued_earlier, queued_later},
         claimed_event_read::{ClaimDictionaries, ClaimedEventRead},
         fewest_in_flight::fewest_in_flight_candidates,
         rows::{RawClaimedDeliveryRow, UnreadableClaimedDelivery},
@@ -43,7 +44,7 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     clock::after_transaction_start,
-    pg_array::{all, any, array_of_subquery},
+    pg_array::{all, array_of_subquery},
     queue::{claimable_at, is_claimed_from},
     statement::Statement,
 };
@@ -235,20 +236,28 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
 /// out of attempts is stamped `exhausted_at` by the worker that made the last
 /// attempt, so the queue never needs to know the configured maximum.
 ///
-/// A delivery set aside behind its Subscription's probe has left the index
-/// already (`held_at`). One that reached the queue while the hold was being
-/// taken, or that failed alongside the probe, is not yet set aside: the hold
-/// itself keeps it out until the next failed attempt sets it aside, so the
-/// probe stays the one attempt the Subscription's endpoint receives.
+/// A held Subscription offers only its probe, its queued delivery first in
+/// change order ([`queued_earlier`]). Every other delivery of it has left the
+/// index already (`held_at`), but for one the hold has not yet set aside: one
+/// queued while the hold was being taken, one in flight when it was, or one
+/// whose change sorts before those already queued because its write began
+/// earlier. The claim's own test keeps such a row out until the next failure
+/// sets it aside, so the probe stays the one attempt the Subscription's
+/// endpoint receives, and a probe in flight leaves its Subscription nothing to
+/// offer.
 ///
 /// The holds are read once per claim, not once per row: a candidate passes
-/// when its Subscription is not among the held ones or when it is one of the
-/// probes, and a probe is always a delivery of the Subscription it holds. As a
-/// correlated `NOT EXISTS`, PostgreSQL rates the rows that pass as rare
-/// whenever the holds' statistics cover the queued Subscriptions, then reads
-/// and sorts every due row to return one; tested against two arrays computed
-/// before the scan, the filter leaves the plan an index range scan in claim
-/// order that stops at the batch.
+/// when its Subscription is not among the held ones, tested against an array
+/// computed before the scan, or when it is its Subscription's probe. As a
+/// correlated `NOT EXISTS` on the holds, PostgreSQL rates the rows that pass
+/// as rare whenever the holds' statistics cover the queued Subscriptions, then
+/// reads and sorts every due row to return one; tested against the array, the
+/// filter leaves the plan an index range scan in claim order that stops at the
+/// batch, and only a candidate of a held Subscription reaches the probe test.
+///
+/// Each claimed row says whether a delivery of a later change of its
+/// Subscription is still queued, held or not ([`queued_later`]): a delivery a
+/// `throttling` window withholds gives way to such a row.
 ///
 /// [`DeliveryClaimOrder::FewestInFlight`] picks its candidates through
 /// [`fewest_in_flight_candidates`] instead, under the same predicate and the
@@ -277,48 +286,9 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::AttemptCount)),
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::NextAttemptAt)),
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventKey)),
-            newer_queued(target),
+            queued_later(target, NotificationDeliveries::Table),
         ]))
         .to_owned()
-}
-
-/// Whether a delivery of the claimed row's Subscription notifying a later
-/// change is still queued, held or not:
-///
-/// ```sql
-/// EXISTS (SELECT 1 FROM notification_deliveries AS later
-///         WHERE later.subscription_key = notification_deliveries.subscription_key
-///           AND later.delivered_at IS NULL AND later.exhausted_at IS NULL
-///           AND (later.committed_at, later.event_ordinal, later.delivery_key)
-///             > (notification_deliveries.committed_at, notification_deliveries.event_ordinal, notification_deliveries.delivery_key))
-/// ```
-///
-/// A delivery a `throttling` window withholds is superseded by such a row.
-/// Later means a later change ([`NotificationDeliveries::CHANGE_ORDER`]), not
-/// a greater key, which a connection's cached block of keys can give an
-/// earlier change. `idx_notification_deliveries_change_order` holds the
-/// queued rows of each Subscription in that order, so the probe is one range
-/// scan that stops at the first later row.
-fn newer_queued(target: &ContextTarget) -> SimpleExpr {
-    Expr::exists(
-        Query::select()
-            .expr(Expr::val(1))
-            .from(table_of(target, NotificationDeliveries::Table).alias(Later))
-            .and_where(
-                Expr::col((Later, NotificationDeliveries::SubscriptionKey)).equals((NotificationDeliveries::Table, NotificationDeliveries::SubscriptionKey)),
-            )
-            .and_where(Expr::col((Later, NotificationDeliveries::DeliveredAt)).is_null())
-            .and_where(Expr::col((Later, NotificationDeliveries::ExhaustedAt)).is_null())
-            .and_where(change_position(Later).gt(change_position(NotificationDeliveries::Table)))
-            .to_owned(),
-    )
-}
-
-/// `(<table>.committed_at, <table>.event_ordinal, <table>.delivery_key)`: where
-/// the change a delivery of `table` notifies falls in its Subscription's
-/// order.
-fn change_position(table: impl Iden + Copy + 'static) -> Expr {
-    Expr::tuple(NotificationDeliveries::CHANGE_ORDER.map(|column| Expr::col((table, column))))
 }
 
 /// `SELECT delivery_key ... FOR UPDATE SKIP LOCKED`: the first `batch_size`
@@ -332,7 +302,7 @@ fn queue_candidates(target: &ContextTarget, batch_size: NonZeroU32) -> SelectSta
         .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
         .and_where(Expr::col(NotificationDeliveries::HeldAt).is_null())
         .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
-        .cond_where(not_held_behind_another_probe(target))
+        .cond_where(held_only_at_its_probe(target))
         .order_by_expr(delivery_claimable_at(), Order::Asc)
         .order_by(NotificationDeliveries::DeliveryKey, Order::Asc)
         .limit(u64::from(batch_size.get()))
@@ -340,21 +310,20 @@ fn queue_candidates(target: &ContextTarget, batch_size: NonZeroU32) -> SelectSta
         .to_owned()
 }
 
-/// The candidate's Subscription is not held, or the candidate is a probe:
+/// The candidate's Subscription is not held, or the candidate is its probe:
 /// `subscription_key <> ALL(ARRAY (SELECT subscription_key FROM
-/// notification_delivery_holds)) OR delivery_key = ANY(ARRAY (SELECT
-/// delivery_key FROM notification_delivery_holds))`.
-fn not_held_behind_another_probe(target: &ContextTarget) -> Condition {
+/// notification_delivery_holds)) OR NOT <queued_earlier>`.
+fn held_only_at_its_probe(target: &ContextTarget) -> Condition {
     Condition::any()
-        .add(Expr::col(NotificationDeliveries::SubscriptionKey).ne(all(array_of_subquery(holds_column(target, NotificationDeliveryHolds::SubscriptionKey)))))
-        .add(Expr::col(NotificationDeliveries::DeliveryKey).eq(any(array_of_subquery(holds_column(target, NotificationDeliveryHolds::DeliveryKey)))))
+        .add(Expr::col(NotificationDeliveries::SubscriptionKey).ne(all(array_of_subquery(held_subscriptions(target)))))
+        .add(queued_earlier(target, NotificationDeliveries::Table).not())
 }
 
-/// `SELECT <column> FROM notification_delivery_holds`, every hold of
-/// `target`'s branch.
-fn holds_column(target: &ContextTarget, column: NotificationDeliveryHolds) -> SelectStatement {
+/// `SELECT subscription_key FROM notification_delivery_holds`, every held
+/// Subscription of `target`'s branch.
+fn held_subscriptions(target: &ContextTarget) -> SelectStatement {
     Query::select()
-        .column(column)
+        .column(NotificationDeliveryHolds::SubscriptionKey)
         .from(table_of(target, NotificationDeliveryHolds::Table))
         .to_owned()
 }
@@ -369,14 +338,9 @@ pub(crate) fn delivery_claimable_at() -> SimpleExpr {
 #[iden = "s"]
 struct DeliverySubscription;
 
-/// The alias of a delivery queued after a claimed one, `later`.
-#[derive(Iden, Clone, Copy)]
-#[iden = "later"]
-struct Later;
-
 #[cfg(test)]
 mod tests {
-    use crate::notification_delivery::claim::{claim_statement, snapshot_record_lock_statement, unclaimed};
+    use crate::notification_delivery::claim::{claim_statement, queue_candidates, snapshot_record_lock_statement, unclaimed};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_notification::delivery_claim_order::{DeliveryClaimOrder, InFlightCeiling};
@@ -457,23 +421,17 @@ mod tests {
         assert!(!predicate.contains("attempt_count"), "the claim must not repeat the attempt ceiling: {sql}");
     }
 
+    /// A candidate of a held Subscription passes only when no queued
+    /// delivery of the Subscription notifies an earlier change. The holds are
+    /// read once, into an array the hold-absence arm tests first, rather than
+    /// once per candidate, so the plan stays a range scan of the claim index
+    /// in claim order.
     #[test]
-    fn a_held_subscription_offers_only_its_probe_to_the_claim() {
-        let sql = claim_sql(&ContextTarget::Live);
-        assert!(
-            sql.contains(concat!(
-                r#"AND ("subscription_key" <> ALL(ARRAY (SELECT "subscription_key" FROM "notification_delivery_holds")) "#,
-                r#"OR "delivery_key" = ANY(ARRAY (SELECT "delivery_key" FROM "notification_delivery_holds"))) ORDER BY"#
-            )),
-            "{sql}"
+    fn a_held_subscription_offers_only_its_earliest_queued_change_to_the_claim() {
+        assert_statement_snapshot!(
+            "claim-a-held-subscription-offers-only-its-earliest-queued-change-to-the-claim",
+            queue_candidates(&ContextTarget::Live, BATCH_SIZE)
         );
-    }
-
-    #[test]
-    fn the_queue_claim_reads_the_holds_once_rather_than_per_candidate() {
-        let sql = claim_sql(&ContextTarget::Live);
-        let predicate = sql.split(" RETURNING ").next().unwrap_or_default();
-        assert!(!predicate.contains("EXISTS"), "{sql}");
     }
 
     /// A delivery a throttling window withholds is dropped only for one of a

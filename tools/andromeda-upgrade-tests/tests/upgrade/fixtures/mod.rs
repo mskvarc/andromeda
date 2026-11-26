@@ -6,6 +6,7 @@ pub(crate) mod census_ledger;
 pub(crate) mod columnstore;
 pub(crate) mod current_state;
 pub(crate) mod database_catalog;
+pub(crate) mod deliveries;
 pub(crate) mod history;
 pub(crate) mod ledgers;
 pub(crate) mod observed;

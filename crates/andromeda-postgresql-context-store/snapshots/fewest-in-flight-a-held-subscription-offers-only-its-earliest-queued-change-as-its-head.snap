@@ -1,0 +1,67 @@
+---
+source: crates/andromeda-postgresql-context-store/src/notification_delivery/fewest_in_flight.rs
+---
+SELECT
+  "delivery_key",
+  GREATEST(
+    "next_attempt_at",
+    COALESCE("lease_until", '-infinity'::timestamptz)
+  ) AS "claimable_at"
+FROM
+  "notification_deliveries"
+WHERE
+  "notification_deliveries"."subscription_key" >= "queued"."subscription_key"
+  AND "notification_deliveries"."subscription_key" <= "queued"."subscription_key"
+  AND "notification_deliveries"."delivered_at" IS NULL
+  AND "notification_deliveries"."exhausted_at" IS NULL
+  AND "notification_deliveries"."held_at" IS NULL
+  AND GREATEST(
+    "next_attempt_at",
+    COALESCE("lease_until", '-infinity'::timestamptz)
+  ) <= CURRENT_TIMESTAMP
+  AND (
+    (
+      NOT EXISTS (
+        SELECT
+          $1
+        FROM
+          "notification_delivery_holds"
+        WHERE
+          "notification_delivery_holds"."subscription_key" = "queued"."subscription_key"
+      )
+    )
+    OR (
+      NOT EXISTS (
+        SELECT
+          $2
+        FROM
+          "notification_deliveries" AS "earlier"
+        WHERE
+          "earlier"."subscription_key" = "notification_deliveries"."subscription_key"
+          AND "earlier"."delivered_at" IS NULL
+          AND "earlier"."exhausted_at" IS NULL
+          AND (
+            "earlier"."committed_at",
+            "earlier"."event_ordinal",
+            "earlier"."delivery_key"
+          ) < (
+            "notification_deliveries"."committed_at",
+            "notification_deliveries"."event_ordinal",
+            "notification_deliveries"."delivery_key"
+          )
+      )
+    )
+  )
+ORDER BY
+  "notification_deliveries"."subscription_key" ASC,
+  GREATEST(
+    "next_attempt_at",
+    COALESCE("lease_until", '-infinity'::timestamptz)
+  ) ASC,
+  "delivery_key" ASC
+LIMIT
+  1
+FOR UPDATE
+  SKIP LOCKED
+1: Int 1
+2: Int 1

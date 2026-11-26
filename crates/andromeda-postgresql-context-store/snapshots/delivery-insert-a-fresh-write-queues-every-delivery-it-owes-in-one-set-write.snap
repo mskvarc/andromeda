@@ -26,6 +26,20 @@ SELECT
             "h"."subscription_key" = "s"."subscription_key"
           FOR KEY SHARE
         )
+        AND EXISTS (
+          SELECT
+            $1
+          FROM
+            "notification_deliveries" AS "earlier"
+          WHERE
+            "earlier"."subscription_key" = "s"."subscription_key"
+            AND "earlier"."delivered_at" IS NULL
+            AND "earlier"."exhausted_at" IS NULL
+            AND (
+              "earlier"."committed_at",
+              "earlier"."event_ordinal"
+            ) < (NOW(), "p"."event_ordinal")
+        )
       ) THEN CURRENT_TIMESTAMP
       ELSE NULL
     END
@@ -33,13 +47,14 @@ SELECT
   NOW(),
   "p"."event_ordinal"
 FROM
-  UNNEST($1::bigint[], $2::integer[], $3::bigint[]) AS p(event_key, event_ordinal, subscription_key)
+  UNNEST($2::bigint[], $3::integer[], $4::bigint[]) AS p(event_key, event_ordinal, subscription_key)
   INNER JOIN "subscriptions" AS "s" ON "s"."subscription_key" = "p"."subscription_key"
 FOR KEY SHARE
   OF "s"
 ON CONFLICT
   ("event_key", "subscription_key")
 DO NOTHING
-1: Array ARRAY [42,42,43]
-2: Array ARRAY [0,0,1]
-3: Array ARRAY [1,2,1]
+1: Int 1
+2: Array ARRAY [42,42,43]
+3: Array ARRAY [0,0,1]
+4: Array ARRAY [1,2,1]

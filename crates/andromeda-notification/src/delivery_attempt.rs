@@ -73,11 +73,11 @@ impl DeliveryAttempt {
     /// a permanent failure, so the store never has to know a ceiling to keep
     /// an exhausted delivery out of the claimable set.
     ///
-    /// A failure that is retried holds the rest of the Subscription's queue
-    /// behind the failed delivery, which the store does with the
-    /// acknowledgement, and an exhausted probe hands the hold to a delivery
-    /// due one first retry step later, as a delivery failing for the first
-    /// time would be. A deferred delivery keeps its attempts and the hold as
+    /// A failure that is retried holds the Subscription's queue behind its
+    /// delivery of the earliest change still owed, which the store does with
+    /// the acknowledgement, and an exhausted probe passes the hold to a
+    /// delivery due no sooner than one first retry step later, as a delivery
+    /// failing for the first time would be. A deferred delivery keeps its attempts and the hold as
     /// they are, and is due again once its window has passed.
     pub(crate) async fn verdict(&self, entry: &DeliveryEntry) -> Result<DeliveryVerdict, NotificationError> {
         trace_entry(entry);
