@@ -149,12 +149,21 @@ fn exhausted() -> Result<DeliveryVerdict, UpgradeTestError> {
 /// Records `verdict` of the live branch's delivery `delivery` in a round of
 /// its own and returns the answer.
 async fn settle(queue: &NotificationDeliveryQueue, delivery: i64, verdict: DeliveryVerdict) -> Result<Vec<LeaseAcknowledgement>, UpgradeTestError> {
-    let settlement = DeliverySettlement {
-        target: ContextTarget::Live,
-        key: DeliveryKey::from(delivery),
-        verdict,
-    };
-    Ok(queue.settle_and_claim(&LeaseHolder::from(WORKER), &[settlement], None).await?.answers)
+    settle_in_one_round(queue, vec![(delivery, verdict)]).await
+}
+
+/// Records the verdict of each of the live branch's deliveries in `verdicts`
+/// in one round, in that order, and returns the answers.
+async fn settle_in_one_round(queue: &NotificationDeliveryQueue, verdicts: Vec<(i64, DeliveryVerdict)>) -> Result<Vec<LeaseAcknowledgement>, UpgradeTestError> {
+    let settlements: Vec<DeliverySettlement> = verdicts
+        .into_iter()
+        .map(|(delivery, verdict)| DeliverySettlement {
+            target: ContextTarget::Live,
+            key: DeliveryKey::from(delivery),
+            verdict,
+        })
+        .collect();
+    Ok(queue.settle_and_claim(&LeaseHolder::from(WORKER), &settlements, None).await?.answers)
 }
 
 /// Claims up to `width` deliveries in `order` in a round of its own and
@@ -279,6 +288,30 @@ async fn two_failures_recorded_in_separate_rounds_leave_the_earlier_change_as_th
     // a drain records an outcome that ends with no round in flight.
     assert_eq!(settle(&queue, second, failed()?).await?, [LeaseAcknowledgement::Applied]);
     assert_eq!(settle(&queue, first, failed()?).await?, [LeaseAcknowledgement::Applied]);
+
+    assert_eq!(held_subscriptions(pool).await?, [subscription]);
+    assert_eq!([is_set_aside(pool, first).await?, is_set_aside(pool, second).await?], [false, true]);
+    assert_eq!(claim(&queue, 2, DeliveryClaimOrder::Queue).await?, [first]);
+    database.drop_database().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_failures_recorded_in_one_round_leave_the_earlier_change_as_the_probe() -> Result<(), UpgradeTestError> {
+    let (database, subscription, events) = with_changes(2).await?;
+    let pool = database.pool();
+    // The later change is queued first, so its key is the smaller, and its
+    // failure is recorded first: neither the keys nor the order of the
+    // settlements points at the earlier change.
+    let second = queue_delivery(pool, subscription, &events, 1, Vec::new()).await?;
+    let first = queue_delivery(pool, subscription, &events, 0, Vec::new()).await?;
+    let queue = queue(pool);
+    assert_eq!(claim(&queue, 2, DeliveryClaimOrder::Queue).await?, [second, first]);
+
+    assert_eq!(
+        settle_in_one_round(&queue, vec![(second, failed()?), (first, failed()?)]).await?,
+        [LeaseAcknowledgement::Applied, LeaseAcknowledgement::Applied]
+    );
 
     assert_eq!(held_subscriptions(pool).await?, [subscription]);
     assert_eq!([is_set_aside(pool, first).await?, is_set_aside(pool, second).await?], [false, true]);
