@@ -2,6 +2,7 @@
 
 use crate::{
     name_stage::{NameStage, Written},
+    query_text::unquoted_delimiter::split_once_unquoted,
     temporal::grouping::{bucket_term::BucketTerm, group_key::GroupKey, grouping_error::GroupingError},
 };
 use std::str::FromStr;
@@ -18,13 +19,14 @@ pub struct GroupingTerm<S: NameStage> {
 impl FromStr for GroupingTerm<Written> {
     type Err = GroupingError;
 
-    /// Parse one comma-delimited grouping term.
+    /// Parse one comma-delimited grouping term, whose bucket follows the first
+    /// `;` outside a quoted name.
     fn from_str(text: &str) -> Result<GroupingTerm<Written>, GroupingError> {
         let text = text.trim();
         if text.is_empty() {
             return Err(GroupingError::EmptyTerm);
         }
-        let (key_text, bucket) = match text.split_once(';') {
+        let (key_text, bucket) = match split_once_unquoted(text, ';') {
             Some((key_text, bucket_text)) => {
                 let bucket = BucketTerm::from_str(bucket_text.trim()).map_err(GroupingError::InvalidBucket)?;
                 (key_text.trim(), Some(bucket))

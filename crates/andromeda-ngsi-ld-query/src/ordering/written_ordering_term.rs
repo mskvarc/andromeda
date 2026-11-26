@@ -4,6 +4,7 @@ use crate::{
     filter::{target_language::LanguageSelector, trailing_group::TrailingGroup, value_path::ValuePath},
     name_stage::Written,
     ordering::{ordering_direction::OrderingDirection, ordering_error::OrderingError},
+    query_text::unquoted_delimiter::split_once_unquoted,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -23,7 +24,7 @@ impl FromStr for WrittenOrderingTerm {
 
     fn from_str(raw: &str) -> Result<WrittenOrderingTerm, OrderingError> {
         let raw = raw.trim();
-        let (member, direction) = match raw.split_once(';') {
+        let (member, direction) = match split_once_unquoted(raw, ';') {
             Some((member, direction)) => {
                 let direction = direction.trim().parse::<OrderingDirection>().map_err(OrderingError::InvalidDirection)?;
                 (member.trim(), direction)
@@ -149,11 +150,14 @@ mod tests {
         );
     }
 
-    /// The direction is split at the first `;` before the path is read, so a `;` inside a quoted name ends the path there.
+    /// The direction is split at the first `;` outside a quoted name, so a `;` an absolute IRI holds stays in the name.
     #[test]
-    fn a_semicolon_inside_a_quoted_name_still_splits_the_direction() {
-        let error = "\"x;y\";desc".parse::<WrittenOrderingTerm>().expect_err("`y\";desc` is no direction");
-        assert!(matches!(error, OrderingError::InvalidDirection(_)), "got {error:?}");
+    fn a_semicolon_inside_a_quoted_name_belongs_to_the_name() {
+        for (text, direction) in [("\"urn:x:a;b\";desc", OrderingDirection::Desc), ("\"urn:x:a;b\"", OrderingDirection::Asc)] {
+            let parsed = term(text);
+            assert_eq!(parsed.path.attribute.as_str(), "urn:x:a;b", "{text}");
+            assert_eq!(parsed.direction, direction, "{text}");
+        }
     }
 
     /// A term is carried in the request text, so it has to spell itself back.
@@ -165,6 +169,7 @@ mod tests {
             "address[city]",
             "sensor.rawdata[airquality.particulate]",
             "\"ex:address\"[city]",
+            "\"urn:x:(a,b);c\";desc",
             "name;desc",
             "name.observedAt;desc",
             "location;dist-asc",
