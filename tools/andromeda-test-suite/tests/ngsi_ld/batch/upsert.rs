@@ -46,3 +46,4 @@ mod o_bat_ups_2302;
 mod o_bat_ups_2700;
 mod o_bat_ups_9002;
 mod o_bat_ups_9018;
+mod o_bat_ups_9024;
