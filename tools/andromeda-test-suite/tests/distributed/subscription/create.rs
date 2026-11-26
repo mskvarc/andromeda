@@ -1,6 +1,7 @@
 //! The tests of `subscription/create`.
 
 mod a_sub_cre_6807;
+mod a_sub_cre_6819;
 mod n_sub_cre_6401;
 mod n_sub_cre_6800;
 mod n_sub_cre_6801;
