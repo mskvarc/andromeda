@@ -19,12 +19,13 @@
 -- `|`, `(` or `)` moves it back. Where a name may stand, a word is the
 -- longest run of characters other than `"`, whitespace and
 -- `. [ ] { } ( ) ; | , = ! < > ~`. A word holding no colon is copied as it
--- is. A word holding a colon that follows a comma is the last type of a type
--- list glued to the name after it, which v1.0.0 read as the list's end, and
--- is copied as it is. A word that begins with a colon follows a quoted last
--- type, so its colon is copied and the rest is quoted when it holds a colon.
--- Any other word holding a colon is a name and is wrapped in double quotes.
--- The rewrite applied twice gives what it gives once.
+-- is. v1.0.0 wrote a type of a type list bare only when it held no colon, and
+-- the list's colon straight after the last type, so a word holding a colon
+-- that follows a comma is that last type glued to the name after it, and a
+-- word that begins with a colon follows a quoted last type. Either is copied
+-- through its first colon, and the rest is wrapped in double quotes when it
+-- holds a colon. Any other word holding a colon is a name and is wrapped in
+-- double quotes. The rewrite applied twice gives what it gives once.
 --
 -- This file rewrites the `q`, the `csf` and each `orderBy` term of each query
 -- `snapshot_queries` and `snapshot_temporal_queries` hold, the clause 5.2.23
@@ -114,16 +115,15 @@ begin
                 token_end := token_end + 1;
             end loop;
             word := substr(path_text, at_index, token_end - at_index);
-            rewritten := rewritten || case when strpos(word, ':') = 0
-                or previous_mark = ',' then
+            rewritten := rewritten || case when strpos(word, ':') = 0 then
                 word
-            when left(word, 1) = ':'
-                and strpos(substr(word, 2), ':') = 0 then
-                word
-            when left(word, 1) = ':' then
-                ':"' || substr(word, 2) || '"'
-            else
+            when previous_mark <> ','
+                and left(word, 1) <> ':' then
                 '"' || word || '"'
+            when strpos(substr(word, strpos(word, ':') + 1), ':') = 0 then
+                word
+            else
+                left(word, strpos(word, ':')) || '"' || substr(word, strpos(word, ':') + 1) || '"'
             end;
             at_index := token_end;
             previous_mark := 'w';

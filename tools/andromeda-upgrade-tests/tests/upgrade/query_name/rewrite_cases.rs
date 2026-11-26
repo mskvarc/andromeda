@@ -4,10 +4,11 @@
 ///
 /// A double-quoted token is copied as it is, and so is everything where an
 /// operand stands. A word holding a colon that follows a comma is the last
-/// type of a type list glued to the name after it, a word opening with a
-/// colon follows a quoted last type, and every other word holding a colon is
-/// a name the rewrite quotes.
-pub(super) const REWRITES: [(&str, &str); 19] = [
+/// type of a type list glued to the name after it, and a word opening with a
+/// colon follows a quoted last type. Each is copied through its first colon,
+/// and the rest is quoted when it holds a colon. Every other word holding a
+/// colon is a name the rewrite quotes.
+pub(super) const REWRITES: [(&str, &str); 20] = [
     (r#""https://example.org/speed">50"#, r#""https://example.org/speed">50"#),
     ("urn:x:weight>1000", r#""urn:x:weight">1000"#),
     (
@@ -24,6 +25,7 @@ pub(super) const REWRITES: [(&str, &str); 19] = [
     (r#""https://example.org/rel"{urn:x:b}==1"#, r#""https://example.org/rel"{"urn:x:b"}==1"#),
     ("sensor{ex:humidity}==40", r#"sensor{"ex:humidity"}==40"#),
     (r#"isParkedIn{Building,Store:category}=="x""#, r#"isParkedIn{Building,Store:category}=="x""#),
+    (r#"rel{Building,Store:ex:category}=="x""#, r#"rel{Building,Store:"ex:category"}=="x""#),
     (r#"rel{Building,"ex:Store":ex:category}=="x""#, r#"rel{Building,"ex:Store":"ex:category"}=="x""#),
     (
         r#""https://example.org/address"[ex:city]=="Berlin""#,

@@ -23,10 +23,13 @@ const SNAPSHOT: &str = "urn:ngsi-ld:Snapshot:named-queries";
 /// Each `q` v1.0.0 stored beside the one this build reads after the upgrade.
 ///
 /// v1.0.0 opened a type list only where a comma followed the first word, so a
-/// lone `X:y` inside the braces was a prefixed attribute name.
-const QUERIES: [(&str, &str); 3] = [
+/// lone `X:y` inside the braces was a prefixed attribute name. It wrote the
+/// list's colon straight after a bare last type, so it stored
+/// `rel{Building,Store: ex:category}` as `rel{Building,Store:ex:category}`.
+const QUERIES: [(&str, &str); 4] = [
     ("sensor{ex:humidity}==40", r#"sensor{"ex:humidity"}==40"#),
     (r#"isParkedIn{Building,Store:category}=="x""#, r#"isParkedIn{Building,Store:category}=="x""#),
+    (r#"rel{Building,Store:ex:category}=="x""#, r#"rel{Building,Store:"ex:category"}=="x""#),
     (r#"rel{Building,"ex:Store":ex:category}=="x""#, r#"rel{Building,"ex:Store":"ex:category"}=="x""#),
 ];
 
