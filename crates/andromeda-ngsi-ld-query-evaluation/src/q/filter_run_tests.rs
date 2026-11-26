@@ -1568,6 +1568,55 @@ fn a_list_of_one_type_before_a_further_hop_types_the_entity_the_outer_hop_reache
     assert!(!holds_linked(&example("a{U:b{c}}"), &entity, &linked));
 }
 
+/// A list of two types stands before a further hop, and admits the Entity the outer hop reaches when it is of either.
+#[test]
+fn a_list_of_two_types_before_a_further_hop_admits_an_entity_of_either() {
+    let entity = serde_json::json!([{
+        "@id": "urn:x",
+        "@type": ["https://example.com/A"],
+        "https://example.com/a": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:y"}]}]
+    }]);
+    let linked = [
+        serde_json::json!({
+            "@id": "urn:y",
+            "@type": ["https://example.com/T2"],
+            "https://example.com/b": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:z"}]}]
+        }),
+        serde_json::json!({
+            "@id": "urn:z",
+            "@type": ["https://example.com/Z"],
+            "https://example.com/c": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+        }),
+    ];
+    assert!(holds_linked(&example("a{T1,T2:b{c}}==1"), &entity, &linked));
+    assert!(!holds_linked(&example("a{T1,T3:b{c}}==1"), &entity, &linked));
+}
+
+/// Each hop of a chain takes a list of its own, which types the Entity that hop reaches.
+#[test]
+fn each_hop_of_a_chain_is_typed_by_its_own_list() {
+    let entity = serde_json::json!([{
+        "@id": "urn:x",
+        "@type": ["https://example.com/A"],
+        "https://example.com/a": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:y"}]}]
+    }]);
+    let linked = [
+        serde_json::json!({
+            "@id": "urn:y",
+            "@type": ["https://example.com/T1"],
+            "https://example.com/b": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:z"}]}]
+        }),
+        serde_json::json!({
+            "@id": "urn:z",
+            "@type": ["https://example.com/T2"],
+            "https://example.com/c": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+        }),
+    ];
+    assert!(holds_linked(&example("a{T1:b{T2:c}}==1"), &entity, &linked));
+    assert!(!holds_linked(&example("a{T1:b{T1:c}}==1"), &entity, &linked));
+    assert!(!holds_linked(&example("a{T2:b{T2:c}}==1"), &entity, &linked));
+}
+
 /// A list of two types stands before a plain path.
 #[test]
 fn a_list_of_two_types_before_a_plain_path_selects_through_an_entity_of_either() {
