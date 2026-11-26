@@ -16,7 +16,7 @@ use ngsi_ld::{
     http::{QueryParameter, headers::Accept, operation::QueryEntities},
     model::{Context, ContextEntry, Entity, InlineContext, Lossless, NgsiLdMediaType},
     query::{builders::SelectorTypeBuilder, q, q::Query},
-    subscription::{Endpoint, NotificationParams, Subscription},
+    subscription::{Endpoint, EntitySubscription, NotificationParams, Subscription},
 };
 use std::slice;
 
@@ -79,7 +79,7 @@ async fn a_sub_qry_9085_a_subscription_q_reads_back_in_the_reader_terms_and_quot
     // The q model reads a name only as an unquoted AttrName, so a q naming an IRI or a prefixed name is read and sent as
     // written.
     for (reader, read) in [(&broker, quoted_iri.as_str()), (&prefixed_reader, r#""ex:speed">50"#)] {
-        let retrieved = retrieved_as_received(reader, &subscription_id).await?;
+        let retrieved = retrieved_as_received(reader, &subscription_id, EntitySubscription).await?;
         expect_that!(retrieved.body(), json_equals("$.q", read), "{read}");
         let page = send_written(reader, &query, &[(QueryParameter::Q, read)]).await?;
         expect_that!(page.items(), ids_in_order(slice::from_ref(&fast_id)), "{read}");

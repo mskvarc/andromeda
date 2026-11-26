@@ -1,10 +1,10 @@
-//! Retrieve Subscription and Query Subscriptions answered as received, for a Subscription whose `q` names a prefixed
-//! name or an absolute IRI.
+//! Retrieve Subscription and Query Subscriptions answered as received, for a Subscription whose `q` or `csf` names a
+//! prefixed name or an absolute IRI.
 //!
-//! The client's `q` model reads a name only as an unquoted `AttrName`, so a Subscription whose `q` holds a quoted name
-//! does not read through the model at all. The request is the typed operation's, and the answer comes back as
-//! received, to be read with the matchers of [`crate::body_json`]. A reader whose `q` reads as `AttrName`s retrieves the
-//! Subscription typed.
+//! The client's `q` model reads a name only as an unquoted `AttrName`, so a Subscription whose `q` or `csf` holds a
+//! quoted name does not read through the model at all. The request is the typed operation's, and the answer comes back
+//! as received, to be read with the matchers of [`crate::body_json`]. A reader whose filters read as `AttrName`s
+//! retrieves the Subscription typed.
 
 use crate::broker::BrokerClient;
 use bytes::Bytes;
@@ -13,10 +13,10 @@ use ngsi_ld::{
     client::{ClientError, ReqwestError},
     http::{
         headers::Accept,
-        operation::{QuerySubscriptions, RetrieveSubscription},
+        operation::{Operation, QuerySubscriptions, RetrieveSubscription},
     },
     model::NgsiLdMediaType,
-    subscription::{EntitySubscription, SubscriptionId},
+    subscription::{EntitySubscription, SubscriptionId, SubscriptionKind},
 };
 
 /// Why a Subscription could not be read as received.
@@ -29,16 +29,20 @@ fn client_error(error: ClientError<ReqwestError>) -> ReceivedSubscriptionError {
     ReceivedSubscriptionError(Box::new(error))
 }
 
-/// The answer to Retrieve Subscription `id` by the broker `client` speaks to, as `application/json` under the
-/// `@context` the client names.
+/// The answer to Retrieve Subscription `id`, a Subscription of `kind`, by the broker `client` speaks to, as
+/// `application/json` under the `@context` the client names.
 ///
 /// # Errors
 ///
 /// Returns [`ReceivedSubscriptionError`] when the request cannot be built or sent, or the answer is an error.
-pub async fn retrieved_as_received(client: &BrokerClient, id: &SubscriptionId) -> Result<Response<Bytes>, ReceivedSubscriptionError> {
+pub async fn retrieved_as_received<K>(client: &BrokerClient, id: &SubscriptionId, kind: K) -> Result<Response<Bytes>, ReceivedSubscriptionError>
+where
+    K: SubscriptionKind,
+    for<'a> RetrieveSubscription<'a, K>: Operation,
+{
     let client = client.with_accept(Accept::new(NgsiLdMediaType::Json));
     let request = client
-        .unchecked(&RetrieveSubscription::builder().id(id).kind(EntitySubscription).build())
+        .unchecked(&RetrieveSubscription::builder().id(id).kind(kind).build())
         .map_err(client_error)?;
     client.send_unchecked(request).await.map_err(client_error)
 }
@@ -65,6 +69,7 @@ mod tests {
     };
     use googletest::prelude::*;
     use http::StatusCode;
+    use ngsi_ld::subscription::EntitySubscription;
     use url::Url;
     use wiremock::{
         Mock,
@@ -91,7 +96,7 @@ mod tests {
             .mount(&server)
             .await;
         let client = client_at(Url::parse(&format!("{}/ngsi-ld/v1/", server.uri()))?)?;
-        let answer = retrieved_as_received(&client, &"urn:ngsi-ld:Subscription:1".parse()?).await?;
+        let answer = retrieved_as_received(&client, &"urn:ngsi-ld:Subscription:1".parse()?, EntitySubscription).await?;
         expect_that!(answer.status(), eq(StatusCode::OK));
         verify_that!(String::from_utf8_lossy(answer.body()).into_owned(), contains_substring("urn:x:a;b"))
     }

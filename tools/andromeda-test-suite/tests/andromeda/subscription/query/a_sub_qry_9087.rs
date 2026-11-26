@@ -16,7 +16,7 @@ use ngsi_ld::{
     http::{QueryParameter, headers::Accept, operation::QueryEntities},
     model::{Context, ContextEntry, Entity, InlineContext, Lossless, NgsiLdMediaType},
     query::{builders::SelectorTypeBuilder, q},
-    subscription::{Endpoint, NotificationParams, Subscription},
+    subscription::{Endpoint, EntitySubscription, NotificationParams, Subscription},
 };
 use std::slice;
 
@@ -73,7 +73,7 @@ async fn a_sub_qry_9087_a_subscription_q_naming_a_dot_free_iri_with_a_semicolon_
     expect_that!(typed_page.items(), ids_in_order(slice::from_ref(&fast_id)));
     let quoted_iri = format!(r#""{iri}">50"#);
     // The q model reads a name only as an unquoted AttrName, so the q naming the IRI is read and sent as written.
-    let received = retrieved_as_received(&broker, &subscription_id).await?;
+    let received = retrieved_as_received(&broker, &subscription_id, EntitySubscription).await?;
     expect_that!(received.body(), json_equals("$.q", quoted_iri.as_str()));
     let query = QueryEntities::builder().entity_type(&selection).format(Lossless::Normalized).build();
     let page = send_written(&broker, &query, &[(QueryParameter::Q, quoted_iri.as_str())]).await?;
