@@ -2,22 +2,16 @@
 
 use andromeda_test_suite::{
     broker,
+    example_prefix::{UNEXPANDABLE_NAMES, under_example_prefix},
     namespace::Namespace,
     problem::{answered, problem},
-    wire::request_to,
 };
-use bytes::Bytes;
 use googletest::prelude::*;
-use http::{HeaderValue, Method, StatusCode, header::CONTENT_TYPE};
+use http::StatusCode;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{ErrorType, NgsiLdMediaType},
+    http::{UncheckedDocument, headers::Accept, operation::CreateEntity},
+    model::{Attribute, Entity, ErrorType, Lossless, NgsiLdMediaType, Property, RawJson},
 };
-use serde_json::json;
-
-/// Names whose expansion under `{"ex": "http://example.org/"}` is no absolute IRI: an IRI admits no `{`, `"` or `%`
-/// that two hexadecimal digits do not follow (IETF RFC 3987), and `urn` and `https` are no terms of the context.
-const UNEXPANDABLE_NAMES: [&str; 6] = ["ex:a{b", "ex:{", "ex:%", "ex:\"", "urn:x:{", "https://example.org/{"];
 
 /// Pins: Create Entity whose @context defines the prefix ex and whose Property speed holds a sub-attribute named
 /// `ex:a{b`, `ex:{`, `ex:%`, `ex:"`, `urn:x:{` or `https://example.org/{` answers 400 `BadRequestData` for each and
@@ -30,28 +24,34 @@ const UNEXPANDABLE_NAMES: [&str; 6] = ["ex:a{b", "ex:{", "ex:%", "ex:\"", "urn:x
 async fn o_ent_cre_9057_a_sub_attribute_name_that_expands_to_no_iri_is_bad_request_data() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
+    let writer = under_example_prefix(&broker)?;
+    let speed = Attribute::from(Property::builder(1).property("placeholder", 2).build()?);
     for (position, name) in UNEXPANDABLE_NAMES.into_iter().enumerate() {
         let vehicle_id = namespace.urn("Vehicle", position)?;
-        // The name is the point of the test and the model refuses it, so the body is sent as written.
-        let body = json!({
-            "id": vehicle_id.to_string(),
-            "type": format!("Vehicle_{namespace}"),
-            "speed": {"type": "Property", "value": 1, name: {"type": "Property", "value": 2}},
-            "@context": {"ex": "http://example.org/"}
-        });
-        let request = request_to(&broker, Method::POST, "entities")?
-            .append_header(CONTENT_TYPE, HeaderValue::from_static("application/ld+json"))
-            .body(Bytes::from(serde_json::to_vec(&body)?));
-        let answer = broker.send_unchecked(request).await;
-        expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData), "{name}");
-        let answer_2 = broker
+        let vehicle = Entity::builder()
+            .id(vehicle_id.clone())
+            .entity_type(namespace.entity_type("Vehicle")?)
+            .build()?;
+        // The model refuses a name that expands to no IRI, so the sub-attribute is renamed to it.
+        let broken_speed: RawJson = UncheckedDocument::try_from(speed.render(Lossless::Normalized))?
+            .rename_member("placeholder", name)
+            .to_string()
+            .parse()?;
+        let document = UncheckedDocument::from_entity(&vehicle, Lossless::Normalized).set_member("speed", &broken_speed);
+        let request = writer.unchecked(&CreateEntity::builder().entity(&vehicle).build())?.document(&document);
+        expect_that!(
+            &writer.send_unchecked(request).await,
+            problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData),
+            "{name}"
+        );
+        let answer = broker
             .with_responses()
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .entities()
             .retrieve(&vehicle_id)
             .send()
             .await;
-        expect_that!(&answer_2, answered(StatusCode::NOT_FOUND), "{name}");
+        expect_that!(&answer, answered(StatusCode::NOT_FOUND), "{name}");
     }
     Ok(())
 }

@@ -4,19 +4,18 @@ use andromeda_test_suite::{
     attribute_matcher::property,
     broker,
     entity_matcher::has_attribute,
+    example_prefix::{UNEXPANDABLE_NAME, under_example_prefix},
     namespace::Namespace,
     nth::nth,
     partial_outcome::reported,
     problem::answered,
     report_matcher::batch_error,
-    wire::{content_type, request_to},
 };
-use bytes::Bytes;
 use googletest::prelude::*;
-use http::{Method, StatusCode};
+use http::StatusCode;
 use ngsi_ld::{
-    http::{BatchOperationResult, headers::Accept},
-    model::{APPLICATION_LD_JSON, ErrorType, NgsiLdMediaType},
+    http::{BatchOperationResult, UncheckedDocument, headers::Accept, operation::BatchCreate},
+    model::{Entity, ErrorType, Lossless, NgsiLdMediaType},
 };
 
 /// Pins: Batch Entity Creation refuses the entity whose attribute is named ex:a{b under an @context defining the
@@ -30,16 +29,28 @@ use ngsi_ld::{
 async fn o_bat_cre_9010_an_attribute_name_that_expands_to_no_iri_is_a_per_entity_bad_request_data() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
+    let writer = under_example_prefix(&broker)?;
     let vehicle_1_id = namespace.urn("Vehicle", "1")?;
     let vehicle_2_id = namespace.urn("Vehicle", "2")?;
-    // The attribute names are the point of the test and the model refuses the first, and each item carries an
-    // `@context` of its own, which the client does not write into a batch, so the body is sent as written.
-    let body = format!(
-        r#"[{{"id": "{vehicle_1_id}", "type": "Vehicle_{namespace}", "ex:a{{b": {{"type": "Property", "value": 1}}, "@context": {{"ex": "http://example.org/"}}}}, {{"id": "{vehicle_2_id}", "type": "Vehicle_{namespace}", "ex:good_name": {{"type": "Property", "value": 2}}, "@context": {{"ex": "http://example.org/"}}}}]"#
-    );
-    let request = content_type(request_to(&broker, Method::POST, "entityOperations/create")?, &APPLICATION_LD_JSON)?.body(Bytes::from(body));
-    let answer = broker.send_unchecked(request).await;
-    let report: BatchOperationResult = reported(answer)?;
+    let vehicle_type = namespace.entity_type("Vehicle")?;
+    let entities = [
+        Entity::builder()
+            .id(vehicle_1_id.clone())
+            .entity_type(vehicle_type.clone())
+            .property("placeholder", 1)
+            .build()?,
+        Entity::builder()
+            .id(vehicle_2_id.clone())
+            .entity_type(vehicle_type)
+            .property("ex:good_name", 2)
+            .build()?,
+    ];
+    // The model refuses a name that expands to no IRI, so the first entity's attribute is renamed to it.
+    let broken = UncheckedDocument::from_entity(&entities[0], Lossless::Normalized).rename_member("placeholder", UNEXPANDABLE_NAME);
+    let request = writer
+        .unchecked(&BatchCreate::builder().entities(&entities).build())?
+        .documents(&[broken, UncheckedDocument::from_entity(&entities[1], Lossless::Normalized)]);
+    let report: BatchOperationResult = reported(writer.send_unchecked(request).await)?;
     expect_that!(&report.errors, len(eq(1)));
     expect_that!(&report.errors, nth(0, batch_error().entity(&vehicle_1_id).problem(ErrorType::BadRequestData)));
     expect_that!(&report.success, nth(0, eq(&vehicle_2_id)));
