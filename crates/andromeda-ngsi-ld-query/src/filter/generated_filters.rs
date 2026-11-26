@@ -16,14 +16,36 @@ use proptest::{
     sample::select,
 };
 
-/// Names of every position a path names: unquoted `AttrName`s, and a quoted
-/// absolute IRI and a quoted prefixed name, the two spellings no `AttrName`
-/// holds.
-const NAMES: [&str; 7] = ["a", "speed", "brandName", "x_1", "observedAt", "\"https://example.com/q\"", "\"ex:q\""];
+/// Names of every position a path names: unquoted `AttrName`s, and quoted
+/// absolute IRIs and a quoted prefixed name, the spellings no `AttrName`
+/// holds. The IRIs hold the marks of the language an IRI admits (`;`, `,`,
+/// `(`, `)`, `.`, `=`, `!` and `~`), which end an unquoted name, so each
+/// reads back as one name only when it is written quoted.
+const NAMES: [&str; 10] = [
+    "a",
+    "speed",
+    "brandName",
+    "x_1",
+    "observedAt",
+    "\"https://example.com/q\"",
+    "\"ex:q\"",
+    "\"urn:x:a;b\"",
+    "\"urn:x:(a,b)\"",
+    "\"https://example.com/a.b=c!d~e\"",
+];
 
 /// Entity types of a hop's type list: unquoted `EntityType`s, and a quoted
-/// prefixed name and a quoted absolute IRI.
-const TYPES: [&str; 5] = ["T1", "Vehicle", "Building", "\"ex:T\"", "\"https://example.com/T\""];
+/// prefixed name and quoted absolute IRIs, two of them holding the marks
+/// that separate the types of a list and end a Query Term.
+const TYPES: [&str; 7] = [
+    "T1",
+    "Vehicle",
+    "Building",
+    "\"ex:T\"",
+    "\"https://example.com/T\"",
+    "\"urn:x:T;U\"",
+    "\"https://example.com/T,U(V)\"",
+];
 
 /// Numbers in the forms clause 4.9 takes from RFC 8259.
 const NUMBERS: [&str; 8] = ["0", "-1", "10", "2.5", "1e3", "-0.25", "9007199254740993", "1.0"];

@@ -568,25 +568,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
 "\"x,y\""
-  refused Key(UnterminatedString)
-  variant Key/UnterminatedString
-  detail "invalid aggrGroupBy key: q expression: unterminated string literal"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"x,y@\""
-  refused Key(UnterminatedString)
-  variant Key/UnterminatedString
-  detail "invalid aggrGroupBy key: q expression: unterminated string literal"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"x,y"
   refused Key(UnterminatedString)
   variant Key/UnterminatedString
   detail "invalid aggrGroupBy key: q expression: unterminated string literal"
 "\"x,\""
-  refused Key(UnterminatedString)
-  variant Key/UnterminatedString
-  detail "invalid aggrGroupBy key: q expression: unterminated string literal"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"x,-\""
-  refused Key(UnterminatedString)
-  variant Key/UnterminatedString
-  detail "invalid aggrGroupBy key: q expression: unterminated string literal"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "name[*]"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }])
 "nam{[*]"
@@ -749,12 +749,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(Week)
   variant BucketOnNonTemporalKey/Week
   detail "aggrGroupBy bucket 'week' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"\tdeletedAt, a.brandName.speed[*] , deletedAt;monthOfYear "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
-"\tdeetedAt, a.brandName.speed[*] , deletedAt;monthOfYear "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deetedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
-"\tdeletedAt, a.bradName.speed[*] , deletedAt;monthOfYear "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("bradName"), AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
+"\tdeletedAt, speed.x_1.brandName[*] , deletedAt;monthOfYear "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("x_1"), AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
+"\tdeetedAt, speed.x_1.brandName[*] , deletedAt;monthOfYear "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deetedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("x_1"), AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
+"\tdeletedAt, speedx_1.brandName[*] , deletedAt;monthOfYear "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speedx_1"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
 "deletedAt;monthOfYear ,createdAt;\thourOfDay\t, deletedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "deletedAt;monthOfYar ,createdAt;\thourOfDay\t, deletedAt\t"
@@ -785,24 +785,24 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '>', position: 4 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '>' at position 4"
-" a.speed.brandName[en.city] , observedAt;dayOfWeek\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-" a.speed.brandName[en.city] , observedAt;dayOfWeek]"
+" a.brandName.x_1[en.city] , observedAt;dayOfWeek\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+" a.brandName.x_1[en.city] , observedAt;dayOfWeek]"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" a.speed.brandName[en.city] , observedAt{dayOfWeek\t"
-  refused Key(UnexpectedCharacter { character: '{', position: 10 })
+" a.brandName.x_1[en.city] , observedAt;{ayOfWeek\t"
+  refused InvalidBucket(VariantNotFound)
+  variant InvalidBucket/VariantNotFound
+  detail "invalid aggrGroupBy bucket: Matching variant not found"
+"\tcreatedAt;\tyear , brandName.\"ex:q\".x_1[*],\tspeed.x_1 "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("x_1")], trailing: None }), bucket: None }])
+"\tcreatedAt;\tyear , brandName.\"ex:q\".x=1[*],\tspeed.x_1 "
+  refused Key(UnexpectedCharacter { character: '=', position: 18 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '{' at position 10"
-"\tcreatedAt;\tyear , speed.observedAt.brandName[*],\ta.brandName "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("observedAt"), AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: None }), bucket: None }])
-"\tcreatedAt;\tyear , speed.observedAt.brandNa=e[*],\ta.brandName "
-  refused Key(UnexpectedCharacter { character: '=', position: 24 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '=' at position 24"
-"\tcreatedAt;\tyear , speedobservedAt.brandName[*],\ta.brandName "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speedobservedAt"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: None }), bucket: None }])
+  detail "invalid aggrGroupBy key: q expression: unexpected character '=' at position 18"
+"\tcreatedAt;\tyear , bandName.\"ex:q\".x_1[*],\tspeed.x_1 "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("bandName"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("x_1")], trailing: None }), bucket: None }])
 " modifiedAt;\tdayOfWeek ,\tmodifiedAt;hour"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }])
 " modifie.At;\tdayOfWeek ,\tmodifiedAt;hour"
@@ -851,12 +851,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '<', position: 4 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '<' at position 4"
-"scope\t,brandName.a.\"https://example.com/q\"[city.b]\t,observedAt; dayOfWeek "
-  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"scope\t,brandName.a.\"https://example-com/q\"[city.b]\t,observedAt; dayOfWeek "
-  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("https://example-com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"scope\t,brandName.a.\"https://example.co=m/q\"[city.b]\t,observedAt; dayOfWeek "
-  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("https://example.co=m/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"scope\t,observedAt.a.\"urn:x:(a,b)\"[city.b]\t,observedAt; dayOfWeek "
+  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a"), AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"scope\t,observedAt.a.\"urn:x:(a,-)\"[city.b]\t,observedAt; dayOfWeek "
+  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a"), AttributeName("urn:x:(a,-)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"scope\t,observedAt.a.\"urn:x:(a,b)\"[=city.b]\t,observedAt; dayOfWeek "
+  refused Key(Expected { expected: AttributeName, found: Character('='), position: 27 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '=' at position 27"
 "id\t, type\t,\ta.speed[*]"
   accepted AggregationGrouping([GroupingTerm { key: Member(Id), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }])
 "id\t, type\t,\ta.spe}d[*]"
@@ -875,14 +877,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(DayOfWeek)
   variant BucketOnNonTemporalKey/DayOfWeek
   detail "aggrGroupBy bucket 'dayOfWeek' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"observedAt; month ,\tobservedAt[*]\t,\tmodifiedAt; week "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
-"observedAt; month ,\tobservedAt[*]\t,\tmodifiedAt; wek "
+"observedAt; month ,\t\"ex:q\"[*]\t,\tmodifiedAt; week "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
+"observedAt; month ,\t\"ex:q\"[*]\t,\tmodifiedAt; wek "
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"observedAt; month ,\tobservedA[*]\t,\tmodifiedAt; week "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedA"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
+"observedAt; month ,\t\"ex:q\"[]\t,\tmodifiedAt; week "
+  refused Key(Expected { expected: AttributeName, found: Character(']'), position: 7 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found ']' at position 7"
 "\tscope "
   accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }])
 "\tscop "
@@ -979,13 +983,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tobservedAt;\tdayOfWeek\t, x_1[b.en], deletedAt "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
-"\tobservedAt;\tdayOfWeek\t, (x_1[b.en], deletedAt "
-  refused Key(Expected { expected: AttributeName, found: Character('('), position: 0 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '(' at position 0"
-"\tobservedAt;\tdayOfWeek\t, x_1[b.en], delete!At "
+"\tobservedAt;\tdayOfWeek\t, observedAt[b.en], deletedAt "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+"\tobservedAt;\tdayOfWeek\t, obse(rvedAt[b.en], deletedAt "
+  refused Key(UnexpectedCharacter { character: '(', position: 4 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character '(' at position 4"
+"\tobservedAt;\tdayOfWeek\t, observedAt[b.en], delete!At "
   refused Key(UnexpectedCharacter { character: '!', position: 6 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 6"
@@ -997,14 +1001,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "ype ,\tdeletedAt;\tyear"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ype"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
-" observedAt.\"https://example.com/q\".\"ex:q\"[zip.city] ,\tmodifiedAt;month "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
-" observedAt.\"http://example.com/q\".\"ex:q\"[zip.city] ,\tmodifiedAt;month "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("http://example.com/q"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
-" observedAt.\"https://example.com/q\".ex:q\"[zip.city] ,\tmodifiedAt;month "
-  refused Key(UnquotedColonName { position: 35 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 35 holds ':' and goes in double quotes"
+" \"ex:q\".\"urn:x:(a,b)\".\"urn:x:(a,b)\"[zip.city] ,\tmodifiedAt;month "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
+" \"ex:q\".\"urn:x:a,b)\".\"urn:x:(a,b)\"[zip.city] ,\tmodifiedAt;month "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:a,b)"), AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
+" \"ex:q\".\"urn:x:(a,b)\".\"urn:x:(a,b\"[zip.city] ,\tmodifiedAt;month "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("urn:x:(a,b")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
 "\tdeletedAt "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tdel+tedAt "
@@ -1013,14 +1015,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid aggrGroupBy key: q expression: unexpected character '+' at position 3"
 "adeletedAt "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("adeletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
-" \"https://example.com/q\"\t,\tmodifiedAt;dayOfWeek,unitCode\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Member(UnitCode), bucket: None }])
-" \"https://example.com/q\"\t,\tmodifiedAt;dayOfWeek,unitCo}e\t"
-  refused Key(UnexpectedCharacter { character: '}', position: 6 })
+" \"urn:x:a;b\"\t,\tmodifiedAt;dayOfWeek,unitCode\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Member(UnitCode), bucket: None }])
+" \"urn:x:a;b\"\t,\tmodifiedAt;dayOfWeek,unitCod}\t"
+  refused Key(UnexpectedCharacter { character: '}', position: 7 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '}' at position 6"
-" \"https:/example.com/q\"\t,\tmodifiedAt;dayOfWeek,unitCode\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https:/example.com/q"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Member(UnitCode), bucket: None }])
+  detail "invalid aggrGroupBy key: q expression: unexpected character '}' at position 7"
+" \"urn::a;b\"\t,\tmodifiedAt;dayOfWeek,unitCode\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn::a;b"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Member(UnitCode), bucket: None }])
 "deletedAt "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "deleedAt "
@@ -1065,16 +1067,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: 'd', position: 6 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character 'd' at position 6"
-"\tmodifiedAt; dayOfWeek\t, observedAt.\"ex:q\".brandName[b]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:q"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
-"\tmodifiedAt; dayOfWeek\t, observedAt.\"ex:q\".brandName[,]"
-  refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 28 })
+"\tmodifiedAt; dayOfWeek\t, \"ex:q\".\"https://example.com/a.b=c!d~e\".x_1[b]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
+"\tmodifiedAt; dayOfWeek\t, \"ex:q\".\"https://example.com/a.b=c!d~e\".x_1[,]"
+  refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 43 })
   variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 28"
-"\tmodifiedAt; dayOfW~ek\t, observedAt.\"ex:q\".brandName[b]"
-  refused InvalidBucket(VariantNotFound)
-  variant InvalidBucket/VariantNotFound
-  detail "invalid aggrGroupBy bucket: Matching variant not found"
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 43"
+"\tmodifiedAt; dayOfWeek\t,~\"ex:q\".\"https://example.com/a.b=c!d~e\".x_1[b]"
+  refused Key(Expected { expected: AttributeName, found: Character('~'), position: 0 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '~' at position 0"
 " modifiedAt,deletedAt "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " modifie\"dAt,deletedAt "
@@ -1085,13 +1087,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '<', position: 9 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '<' at position 9"
-"deletedAt;year,\t\"https://example.com/q\".x_1[zip]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }])
-"deletedAt;year,\t\"http s://example.com/q\".x_1[zip]\t"
+"deletedAt;year,\t\"urn:x:(a,b)\".observedAt[zip]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }])
+"deletedAt;year,\t\"ur n:x:(a,b)\".observedAt[zip]\t"
   refused Key(InvalidAttributeName(Invalid))
   variant Key/InvalidAttributeName/Invalid
   detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
-"deleteZAt;year,\t\"https://example.com/q\".x_1[zip]\t"
+"deletZdAt;year,\t\"urn:x:(a,b)\".observedAt[zip]\t"
   refused BucketOnNonTemporalKey(Year)
   variant BucketOnNonTemporalKey/Year
   detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
@@ -1105,11 +1107,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(MonthOfYear)
   variant BucketOnNonTemporalKey/MonthOfYear
   detail "aggrGroupBy bucket 'monthOfYear' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"deletedAt;month,x_1.brandName.\"https://example.com/q\"[*] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"deletedAt;month,x_1.brandName.\"https:/Z/example.com/q\"[*] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName"), AttributeName("https:/Z/example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"deleted0At;month,x_1.brandName.\"https://example.com/q\"[*] "
+"deletedAt;month,\"https://example.com/q\".x_1.\"urn:x:(a,b)\"[*] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }), bucket: None }])
+"deletedAt;month,\"https://example.com/q\".Zx_1.\"urn:x:(a,b)\"[*] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("Zx_1"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }), bucket: None }])
+"deletedA0t;month,\"https://example.com/q\".x_1.\"urn:x:(a,b)\"[*] "
   refused BucketOnNonTemporalKey(Month)
   variant BucketOnNonTemporalKey/Month
   detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
@@ -1119,21 +1121,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '}', position: 7 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '}' at position 7"
-"observedAt , deletedAt;year ,\tcreatedAt;hourOfDay "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
-"observedAt , deletedAtyear ,\tcreatedAt;hourOfDay "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAtyear"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
-"observedAt , deletedAt;year ,\tcreatedAt;h\turOfDay "
+"\"urn:x:a;b\" , deletedAt;year ,\tcreatedAt;hourOfDay "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
+"\"urn:x:a;b\" , deletedA;year ,\tcreatedAt;hourOfDay "
+  refused BucketOnNonTemporalKey(Year)
+  variant BucketOnNonTemporalKey/Year
+  detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
+"\"urn:x:a;b\" , deletedAt;year ,\tcreatedAt;h\turOfDay "
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" a.observedAt.speed[zip.city], modifiedAt\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observedAt"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
-" a.observedAt.speed[zip.city], modif*iedAt\t"
+" a.\"ex:q\".brandName[zip.city], modifiedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" a.\"ex:q\".brandName[zip.city], modif*iedAt\t"
   refused Key(UnexpectedCharacter { character: '*', position: 5 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '*' at position 5"
-" a.observedAt<.speed[zip.city], modifiedAt\t"
+" a.\"ex:q\".bra<ndName[zip.city], modifiedAt\t"
   refused Key(UnexpectedCharacter { character: '<', position: 12 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '<' at position 12"
@@ -1173,12 +1177,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '{', position: 1 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '{' at position 1"
-" modifiedAt;hour ,observedAt.brandName.\"https://example.com/q\"[*]\t,createdAt"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
-" modifiedAt;hour ,observed.t.brandName.\"https://example.com/q\"[*]\t,createdAt"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observed"), sub_attributes: [AttributeName("t"), AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
-" modifiedAt;hour ,observedAt.brandName.\"https://exaample.com/q\"[*]\t,createdAt"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("brandName"), AttributeName("https://exaample.com/q")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" modifiedAt;hour ,\"urn:x:a;b\".x_1.\"urn:x:a;b\"[*]\t,createdAt"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:a;b")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" modifiedAt;hour ,\"u.n:x:a;b\".x_1.\"urn:x:a;b\"[*]\t,createdAt"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("u.n:x:a;b"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:a;b")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" modifiedAt;hour ,\"urn:x:a;b\".x_1.\"urn:xa:a;b\"[*]\t,createdAt"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:xa:a;b")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " modifiedAt , observedAt; week,\tmodifiedAt;\tweek\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
 " modifiedAt , observdAt; week,\tmodifiedAt;\tweek\t"
@@ -1205,14 +1209,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(MonthOfYear)
   variant BucketOnNonTemporalKey/MonthOfYear
   detail "aggrGroupBy bucket 'monthOfYear' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"observedAt.a "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }])
-"observedAt.a"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }])
-"observedAt. "
-  refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 11 })
+"\"ex:q\".a "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }])
+"\"ex:q\".a"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }])
+"\"ex:q\". "
+  refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 7 })
   variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 11"
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 7"
 "scope\t, observedAt; year ,\tscope\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(Scope), bucket: None }])
 "scpe\t, observedAt; year ,\tscope\t"
@@ -1275,11 +1279,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(Expected { expected: AttributeName, found: Character('/'), position: 0 })
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found '/' at position 0"
-"\t\"ex:q\".\"https://example.com/q\".\"ex:q\"[*] ,observedAt.\"ex:q\".x_1[zip] ,\"ex:q\".a.\"https://example.com/q\"[*]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("ex:q")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"\t\"ex:q\".\"https://exa{ple.com/q\".\"ex:q\"[*] ,observedAt.\"ex:q\".x_1[zip] ,\"ex:q\".a.\"https://example.com/q\"[*]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://exa{ple.com/q"), AttributeName("ex:q")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"9\"ex:q\".\"https://example.com/q\".\"ex:q\"[*] ,observedAt.\"ex:q\".x_1[zip] ,\"ex:q\".a.\"https://example.com/q\"[*]"
+"\t\"https://example.com/a.b=c!d~e\".\"urn:x:(a,b)\".\"urn:x:(a,b)\"[*] ,\"https://example.com/q\".\"https://example.com/a.b=c!d~e\".\"https://example.com/q\"[zip] ,\"https://example.com/a.b=c!d~e\".a.\"urn:x:(a,b)\"[*]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("a"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }), bucket: None }])
+"\t\"https://example.com/a.b=c!d~e\".\"urn:{:(a,b)\".\"urn:x:(a,b)\"[*] ,\"https://example.com/q\".\"https://example.com/a.b=c!d~e\".\"https://example.com/q\"[zip] ,\"https://example.com/a.b=c!d~e\".a.\"urn:x:(a,b)\"[*]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("urn:{:(a,b)"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("a"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }), bucket: None }])
+"9\"https://example.com/a.b=c!d~e\".\"urn:x:(a,b)\".\"urn:x:(a,b)\"[*] ,\"https://example.com/q\".\"https://example.com/a.b=c!d~e\".\"https://example.com/q\"[zip] ,\"https://example.com/a.b=c!d~e\".a.\"urn:x:(a,b)\"[*]"
   refused Key(Expected { expected: AttributeName, found: Character('9'), position: 0 })
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found '9' at position 0"
@@ -1343,17 +1347,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '<', position: 5 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '<' at position 5"
-"\"https://example.com/q\".a.\"https://example.com/q\"[*]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"\"https://example.com/q\".a.\"htps://example.com/q\"[*]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("htps://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"\"https://example#.com/q\".a.\"https://example.com/q\"[*]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example#.com/q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-"\tbrandName,\tobservedAt;\tday , modifiedAt;\tmonth\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
-"\tbrandName,\tobservedAt;day , modifiedAt;\tmonth\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
-"\tbrandName,\tobseredAt;\tday , modifiedAt;\tmonth\t"
+"\"urn:x:(a,b)\".speed.\"urn:x:a;b\"[*]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("speed"), AttributeName("urn:x:a;b")], trailing: Some(AllLanguages) }), bucket: None }])
+"\"urn:x:(a,b)\".spee.\"urn:x:a;b\"[*]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("spee"), AttributeName("urn:x:a;b")], trailing: Some(AllLanguages) }), bucket: None }])
+"\"urn:x:(a,b#)\".speed.\"urn:x:a;b\"[*]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b#)"), sub_attributes: [AttributeName("speed"), AttributeName("urn:x:a;b")], trailing: Some(AllLanguages) }), bucket: None }])
+"\tx_1,\tobservedAt;\tday , modifiedAt;\tmonth\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
+"\tx_1,\tobservedAt;\tda , modifiedAt;\tmonth\t"
+  refused InvalidBucket(VariantNotFound)
+  variant InvalidBucket/VariantNotFound
+  detail "invalid aggrGroupBy bucket: Matching variant not found"
+"\tx_1,\tobservedA;\tday , modifiedAt;\tmonth\t"
   refused BucketOnNonTemporalKey(Day)
   variant BucketOnNonTemporalKey/Day
   detail "aggrGroupBy bucket 'day' is on a key that is not a temporal property: a bucket applies only to a temporal property"
@@ -1365,16 +1371,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid aggrGroupBy bucket: Matching variant not found"
 "\tdeetedAt ,\tmodifiedAt;monthOfYear\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deetedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
-"\tx_1.a ,observedAt; dayOfWeek\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"\tx_1.a ,observedAt; dayOfWeek\t."
+"\tobservedAt.a ,observedAt; dayOfWeek\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"\tobservedAt.a ,observedAt; dayOfWeek.\t"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tx_1.a ,observedAt dayOfWeek\t"
-  refused Key(UnexpectedCharacter { character: 'd', position: 11 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character 'd' at position 11"
+"\tobservedAt.a ,observeAt; dayOfWeek\t"
+  refused BucketOnNonTemporalKey(DayOfWeek)
+  variant BucketOnNonTemporalKey/DayOfWeek
+  detail "aggrGroupBy bucket 'dayOfWeek' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "modifiedAt;\tmonth ,\tdeletedAt;year\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
 "modifiedA>;\tmonth ,\tdeletedAt;year\t"
@@ -1421,16 +1427,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "aggrGroupBy bucket 'week' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 " observedAt;\tweek,createdAt;hourOfDay"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
-" speed.\"https://example.com/q\" "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("https://example.com/q")], trailing: None }), bucket: None }])
-" speed!.\"https://example.com/q\" "
-  refused Key(UnexpectedCharacter { character: '!', position: 5 })
+" brandName.\"urn:x:a;b\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("urn:x:a;b")], trailing: None }), bucket: None }])
+" bra!ndName.\"urn:x:a;b\" "
+  refused Key(UnexpectedCharacter { character: '!', position: 3 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 5"
-" speed\"https://example.com/q\" "
-  refused Key(UnexpectedCharacter { character: '"', position: 5 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 5"
+  detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 3"
+" bradName.\"urn:x:a;b\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("bradName"), sub_attributes: [AttributeName("urn:x:a;b")], trailing: None }), bucket: None }])
 "\tmodifiedAt;\tyear\t, createdAt;month\t, deletedAt;\tmonthOfYear\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
 "\tmodifiedAt;\tyear\t, create=dAt;month\t, deletedAt;\tmonthOfYear\t"
@@ -1521,12 +1525,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(Hour)
   variant BucketOnNonTemporalKey/Hour
   detail "aggrGroupBy bucket 'hour' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"\tspeed.a[b]\t, \"ex:q\".\"ex:q\"[zip]\t, deletedAt;year "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
-"\tspeed.a[b]\t,\"ex:q\".\"ex:q\"[zip]\t, deletedAt;year "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
-"\tseed.a[b]\t, \"ex:q\".\"ex:q\"[zip]\t, deletedAt;year "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("seed"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
+"\tbrandName.a[b]\t, \"urn:x:(a,b)\".\"urn:x:(a,b)\"[zip]\t, deletedAt;year "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
+"\tbrandName.a[b]\t,\"urn:x:(a,b)\".\"urn:x:(a,b)\"[zip]\t, deletedAt;year "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
+"\tbrndName.a[b]\t, \"urn:x:(a,b)\".\"urn:x:(a,b)\"[zip]\t, deletedAt;year "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brndName"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
 "createdAt;monthOfYear,\tcreatedAt;\tdayOfWeek"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
 "createdA|t;monthOfYear,\tcreatedAt;\tdayOfWeek"
@@ -1579,14 +1583,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" speed, brandName.brandName[city] , observedAt.speed\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }])
-" speed, brandName.brandName[city] , observedAtspeed\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAtspeed"), sub_attributes: [], trailing: None }), bucket: None }])
-" speed, brandName.brandName[city] , obser:edAt.speed\t"
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+" brandName, x_1.observedAt[city] , \"ex:q\".speed\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }])
+" brandName, x_1.observedAt[city] , \"ex:q\".peed\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("peed")], trailing: None }), bucket: None }])
+" brandName, x_1.observedAt[city] , \"e::q\".speed\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("e::q"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }])
 "\tmodifiedAt,\tmodifiedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "\t=modifiedAt,\tmodifiedAt\t"
@@ -1613,16 +1615,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 2"
 "\ttyp "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("typ"), sub_attributes: [], trailing: None }), bucket: None }])
-"\t\"ex:q\".observedAt.speed[en],\tmodifiedAt;dayOfWeek "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"\t\"e@:q\".observedAt.speed[en],\tmodifiedAt;dayOfWeek "
+"\t\"urn:x:(a,b)\".\"ex:q\".speed[en],\tmodifiedAt;dayOfWeek "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"\t\"u@n:x:(a,b)\".\"ex:q\".speed[en],\tmodifiedAt;dayOfWeek "
   refused Key(InvalidAttributeName(Invalid))
   variant Key/InvalidAttributeName/Invalid
   detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
-"\t\"ex:q\".obser-edAt.speed[en],\tmodifiedAt;dayOfWeek "
-  refused Key(UnexpectedCharacter { character: '-', position: 12 })
+"\t\"urn:x:(a,b)\"-\"ex:q\".speed[en],\tmodifiedAt;dayOfWeek "
+  refused Key(UnexpectedCharacter { character: '-', position: 13 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 12"
+  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 13"
 "\tcreatedAt;\thourOfDay , unitCode\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Member(UnitCode), bucket: None }])
 "\tcratedAt;\thourOfDay , unitCode\t"
@@ -1699,22 +1701,18 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\"https://example.com/q\" "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }), bucket: None }])
-"\"https://exampl\\e.com/q\" "
-  refused Key(InvalidStringEscape { escape: 'e', position: 15 })
+"\"urn:x:a;b\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [], trailing: None }), bucket: None }])
+"\"urn:x:\\a;b\" "
+  refused Key(InvalidStringEscape { escape: 'a', position: 7 })
   variant Key/InvalidStringEscape
-  detail "invalid aggrGroupBy key: q expression: invalid string escape '\\e' at position 15"
-"\"https://exam[ple.com/q\" "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://exam[ple.com/q"), sub_attributes: [], trailing: None }), bucket: None }])
-"createdAt,\tmodifiedAt;month ,\tspeed\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: None }), bucket: None }])
-"createdAt,\tmodifiedAt;month ,\ts,peed\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("s"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("peed"), sub_attributes: [], trailing: None }), bucket: None }])
-"createdAt,\tmodifiedAt;mo th ,\tspeed\t"
-  refused InvalidBucket(VariantNotFound)
-  variant InvalidBucket/VariantNotFound
-  detail "invalid aggrGroupBy bucket: Matching variant not found"
+  detail "invalid aggrGroupBy key: q expression: invalid string escape '\\a' at position 7"
+"\"urn:x:[a;b\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:[a;b"), sub_attributes: [], trailing: None }), bucket: None }])
+"createdAt,\tmodifiedAt;month ,\tbrandName\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }), bucket: None }])
+"createdAt,\tmodifiedAt;month ,\tbran,dName\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("bran"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("dName"), sub_attributes: [], trailing: None }), bucket: None }])
 "createdAt;hourOfDay ,createdAt;\tweek,\tcreatedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "createdAt;hourfDay ,createdAt;\tweek,\tcreatedAt\t"
@@ -1787,16 +1785,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '<', position: 4 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '<' at position 4"
-"\tobservedAt.observedAt, unitCode "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("observedAt")], trailing: None }), bucket: None }, GroupingTerm { key: Member(UnitCode), bucket: None }])
-"\tobservedA..observedAt, unitCode "
-  refused Key(UnexpectedCharacter { character: '.', position: 9 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '.' at position 9"
-"\to@servedAt.observedAt, unitCode "
-  refused Key(UnexpectedCharacter { character: '@', position: 1 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '@' at position 1"
+"\t\"ex:q\".\"ex:q\", unitCode "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q")], trailing: None }), bucket: None }, GroupingTerm { key: Member(UnitCode), bucket: None }])
+"\t@ex:q\".\"ex:q\", unitCode "
+  refused Key(Expected { expected: AttributeName, found: Character('@'), position: 0 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '@' at position 0"
 "\tdeletedAt;\thourOfDay, createdAt; day\t,\tmodifiedAt;day"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
 "\tdeletedAt\thourOfDay, createdAt; day\t,\tmodifiedAt;day"
@@ -1867,14 +1861,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(Day)
   variant BucketOnNonTemporalKey/Day
   detail "aggrGroupBy bucket 'day' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"observedAt;\tday\t, scope\t, observedAt.\"https://example.com/q\".\"https://example.com/q\""
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: None }), bucket: None }])
-"observedAt;\tday\t, scope\t, observedA0.\"https://example.com/q\".\"https://example.com/q\""
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedA0"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: None }), bucket: None }])
-"observedAt;\tday\t, scope\t, observ{edAt.\"https://example.com/q\".\"https://example.com/q\""
-  refused Key(UnexpectedCharacter { character: '{', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '{' at position 6"
+"observedAt;\tday\t, scope\t, \"https://example.com/q\".\"urn:x:(a,b)\".\"urn:x:(a,b)\""
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("urn:x:(a,b)")], trailing: None }), bucket: None }])
+"observedAt;\tday\t, scope\t, \"https0//example.com/q\".\"urn:x:(a,b)\".\"urn:x:(a,b)\""
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+"observedAt;\tday\t, scope\t, \"htt{ps://example.com/q\".\"urn:x:(a,b)\".\"urn:x:(a,b)\""
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " modifiedAt;\tyear,createdAt;hourOfDay,type\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Member(Type), bucket: None }])
 " modifiedAt;\tyear,create,dAt;hourOfDay,type\t"
@@ -1969,11 +1965,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tobservedAt; day ,\tdeletedAt;year , observedAt.brandName[*] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }])
-"\tobservedAt; day ,\tdeletedAt;year , observéedAt.brandName[*] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observéedAt"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }])
-"\tobs+ervedAt; day ,\tdeletedAt;year , observedAt.brandName[*] "
+"\tobservedAt; day ,\tdeletedAt;year , \"https://example.com/q\".x_1[*] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(AllLanguages) }), bucket: None }])
+"\tobservedAt; day ,\tdeletedAt;year , \"https://exéample.com/q\".x_1[*] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://exéample.com/q"), sub_attributes: [AttributeName("x_1")], trailing: Some(AllLanguages) }), bucket: None }])
+"\tobs+ervedAt; day ,\tdeletedAt;year , \"https://example.com/q\".x_1[*] "
   refused Key(UnexpectedCharacter { character: '+', position: 3 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '+' at position 3"
@@ -1997,12 +1993,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tdeletedAt;day ,\tobservedAt ,id"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Id), bucket: None }])
-"\tdeletedAt;day ,\tobserv!edAt ,id"
-  refused Key(UnexpectedCharacter { character: '!', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 6"
+"\tdeletedAt;day ,\t\"ex:q\" ,id"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Id), bucket: None }])
+"\tdeletedAt;d y ,\t\"ex:q\" ,id"
+  refused InvalidBucket(VariantNotFound)
+  variant InvalidBucket/VariantNotFound
+  detail "invalid aggrGroupBy bucket: Matching variant not found"
+"\tdeletedAt;day ,\t\"ex!:q\" ,id"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "observedAt;\thour\t,id "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Member(Id), bucket: None }])
 "observedAt;\\hour\t,id "
@@ -2021,26 +2021,22 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tdeletedAt; year , deletedAt ,\"ex:q\".x_1"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("x_1")], trailing: None }), bucket: None }])
-"\tdeletedA:t; year , deletedAt ,\"ex:q\".x_1"
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
-"\tdeletedAt; year , dele;edAt ,\"ex:q\".x_1"
+"\tdeletedAt; year , deletedAt ,\"https://example.com/a.b=c!d~e\".observedAt"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("observedAt")], trailing: None }), bucket: None }])
+"\tdeletedAt; year :, deletedAt ,\"https://example.com/a.b=c!d~e\".observedAt"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tdeletedAt; year\t,\t\"ex:q\""
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }), bucket: None }])
-"\td+eletedAt; year\t,\t\"ex:q\""
-  refused Key(UnexpectedCharacter { character: '+', position: 1 })
+"\tdeletedAt; year , deletedAt ,\"https://exa;ple.com/a.b=c!d~e\".observedAt"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://exa;ple.com/a.b=c!d~e"), sub_attributes: [AttributeName("observedAt")], trailing: None }), bucket: None }])
+"\tdeletedAt; year\t,\t\"https://example.com/a.b=c!d~e\""
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [], trailing: None }), bucket: None }])
+"\tdel+etedAt; year\t,\t\"https://example.com/a.b=c!d~e\""
+  refused Key(UnexpectedCharacter { character: '+', position: 3 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '+' at position 1"
-"\tdeletedAt; year\t,\t\"ex~:q\""
-  refused Key(InvalidAttributeName(Invalid))
-  variant Key/InvalidAttributeName/Invalid
-  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+  detail "invalid aggrGroupBy key: q expression: unexpected character '+' at position 3"
+"\tdeletedAt; year\t,\t\"https://example.com/a.b=~c!d~e\""
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=~c!d~e"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tdeletedAt\t,observedAt;hour ,\tid\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Member(Id), bucket: None }])
 "\tdeletedAt\t,observedAt;ho9r ,\tid\t"
@@ -2069,16 +2065,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(Expected { expected: AttributeName, found: Character('/'), position: 0 })
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found '/' at position 0"
-"x_1.\"ex:q\".x_1\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: None }), bucket: None }])
-"_1.\"ex:q\".x_1\t"
-  refused Key(Expected { expected: AttributeName, found: Character('_'), position: 0 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '_' at position 0"
-"x_1.\"ex:q\".x_1:\t"
-  refused Key(UnquotedColonName { position: 11 })
+"\"https://example.com/q\".\"https://example.com/a.b=c!d~e\".observedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("observedAt")], trailing: None }), bucket: None }])
+"\"htps://example.com/q\".\"https://example.com/a.b=c!d~e\".observedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("htps://example.com/q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("observedAt")], trailing: None }), bucket: None }])
+"\"https://example.com/q\".\"https://example.com/a.b=c!d~e\".obse:rvedAt\t"
+  refused Key(UnquotedColonName { position: 56 })
   variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 11 holds ':' and goes in double quotes"
+  detail "invalid aggrGroupBy key: q expression: the name at position 56 holds ':' and goes in double quotes"
 " modifiedAt; day, createdAt"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " modifiedAt; day, createAt"
@@ -2277,14 +2271,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" createdAt; monthOfYear , brandName.a.brandName"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("brandName")], trailing: None }), bucket: None }])
-" createdAt; monthOfYear , b[randName.a.brandName"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 22 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 22"
-" createdAt; monthOfYear , brandName.a.branName"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("branName")], trailing: None }), bucket: None }])
+" createdAt; monthOfYear , x_1.a.x_1"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("a"), AttributeName("x_1")], trailing: None }), bucket: None }])
+" createdAt; monthOfY[ear , x_1.a.x_1"
+  refused InvalidBucket(VariantNotFound)
+  variant InvalidBucket/VariantNotFound
+  detail "invalid aggrGroupBy bucket: Matching variant not found"
+" createdAt; monthOfYear , x_1.ax_1"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("ax_1")], trailing: None }), bucket: None }])
 " createdAt;week, observedAt;\tmonth , id"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Member(Id), bucket: None }])
 " createdAt;week, observedAt;\tmonth , i"
@@ -2305,23 +2299,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
 "\tobserveAt ,deletedAt , deletedAt;\tyear "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observeAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
-"datasetId,deletedAt,\tspeed.\"https://example.com/q\".\"https://example.com/q\" "
-  accepted AggregationGrouping([GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("https://example.com/q")], trailing: None }), bucket: None }])
-"datasetId,deletedAt,\tspeed.\"https://exampl;e.com/q\".\"https://example.com/q\" "
+"datasetId,deletedAt,\tbrandName.\"urn:x:a;b\".\"urn:x:a;b\" "
+  accepted AggregationGrouping([GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("urn:x:a;b")], trailing: None }), bucket: None }])
+"datasetId,deletedAt,\tbrandName.;\"urn:x:a;b\".\"urn:x:a;b\" "
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"datasetId,delete;At,\tspeed.\"https://example.com/q\".\"https://example.com/q\" "
+"datasetId,d;letedAt,\tbrandName.\"urn:x:a;b\".\"urn:x:a;b\" "
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" brandName[city]\t,\tdeletedAt;\tmonthOfYear , observedAt;week"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
-" brandName[city]\t,\tdeletedAt;\tmonthOfYear , obser!vedAt;week"
-  refused Key(UnexpectedCharacter { character: '!', position: 5 })
+" x_1[city]\t,\tdeletedAt;\tmonthOfYear , observedAt;week"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
+" x_1[city]\t,\tdeletedAt;\tmonthOfYear , observ!edAt;week"
+  refused Key(UnexpectedCharacter { character: '!', position: 6 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 5"
-" brandName[city]\t,\tdeletedAt;\tmon9thOfYear , observedAt;week"
+  detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 6"
+" x_1[city]\t,\tdeletedAt;\tmonthO9fYear , observedAt;week"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
@@ -2343,22 +2337,24 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: ']', position: 2 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 2"
-" \"ex:q\".speed[*]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }])
-" \"ex:q\".s|peed[*]\t"
-  refused Key(UnexpectedCharacter { character: '|', position: 8 })
+" \"urn:x:(a,b)\".speed[*]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }])
+" \"urn:x:(a,b)|\".speed[*]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)|"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }])
+" \"urn:x:(a,b)\".sp\"ed[*]\t"
+  refused Key(UnexpectedCharacter { character: '"', position: 16 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '|' at position 8"
-" \"ex:q\".spee\"[*]\t"
-  refused Key(UnexpectedCharacter { character: '"', position: 11 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 11"
-" \"ex:q\".a.\"https://example.com/q\"[*]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-" \"ex:=\".a.\"https://example.com/q\"[*]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:="), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
-" \"ex:a\".a.\"https://example.com/q\"[*]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:a"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }), bucket: None }])
+  detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 16"
+" \"https://example.com/a.b=c!d~e\".a.\"urn:x:a;b\"[*]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("a"), AttributeName("urn:x:a;b")], trailing: Some(AllLanguages) }), bucket: None }])
+" \"https=//example.com/a.b=c!d~e\".a.\"urn:x:a;b\"[*]"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
+" \"httpsa//example.com/a.b=c!d~e\".a.\"urn:x:a;b\"[*]"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " unitCode ,modifiedAt;\tday"
   accepted AggregationGrouping([GroupingTerm { key: Member(UnitCode), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
 " untCode ,modifiedAt;\tday"
@@ -2377,13 +2373,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tbrandName[*]\t,observedAt\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
-"\tbrandName[*];\t,observedAt\t"
+"\tobservedAt[*]\t,observedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+"\tobservedAt[*;]\t,observedAt\t"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tbr#ndName[*]\t,observedAt\t"
+"\tob#ervedAt[*]\t,observedAt\t"
   refused Key(UnexpectedCharacter { character: '#', position: 2 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 2"
@@ -2417,12 +2413,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(Expected { expected: AttributeName, found: Character('-'), position: 0 })
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found '-' at position 0"
-"\t\"https://example.com/q\".a.a[city.city],\ta.speed,\tmodifiedAt;dayOfWeek\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"\t\"https://example.om/q\".a.a[city.city],\ta.speed,\tmodifiedAt;dayOfWeek\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.om/q"), sub_attributes: [AttributeName("a"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"\t\"https://e|ample.com/q\".a.a[city.city],\ta.speed,\tmodifiedAt;dayOfWeek\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://e|ample.com/q"), sub_attributes: [AttributeName("a"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"\t\"urn:x:a;b\".speed.speed[city.city],\ta.brandName,\tmodifiedAt;dayOfWeek\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("speed"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"\t\"urn:x:a;b\".speedspeed[city.city],\ta.brandName,\tmodifiedAt;dayOfWeek\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("speedspeed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"\t\"urn:x:a;b|.speed.speed[city.city],\ta.brandName,\tmodifiedAt;dayOfWeek\t"
+  refused Key(UnterminatedString)
+  variant Key/UnterminatedString
+  detail "invalid aggrGroupBy key: q expression: unterminated string literal"
 " modifiedAt, deletedAt; month,modifiedAt;year\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
 " modifiedAt, deletedAt; month,modifiedAt;year+\t"
@@ -2447,16 +2445,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tobservedAt;\tdayOfWeek\t,modifiedAt;year\t,x_1[zip]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }])
-"\tobservedAt;\tdayOfWeek\t,modifiedAt;year\t,x_1[zi]p]\t"
-  refused Key(UnexpectedCharacter { character: 'p', position: 7 })
+"\tobservedAt;\tdayOfWeek\t,modifiedAt;year\t,observedAt[zip]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }])
+"\tobservedAt;\tdayOfWeek\t,modifiedAt;year\t,observedAt[zi]p]\t"
+  refused Key(UnexpectedCharacter { character: 'p', position: 14 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character 'p' at position 7"
-"\tobservedAt;\tdayOfWeek\t,modifiedAt;year\t,x_1[zip(]\t"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: Character('('), position: 7 })
+  detail "invalid aggrGroupBy key: q expression: unexpected character 'p' at position 14"
+"\tobservedAt;\tdayOfWeek\t,modifiedAt;year\t,observedAt[zip(]\t"
+  refused Key(Expected { expected: Punctuation(CloseBracket), found: Character('('), position: 14 })
   variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found '(' at position 7"
+  detail "invalid aggrGroupBy key: q expression: expected ], found '(' at position 14"
 " deletedAt;\thour, deletedAt;day , createdAt"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " deletedAt;\thour, deletedAt;day ,; createdAt"
@@ -2519,16 +2517,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: 'r', position: 5 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character 'r' at position 5"
-" modifiedAt;month ,\ta.observedAt.observedAt "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: None }), bucket: None }])
-" modifiedAt;month ,\ta.observedA~t.observedAt "
-  refused Key(UnexpectedCharacter { character: '~', position: 11 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '~' at position 11"
-" modifiedAt;mnth ,\ta.observedAt.observedAt "
-  refused InvalidBucket(VariantNotFound)
-  variant InvalidBucket/VariantNotFound
-  detail "invalid aggrGroupBy bucket: Matching variant not found"
+" modifiedAt;month ,\ta.\"ex:q\".\"ex:q\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("ex:q")], trailing: None }), bucket: None }])
+" modifiedAt;month ,\ta.\"ex:~q\".\"ex:q\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:~q"), AttributeName("ex:q")], trailing: None }), bucket: None }])
+" modifiedAtmonth ,\ta.\"ex:q\".\"ex:q\" "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAtmonth"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("ex:q")], trailing: None }), bucket: None }])
 "\tcreatedAt; monthOfYear\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
 "createdAt; monthOfYear\t"
@@ -2575,26 +2569,22 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"createdAt;\tweek\t,\t\"https://example.com/q\"[*], createdAt; hourOfDay\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
-"createdAt;\tweek\t,\t\"https://example.com/q\",[*], createdAt; hourOfDay\t"
-  refused Key(Expected { expected: AttributeName, found: Character('['), position: 0 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '[' at position 0"
-"createdAt;\tweek\t,\t\"https://example.com/q\"[*], cre;tedAt; hourOfDay\t"
+"createdAt;\tweek\t,\t\"urn:x:(a,b)\"[*], createdAt; hourOfDay\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
+"createdAt;\tweek\t,\t\"urn:x:(a,b)\"[*],, createdAt; hourOfDay\t"
+  refused EmptyTerm
+  variant EmptyTerm
+  detail "aggrGroupBy has an empty grouping term"
+"createdAt;\tweek\t,\t\"urn:x:(a,b)\"[*], create;At; hourOfDay\t"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" \"https://example.com/q\".\"https://example.com/q\"[en] , observedAt\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
-" \"https://example.com/q\".a\"https://example.com/q\"[en] , observedAt\t"
-  refused Key(UnexpectedCharacter { character: '"', position: 25 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 25"
-" \"https://example.com/q\".\"https://example.com/q\"[en , observedAt\t"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 50 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 50"
+" \"urn:x:(a,b)\".\"urn:x:a;b\"[en] , observedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:a;b")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" \"urn:x:(a,b)\".\"aurn:x:a;b\"[en] , observedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("aurn:x:a;b")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" \"urn:x:(a,b)\".\"urn:x:a;b\"[en] , oservedAt\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:a;b")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("oservedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "deletedAt;week\t,\tobservedAt;month\t,\tcreatedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "deletedAt;week\t,\tobservedAt;month:,\tcreatedAt\t"
@@ -2625,16 +2615,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '!', position: 1 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '!' at position 1"
-" observedAt,\"https://example.com/q\".x_1.brandName ,\tx_1[en.zip]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("x_1"), AttributeName("brandName")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("zip")], written: [AttributeName("en"), AttributeName("zip")] })) }), bucket: None }])
-" observedAt,\"https://example.com/q\".x_1.brandName ,\tx_1[en.zip.]"
-  refused Key(Expected { expected: AttributeName, found: Character(']'), position: 11 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found ']' at position 11"
-" observedA|,\"https://example.com/q\".x_1.brandName ,\tx_1[en.zip]"
-  refused Key(UnexpectedCharacter { character: '|', position: 9 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '|' at position 9"
+" observedAt,\"urn:x:a;b\".\"https://example.com/q\".observedAt ,\t\"https://example.com/q\"[en.zip]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("observedAt")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("zip")], written: [AttributeName("en"), AttributeName("zip")] })) }), bucket: None }])
+" observedAt,\"urn:x:a;b\".\"https://example.com/q\".observedAt ,\t\"https://example.com/q\"[en.zi.p]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("observedAt")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("zi"), AttributeName("p")], written: [AttributeName("en"), AttributeName("zi"), AttributeName("p")] })) }), bucket: None }])
+" observedAt,\"u|n:x:a;b\".\"https://example.com/q\".observedAt ,\t\"https://example.com/q\"[en.zip]"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " observedAt; hourOfDay "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
 " ob9servedAt; hourOfDay "
@@ -2645,16 +2633,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 0 })
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 0"
-"\tx_1.speed"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }])
-"\t]x_1.speed"
-  refused Key(Expected { expected: AttributeName, found: Character(']'), position: 0 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found ']' at position 0"
-"\t_1.speed"
-  refused Key(Expected { expected: AttributeName, found: Character('_'), position: 0 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '_' at position 0"
+"\tobservedAt.speed"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }])
+"\to]bservedAt.speed"
+  refused Key(UnexpectedCharacter { character: ']', position: 1 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 1"
+"\tobervedAt.speed"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("obervedAt"), sub_attributes: [AttributeName("speed")], trailing: None }), bucket: None }])
 " modifiedAt "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " modifedAt "
@@ -2699,14 +2685,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 0 })
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 0"
-"\t\"ex:q\".observedAt.brandName[*]\t,\tdeletedAt;\tday"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt"), AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
-"\t\"ex:q\".observedAt.brandName-[*]\t,\tdeletedAt;\tday"
-  refused Key(UnexpectedCharacter { character: '-', position: 27 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 27"
-"\t\"ex:\".observedAt.brandName[*]\t,\tdeletedAt;\tday"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:"), sub_attributes: [AttributeName("observedAt"), AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
+"\t\"urn:x:(a,b)\".\"ex:q\".x_1[*]\t,\tdeletedAt;\tday"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
+"\t\"urn:x:(a,b)\".\"ex:q\".x_1[-*]\t,\tdeletedAt;\tday"
+  refused Key(Expected { expected: AttributeName, found: Character('-'), position: 25 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '-' at position 25"
+"\t\"ur:x:(a,b)\".\"ex:q\".x_1[*]\t,\tdeletedAt;\tday"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ur:x:(a,b)"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
 "id\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(Id), bucket: None }])
 "id~"
@@ -2717,13 +2703,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnquotedColonName { position: 0 })
   variant Key/UnquotedColonName
   detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
-"\tmodifiedAt;\tdayOfWeek\t, brandName[en.city] ,speed.speed.speed[b] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("speed"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
-"\tmodifiedAt;\tdayOfWeek\t, brandName[en.city] *speed.speed.speed[b] "
-  refused Key(UnexpectedCharacter { character: '*', position: 19 })
+"\tmodifiedAt;\tdayOfWeek\t, x_1[en.city] ,speed.brandName.speed[b] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
+"\tmodifiedAt;\tdayOfWeek\t, x_1[en.city] ,spee*.brandName.speed[b] "
+  refused Key(UnexpectedCharacter { character: '*', position: 4 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '*' at position 19"
-"\tmodifiedAt;\tdayOfWee;k\t, brandName[en.city] ,speed.speed.speed[b] "
+  detail "invalid aggrGroupBy key: q expression: unexpected character '*' at position 4"
+"\tmodifiedAt;\tdayOfWe;ek\t, x_1[en.city] ,speed.brandName.speed[b] "
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
@@ -2745,16 +2731,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tbrandName[*] ,createdAt; dayOfWeek"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
-"\tbrandName[*| ,createdAt; dayOfWeek"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: Character('|'), position: 11 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found '|' at position 11"
-"\tbrandName[*] }createdAt; dayOfWeek"
-  refused Key(UnexpectedCharacter { character: '}', position: 13 })
+"\tx_1[*] ,createdAt; dayOfWeek"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
+"\tx_1[*] ,c|eatedAt; dayOfWeek"
+  refused Key(UnexpectedCharacter { character: '|', position: 1 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '}' at position 13"
+  detail "invalid aggrGroupBy key: q expression: unexpected character '|' at position 1"
+"\tx_1[*] ,cre}tedAt; dayOfWeek"
+  refused Key(UnexpectedCharacter { character: '}', position: 3 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character '}' at position 3"
 " createdAt, modifiedAt;\tweek"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
 " createdAt, odifiedAt;\tweek"
@@ -2765,14 +2751,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: ']', position: 7 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 7"
-" modifiedAt; week\t,brandName.observedAt"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("observedAt")], trailing: None }), bucket: None }])
-" modifiedAt; week\t,,brandName.observedAt"
-  refused EmptyTerm
-  variant EmptyTerm
-  detail "aggrGroupBy has an empty grouping term"
-" modifiedAt; week\t,brandName.obse.vedAt"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("obse"), AttributeName("vedAt")], trailing: None }), bucket: None }])
+" modifiedAt; week\t,observedAt.\"https://example.com/q\""
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://example.com/q")], trailing: None }), bucket: None }])
+" modifiedAt; week\t,observe,dAt.\"https://example.com/q\""
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observe"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("dAt"), sub_attributes: [AttributeName("https://example.com/q")], trailing: None }), bucket: None }])
 "\tunitCode "
   accepted AggregationGrouping([GroupingTerm { key: Member(UnitCode), bucket: None }])
 "\tuniCode "
@@ -2827,14 +2809,16 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: '"', position: 10 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 10"
-" observedAt[zip], observedAt;week\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
-" observedAt[zéip], observedAt;week\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zéip")], written: [AttributeName("zéip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
-" observedAt[zip], observed+At;week\t"
-  refused Key(UnexpectedCharacter { character: '+', position: 8 })
+" \"ex:q\"[zip], observedAt;week\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
+" \"ex:q\"[zip]é, observedAt;week\t"
+  refused Key(UnexpectedCharacter { character: 'é', position: 11 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '+' at position 8"
+  detail "invalid aggrGroupBy key: q expression: unexpected character 'é' at position 11"
+" \"ex:q\"[zip], observedA+t;week\t"
+  refused Key(UnexpectedCharacter { character: '+', position: 9 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character '+' at position 9"
 "createdAt;week,\tmodifiedAt"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "createdAt;week,\tmodi.iedAt"
@@ -2879,16 +2863,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-" a.brandName.a[b.b] , modifiedAt\t,\tunitCode"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(UnitCode), bucket: None }])
-" a.brandName.a[b.b , modifiedAt\t,\tunitCode"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 17 })
+" a.x_1.speed[b.b] , modifiedAt\t,\tunitCode"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(UnitCode), bucket: None }])
+" a.x_1.speed[b.b], modifiedAt\t,\tunitCode"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("x_1"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(UnitCode), bucket: None }])
+" a.x_1.speed[b*.b] , modifiedAt\t,\tunitCode"
+  refused Key(Expected { expected: Punctuation(CloseBracket), found: Character('*'), position: 13 })
   variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 17"
-" a.brandName.a[*b.b] , modifiedAt\t,\tunitCode"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: Character('b'), position: 15 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found 'b' at position 15"
+  detail "invalid aggrGroupBy key: q expression: expected ], found '*' at position 13"
 " deletedAt;week"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
 " deletedAt;w#ek"
@@ -2935,24 +2917,22 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: ')', position: 9 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character ')' at position 9"
-" \"ex:q\".brandName[city.city],\tcreatedAt; hourOfDay,\tid"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Member(Id), bucket: None }])
-" \"ex:q\".brandName[city.city],\tcreatedAt; ho\turOfDay,\tid"
-  refused InvalidBucket(VariantNotFound)
-  variant InvalidBucket/VariantNotFound
-  detail "invalid aggrGroupBy bucket: Matching variant not found"
-" \"ex:q\".brandName[city,.city],\tcreatedAt; hourOfDay,\tid"
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 21 })
+" \"https://example.com/a.b=c!d~e\".brandName[city.city],\tcreatedAt; hourOfDay,\tid"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }, GroupingTerm { key: Member(Id), bucket: None }])
+" \"https://example.com/a.b=c!d~e\".brandName[city.city],\tcreated\tAt; hourOfDay,\tid"
+  refused Key(UnexpectedCharacter { character: 'A', position: 8 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character 'A' at position 8"
+" \"https://example.com/a.b=c!d~e\",.brandName[city.city],\tcreatedAt; hourOfDay,\tid"
+  refused Key(Expected { expected: AttributeName, found: Character('.'), position: 0 })
   variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 21"
-"type ,\"ex:q\".speed[zip.en]\t, speed.a.\"ex:q\"[b]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
-"type ,\"ex:q\".speed[zip.en]\t, sped.a.\"ex:q\"[b]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("sped"), sub_attributes: [AttributeName("a"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
-"type ,\"ex:q\".speed[zip.0n]\t, speed.a.\"ex:q\"[b]\t"
-  refused Key(Expected { expected: AttributeName, found: Character('0'), position: 17 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '0' at position 17"
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '.' at position 0"
+"type ,\"urn:x:(a,b)\".brandName[zip.en]\t, brandName.a.\"https://example.com/a.b=c!d~e\"[b]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
+"type ,\"urn:x:(a,b)\".brandName[zip.en]\t, brandName.a.\"https:/example.com/a.b=c!d~e\"[b]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a"), AttributeName("https:/example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
+"type ,\"urn:x:(a,b)\".brandName[zip.en]\t, bra0dName.a.\"https://example.com/a.b=c!d~e\"[b]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("bra0dName"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
 " deletedAt;month ,\tcreatedAt;\tmonthOfYear , modifiedAt; month\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
 " deletedAt;month ,\tcre+atedAt;\tmonthOfYear , modifiedAt; month\t"
@@ -3057,14 +3037,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: 'w', position: 11 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character 'w' at position 11"
-" \"ex:q\".brandName.\"https://example.com/q\"\t,type , modifiedAt;\tmonthOfYear"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
-" \"ex:q\".brandName.\"https://example.com/q\"=,type , modifiedAt;\tmonthOfYear"
-  refused Key(UnexpectedCharacter { character: '=', position: 40 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '=' at position 40"
-" \"ex:q\".brandName.\"https://exaple.com/q\"\t,type , modifiedAt;\tmonthOfYear"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName"), AttributeName("https://exaple.com/q")], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
+" \"https://example.com/a.b=c!d~e\".x_1.\"urn:x:a;b\"\t,type , modifiedAt;\tmonthOfYear"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:a;b")], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
+" \"https://example.com/a.b=c!d~e\".x_1.\"urn:x:a;=\"\t,type , modifiedAt;\tmonthOfYear"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:a;=")], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }])
+" \"https://example.com/a.b=c!d~e\"._1.\"urn:x:a;b\"\t,type , modifiedAt;\tmonthOfYear"
+  refused Key(Expected { expected: AttributeName, found: Character('_'), position: 32 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '_' at position 32"
 "\tmodifiedAt;month,modifiedAt,deletedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tmodifiedAt;onth,modifiedAt,deletedAt\t"
@@ -3075,14 +3055,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(Month)
   variant BucketOnNonTemporalKey/Month
   detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"modifiedAt; year ,\tspeed.a[en]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }])
-"modifiedA; year ,\tspeed.a[en]"
-  refused BucketOnNonTemporalKey(Year)
-  variant BucketOnNonTemporalKey/Year
-  detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"modifiedAt; year,\tspeed.a[en]"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }])
+"modifiedAt; year ,\tbrandName.a[en]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }])
+"modifiedAt year ,\tbrandName.a[en]"
+  refused Key(UnexpectedCharacter { character: 'y', position: 11 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character 'y' at position 11"
+"modifiedAt; year ,brandName.a[en]"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }), bucket: None }])
 "\tdeletedAt;\tday\t, deletedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tdelZtedAt;\tday\t, deletedAt\t"
@@ -3103,31 +3083,31 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"modifiedAt;dayOfWeek\t, observedAt;hour ,\ta.a[*] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a")], trailing: Some(AllLanguages) }), bucket: None }])
-"modifiedAt;dayOfWeek\t, observedAt;hour #,\ta.a[*] "
-  refused InvalidBucket(VariantNotFound)
-  variant InvalidBucket/VariantNotFound
-  detail "invalid aggrGroupBy bucket: Matching variant not found"
-"modified}t;dayOfWeek\t, observedAt;hour ,\ta.a[*] "
+"modifiedAt;dayOfWeek\t, observedAt;hour ,\ta.speed[*] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }])
+"modifiedAt;dayOfWeek\t, observedAt;hour ,\ta.#speed[*] "
+  refused Key(Expected { expected: AttributeName, found: Character('#'), position: 2 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '#' at position 2"
+"modified}t;dayOfWeek\t, observedAt;hour ,\ta.speed[*] "
   refused Key(UnexpectedCharacter { character: '}', position: 8 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '}' at position 8"
-"\tscope, x_1[city.zip]"
-  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("zip")], written: [AttributeName("city"), AttributeName("zip")] })) }), bucket: None }])
-"\tscope, x_[city.zip]"
-  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("zip")], written: [AttributeName("city"), AttributeName("zip")] })) }), bucket: None }])
-"\tscope, x_1[city:zip]"
-  refused Key(UnquotedColonName { position: 4 })
+"\tscope, observedAt[city.zip]"
+  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("zip")], written: [AttributeName("city"), AttributeName("zip")] })) }), bucket: None }])
+"\tscope, obseredAt[city.zip]"
+  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("obseredAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("zip")], written: [AttributeName("city"), AttributeName("zip")] })) }), bucket: None }])
+"\tscope, observedAt[ci:y.zip]"
+  refused Key(UnquotedColonName { position: 11 })
   variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 4 holds ':' and goes in double quotes"
-"modifiedAt;\tweek ,\t\"ex:q\".observedAt.brandName "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt"), AttributeName("brandName")], trailing: None }), bucket: None }])
-"modifiedA;\tweek ,\t\"ex:q\".observedAt.brandName "
-  refused BucketOnNonTemporalKey(Week)
-  variant BucketOnNonTemporalKey/Week
-  detail "aggrGroupBy bucket 'week' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"mod0ifiedAt;\tweek ,\t\"ex:q\".observedAt.brandName "
+  detail "invalid aggrGroupBy key: q expression: the name at position 11 holds ':' and goes in double quotes"
+"modifiedAt;\tweek ,\t\"https://example.com/a.b=c!d~e\".\"ex:q\".x_1 "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: None }), bucket: None }])
+"modifiedAt;\teek ,\t\"https://example.com/a.b=c!d~e\".\"ex:q\".x_1 "
+  refused InvalidBucket(VariantNotFound)
+  variant InvalidBucket/VariantNotFound
+  detail "invalid aggrGroupBy bucket: Matching variant not found"
+"modif0iedAt;\tweek ,\t\"https://example.com/a.b=c!d~e\".\"ex:q\".x_1 "
   refused BucketOnNonTemporalKey(Week)
   variant BucketOnNonTemporalKey/Week
   detail "aggrGroupBy bucket 'week' is on a key that is not a temporal property: a bucket applies only to a temporal property"
@@ -3239,26 +3219,24 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused Key(UnexpectedCharacter { character: ']', position: 4 })
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 4"
-"createdAt; day,\tobservedAt;\tweek,speed[*] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }])
-"cratedAt; day,\tobservedAt;\tweek,speed[*] "
+"createdAt; day,\tobservedAt;\tweek,brandName[*] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(AllLanguages) }), bucket: None }])
+"cretedAt; day,\tobservedAt;\tweek,brandName[*] "
   refused BucketOnNonTemporalKey(Day)
   variant BucketOnNonTemporalKey/Day
   detail "aggrGroupBy bucket 'day' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"createdAt; day,\tobservedAt;\tweek,speed[\"*] "
-  refused Key(UnterminatedString)
-  variant Key/UnterminatedString
-  detail "invalid aggrGroupBy key: q expression: unterminated string literal"
-" brandName.\"ex:q\"[en.city]\t,\tmodifiedAt ,\tobservedAt "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
-" brandName.\"ex:q\"[en.0ity]\t,\tmodifiedAt ,\tobservedAt "
-  refused Key(Expected { expected: AttributeName, found: Character('0'), position: 20 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '0' at position 20"
-" brandName.\"ex:q\"[en.city]\t,\tmodifiedAt %\tobservedAt "
-  refused Key(UnexpectedCharacter { character: '%', position: 11 })
+"createdAt; day,\tobservedAt;\tweek,brandName\"[*] "
+  refused Key(UnexpectedCharacter { character: '"', position: 9 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '%' at position 11"
+  detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 9"
+" x_1.\"https://example.com/a.b=c!d~e\"[en.city]\t,\tmodifiedAt ,\tobservedAt "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" x_1.\"https://example.com/a.b0c!d~e\"[en.city]\t,\tmodifiedAt ,\tobservedAt "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("https://example.com/a.b0c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }])
+" x_1.\"https://example.com/a.b=c!d~e\"[en.city]\t,\tmodifi%dAt ,\tobservedAt "
+  refused Key(UnexpectedCharacter { character: '%', position: 6 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character '%' at position 6"
 "deletedAt;hourOfDay\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
 "deletedAt;hourO(Day\t"
@@ -3339,19 +3317,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\tobservedAt\t,modifiedAt;\tmonth\t, speed.brandName.brandName[city.b]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }])
-"\tobservedAt\t,modifiedAt;\tmonth\t, speed.brandame.brandName[city.b]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandame"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }])
-"\toZservedAt\t,modifiedAt;\tmonth\t, speed.brandName.brandName[city.b]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("oZservedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }])
-" observedAt\t,\tx_1.x_1\t,modifiedAt; week "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("x_1")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
-" observe@dAt\t,\tx_1.x_1\t,modifiedAt; week "
-  refused Key(UnexpectedCharacter { character: '@', position: 7 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '@' at position 7"
-" observedAt\t,\tx_1.x_1\t,modifiedAt; week 0"
+"\tobservedAt\t,modifiedAt;\tmonth\t, brandName.x_1.x_1[city.b]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }])
+"\tobservedAt\t,modifiedAt;\tmonth\t, brandNme.x_1.x_1[city.b]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandNme"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }])
+"\toZservedAt\t,modifiedAt;\tmonth\t, brandName.x_1.x_1[city.b]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("oZservedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("x_1"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("b")], written: [AttributeName("city"), AttributeName("b")] })) }), bucket: None }])
+" observedAt\t,\t\"https://example.com/q\".observedAt\t,modifiedAt; week "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("observedAt")], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
+" observedAt\t,@\t\"https://example.com/q\".observedAt\t,modifiedAt; week "
+  refused Key(Expected { expected: AttributeName, found: Character('@'), position: 0 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '@' at position 0"
+" observedAt\t,\t\"https://example.com/q\".observedAt\t,modifiedAt; week 0"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
@@ -3365,40 +3343,38 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   refused BucketOnNonTemporalKey(Month)
   variant BucketOnNonTemporalKey/Month
   detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-"\"https://example.com/q\".\"https://example.com/q\".a[*],\ta.brandName[*]\t, createdAt; day "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("a")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
-"\"https://example.com/q\".\"https://example.com/q\".a[*],\ta.brandName[*]\t, createdAt;(day "
+"\"urn:x:a;b\".\"urn:x:a;b\".speed[*],\ta.observedAt[*]\t, createdAt; day "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("speed")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observedAt")], trailing: Some(AllLanguages) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
+"\"urn:x:a;b\".\"urn:x:a;b\".speed[*],\ta.observedAt[*]\t, createdAt; (ay "
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
-"\"https://example.com/q\".\"https://example.com/q\".a[*],\ta.brandName[*]\t, crea]tedAt; day "
-  refused Key(UnexpectedCharacter { character: ']', position: 4 })
+"\"urn:x:a;b\".\"urn:x:a;b\".speed[*],\ta.observedAt[*]\t, create]dAt; day "
+  refused Key(UnexpectedCharacter { character: ']', position: 6 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 4"
-" observedAt\t,deletedAt,type"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }])
-"a observedAt\t,deletedAt,type"
-  refused Key(UnexpectedCharacter { character: 'o', position: 2 })
+  detail "invalid aggrGroupBy key: q expression: unexpected character ']' at position 6"
+" \"https://example.com/q\"\t,deletedAt,type"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }])
+" a\"https://example.com/q\"\t,deletedAt,type"
+  refused Key(UnexpectedCharacter { character: '"', position: 1 })
   variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character 'o' at position 2"
-" modifiedAt;year , datasetId,a.\"ex:q\"[city]\t"
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }])
-" modifiedA;year , datasetId,a.\"ex:q\"[city]\t"
-  refused BucketOnNonTemporalKey(Year)
-  variant BucketOnNonTemporalKey/Year
-  detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
-" modifiedAt;year , datasetId,.\"ex:q\"[city]\t"
-  refused Key(Expected { expected: AttributeName, found: Character('.'), position: 0 })
+  detail "invalid aggrGroupBy key: q expression: unexpected character '\"' at position 1"
+" \"https://example.com/q\"\t,deleted,t,type"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deleted"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("t"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }])
+" modifiedAt;year , datasetId,a.\"https://example.com/a.b=c!d~e\"[city]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }])
+" modifiedAt;year, datasetId,a.\"https://example.com/a.b=c!d~e\"[city]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }])
+" modifiedAt;year , datasetId,a.\"https://exampe.com/a.b=c!d~e\"[city]\t"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://exampe.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }), bucket: None }])
+"\t\"https://example.com/q\".brandName[city.city] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }])
+"\t\"https://example.com/q\".brandName[city,.city] "
+  refused Key(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 38 })
   variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected attribute name, found '.' at position 0"
-"\tx_1.brandName[city.city] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }])
-"\tx_1.brandName[city.ci,ty] "
-  refused Key(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 21 })
-  variant Key/Expected
-  detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 21"
-"\tx_1.brandName[ciy.city] "
-  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("ciy"), AttributeName("city")], written: [AttributeName("ciy"), AttributeName("city")] })) }), bucket: None }])
+  detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 38"
+"\t\"https://example.com/q\".brandNme[city.city] "
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("brandNme")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }), bucket: None }])
 "\tobservedAt;\tyear ,\tdatasetId ,observedAt;\tweek "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
 "\tobservedAt;\tyear ,\tdatasetId ,observedAt;\tw]ek "
@@ -3807,6 +3783,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid aggrGroupBy key: q expression: unexpected character '{' at position 11"
 "observedAt.observedAt"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("observedAt")], trailing: None }), bucket: None }])
+"observedAt.a"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a")], trailing: None }), bucket: None }])
 "observedAt.."
   refused Key(UnexpectedCharacter { character: '.', position: 10 })
   variant Key/UnexpectedCharacter
@@ -3827,6 +3805,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("month")], trailing: None }), bucket: None }])
 "observedAt.id"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("id")], trailing: None }), bucket: None }])
+"observedAt. "
+  refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 11 })
+  variant Key/Expected
+  detail "invalid aggrGroupBy key: q expression: expected attribute name, found end of input at position 11"
 "observedAt.{"
   refused Key(Expected { expected: AttributeName, found: Character('{'), position: 11 })
   variant Key/Expected

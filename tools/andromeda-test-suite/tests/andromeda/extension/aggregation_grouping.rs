@@ -7,3 +7,4 @@ mod a_ext_agg_0004;
 mod a_ext_agg_0005;
 mod a_ext_agg_0006;
 mod a_ext_agg_0007;
+mod a_ext_agg_0008;

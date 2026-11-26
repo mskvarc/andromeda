@@ -177,6 +177,15 @@ mod tests {
         }
     }
 
+    /// A quoted IRI holding a comma or a semicolon is one term of the GET binding's list, ordered by that IRI.
+    #[test]
+    fn a_comma_or_a_semicolon_inside_a_quoted_name_stays_in_its_term() {
+        let ordering: OrderingParameters =
+            serde_json::from_value(serde_json::json!({ "orderBy": r#""urn:x:(a,b)";desc, "urn:x:a;b""# })).expect("valid ordering");
+        let terms: Vec<(&str, OrderingDirection)> = ordering.order_by.iter().map(|term| (term.path.attribute.as_str(), term.direction)).collect();
+        pretty_assertions::assert_eq!(terms, [("urn:x:(a,b)", OrderingDirection::Desc), ("urn:x:a;b", OrderingDirection::Asc)]);
+    }
+
     #[test]
     fn a_value_ordering_needs_no_reference_geometry() {
         let ordering: OrderingParameters = serde_json::from_value(serde_json::json!({ "orderBy": "name;desc,location" })).expect("valid ordering");

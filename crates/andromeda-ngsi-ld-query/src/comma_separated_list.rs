@@ -5,8 +5,12 @@
 //! string in a query string or a query body member. Every reader splits such a
 //! list here: each member is trimmed of the whitespace around it, and an empty
 //! member is malformed input whatever the list enumerates, so the splitting
-//! rule and its refusal are one concept shared by every reader.
+//! rule and its refusal are one concept shared by every reader. A comma inside
+//! a JSON string separates nothing, since an ordering term names an attribute
+//! no `AttrName` spells as a `quotedStr` whose value may hold one; no member
+//! of the other lists holds a quotation mark.
 
+use crate::query_text::unquoted_delimiter::split_unquoted;
 use std::{error::Error as StdError, str::FromStr};
 use strum::Display;
 use thiserror::Error;
@@ -57,15 +61,16 @@ pub enum ListedMemberError<E: StdError + 'static> {
     Invalid(E),
 }
 
-/// The members of the comma-separated list `raw` enumerating `kind`, each
-/// trimmed of the whitespace around it.
+/// The members of the comma-separated list `raw` enumerating `kind`, split at
+/// each comma outside a JSON string and trimmed of the whitespace around
+/// them.
 ///
 /// # Errors
 ///
 /// Yields [`CommaSeparatedListError::EmptyMember`] in place of every empty
 /// member.
 pub fn listed_members(raw: &str, kind: ListedMemberKind) -> impl Iterator<Item = Result<&str, CommaSeparatedListError>> {
-    raw.split(',').map(str::trim).map(move |member| match member {
+    split_unquoted(raw, ',').map(str::trim).map(move |member| match member {
         "" => Err(CommaSeparatedListError::EmptyMember { kind }),
         member => Ok(member),
     })
@@ -117,6 +122,12 @@ mod tests {
                 "{raw:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_comma_inside_a_quoted_name_separates_no_members() {
+        let members = listed_members(r#""urn:x:(a,b)";desc, name"#, ListedMemberKind::OrderingTerm).collect::<Result<Vec<_>, _>>();
+        pretty_assertions::assert_eq!(members, Ok(vec![r#""urn:x:(a,b)";desc"#, "name"]));
     }
 
     #[test]

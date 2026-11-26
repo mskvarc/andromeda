@@ -2,6 +2,7 @@
 
 use crate::{
     name_stage::{NameStage, Written},
+    query_text::unquoted_delimiter::split_unquoted,
     temporal::grouping::{grouping_error::GroupingError, grouping_term::GroupingTerm},
 };
 use std::str::FromStr;
@@ -23,8 +24,9 @@ impl FromStr for AggregationGrouping<Written> {
 
     /// Parse a whole `aggrGroupBy` value.
     ///
-    /// Splits on `,` into terms (outermost first), then each term on `;` into
-    /// a key and an optional bucket.
+    /// Splits at each `,` outside a quoted name into terms (outermost first),
+    /// then each term at its first `;` outside one into a key and an optional
+    /// bucket, so a mark a quoted IRI holds stays in the key.
     ///
     /// # Errors
     ///
@@ -36,7 +38,9 @@ impl FromStr for AggregationGrouping<Written> {
         if raw.is_empty() {
             return Err(GroupingError::Empty);
         }
-        let terms = raw.split(',').map(str::parse::<GroupingTerm<Written>>).collect::<Result<Vec<_>, _>>()?;
+        let terms = split_unquoted(raw, ',')
+            .map(str::parse::<GroupingTerm<Written>>)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(AggregationGrouping(terms))
     }
 }
@@ -79,6 +83,16 @@ mod tests {
         assert_eq!(grouping.terms().len(), 2);
         assert!(matches!(&grouping.terms()[0].key, GroupKey::Path(path) if path.attribute.as_str() == "zone"));
         assert!(matches!(&grouping.terms()[1].key, GroupKey::Path(path) if path.attribute.as_str() == "vehicleType"));
+    }
+
+    #[test]
+    fn a_comma_or_a_semicolon_inside_a_quoted_name_stays_in_the_key() {
+        let grouping = parse(r#""urn:x:(a,b)", "urn:x:a;b",observedAt;month"#);
+        assert_eq!(grouping.terms().len(), 3);
+        assert!(matches!(&grouping.terms()[0].key, GroupKey::Path(path) if path.attribute.as_str() == "urn:x:(a,b)"));
+        assert!(matches!(&grouping.terms()[1].key, GroupKey::Path(path) if path.attribute.as_str() == "urn:x:a;b"));
+        assert_eq!(grouping.terms()[1].bucket, None);
+        assert_eq!(grouping.terms()[2].bucket, Some(BucketTerm::Month));
     }
 
     #[test]
