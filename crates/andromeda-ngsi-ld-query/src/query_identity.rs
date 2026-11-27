@@ -387,6 +387,20 @@ mod tests {
         assert_eq!(excepted(&filtered("a==1;b==2")), excepted(&filtered("b==2;a==1")));
     }
 
+    /// The quotes around a name only delimit it, so a name written unquoted or quoted is one query, and a cursor or Entity Map begun under one spelling is followed under the other.
+    #[test]
+    fn a_name_written_unquoted_or_quoted_has_one_identity() {
+        for (unquoted, quoted) in [
+            ("ex:speed>50", "\"ex:speed\">50"),
+            ("urn:x:weight>1000", "\"urn:x:weight\">1000"),
+            ("a.ex:b==1", "a.\"ex:b\"==1"),
+            ("sensor{Device:ex:humidity}==40", "sensor{Device:\"ex:humidity\"}==40"),
+        ] {
+            assert_eq!(kept(&filtered(unquoted)), kept(&filtered(quoted)), "{unquoted}");
+            assert_eq!(excepted(&filtered(unquoted)), excepted(&filtered(quoted)), "{unquoted}");
+        }
+    }
+
     /// A term with another value changes the identity.
     #[test]
     fn q_terms_with_another_value_have_another_identity() {

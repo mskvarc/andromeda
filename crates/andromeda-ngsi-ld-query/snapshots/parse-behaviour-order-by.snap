@@ -1,5 +1,6 @@
 ---
 source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+assertion_line: 76
 ---
 "a"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }, direction: Asc }
@@ -405,9 +406,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ame"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }, direction: Asc }
   written "ame[en]", read back to the same tree
 "n#ame[en]"
-  refused Path(UnexpectedCharacter { character: '#', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '#' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "name[en-GB];desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("name"), sub_attributes: [], trailing: Some(Language(Tag(en-GB))) }, direction: Desc }
   written "name[en-GB];desc", read back to the same tree
@@ -437,18 +438,18 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("addres"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("street")], written: [AttributeName("city"), AttributeName("street")] })) }, direction: Asc }
   written "addres[city.street]", read back to the same tree
 "address#[city.street]"
-  refused Path(UnexpectedCharacter { character: '#', position: 7 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '#' at position 7"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "addaress[city.street]"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("addaress"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("street")], written: [AttributeName("city"), AttributeName("street")] })) }, direction: Asc }
   written "addaress[city.street]", read back to the same tree
 "\"ex:q\""
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"ex:q\"", read back to the same tree
+  written "ex:q", read back to the same tree
 "\"x:q\""
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("x:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"x:q\"", read back to the same tree
+  written "x:q", read back to the same tree
 "\"ex{:q\""
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -459,7 +460,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"e:q\""
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("e:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"e:q\"", read back to the same tree
+  written "e:q", read back to the same tree
 "\"https://example.com/q\";desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: None }, direction: Desc }
   written "\"https://example.com/q\";desc", read back to the same tree
@@ -476,25 +477,22 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("Zttps://example.com/q"), sub_attributes: [], trailing: None }, direction: Desc }
   written "\"Zttps://example.com/q\";desc", read back to the same tree
 "ex:name"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: None }, direction: Asc }
+  written "ex:name", read back to the same tree
 "ex:%name"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Path(UnexpectedCharacter { character: '%', position: 3 })
+  variant Path/UnexpectedCharacter
+  detail "invalid orderBy member: q expression: unexpected character '%' at position 3"
 "ex:nam%"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Path(UnexpectedCharacter { character: '%', position: 6 })
+  variant Path/UnexpectedCharacter
+  detail "invalid orderBy member: q expression: unexpected character '%' at position 6"
 "ex:nam"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:nam"), sub_attributes: [], trailing: None }, direction: Asc }
+  written "ex:nam", read back to the same tree
 "ex:nme"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:nme"), sub_attributes: [], trailing: None }, direction: Asc }
+  written "ex:nme", read back to the same tree
 "+"
   refused Path(Expected { expected: AttributeName, found: Character('+'), position: 0 })
   variant Path/Expected
@@ -543,13 +541,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("type"), sub_attributes: [], trailing: None }, direction: Asc }
   written "type", read back to the same tree
 "ty/pe"
-  refused Path(UnexpectedCharacter { character: '/', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '/' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "type:"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("type:"), sub_attributes: [], trailing: None }, direction: Asc }
+  written "type:", read back to the same tree
 "t%ype"
   refused Path(UnexpectedCharacter { character: '%', position: 1 })
   variant Path/UnexpectedCharacter
@@ -711,13 +708,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: unexpected character '%' at position 2"
 " \"ex:q\".\"urn:x:(a,b)\".x_1[en.b] ; desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) }, direction: Desc }
-  written "\"ex:q\".\"urn:x:(a,b)\".x_1[en.b];desc", read back to the same tree
+  written "ex:q.\"urn:x:(a,b)\".x_1[en.b];desc", read back to the same tree
 " \"ex:q\".\"urn:x:(a,b)\".x_1[enb] ; desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("enb")], written: [AttributeName("enb")] })) }, direction: Desc }
-  written "\"ex:q\".\"urn:x:(a,b)\".x_1[enb];desc", read back to the same tree
+  written "ex:q.\"urn:x:(a,b)\".x_1[enb];desc", read back to the same tree
 " \"ex:q\".\"urn:;:(a,b)\".x_1[en.b] ; desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:;:(a,b)"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) }, direction: Desc }
-  written "\"ex:q\".\"urn:;:(a,b)\".x_1[en.b];desc", read back to the same tree
+  written "ex:q.\"urn:;:(a,b)\".x_1[en.b];desc", read back to the same tree
 " x_1[b.en] ; asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }, direction: Asc }
   written "x_1[b.en]", read back to the same tree
@@ -761,7 +758,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy direction: Matching variant not found"
 " \"ex:q\".speed.\"ex:q\"[city]"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }, direction: Asc }
-  written "\"ex:q\".speed.\"ex:q\"[city]", read back to the same tree
+  written "ex:q.speed.ex:q[city]", read back to the same tree
 " \"ex:q\".speed.\"ex:q\"[cit(y]"
   refused Path(Expected { expected: Punctuation(CloseBracket), found: Character('('), position: 23 })
   variant Path/Expected
@@ -1073,7 +1070,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "bandName[en]", read back to the same tree
 "\ta.\"urn:x:(a,b)\".\"ex:q\"[city]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }, direction: Asc }
-  written "a.\"urn:x:(a,b)\".\"ex:q\"[city]", read back to the same tree
+  written "a.\"urn:x:(a,b)\".ex:q[city]", read back to the same tree
 "\ta.\"u|n:x:(a,b)\".\"ex:q\"[city]\t"
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -1138,14 +1135,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy direction: Matching variant not found"
 "\"ex:q\".\"urn:x:a;b\".a[en.zip];\tdesc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("zip")], written: [AttributeName("en"), AttributeName("zip")] })) }, direction: Desc }
-  written "\"ex:q\".\"urn:x:a;b\".a[en.zip];desc", read back to the same tree
+  written "ex:q.\"urn:x:a;b\".a[en.zip];desc", read back to the same tree
 "\"ex:q\".urn:x:a;b\".a[en.zip];\tdesc"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
   detail "invalid orderBy direction: Matching variant not found"
 "\"ex:q\".\"urn:x:a;|\".a[en.zip];\tdesc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:a;|"), AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("zip")], written: [AttributeName("en"), AttributeName("zip")] })) }, direction: Desc }
-  written "\"ex:q\".\"urn:x:a;|\".a[en.zip];desc", read back to the same tree
+  written "ex:q.\"urn:x:a;|\".a[en.zip];desc", read back to the same tree
 " brandName.\"https://example.com/a.b=c!d~e\" "
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e")], trailing: None }, direction: Asc }
   written "brandName.\"https://example.com/a.b=c!d~e\"", read back to the same tree
@@ -1194,7 +1191,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: unterminated string literal"
 "\t\"https://examplecom/q\" "
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://examplecom/q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"https://examplecom/q\"", read back to the same tree
+  written "https://examplecom/q", read back to the same tree
 "\t\"https://example.com/a.b=c!d~e\"[*]\t"
   refused LanguageSuppression
   variant LanguageSuppression
@@ -1219,13 +1216,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " \"https://example.com/a.b=c!d~e\".\"ex:q\" ;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q")], trailing: None }, direction: Asc }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\"", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q", read back to the same tree
 " \"https://example.com/a.b=!d~e\".\"ex:q\" ;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=!d~e"), sub_attributes: [AttributeName("ex:q")], trailing: None }, direction: Asc }
-  written "\"https://example.com/a.b=!d~e\".\"ex:q\"", read back to the same tree
+  written "\"https://example.com/a.b=!d~e\".ex:q", read back to the same tree
 " \"https://{example.com/a.b=c!d~e\".\"ex:q\" ;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://{example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q")], trailing: None }, direction: Asc }
-  written "\"https://{example.com/a.b=c!d~e\".\"ex:q\"", read back to the same tree
+  written "\"https://{example.com/a.b=c!d~e\".ex:q", read back to the same tree
 "#type\t"
   refused Path(Expected { expected: AttributeName, found: Character('#'), position: 0 })
   variant Path/Expected
@@ -1289,7 +1286,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: unexpected character '>' at position 2"
 "\t\"ex:q\"\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"ex:q\"", read back to the same tree
+  written "ex:q", read back to the same tree
 "\t\"~x:q\"\t"
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -1311,13 +1308,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: expected attribute name, found '_' at position 11"
 "\"https://example.com/a.b=c!d~e\".\"ex:q\".speed[zip]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }, direction: Asc }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\".speed[zip]", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q.speed[zip]", read back to the same tree
 "\"https://exaple.com/a.b=c!d~e\".\"ex:q\".speed[zip]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://exaple.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }, direction: Asc }
-  written "\"https://exaple.com/a.b=c!d~e\".\"ex:q\".speed[zip]", read back to the same tree
+  written "\"https://exaple.com/a.b=c!d~e\".ex:q.speed[zip]", read back to the same tree
 "\"https://examéple.com/a.b=c!d~e\".\"ex:q\".speed[zip]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://examéple.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }, direction: Asc }
-  written "\"https://examéple.com/a.b=c!d~e\".\"ex:q\".speed[zip]", read back to the same tree
+  written "\"https://examéple.com/a.b=c!d~e\".ex:q.speed[zip]", read back to the same tree
 "scope\t;\tdesc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("scope"), sub_attributes: [], trailing: None }, direction: Desc }
   written "scope;desc", read back to the same tree
@@ -1396,13 +1393,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\t\"urn:x:a;b\".\"ex:q\".x_1[en.b]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) }, direction: Asc }
-  written "\"urn:x:a;b\".\"ex:q\".x_1[en.b]", read back to the same tree
+  written "\"urn:x:a;b\".ex:q.x_1[en.b]", read back to the same tree
 "\t\"urn:x:-;b\".\"ex:q\".x_1[en.b]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:-;b"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) }, direction: Asc }
-  written "\"urn:x:-;b\".\"ex:q\".x_1[en.b]", read back to the same tree
+  written "\"urn:x:-;b\".ex:q.x_1[en.b]", read back to the same tree
 "\t\"urn:x:a;b\".\"ex:\".x_1[en.b]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("ex:"), AttributeName("x_1")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("b")], written: [AttributeName("en"), AttributeName("b")] })) }, direction: Asc }
-  written "\"urn:x:a;b\".\"ex:\".x_1[en.b]", read back to the same tree
+  written "\"urn:x:a;b\".ex:.x_1[en.b]", read back to the same tree
 "\"https://example.com/a.b=c!d~e\".\"urn:x:a;b\"\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("urn:x:a;b")], trailing: None }, direction: Asc }
   written "\"https://example.com/a.b=c!d~e\".\"urn:x:a;b\"", read back to the same tree
@@ -1438,9 +1435,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }, direction: Asc }
   written "brandName", read back to the same tree
 "\tbrandNam-e\t"
-  refused Path(UnexpectedCharacter { character: '-', position: 8 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 8"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\t\tbrandName\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: None }, direction: Asc }
   written "brandName", read back to the same tree
@@ -1493,9 +1490,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/Expected
   detail "invalid orderBy member: q expression: expected ], found '0' at position 5"
 " x/_1[*]\t"
-  refused Path(UnexpectedCharacter { character: '/', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '/' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tobservedAt\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }, direction: Asc }
   written "observedAt", read back to the same tree
@@ -1542,12 +1539,12 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }, direction: Asc }
   written "createdAt", read back to the same tree
 " createdAt/"
-  refused Path(UnexpectedCharacter { character: '/', position: 9 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '/' at position 9"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\"[city]\t; asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }, direction: Asc }
-  written "\"ex:q\"[city]", read back to the same tree
+  written "ex:q[city]", read back to the same tree
 "\"ex:q\"[city]\t; ac"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
@@ -1583,9 +1580,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant LanguageSuppression
   detail "invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy"
 "\tobservedAt.observedAt.a#[*] ; desc"
-  refused Path(UnexpectedCharacter { character: '#', position: 23 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '#' at position 23"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tobservedAt.observedAt.a[* ; desc"
   refused Path(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 25 })
   variant Path/Expected
@@ -1613,14 +1610,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"https:#//example.com/a.b=c!d~e\".brandName.speed", read back to the same tree
 " \"ex:q\";asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"ex:q\"", read back to the same tree
+  written "ex:q", read back to the same tree
 " \" x:q\";asc"
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
   detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " \"e:q\";asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("e:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"e:q\"", read back to the same tree
+  written "e:q", read back to the same tree
 "\tx_1.speed[*] "
   refused LanguageSuppression
   variant LanguageSuppression
@@ -1777,9 +1774,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant LanguageSuppression
   detail "invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy"
 "\tex:q\"[*];\tdesc"
-  refused Path(UnquotedColonName { position: 0 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Path(UnexpectedCharacter { character: '"', position: 4 })
+  variant Path/UnexpectedCharacter
+  detail "invalid orderBy member: q expression: unexpected character '\"' at position 4"
 "\t\"ex:q\"[*;\tdesc"
   refused Path(Expected { expected: Punctuation(CloseBracket), found: EndOfInput, position: 8 })
   variant Path/Expected
@@ -1818,7 +1815,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy direction: Matching variant not found"
 "\"ex:q\" ; asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }, direction: Asc }
-  written "\"ex:q\"", read back to the same tree
+  written "ex:q", read back to the same tree
 "+\"ex:q\" ; asc"
   refused Path(Expected { expected: AttributeName, found: Character('+'), position: 0 })
   variant Path/Expected
@@ -1828,14 +1825,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "exq", read back to the same tree
 " observedAt.\"urn:x:(a,b)\".\"ex:q\"[b]\t;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }, direction: Asc }
-  written "observedAt.\"urn:x:(a,b)\".\"ex:q\"[b]", read back to the same tree
+  written "observedAt.\"urn:x:(a,b)\".ex:q[b]", read back to the same tree
 " observedAt.Z\"urn:x:(a,b)\".\"ex:q\"[b]\t;asc"
   refused Path(UnexpectedCharacter { character: '"', position: 12 })
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '\"' at position 12"
 " observedA.\"urn:x:(a,b)\".\"ex:q\"[b]\t;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedA"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }, direction: Asc }
-  written "observedA.\"urn:x:(a,b)\".\"ex:q\"[b]", read back to the same tree
+  written "observedA.\"urn:x:(a,b)\".ex:q[b]", read back to the same tree
 "\"urn:x:(a,b)\".a.observedAt[*]\t"
   refused LanguageSuppression
   variant LanguageSuppression
@@ -2030,9 +2027,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("x_1"), AttributeName("https://example.com/]q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("city")], written: [AttributeName("city"), AttributeName("city")] })) }, direction: Desc }
   written "observedAt.x_1.\"https://example.com/]q\"[city.city];desc", read back to the same tree
 "observedAt.x_1.\"https://example.com/q\"[c/ty.city] ; desc"
-  refused Path(Expected { expected: Punctuation(CloseBracket), found: Character('/'), position: 40 })
-  variant Path/Expected
-  detail "invalid orderBy member: q expression: expected ], found '/' at position 40"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tx_1.a[zip.en]"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }, direction: Asc }
   written "x_1.a[zip.en]", read back to the same tree
@@ -2065,13 +2062,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"urn:x:a>b\"", read back to the same tree
 "observedAt.\"ex:q\".brandName ;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:q"), AttributeName("brandName")], trailing: None }, direction: Asc }
-  written "observedAt.\"ex:q\".brandName", read back to the same tree
+  written "observedAt.ex:q.brandName", read back to the same tree
 "observedAt.\"ex:,\".brandName ;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:,"), AttributeName("brandName")], trailing: None }, direction: Asc }
   written "observedAt.\"ex:,\".brandName", read back to the same tree
 "observedAt.\"ex:q\".br0ndName ;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("ex:q"), AttributeName("br0ndName")], trailing: None }, direction: Asc }
-  written "observedAt.\"ex:q\".br0ndName", read back to the same tree
+  written "observedAt.ex:q.br0ndName", read back to the same tree
 "brandName[b]\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("brandName"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }, direction: Asc }
   written "brandName[b]", read back to the same tree
@@ -2249,9 +2246,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/Expected
   detail "invalid orderBy member: q expression: expected attribute name, found '_' at position 26"
 "\tobse-rvedAt.\"urn:x:(a,b)\".x_1\t"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "x_1.\"urn:x:(a,b)\".speed\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("speed")], trailing: None }, direction: Asc }
   written "x_1.\"urn:x:(a,b)\".speed", read back to the same tree
@@ -2339,9 +2336,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant LanguageSuppression
   detail "invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy"
 " x/_1.\"https://example.com/q\"[*] ;asc"
-  refused Path(UnexpectedCharacter { character: '/', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '/' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " x_1.\"https://exampe.com/q\"[*] ;asc"
   refused LanguageSuppression
   variant LanguageSuppression
@@ -2436,9 +2433,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/Expected
   detail "invalid orderBy member: q expression: expected attribute name, found '}' at position 0"
 " mo/ifiedAt\t"
-  refused Path(UnexpectedCharacter { character: '/', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '/' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tspeed.brandName.\"urn:x:(a,b)\" ; asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName"), AttributeName("urn:x:(a,b)")], trailing: None }, direction: Asc }
   written "speed.brandName.\"urn:x:(a,b)\"", read back to the same tree
@@ -2593,9 +2590,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '+' at position 9"
 "cr#eatedAt ; desc"
-  refused Path(UnexpectedCharacter { character: '#', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '#' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tid "
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("id"), sub_attributes: [], trailing: None }, direction: Asc }
   written "id", read back to the same tree
@@ -2607,13 +2604,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "i9d", read back to the same tree
 "\t\"urn:x:(a,b)\".\"ex:q\".\"urn:x:(a,b)\"[b]\t;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }, direction: Asc }
-  written "\"urn:x:(a,b)\".\"ex:q\".\"urn:x:(a,b)\"[b]", read back to the same tree
+  written "\"urn:x:(a,b)\".ex:q.\"urn:x:(a,b)\"[b]", read back to the same tree
 "\t\"urn:x:(a,b)\".\"ex:q\".\"urn:x:(a,b))\"[b]\t;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:(a,b))")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }, direction: Asc }
-  written "\"urn:x:(a,b)\".\"ex:q\".\"urn:x:(a,b))\"[b]", read back to the same tree
+  written "\"urn:x:(a,b)\".ex:q.\"urn:x:(a,b))\"[b]", read back to the same tree
 "\t\"urn:x:(a,b])\".\"ex:q\".\"urn:x:(a,b)\"[b]\t;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:(a,b])"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:(a,b)")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }, direction: Asc }
-  written "\"urn:x:(a,b])\".\"ex:q\".\"urn:x:(a,b)\"[b]", read back to the same tree
+  written "\"urn:x:(a,b])\".ex:q.\"urn:x:(a,b)\"[b]", read back to the same tree
 "\"urn:x:(a,b)\".\"urn:x:(a,b)\";\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:(a,b)")], trailing: None }, direction: Asc }
   written "\"urn:x:(a,b)\".\"urn:x:(a,b)\"", read back to the same tree
@@ -2726,9 +2723,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/Expected
   detail "invalid orderBy member: q expression: expected attribute name, found '#' at position 0"
 "observ#dAt.\"urn:x:a;b\"[zip.city];desc"
-  refused Path(UnexpectedCharacter { character: '#', position: 6 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '#' at position 6"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "x_1[*] ;\tasc"
   refused LanguageSuppression
   variant LanguageSuppression
@@ -2891,7 +2888,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "create.At", read back to the same tree
 "\t\"ex:q\".\"urn:x:a;b\".\"ex:q\" ;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("ex:q")], trailing: None }, direction: Asc }
-  written "\"ex:q\".\"urn:x:a;b\".\"ex:q\"", read back to the same tree
+  written "ex:q.\"urn:x:a;b\".ex:q", read back to the same tree
 "\t\"ex:q\".\"urn:x:a;b\"*.\"ex:q\" ;asc"
   refused Path(UnexpectedCharacter { character: '*', position: 18 })
   variant Path/UnexpectedCharacter
@@ -2911,7 +2908,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "x_1.\"https://example.~om/q\"[b.en];desc", read back to the same tree
 "\t\"ex:q\".speed.\"ex:q\";\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed"), AttributeName("ex:q")], trailing: None }, direction: Asc }
-  written "\"ex:q\".speed.\"ex:q\"", read back to the same tree
+  written "ex:q.speed.ex:q", read back to the same tree
 "\t\"ex:q\".speed.\"ex:q\"\tasc"
   refused Path(UnexpectedCharacter { character: 'a', position: 20 })
   variant Path/UnexpectedCharacter
@@ -2922,7 +2919,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: unexpected character 'e' at position 13"
 " \"ex:q\".x_1 "
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("x_1")], trailing: None }, direction: Asc }
-  written "\"ex:q\".x_1", read back to the same tree
+  written "ex:q.x_1", read back to the same tree
 " \"#ex:q\".x_1 "
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -2956,23 +2953,23 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy"
 " \"ex:q\".x_1.\"urn:x:a;b\"\t;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:a;b")], trailing: None }, direction: Desc }
-  written "\"ex:q\".x_1.\"urn:x:a;b\";desc", read back to the same tree
+  written "ex:q.x_1.\"urn:x:a;b\";desc", read back to the same tree
 " \"ex:q\".x_1.\"urn:x:/a;b\"\t;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:/a;b")], trailing: None }, direction: Desc }
-  written "\"ex:q\".x_1.\"urn:x:/a;b\";desc", read back to the same tree
+  written "ex:q.x_1.\"urn:x:/a;b\";desc", read back to the same tree
 " \"ex:q\".x_1.\"urn:x:a;~b\"\t;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("x_1"), AttributeName("urn:x:a;~b")], trailing: None }, direction: Desc }
-  written "\"ex:q\".x_1.\"urn:x:a;~b\";desc", read back to the same tree
+  written "ex:q.x_1.\"urn:x:a;~b\";desc", read back to the same tree
 "a.\"ex:q\".observedAt"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("observedAt")], trailing: None }, direction: Asc }
-  written "a.\"ex:q\".observedAt", read back to the same tree
+  written "a.ex:q.observedAt", read back to the same tree
 "a.+ex:q\".observedAt"
   refused Path(Expected { expected: AttributeName, found: Character('+'), position: 2 })
   variant Path/Expected
   detail "invalid orderBy member: q expression: expected attribute name, found '+' at position 2"
 "a.\"ex:q\".obseredAt"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q"), AttributeName("obseredAt")], trailing: None }, direction: Asc }
-  written "a.\"ex:q\".obseredAt", read back to the same tree
+  written "a.ex:q.obseredAt", read back to the same tree
 " ~odifiedAt\t"
   refused Path(Expected { expected: AttributeName, found: Character('~'), position: 0 })
   variant Path/Expected
@@ -3065,25 +3062,25 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '@' at position 2"
 "typ-e"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\".\"urn:x:(a,b)\".a\t;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:(a,b)"), AttributeName("a")], trailing: None }, direction: Desc }
-  written "\"ex:q\".\"urn:x:(a,b)\".a;desc", read back to the same tree
+  written "ex:q.\"urn:x:(a,b)\".a;desc", read back to the same tree
 "\"ex:q\".\"urn:x:(a,b)\".a\t;desc{"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
   detail "invalid orderBy direction: Matching variant not found"
 "\"ex:q\".\"urn:x:a,b)\".a\t;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:a,b)"), AttributeName("a")], trailing: None }, direction: Desc }
-  written "\"ex:q\".\"urn:x:a,b)\".a;desc", read back to the same tree
+  written "ex:q.\"urn:x:a,b)\".a;desc", read back to the same tree
 " brandName.\"https://example.com/a.b=c!d~e\".\"ex:q\"[b.en] ;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }, direction: Desc }
-  written "brandName.\"https://example.com/a.b=c!d~e\".\"ex:q\"[b.en];desc", read back to the same tree
+  written "brandName.\"https://example.com/a.b=c!d~e\".ex:q[b.en];desc", read back to the same tree
 " brandName.\"https:/example.com/a.b=c!d~e\".\"ex:q\"[b.en] ;desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("https:/example.com/a.b=c!d~e"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }, direction: Desc }
-  written "brandName.\"https:/example.com/a.b=c!d~e\".\"ex:q\"[b.en];desc", read back to the same tree
+  written "brandName.\"https:/example.com/a.b=c!d~e\".ex:q[b.en];desc", read back to the same tree
 " brandName.\"htt s://example.com/a.b=c!d~e\".\"ex:q\"[b.en] ;desc"
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -3205,7 +3202,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "x_1[e0n]", read back to the same tree
 "\t\"urn:x:(a,b)\".\"ex:q\".observedAt\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:q"), AttributeName("observedAt")], trailing: None }, direction: Asc }
-  written "\"urn:x:(a,b)\".\"ex:q\".observedAt", read back to the same tree
+  written "\"urn:x:(a,b)\".ex:q.observedAt", read back to the same tree
 "\t\"urn:x:(a,b)\".\"ex:.q\".observedAt\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:.q"), AttributeName("observedAt")], trailing: None }, direction: Asc }
   written "\"urn:x:(a,b)\".\"ex:.q\".observedAt", read back to the same tree
@@ -3280,13 +3277,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "brandNam", read back to the same tree
 "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\";desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:a;b")], trailing: None }, direction: Desc }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\";desc", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q.\"urn:x:a;b\";desc", read back to the same tree
 "\"https://example.com/a.b=c!d~e}\".\"ex:q\".\"urn:x:a;b\";desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e}"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:a;b")], trailing: None }, direction: Desc }
-  written "\"https://example.com/a.b=c!d~e}\".\"ex:q\".\"urn:x:a;b\";desc", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e}\".ex:q.\"urn:x:a;b\";desc", read back to the same tree
 "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"u-rn:x:a;b\";desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("u-rn:x:a;b")], trailing: None }, direction: Desc }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"u-rn:x:a;b\";desc", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q.\"u-rn:x:a;b\";desc", read back to the same tree
 " observedAt.brandName.brandName[city.en]\t; desc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("brandName"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("en")], written: [AttributeName("city"), AttributeName("en")] })) }, direction: Desc }
   written "observedAt.brandName.brandName[city.en];desc", read back to the same tree
@@ -3367,9 +3364,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }, direction: Asc }
   written "a[zip]", read back to the same tree
 "\ta[z#p]"
-  refused Path(Expected { expected: Punctuation(CloseBracket), found: Character('#'), position: 3 })
-  variant Path/Expected
-  detail "invalid orderBy member: q expression: expected ], found '#' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "type ;\tdesc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("type"), sub_attributes: [], trailing: None }, direction: Desc }
   written "type;desc", read back to the same tree
@@ -3383,13 +3380,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy direction: Matching variant not found"
 " \"ex:q\".\"https://example.com/a.b=c!d~e\".\"ex:q\"[en]"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }, direction: Asc }
-  written "\"ex:q\".\"https://example.com/a.b=c!d~e\".\"ex:q\"[en]", read back to the same tree
+  written "ex:q.\"https://example.com/a.b=c!d~e\".ex:q[en]", read back to the same tree
 " \"ex:q\".\"https://example.com/ab=c!d~e\".\"ex:q\"[en]"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/ab=c!d~e"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }, direction: Asc }
-  written "\"ex:q\".\"https://example.com/ab=c!d~e\".\"ex:q\"[en]", read back to the same tree
+  written "ex:q.\"https://example.com/ab=c!d~e\".ex:q[en]", read back to the same tree
 " \"ex:q\".\"https://exampl9.com/a.b=c!d~e\".\"ex:q\"[en]"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://exampl9.com/a.b=c!d~e"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }, direction: Asc }
-  written "\"ex:q\".\"https://exampl9.com/a.b=c!d~e\".\"ex:q\"[en]", read back to the same tree
+  written "ex:q.\"https://exampl9.com/a.b=c!d~e\".ex:q[en]", read back to the same tree
 "\type"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ype"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ype", read back to the same tree
@@ -3518,7 +3515,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: unexpected character '}' at position 10"
 "\ta.\"ex:q\""
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("ex:q")], trailing: None }, direction: Asc }
-  written "a.\"ex:q\"", read back to the same tree
+  written "a.ex:q", read back to the same tree
 "\ta.\")ex:q\""
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -3548,7 +3545,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: expected ], found '\\' at position 5"
 " \"ex:q\".brandName ;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName")], trailing: None }, direction: Asc }
-  written "\"ex:q\".brandName", read back to the same tree
+  written "ex:q.brandName", read back to the same tree
 " \"ex:q\".br)andName ;\tasc"
   refused Path(UnexpectedCharacter { character: ')', position: 9 })
   variant Path/UnexpectedCharacter
@@ -3582,7 +3579,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy"
 " \"ex:q\".\"https://example.com/q\".x_1\t"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/q"), AttributeName("x_1")], trailing: None }, direction: Asc }
-  written "\"ex:q\".\"https://example.com/q\".x_1", read back to the same tree
+  written "ex:q.\"https://example.com/q\".x_1", read back to the same tree
 " \"ex:q\".\"h|ttps://example.com/q\".x_1\t"
   refused Path(InvalidAttributeName(Invalid))
   variant Path/InvalidAttributeName/Invalid
@@ -3664,9 +3661,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }, direction: Asc }
   written "\"https://example.com/q\"[b.en]", read back to the same tree
 " \"https://example.com/q\"[b:en]\t;\tasc"
-  refused Path(UnquotedColonName { position: 24 })
-  variant Path/UnquotedColonName
-  detail "invalid orderBy member: q expression: the name at position 24 holds ':' and goes in double quotes"
+  accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b:en")], written: [AttributeName("b:en")] })) }, direction: Asc }
+  written "\"https://example.com/q\"[b:en]", read back to the same tree
 " \"https://ex9ample.com/q\"[b.en]\t;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("https://ex9ample.com/q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }, direction: Asc }
   written "\"https://ex9ample.com/q\"[b.en]", read back to the same tree
@@ -3700,7 +3696,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid orderBy member: q expression: invalid string escape '\\q' at position 33"
 "\"urn:x:a;b\".\"https://example#com/q\"\t;\tasc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("https://example#com/q")], trailing: None }, direction: Asc }
-  written "\"urn:x:a;b\".\"https://example#com/q\"", read back to the same tree
+  written "\"urn:x:a;b\".https://example#com/q", read back to the same tree
 "\tx_1[zip.city] ;asc"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("city")], written: [AttributeName("zip"), AttributeName("city")] })) }, direction: Asc }
   written "x_1[zip.city]", read back to the same tree
@@ -3809,9 +3805,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }, direction: Asc }
   written "a", read back to the same tree
 "a-"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "ba"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ba", read back to the same tree
@@ -3860,9 +3856,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("b"), sub_attributes: [], trailing: None }, direction: Asc }
   written "b", read back to the same tree
 "b-"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 ".a"
   refused Path(Expected { expected: AttributeName, found: Character('.'), position: 0 })
   variant Path/Expected
@@ -4187,9 +4183,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("asc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "asc", read back to the same tree
 "asc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desca"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("desca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "desca", read back to the same tree
@@ -4238,9 +4234,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("desc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "desc", read back to the same tree
 "desc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "{b"
   refused Path(Expected { expected: AttributeName, found: Character('{'), position: 0 })
   variant Path/Expected
@@ -4561,9 +4557,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("aa"), sub_attributes: [], trailing: None }, direction: Asc }
   written "aa", read back to the same tree
 "aa-"
-  refused Path(UnexpectedCharacter { character: '-', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "aba"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("aba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "aba", read back to the same tree
@@ -4612,9 +4608,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ab"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ab", read back to the same tree
 "ab-"
-  refused Path(UnexpectedCharacter { character: '-', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a.a"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a")], trailing: None }, direction: Asc }
   written "a.a", read back to the same tree
@@ -4919,9 +4915,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("aasc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "aasc", read back to the same tree
 "aasc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "adesca"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("adesca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "adesca", read back to the same tree
@@ -4970,9 +4966,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("adesc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "adesc", read back to the same tree
 "adesc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 5 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 5"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a{a"
   refused Path(UnexpectedCharacter { character: '{', position: 1 })
   variant Path/UnexpectedCharacter
@@ -5189,61 +5185,61 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '-' at position 2"
 "a-a"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-b"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-."
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-["
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-]"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-*"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-;"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
   detail "invalid orderBy direction: Matching variant not found"
 "a-asc"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-desc"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-{"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-}"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-\""
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a- "
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a--"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "baa"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("baa"), sub_attributes: [], trailing: None }, direction: Asc }
   written "baa", read back to the same tree
@@ -5292,9 +5288,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ba", read back to the same tree
 "ba-"
-  refused Path(UnexpectedCharacter { character: '-', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "bba"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("bba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "bba", read back to the same tree
@@ -5343,9 +5339,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("bb"), sub_attributes: [], trailing: None }, direction: Asc }
   written "bb", read back to the same tree
 "bb-"
-  refused Path(UnexpectedCharacter { character: '-', position: 2 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 2"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b.a"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("b"), sub_attributes: [AttributeName("a")], trailing: None }, direction: Asc }
   written "b.a", read back to the same tree
@@ -5668,9 +5664,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("basc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "basc", read back to the same tree
 "basc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "bdesca"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("bdesca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "bdesca", read back to the same tree
@@ -5719,9 +5715,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("bdesc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "bdesc", read back to the same tree
 "bdesc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 5 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 5"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b{a"
   refused Path(UnexpectedCharacter { character: '{', position: 1 })
   variant Path/UnexpectedCharacter
@@ -5946,61 +5942,61 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '-' at position 2"
 "b-a"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-b"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-."
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-["
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-]"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-*"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-;"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
   detail "invalid orderBy direction: Matching variant not found"
 "b-asc"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-desc"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-{"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-}"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b-\""
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b- "
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "b--"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 ".aa"
   refused Path(Expected { expected: AttributeName, found: Character('.'), position: 0 })
   variant Path/Expected
@@ -9969,9 +9965,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("asca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "asca", read back to the same tree
 "asca-"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "ascba"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ascba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ascba", read back to the same tree
@@ -10020,9 +10016,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ascb"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ascb", read back to the same tree
 "ascb-"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc.a"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("asc"), sub_attributes: [AttributeName("a")], trailing: None }, direction: Asc }
   written "asc.a", read back to the same tree
@@ -10345,9 +10341,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ascasc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ascasc", read back to the same tree
 "ascasc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 6 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 6"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "ascdesca"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ascdesca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ascdesca", read back to the same tree
@@ -10396,9 +10392,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ascdesc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ascdesc", read back to the same tree
 "ascdesc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 7 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 7"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc{a"
   refused Path(UnexpectedCharacter { character: '{', position: 3 })
   variant Path/UnexpectedCharacter
@@ -10623,61 +10619,61 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
 "asc-a"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-b"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-."
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-["
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-]"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-*"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-;"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
   detail "invalid orderBy direction: Matching variant not found"
 "asc-asc"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-desc"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-{"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-}"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc-\""
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc- "
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "asc--"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "descaa"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("descaa"), sub_attributes: [], trailing: None }, direction: Asc }
   written "descaa", read back to the same tree
@@ -10726,9 +10722,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("desca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "desca", read back to the same tree
 "desca-"
-  refused Path(UnexpectedCharacter { character: '-', position: 5 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 5"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "descba"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("descba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "descba", read back to the same tree
@@ -10777,9 +10773,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("descb"), sub_attributes: [], trailing: None }, direction: Asc }
   written "descb", read back to the same tree
 "descb-"
-  refused Path(UnexpectedCharacter { character: '-', position: 5 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 5"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc.a"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("desc"), sub_attributes: [AttributeName("a")], trailing: None }, direction: Asc }
   written "desc.a", read back to the same tree
@@ -11102,9 +11098,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("descasc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "descasc", read back to the same tree
 "descasc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 7 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 7"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "descdesca"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("descdesca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "descdesca", read back to the same tree
@@ -11153,9 +11149,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("descdesc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "descdesc", read back to the same tree
 "descdesc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 8 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 8"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc{a"
   refused Path(UnexpectedCharacter { character: '{', position: 4 })
   variant Path/UnexpectedCharacter
@@ -11380,61 +11376,61 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Path/UnexpectedCharacter
   detail "invalid orderBy member: q expression: unexpected character '-' at position 5"
 "desc-a"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-b"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-."
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-["
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-]"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-*"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-;"
   refused InvalidDirection(VariantNotFound)
   variant InvalidDirection/VariantNotFound
   detail "invalid orderBy direction: Matching variant not found"
 "desc-asc"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-desc"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-{"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-}"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc-\""
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc- "
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "desc--"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "{aa"
   refused Path(Expected { expected: AttributeName, found: Character('{'), position: 0 })
   variant Path/Expected
@@ -13831,9 +13827,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }, direction: Asc }
   written "a", read back to the same tree
 " a-"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " ba"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("ba"), sub_attributes: [], trailing: None }, direction: Asc }
   written "ba", read back to the same tree
@@ -13882,9 +13878,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("b"), sub_attributes: [], trailing: None }, direction: Asc }
   written "b", read back to the same tree
 " b-"
-  refused Path(UnexpectedCharacter { character: '-', position: 1 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 1"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " .a"
   refused Path(Expected { expected: AttributeName, found: Character('.'), position: 0 })
   variant Path/Expected
@@ -14213,9 +14209,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("asc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "asc", read back to the same tree
 " asc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 3 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 3"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " desca"
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("desca"), sub_attributes: [], trailing: None }, direction: Asc }
   written "desca", read back to the same tree
@@ -14264,9 +14260,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted WrittenOrderingTerm { path: ValuePath { attribute: AttributeName("desc"), sub_attributes: [], trailing: None }, direction: Asc }
   written "desc", read back to the same tree
 " desc-"
-  refused Path(UnexpectedCharacter { character: '-', position: 4 })
-  variant Path/UnexpectedCharacter
-  detail "invalid orderBy member: q expression: unexpected character '-' at position 4"
+  refused Path(InvalidAttributeName(Invalid))
+  variant Path/InvalidAttributeName/Invalid
+  detail "invalid orderBy member: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " {a"
   refused Path(Expected { expected: AttributeName, found: Character('{'), position: 0 })
   variant Path/Expected

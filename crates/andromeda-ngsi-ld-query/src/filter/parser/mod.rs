@@ -57,7 +57,7 @@ impl FromStr for Filter<Written> {
     ///
     /// Returns [`FilterError::Empty`] when the input is blank, [`FilterError::Expected`],
     /// [`FilterError::UnexpectedCharacter`], [`FilterError::UnterminatedString`],
-    /// [`FilterError::UnquotedColonName`], [`FilterError::PathTooDeep`] or one of the literal-typing variants when it is
+    /// [`FilterError::PathTooDeep`] or one of the literal-typing variants when it is
     /// outside the clause 4.9 grammar, and [`FilterError::NestedTooDeep`] when its
     /// parentheses nest past [`WRITTEN_NESTING_CEILING`].
     fn from_str(input: &str) -> Result<Filter<Written>, FilterError> {
@@ -1139,27 +1139,29 @@ mod tests {
         assert!(matches!(time_value("09:00:00Z"), Scalar::Time(_)));
     }
 
-    /// A prefixed name holds a colon and is written quoted, while a bare `URI` operand runs through its colons.
+    /// A prefixed name reads the same quoted or not, and a bare `URI` operand runs through its colons.
     #[test]
-    fn a_prefixed_name_goes_in_quotes_and_a_uri_operand_keeps_its_colons() {
+    fn a_prefixed_name_reads_alike_quoted_or_not_and_a_uri_operand_keeps_its_colons() {
         pretty_assertions::assert_eq!(parsed("\"ngsi-ld:speed_1\""), exists("ngsi-ld:speed_1"));
-        assert!(
-            matches!(refusal_of("ngsi-ld:speed_1"), FilterError::UnexpectedCharacter { character: '-', position: 4 }),
-            "an unquoted name ends at the first character outside AttrName"
-        );
+        pretty_assertions::assert_eq!(parsed("ngsi-ld:speed_1"), exists("ngsi-ld:speed_1"));
         pretty_assertions::assert_eq!(
             equality_of("a==urn:ngsi-ld:Vehicle:A4567"),
             EqualityValue::Scalar(Scalar::Uri("urn:ngsi-ld:Vehicle:A4567".to_owned()))
         );
     }
 
-    /// An absolute IRI where a name stands goes in quotes, and unquoted its scheme is a name directly followed by a colon.
+    /// An absolute IRI holding no dot reads the same quoted or not, while unquoted an IRI holding a dot ends at the dot, so it goes in quotes.
     #[test]
-    fn an_unquoted_iri_where_a_name_stands_is_refused_at_its_first_character() {
-        assert!(matches!(
-            "https://example.com/Vehicle#speed".parse::<Filter<Written>>(),
-            Err(FilterError::UnquotedColonName { position: 0 })
-        ));
+    fn an_unquoted_iri_where_a_name_stands_reads_up_to_its_first_dot() {
+        pretty_assertions::assert_eq!(parsed("urn:x:Vehicle/a#speed"), exists("urn:x:Vehicle/a#speed"));
+        pretty_assertions::assert_eq!(parsed("\"urn:x:Vehicle/a#speed\""), exists("urn:x:Vehicle/a#speed"));
+        assert!(
+            matches!(
+                refusal_of("https://example.com/Vehicle#speed"),
+                FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid)
+            ),
+            "the sub-attribute after the first dot is no name"
+        );
         pretty_assertions::assert_eq!(parsed("\"https://example.com/Vehicle#speed\""), exists("https://example.com/Vehicle#speed"));
     }
 
@@ -1383,13 +1385,23 @@ mod tests {
         );
     }
 
-    /// An unquoted name after a type list that a colon directly follows is refused at its first character, before a later character that opens nothing.
+    /// The unquoted name after a type list runs through its colons and ends at a quotation mark, which is refused where the hop's brace was required.
     #[test]
-    fn an_unquoted_name_holding_a_colon_after_a_type_list_is_refused_before_a_later_stray_character() {
+    fn a_stray_quotation_mark_after_the_name_that_follows_a_type_list_is_refused_where_the_brace_was_required() {
         let error = refusal_of(
             r#"((isParked{r{Vehicle:ex:q"}}~="[0-9]+";"ex:q".brandName.ex:name<=9007199254740993)|"ex:q".speed[en.en]|r{link{r{brandName[*]}}}~="\\d")"#,
         );
-        assert!(matches!(error, FilterError::UnquotedColonName { position: 21 }), "got {error:?}");
+        assert!(
+            matches!(
+                error,
+                FilterError::Expected {
+                    expected: Expectation::Punctuation(Punctuation::CloseBrace),
+                    found: Found::Character('"'),
+                    position: 25
+                }
+            ),
+            "got {error:?}"
+        );
     }
 
     /// A bare operand in no clause 4.6.3 form and no URI is refused as a bare word, before a later stray character.
@@ -1771,13 +1783,14 @@ mod tests {
         pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "prefix:name");
     }
 
-    /// No unquoted name holds a colon, so the first colon at the head of a hop
-    /// ends its type list, and the unquoted name after it directly followed by
-    /// a second colon is refused at its first character.
+    /// An unquoted type holds no colon, so the first colon at the head of a hop
+    /// ends its type list, and the name after it holds the second colon.
     #[test]
-    fn a_second_unquoted_colon_at_the_head_of_a_hop_refuses_the_name_before_it() {
-        let error = "rel{ex:Store:category}==\"x\"".parse::<Filter<Written>>().expect_err("must reject");
-        assert!(matches!(error, FilterError::UnquotedColonName { position: 7 }), "got {error:?}");
+    fn the_first_unquoted_colon_at_the_head_of_a_hop_ends_its_type_list() {
+        let filter = "rel{ex:Store:category}==\"x\"".parse::<Filter<Written>>().expect("parses");
+        let (relationship, guard, inner) = hop_of(term_of(&filter).path());
+        pretty_assertions::assert_eq!((relationship, guard), ("rel", vec!["ex"]));
+        pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "Store:category");
     }
 
     #[test]
@@ -1817,13 +1830,18 @@ mod tests {
         }
     }
 
-    /// The colon after the last unquoted type of a list ends it, so an unquoted
-    /// name after it directly followed by a colon is refused at its first
-    /// character, and quoting the type keeps its colon.
+    /// The colon after the last unquoted type of a list ends it, so the name
+    /// after it holds every later colon, and quoting the type keeps its colon.
     #[test]
-    fn an_unquoted_last_type_is_never_split_and_the_name_after_it_holding_a_colon_is_refused() {
-        let error = "rel{Building,ex:Store:category}==\"x\"".parse::<Filter<Written>>().expect_err("must reject");
-        assert!(matches!(error, FilterError::UnquotedColonName { position: 16 }), "got {error:?}");
+    fn an_unquoted_last_type_is_never_split_and_the_name_after_it_holds_the_later_colon() {
+        let filter = "rel{Building,ex:Store:category}==\"x\"".parse::<Filter<Written>>().expect("parses");
+        let (_, guard, inner) = hop_of(term_of(&filter).path());
+        pretty_assertions::assert_eq!(guard, vec!["Building", "ex"]);
+        pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "Store:category");
+        let filter = "rel{Building,\"ex:Store\":category}==\"x\"".parse::<Filter<Written>>().expect("parses");
+        let (_, guard, inner) = hop_of(term_of(&filter).path());
+        pretty_assertions::assert_eq!(guard, vec!["Building", "ex:Store"]);
+        pretty_assertions::assert_eq!(local_of(inner).attribute.as_str(), "category");
     }
 
     #[test]

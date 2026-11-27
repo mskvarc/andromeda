@@ -5,6 +5,7 @@ use crate::{
         Filter,
         attribute_path::AttributePath,
         equality_value::EqualityValue,
+        name_position::NamePosition,
         operator_spelling::{MATCH, NOT_MATCH, RANGE},
         parser::operand::uri_extent,
         query_term::QueryTerm,
@@ -16,7 +17,6 @@ use crate::{
     pattern::{Pattern, bare_operand::reads_back_bare},
 };
 use andromeda_json_literal::json_text::quoted;
-use andromeda_ngsi_ld_lexicon::name::unprefixed::is_unprefixed_name;
 use std::fmt;
 
 /// Which spelling of a trailing `[…]` member a rendering writes.
@@ -112,7 +112,7 @@ const fn needs_parentheses<S: NameStage>(filter: &Filter<S>, separator: char) ->
 /// operand, which clause 4.9 writes after a hop's closing brace
 /// (`rel{attr}=="x"`).
 fn write_query_term<S: NameStage>(buffer: &mut String, term: &QueryTerm<S>, spelling: MemberSpelling) {
-    write_attribute_path(buffer, term.path(), spelling);
+    write_attribute_path(buffer, term.path(), spelling, NamePosition::Path);
     match term {
         QueryTerm::Exists(_) => {}
         QueryTerm::Equality { membership, value, .. } => {
@@ -134,27 +134,32 @@ fn write_query_term<S: NameStage>(buffer: &mut String, term: &QueryTerm<S>, spel
     }
 }
 
-/// Write an attribute path, every hop's braces closed.
-fn write_attribute_path<S: NameStage>(buffer: &mut String, path: &AttributePath<S>, spelling: MemberSpelling) {
+/// Write an attribute path whose leading name, a Relationship or an attribute, stands at `leading`, every hop's braces closed.
+///
+/// The leading name of a hop's inner path stands at the head of its braces when the hop has no type list, and after the list's colon otherwise.
+fn write_attribute_path<S: NameStage>(buffer: &mut String, path: &AttributePath<S>, spelling: MemberSpelling, leading: NamePosition) {
     match path {
-        AttributePath::Local(local) => write_value_path(buffer, local, spelling),
+        AttributePath::Local(local) => write_value_path(buffer, local, spelling, leading),
         AttributePath::Linked {
             relationship,
             guard_types,
             inner,
         } => {
-            write_name(buffer, relationship.as_ref());
+            write_name(buffer, relationship.as_ref(), leading);
             buffer.push('{');
             for (index, guard_type) in guard_types.iter().enumerate() {
                 if index > 0 {
                     buffer.push(',');
                 }
-                write_name(buffer, guard_type.as_ref());
+                write_name(buffer, guard_type.as_ref(), NamePosition::HopHead);
             }
-            if !guard_types.is_empty() {
+            let inner_leading = if guard_types.is_empty() {
+                NamePosition::HopHead
+            } else {
                 buffer.push(':');
-            }
-            write_attribute_path(buffer, inner, spelling);
+                NamePosition::Path
+            };
+            write_attribute_path(buffer, inner, spelling, inner_leading);
             buffer.push('}');
         }
     }
@@ -171,18 +176,17 @@ impl<S: NameStage> fmt::Display for ValuePath<S> {
     /// the request text, so the parsed term has to be able to spell itself again.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
-        write_value_path(&mut text, self, MemberSpelling::Addressed);
+        write_value_path(&mut text, self, MemberSpelling::Addressed, NamePosition::Path);
         formatter.write_str(&text)
     }
 }
 
-/// Write a value path, including sub-attributes and compound value keys
-/// in `spelling`.
-fn write_value_path<S: NameStage>(buffer: &mut String, path: &ValuePath<S>, spelling: MemberSpelling) {
-    write_name(buffer, path.attribute.as_ref());
+/// Write a value path whose attribute stands at `leading`, including sub-attributes and compound value keys in `spelling`.
+fn write_value_path<S: NameStage>(buffer: &mut String, path: &ValuePath<S>, spelling: MemberSpelling, leading: NamePosition) {
+    write_name(buffer, path.attribute.as_ref(), leading);
     for sub in &path.sub_attributes {
         buffer.push('.');
-        write_name(buffer, sub.as_str());
+        write_name(buffer, sub.as_str(), NamePosition::Path);
     }
     match &path.trailing {
         Some(TrailingGroup::Members(members)) => {
@@ -195,7 +199,7 @@ fn write_value_path<S: NameStage>(buffer: &mut String, path: &ValuePath<S>, spel
                 if index > 0 {
                     buffer.push('.');
                 }
-                write_name(buffer, name.as_str());
+                write_name(buffer, name.as_str(), NamePosition::Path);
             }
             buffer.push(']');
         }
@@ -209,15 +213,11 @@ fn write_value_path<S: NameStage>(buffer: &mut String, path: &ValuePath<S>, spel
     }
 }
 
-/// Write a name of a path or a type of a hop's list: unquoted when it is a
-/// clause 4.9 `AttrName`, and as a `quotedStr` otherwise.
+/// Write a name of a path or a type of a hop's list standing at `position`: unquoted when it reads back unquoted there as itself, and as a `quotedStr` otherwise.
 ///
-/// Every name is written by this one rule, wherever it stands and whatever
-/// stage it is in, so the text reads back as the same name. A prefixed name or
-/// an absolute IRI holds a colon, which no `AttrName` holds, and would read
-/// back as another filter written bare.
-fn write_name(buffer: &mut String, text: &str) {
-    if is_unprefixed_name(text) {
+/// Every name is written by this one rule, wherever it stands and whatever stage it is in, so the text reads back as the same name. A prefixed name or an absolute IRI holding no dot is written as it is where a colon after a name means nothing of its own, and quoted at the head of a hop's braces and in its type list, where an unquoted colon would end the list. A name holding a dot or another character the grammar reads is always quoted, since unquoted it would end there.
+fn write_name(buffer: &mut String, text: &str, position: NamePosition) {
+    if position.reads_bare(text) {
         buffer.push_str(text);
     } else {
         write_quoted(buffer, text);
@@ -307,6 +307,7 @@ mod tests {
             attribute_path::AttributePath,
             display::write_name,
             equality_value::EqualityValue,
+            name_position::NamePosition,
             query_term::{OrderingOperator, QueryTerm},
             scalar::Scalar,
             value_path::ValuePath,
@@ -315,26 +316,30 @@ mod tests {
     };
     use andromeda_json_literal::json_text::quoted;
 
-    /// Clause 4.9 `AttrName` is a letter followed by letters, digits and `_`; every other name, a prefixed name and an
-    /// absolute IRI among them, is written as a `quotedStr`.
+    /// A name is written unquoted where it reads back unquoted as itself: an `AttrName` everywhere, and a prefixed name or an absolute IRI holding no dot where a colon after a name means nothing of its own. Every other name is written as a `quotedStr`.
     #[test]
-    fn a_name_is_written_unquoted_exactly_when_it_is_an_attr_name() {
-        for (name, unquoted) in [
-            ("speed", true),
-            ("x_1", true),
-            ("M\u{fc}nchen", true),
-            ("ex:speed", false),
-            ("urn:a", false),
-            ("https://example.org/a", false),
-            ("urn:x:a=b", false),
-            ("urn:x:a(b)", false),
-            ("urn:x:a,b", false),
-            ("http://[::1]/a", false),
+    fn a_name_is_written_unquoted_exactly_where_it_reads_back_unquoted_as_itself() {
+        for (name, at_path, at_hop_head) in [
+            ("speed", true, true),
+            ("x_1", true, true),
+            ("M\u{fc}nchen", true, true),
+            ("ex:speed", true, false),
+            ("urn:a", true, false),
+            ("urn:x:Vehicle/a#speed", true, false),
+            ("https://example.org/a", false, false),
+            ("urn:x:a.b", false, false),
+            ("urn:x:a=b", false, false),
+            ("urn:x:a(b)", false, false),
+            ("urn:x:a,b", false, false),
+            ("urn:x:a b", false, false),
+            ("http://[::1]/a", false, false),
         ] {
-            let mut written = String::new();
-            write_name(&mut written, name);
-            let expected = if unquoted { name.to_owned() } else { quoted(name) };
-            pretty_assertions::assert_eq!(written, expected, "{name}");
+            for (position, unquoted) in [(NamePosition::Path, at_path), (NamePosition::HopHead, at_hop_head)] {
+                let mut written = String::new();
+                write_name(&mut written, name, position);
+                let expected = if unquoted { name.to_owned() } else { quoted(name) };
+                pretty_assertions::assert_eq!(written, expected, "{name} at {position:?}");
+            }
         }
     }
 
@@ -484,9 +489,9 @@ mod tests {
     /// round-trip would be a subscription that silently changed meaning.
     ///
     /// The expanded shapes matter as much as the compact ones. Expansion turns
-    /// every name into an IRI, which no `AttrName` spells and is therefore
-    /// quoted, and the guard's terminating colon then stands alone between two
-    /// quoted strings.
+    /// every name into an IRI, which is quoted where it holds a dot, as every
+    /// `https` IRI does, or stands at the head of a hop, and the guard's
+    /// terminating colon then stands alone between two quoted strings.
     #[test]
     fn a_linked_entity_traversal_round_trips_with_and_without_its_guard() {
         let shapes = [
@@ -498,11 +503,14 @@ mod tests {
             "sensor{Device:humidity}==40",
             "r{T1:s{T2:a}}==1",
             "\"https://example.com/sensor\"{\"https://example.com/Device\":\"https://example.com/humidity\"}==40",
-            // A prefixed name is quoted, at the head of a hop, after a list or
-            // as the Relationship.
+            // A prefixed name is quoted at the head of a hop and in its list,
+            // and unquoted after the list and as the Relationship.
             "a{\"prefix:name\"}==\"v\"",
-            "rel{Store:\"ex:category\"}==\"x\"",
+            "rel{Store:ex:category}==\"x\"",
+            "ex:rel{Store:ex:category}==\"x\"",
             "rel{\"ex:link\"{name}}==\"x\"",
+            "rel{Store:ex:link{name}}==\"x\"",
+            "urn:x:rel{\"urn:x:T\":urn:x:a}==\"x\"",
             "speed>50;isParkedIn{category}==\"x\"",
             "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",\"https://example.com/Store\":\"https://example.com/category\"}==\"x\"",
             "\"https://example.com/rel\"{Building,Store:\"https://example.com/category\"}==\"x\"",
@@ -596,7 +604,7 @@ mod tests {
             value: Scalar::Number(50.into()),
         });
         let text = filter.to_string();
-        // An absolute IRI is no clause 4.9 `AttrName`, so it is written quoted.
+        // An absolute IRI holding a dot is written quoted, since unquoted it would end at the dot.
         pretty_assertions::assert_eq!(text, "\"https://example.com/speed\">50");
         let parsed = text.parse::<Filter<Written>>().unwrap();
         match parsed {

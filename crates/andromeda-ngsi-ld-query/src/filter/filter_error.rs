@@ -65,14 +65,6 @@ pub enum FilterError {
         /// Zero-based byte offset in the text the parser read where the grammar required it.
         position: usize,
     },
-    /// An unquoted name is directly followed by a colon where no hop's type
-    /// list ends. An unquoted name is a clause 4.9 `AttrName`, which holds no
-    /// colon, so a prefixed name or an absolute IRI is written in double quotes.
-    #[error("q expression: the name at position {position} holds ':' and goes in double quotes")]
-    UnquotedColonName {
-        /// Zero-based byte offset of the name's first character in the text the parser read.
-        position: usize,
-    },
     /// Input continues where the filter, or a value path read on its own, is
     /// complete.
     #[error("q expression: unexpected character '{character}' at position {position}")]

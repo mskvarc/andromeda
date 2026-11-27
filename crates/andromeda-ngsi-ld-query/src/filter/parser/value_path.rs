@@ -32,13 +32,9 @@ use crate::{
         complexity::MAX_SUB_ATTRIBUTE_DEPTH,
         expectation::{Expectation, Punctuation},
         filter_error::FilterError,
+        name_position::{NamePosition, attr_name_extent},
         operator_spelling::RANGE,
-        parser::{
-            complete,
-            entry_refusal,
-            expected,
-            name::{path_name, unquoted_extent},
-        },
+        parser::{complete, entry_refusal, expected, name::path_name},
         target_language::TargetLanguage,
         trailing_group::{MemberPath, TrailingGroup},
         value_path::ValuePath,
@@ -150,17 +146,19 @@ fn dotted_name(input: &mut LocatingSlice<&str>) -> Result<Option<AttributeName>,
 enum FirstMember<'i> {
     /// A name opening a `DottedPath` of members.
     Name(Cow<'i, str>),
-    /// A word running past the name it opens with, through a `-` or a `*`, which an RFC 5646 tag or an RFC 4647 range spells.
+    /// A word running past the `AttrName` it opens with, through a `-` or a `*`, which an RFC 5646 tag or an RFC 4647 range spells.
     Language(&'i str),
 }
 
-/// Reads the first member of a trailing group, which is a language tag or range when its unquoted word runs past the name it opens with.
+/// Reads the first member of a trailing group, which is a language tag or range when its unquoted word runs past the `AttrName` it opens with and is no shorter than the unquoted name it opens.
+///
+/// A colon, a `/` or a `#` continues a name and no language word, so a name holding one is read as a name (`address[ex:zip]`), while a word both readings end at together (`en-GB`) is read first as a name and then as a language.
 ///
 /// Backtracks without consuming when neither a name nor a language word opens at the start.
 fn first_member<'i>(input: &mut LocatingSlice<&'i str>) -> Result<FirstMember<'i>, GrammarFault<FilterError>> {
     let text = input.peek_finish();
     let language = language_extent(text);
-    if !text.starts_with('"') && language > unquoted_extent(text) {
+    if !text.starts_with('"') && language > attr_name_extent(text) && language >= NamePosition::Path.unquoted_extent(text) {
         return Ok(FirstMember::Language(input.next_slice(language)));
     }
     path_name(input).map(FirstMember::Name)
@@ -510,22 +508,60 @@ mod tests {
         );
     }
 
-    /// A prefixed name is written quoted, so it is one segment and the dot after
-    /// it still separates segments, while unquoted it is refused at its first
-    /// character.
+    /// A prefixed name is one segment quoted or not, and the dot after it still separates segments.
     #[test]
-    fn a_quoted_prefixed_name_stays_one_segment_of_a_dotted_path() {
-        let (attribute, sub_attributes, members) = spelled("\"ex:address\"[city]");
-        assert_eq!(attribute, "ex:address");
-        assert_eq!(sub_attributes, Vec::<String>::new());
-        assert_eq!(members, vec!["city".to_owned()]);
+    fn a_prefixed_name_stays_one_segment_of_a_dotted_path_quoted_or_not() {
+        for text in ["\"ex:address\"[city]", "ex:address[city]"] {
+            let (attribute, sub_attributes, members) = spelled(text);
+            assert_eq!(attribute, "ex:address", "{text}");
+            assert_eq!(sub_attributes, Vec::<String>::new(), "{text}");
+            assert_eq!(members, vec!["city".to_owned()], "{text}");
+        }
+        for text in ["\"ex:a\".b", "ex:a.b", "ex:a.\"b\""] {
+            let (attribute, sub_attributes, _) = spelled(text);
+            assert_eq!(attribute, "ex:a", "{text}");
+            assert_eq!(sub_attributes, vec!["b".to_owned()], "{text}");
+        }
+    }
 
-        let (attribute, sub_attributes, _) = spelled("\"ex:a\".b");
-        assert_eq!(attribute, "ex:a");
+    /// An unquoted name ends at its first dot, so an IRI holding one is that IRI's text up to the dot and a sub-attribute after it.
+    #[test]
+    fn an_unquoted_iri_holding_a_dot_ends_at_the_dot() {
+        let (attribute, sub_attributes, _) = spelled("urn:x:a.b");
+        assert_eq!(attribute, "urn:x:a");
         assert_eq!(sub_attributes, vec!["b".to_owned()]);
+        let (attribute, sub_attributes, _) = spelled("\"urn:x:a.b\"");
+        assert_eq!(attribute, "urn:x:a.b");
+        assert_eq!(sub_attributes, Vec::<String>::new());
+    }
 
-        let error = refusal("ex:a.b");
-        assert!(matches!(error, FilterError::UnquotedColonName { position: 0 }), "got {error:?}");
+    /// A member holding a colon, a `/` or a `#` is a name, unquoted or not, and stays apart from a language tag.
+    #[test]
+    fn a_member_holding_a_colon_is_a_name_quoted_or_not() {
+        for (text, member) in [
+            ("address[ex:zip]", "ex:zip"),
+            ("address[\"ex:zip\"]", "ex:zip"),
+            ("address[urn:x:zip]", "urn:x:zip"),
+            ("address[a-b:c]", "a-b:c"),
+            ("address[ex:a/b#c]", "ex:a/b#c"),
+        ] {
+            let (_, _, members) = spelled(text);
+            assert_eq!(members, vec![member.to_owned()], "{text}");
+        }
+        let (_, _, members) = spelled("address[ex:zip.code]");
+        assert_eq!(members, vec!["ex:zip".to_owned(), "code".to_owned()]);
+    }
+
+    /// A bare name is validated as the same name quoted, so a name the clause 4.6.2 grammar refuses is refused in both spellings.
+    #[test]
+    fn a_name_outside_the_grammar_is_refused_alike_quoted_or_not() {
+        for text in ["speed-limit", "\"speed-limit\"", "a.speed-limit", "a.\"speed-limit\""] {
+            let error = refusal(text);
+            assert!(
+                matches!(error, FilterError::InvalidAttributeName(NgsiLdReferenceError::Invalid)),
+                "{text}: got {error:?}"
+            );
+        }
     }
 
     /// An expanded path round-trips through the parser because its IRIs are

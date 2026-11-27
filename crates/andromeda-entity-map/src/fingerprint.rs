@@ -344,6 +344,16 @@ mod tests {
         Ok(())
     }
 
+    /// The quotes around a name only delimit it, so a follow-up that writes a
+    /// name unquoted where the creating request quoted it asks the same thing.
+    #[tokio::test]
+    async fn a_name_written_unquoted_or_quoted_does_not_change_the_fingerprint() -> Result<(), EntityMapError> {
+        let first = entity_query("type=Vehicle&q=ex:speed%3E10").await?;
+        let second = entity_query("type=Vehicle&q=%22ex:speed%22%3E10").await?;
+        pretty_assertions::assert_eq!(first.compare(&second), RequestComparison::Same);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn identifiers_pagination_and_the_map_parameters_are_excepted() -> Result<(), EntityMapError> {
         let created = entity_query("type=Vehicle&entityMap=true&entityMapLifetime=PT1H").await?;

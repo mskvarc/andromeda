@@ -160,6 +160,18 @@ mod tests {
         }
     }
 
+    /// A prefixed name reads the same quoted or not, and the direction after it is split off at its `;`.
+    #[test]
+    fn a_prefixed_name_orders_alike_quoted_or_not() {
+        for text in ["ex:speed;desc", "\"ex:speed\";desc"] {
+            let parsed = term(text);
+            assert_eq!(parsed.path.attribute.as_str(), "ex:speed", "{text}");
+            assert!(parsed.path.is_simple(), "{text}");
+            assert_eq!(parsed.direction, OrderingDirection::Desc, "{text}");
+            assert_eq!(parsed.to_string(), "ex:speed;desc", "{text}");
+        }
+    }
+
     /// A term is carried in the request text, so it has to spell itself back.
     #[test]
     fn every_shape_of_ordering_term_round_trips_through_its_text() {
@@ -168,7 +180,10 @@ mod tests {
             "name.observedAt",
             "address[city]",
             "sensor.rawdata[airquality.particulate]",
-            "\"ex:address\"[city]",
+            "ex:address[city]",
+            "ex:speed;desc",
+            "address[ex:zip]",
+            "\"urn:x:a.b\";desc",
             "\"urn:x:(a,b);c\";desc",
             "name;desc",
             "name.observedAt;desc",

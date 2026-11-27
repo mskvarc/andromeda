@@ -44,6 +44,7 @@ pub mod language_range;
 pub mod language_targeting;
 #[cfg(test)]
 mod linked_entity_path_tests;
+mod name_position;
 #[cfg(test)]
 mod name_spelling_tests;
 pub mod nested_names;
