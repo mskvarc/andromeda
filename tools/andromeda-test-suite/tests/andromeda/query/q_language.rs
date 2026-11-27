@@ -19,3 +19,6 @@ mod a_qry_qlg_9071;
 mod a_qry_qlg_9072;
 mod a_qry_qlg_9073;
 mod a_qry_qlg_9074;
+mod a_qry_qlg_9075;
+mod a_qry_qlg_9076;
+mod a_qry_qlg_9077;

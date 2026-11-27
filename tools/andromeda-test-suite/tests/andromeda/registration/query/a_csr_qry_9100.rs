@@ -1,4 +1,4 @@
-//! A prefixed name or an absolute IRI in csf goes in double quotes.
+//! A prefixed name in csf reads alike unquoted or quoted, and an absolute IRI holding a dot goes in double quotes.
 
 use andromeda_test_suite::{
     broker,
@@ -22,17 +22,17 @@ use ngsi_ld::{
 };
 
 /// Pins: over two registrations whose Context Source Property ex:tier, written under an @context holding the prefix
-/// ex, is "gold" and "silver", Query Context Source Registrations with csf="ex:tier"=="gold" under that prefix and
-/// with csf="https://example.org/<namespace>/tier"=="gold" answers only the gold one, and csf=ex:tier=="gold" and
-/// csf=https://example.org/<namespace>/tier=="gold" are each 400 `BadRequestData`
+/// ex, is "gold" and "silver", Query Context Source Registrations with csf=ex:tier=="gold" and csf="ex:tier"=="gold"
+/// under that prefix and with csf="https://example.org/<namespace>/tier"=="gold" answers only the gold one, and
+/// csf=https://example.org/<namespace>/tier=="gold", whose IRI holds a dot, is 400 `BadRequestData`
 /// Clause: 4.9, 4.6.2, 5.5.7, 5.10.2.4
 /// Recorded: clause 4.9 spells `AttrName` as a letter followed by letters, digits and underscores, and has every name
 /// expanded as clause 5.5.7 says, which reads a prefixed name and an absolute IRI too; Andromeda reads a csf by the
-/// path grammar of q, an unquoted name as exactly the grammar's `AttrName` and any other name as the grammar's
-/// `quotedStr`, whose value is the name, and refuses an unquoted name holding a colon
+/// path grammar of q, an unquoted name through `-`, `:`, `/` and `#` wherever an unquoted colon has no meaning of its
+/// own and any name as the grammar's `quotedStr`, whose value is the name, so an unquoted name ends at its first dot
 #[gtest]
 #[tokio::test]
-async fn a_csr_qry_9100_a_prefixed_name_or_an_absolute_iri_in_csf_goes_in_double_quotes() -> Result<()> {
+async fn a_csr_qry_9100_a_prefixed_name_in_csf_reads_alike_unquoted_or_quoted_and_a_dotted_iri_goes_in_quotes() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -68,21 +68,21 @@ async fn a_csr_qry_9100_a_prefixed_name_or_an_absolute_iri_in_csf_goes_in_double
     let quoted_iri = format!(r#""https://example.org/{namespace}/tier"=="gold""#);
     // The q model writes a name only as an unquoted AttrName, so a csf naming a prefixed name or an IRI is set as
     // written.
-    for (csf, reader) in [(r#""ex:tier"=="gold""#, &prefixed_reader), (quoted_iri.as_str(), &broker)] {
+    for (csf, reader) in [
+        (r#"ex:tier=="gold""#, &prefixed_reader),
+        (r#""ex:tier"=="gold""#, &prefixed_reader),
+        (quoted_iri.as_str(), &broker),
+    ] {
         let page = send_written(reader, &query, &[(QueryParameter::Csf, csf)]).await?;
         expect_that!(page.items(), len(eq(1)), "{csf}");
         expect_that!(page.items(), nth(0, has_id(&gold_id)), "{csf}");
     }
-    for (csf, reader) in [
-        (r#"ex:tier=="gold""#.to_owned(), &prefixed_reader),
-        (format!(r#"https://example.org/{namespace}/tier=="gold""#), &broker),
-    ] {
-        let request = written_request(reader, &query, &[(QueryParameter::Csf, csf.as_str())])?;
-        expect_that!(
-            &reader.send_unchecked(request).await,
-            problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData),
-            "{csf}"
-        );
-    }
+    let dotted = format!(r#"https://example.org/{namespace}/tier=="gold""#);
+    let request = written_request(&broker, &query, &[(QueryParameter::Csf, dotted.as_str())])?;
+    expect_that!(
+        &broker.send_unchecked(request).await,
+        problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData),
+        "{dotted}"
+    );
     Ok(())
 }

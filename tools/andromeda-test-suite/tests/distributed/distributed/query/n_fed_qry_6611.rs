@@ -1,5 +1,5 @@
-//! A forwarded q names a term the forwarding context lacks as a quoted absolute IRI, and travels as written under the
-//! client's own context.
+//! A forwarded q names a term the forwarding context lacks as its absolute IRI, quoted where it holds a dot, and under
+//! the client's own context travels with each name as the client's terms spell it, unquoted where it reads back so.
 
 use andromeda_test_suite::{
     broker,
@@ -27,15 +27,17 @@ use ngsi_ld::{
 };
 
 /// Pins: Query Entities with q=brand=="x" forwarded to a registration whose `jsonldContext` holds no term for brand
-/// reaches the Context Source with the name as the quoted absolute IRI, "<brand IRI>"=="x", and Query Entities with
-/// q="ex:brand"=="x" forwarded to a registration with no `jsonldContext`, under the @context a Link header names,
-/// reaches it as the client wrote it
+/// reaches the Context Source with the name as the quoted absolute IRI, "<brand IRI>"=="x", the IRI holding a dot, and
+/// Query Entities with q="ex:brand"=="x" and with q=ex:brand=="x" forwarded to a registration with no
+/// `jsonldContext`, under the @context a Link header names, each reach it as ex:brand=="x"
 /// Clause: 4.3.6.6, 4.9, 5.5.7
 /// Recorded: clause 4.3.6.6 compacts the forwarded query parameters as JSON-LD section 4.1.5 compacts IRIs, so a name
-/// with no term travels as its absolute IRI, which Andromeda writes as a `quotedStr`, since no `AttrName` holds a colon
+/// with no term travels as its absolute IRI, which Andromeda writes as a `quotedStr` when it holds a dot; a forwarded
+/// q is written by the rule a Subscription's q is read back by, so a name the client quoted travels unquoted where it
+/// reads back so
 #[gtest]
 #[tokio::test]
-async fn n_fed_qry_6611_a_forwarded_q_quotes_a_name_the_forwarding_context_has_no_term_for() -> Result<()> {
+async fn n_fed_qry_6611_a_forwarded_q_quotes_a_dotted_iri_the_forwarding_context_has_no_term_for() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
@@ -107,10 +109,10 @@ async fn n_fed_qry_6611_a_forwarded_q_quotes_a_name_the_forwarding_context_has_n
     // The q model writes a name only as an unquoted AttrName, so the q naming a prefixed name is set as written.
     let buses = SelectorTypeBuilder::from(&bus_type).build()?;
     let query = QueryEntities::builder().entity_type(&buses).format(Lossless::Normalized).build();
-    send_written(&linked, &query, &[(QueryParameter::Q, r#""ex:brand"=="x""#)]).await?;
-    let travelled = source
-        .received_matching(&SourceRequest::new(Method::GET, "/b/ngsi-ld/v1/entities").query("q", r#""ex:brand"=="x""#))
-        .await?;
-    expect_that!(travelled, len(eq(1)));
+    let travelling = SourceRequest::new(Method::GET, "/b/ngsi-ld/v1/entities").query("q", r#"ex:brand=="x""#);
+    for (sent, q) in [(1, r#""ex:brand"=="x""#), (2, r#"ex:brand=="x""#)] {
+        send_written(&linked, &query, &[(QueryParameter::Q, q)]).await?;
+        expect_that!(source.received_matching(&travelling).await?, len(eq(sent)), "{q}");
+    }
     Ok(())
 }

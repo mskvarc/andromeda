@@ -1,4 +1,5 @@
-//! A colon outside quotes ends a hop's type list, so a prefixed type or attribute inside the braces goes in quotes.
+//! A colon outside quotes at the head of a hop's braces ends its type list, so a prefixed type or attribute there goes
+//! in quotes, while the attribute after the list reads alike unquoted or quoted.
 
 use andromeda_test_suite::{
     broker,
@@ -19,14 +20,17 @@ use ngsi_ld::{
 use std::{num::NonZeroU32, slice};
 
 /// Pins: with Cars parked in an ex:Building and an ex:Warehouse, each holding ex:category "commercial",
-/// q=isParkedIn{"ex:Building":"ex:category"}=="commercial" selects the Car parked in the Building, and
-/// q=isParkedIn{ex:category}=="commercial" selects nothing, ex being read as an entity type
+/// q=isParkedIn{"ex:Building":"ex:category"}=="commercial" and q=isParkedIn{"ex:Building":ex:category}=="commercial"
+/// each select the Car parked in the Building, and q=isParkedIn{ex:category}=="commercial" selects nothing, ex being
+/// read as an entity type
 /// Clause: 4.9, 4.6.2, 5.7.2.4
-/// Recorded: no unquoted `AttrName` or `EntityType` holds a colon, so Andromeda reads an unquoted colon at the head of
-/// a hop as the end of its type list and a prefixed name there as a `quotedStr`
+/// Recorded: no unquoted `AttrName` or `EntityType` holds a colon, and `X:y` alone never tells a type list from an
+/// absolute IRI, so Andromeda reads an unquoted name at the head of a hop as exactly an `AttrName` or `EntityType`, an
+/// unquoted colon there as the end of its type list and a prefixed name there as a `quotedStr`; after the list's colon
+/// it reads an unquoted name through its colons
 #[gtest]
 #[tokio::test]
-async fn a_qry_qlg_9072_a_colon_outside_quotes_ends_a_hop_type_list() -> Result<()> {
+async fn a_qry_qlg_9072_a_colon_outside_quotes_at_the_head_of_a_hop_ends_its_type_list() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let prefix = format!(r#"{{"ex":"https://example.org/{namespace}/"}}"#);
@@ -74,13 +78,13 @@ async fn a_qry_qlg_9072_a_colon_outside_quotes_ends_a_hop_type_list() -> Result<
         .format(Lossless::Normalized)
         .build();
     // The q model writes a name only as an unquoted AttrName, so a q naming a prefixed name is set as written.
-    let quoted = send_written(
-        &reader,
-        &joined,
-        &[(QueryParameter::Q, r#"isParkedIn{"ex:Building":"ex:category"}=="commercial""#)],
-    )
-    .await?;
-    expect_that!(quoted.items(), ids_in_order(slice::from_ref(&in_building_id)));
+    for q in [
+        r#"isParkedIn{"ex:Building":"ex:category"}=="commercial""#,
+        r#"isParkedIn{"ex:Building":ex:category}=="commercial""#,
+    ] {
+        let page = send_written(&reader, &joined, &[(QueryParameter::Q, q)]).await?;
+        expect_that!(page.items(), ids_in_order(slice::from_ref(&in_building_id)), "{q}");
+    }
     let typed = send_written(&reader, &joined, &[(QueryParameter::Q, r#"isParkedIn{ex:category}=="commercial""#)]).await?;
     expect_that!(typed.items(), is_empty());
     Ok(())

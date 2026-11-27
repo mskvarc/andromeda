@@ -1,4 +1,5 @@
-//! A Subscription's q reads back in the terms of the reader's @context, and a name it has no term for comes back quoted.
+//! A Subscription's q reads back in the terms of the reader's @context, and a name it has no term for comes back as a
+//! compact IRI or an absolute IRI, quoted where it holds a dot.
 
 use andromeda_test_suite::{
     body_json::json_equals,
@@ -21,15 +22,16 @@ use ngsi_ld::{
 use std::slice;
 
 /// Pins: a Subscription created with q=speed>50 under an @context holding the term speed is retrieved under that
-/// @context with speed>50, with no Link header with "<the IRI>">50, under an @context holding only a prefix for the
-/// namespace with "ex:speed">50 and under an @context holding the term velocity for the IRI with velocity>50, and each
-/// q returned, sent to Query Entities under the @context it was returned for, selects the Car speed>50 selects
+/// @context with speed>50, with no Link header with "<the IRI>">50, the IRI holding a dot, under an @context holding
+/// only a prefix for the namespace with ex:speed>50 and under an @context holding the term velocity for the IRI with
+/// velocity>50, and each q returned, sent to Query Entities under the @context it was returned for, selects the Car
+/// speed>50 selects
 /// Clause: 4.9, 5.5.7, 5.8.3
 /// Recorded: clause 5.5.7 renders a name no term of the reader's @context matches as its Fully Qualified Name; Andromeda
-/// writes a name back compacted, unquoted when it is an `AttrName` and as a `quotedStr` otherwise
+/// writes a name back compacted, unquoted where it reads back unquoted as itself and as a `quotedStr` otherwise
 #[gtest]
 #[tokio::test]
-async fn a_sub_qry_9085_a_subscription_q_reads_back_in_the_reader_terms_and_quoted_where_it_has_none() -> Result<()> {
+async fn a_sub_qry_9085_a_subscription_q_reads_back_in_the_reader_terms_and_unquoted_where_it_reads_back_so() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -78,7 +80,7 @@ async fn a_sub_qry_9085_a_subscription_q_reads_back_in_the_reader_terms_and_quot
     let query = QueryEntities::builder().entity_type(&selection).format(Lossless::Normalized).build();
     // The q model reads a name only as an unquoted AttrName, so a q naming an IRI or a prefixed name is read and sent as
     // written.
-    for (reader, read) in [(&broker, quoted_iri.as_str()), (&prefixed_reader, r#""ex:speed">50"#)] {
+    for (reader, read) in [(&broker, quoted_iri.as_str()), (&prefixed_reader, "ex:speed>50")] {
         let retrieved = retrieved_as_received(reader, &subscription_id, EntitySubscription).await?;
         expect_that!(retrieved.body(), json_equals("$.q", read), "{read}");
         let page = send_written(reader, &query, &[(QueryParameter::Q, read)]).await?;

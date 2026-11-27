@@ -1,5 +1,5 @@
-//! A Subscription whose q the release stored with a dot-free IRI reads back quoted and still notifies once the hub is
-//! upgraded.
+//! A Subscription whose q the release stored with a dot-free IRI reads back as the release wrote it and still notifies
+//! once the hub is upgraded.
 
 use andromeda_test_suite::{
     body_json::json_equals,
@@ -25,13 +25,13 @@ use ngsi_ld::{
 /// Pins: a Subscription the hub created on v1.0.0 with q=speed>50 under an @context mapping speed to
 /// urn:<namespace>:speed, which v1.0.0 retrieves with no Link header as the unquoted urn:<namespace>:speed>50, is
 /// retrieved once the hub runs the working tree under that @context with speed>50 and with no Link header with
-/// "urn:<namespace>:speed">50, and notifies for the creation of a Car whose speed is 80
+/// urn:<namespace>:speed>50, and notifies for the creation of a Car whose speed is 80
 /// Clause: 4.9, 5.5.7, 5.8.3, 5.8.6
 /// Recorded: v1.0.0 wrote a name unquoted unless it held a dot, a space or a quote; the upgrade quotes every stored
-/// name holding a colon, which this build reads only as a `quotedStr`
+/// name holding a colon, and this build writes a name holding no dot back unquoted outside the head of a hop's braces
 #[gtest]
 #[tokio::test]
-async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_reads_back_quoted_and_still_notifies() -> Result<()> {
+async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_reads_back_as_written_and_still_notifies() -> Result<()> {
     let namespace = Namespace::fresh();
     let hub = broker::client(BrokerRole::NamesHub)?;
     let sink = NotificationSink::start().await?;
@@ -66,9 +66,8 @@ async fn a_upg_qnm_0001_a_subscription_q_the_release_stored_with_a_dot_free_iri_
         .send()
         .await?;
     expect_that!(retrieved.q(), some(eq(&speed_above_50)));
-    let quoted_iri = format!(r#""{iri}">50"#);
     let received = retrieved_as_received(&hub, &subscription_id, EntitySubscription).await?;
-    expect_that!(received.body(), json_equals("$.q", quoted_iri.as_str()));
+    expect_that!(received.body(), json_equals("$.q", unquoted_iri.as_str()));
     let fast_id = namespace.urn("Car", "fast")?;
     let fast = Entity::builder().id(fast_id.clone()).entity_type(car_type).property("speed", 80).build()?;
     writer.entities().create(&fast).send().await?.done()?;
