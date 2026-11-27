@@ -6,9 +6,9 @@ compact_code_registry! {
     /// The API a stored posted query was posted to, and whose GET binding its
     /// page links are followed on.
     PostedQueryKindCode {
-        frozen_at: (1, 0, 0),
-        frozen_prefix: 0,
-        frozen_digest: 0xcbf2_9ce4_8422_2325,
+        frozen_at: (1, 1, 0),
+        frozen_prefix: 2,
+        frozen_digest: 0x56d3_8d48_ad0c_88e5,
         codes: {
             /// Query Entities, posted as `POST /entityOperations/query`.
             Entities = 1, "entities";

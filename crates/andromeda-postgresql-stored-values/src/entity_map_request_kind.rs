@@ -6,9 +6,9 @@ compact_code_registry! {
     /// The operation whose request created a stored Entity Map, which a
     /// follow-up request is held to.
     EntityMapRequestKindCode {
-        frozen_at: (1, 0, 0),
-        frozen_prefix: 0,
-        frozen_digest: 0xcbf2_9ce4_8422_2325,
+        frozen_at: (1, 1, 0),
+        frozen_prefix: 4,
+        frozen_digest: 0x7c82_6c68_4a84_d02f,
         codes: {
             /// Query Entities.
             QueryEntities = 1, "query-entities";

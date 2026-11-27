@@ -154,3 +154,96 @@ sha256 = "1d5a417cac938b6c585f6e078f39ee7b3858ab8d042c0fcfc20d2b37abaf57f6"
 set = "platform"
 name = "0030_tenant_extension_versions.sql"
 sha256 = "011468aec315c1ebaf156c3fb67d865c386621b6877fcc079f7326555615579c"
+
+[[release]]
+version = "v1.1.0"
+
+[[release.migration]]
+set = "tenant"
+name = "0031_forwarded_subscription_claims.sql"
+sha256 = "9735a25028fdd3f724c8831f5691ffa0d0889e01b1c9cfa14136401ab88e8a73"
+
+[[release.migration]]
+set = "tenant"
+name = "0032_typed_data_integrity_seals.sql"
+sha256 = "978485f87fd494ffeb634b3e310aa198d5f21f845091e61a530613c0a8703f0b"
+
+[[release.migration]]
+set = "branch"
+name = "0033_typed_data_integrity_seals_in_branch_rows.sql"
+sha256 = "b601919c95b067080a621ab682115d9282e9096bf78d7eed9d49a7b3a917c496"
+
+[[release.migration]]
+set = "tenant"
+name = "0034_types_without_proof_seals.sql"
+sha256 = "cc1756be279a528a468c34d1de2d62a80eae072a396edb97cb14375b73b68a99"
+
+[[release.migration]]
+set = "tenant"
+name = "0035_posted_queries.sql"
+sha256 = "f99a3cfb85bb5bd224e743c405264c00ad9d54609c92c257c912c5b98138b484"
+
+[[release.migration]]
+set = "tenant"
+name = "0036_lockstep_snapshot_branches.sql"
+sha256 = "e8efa1d4fa50f514d09677489b90e59c43b745798d6f064d53fee324af5e8a89"
+
+[[release.migration]]
+set = "tenant"
+name = "0037_declared_registration_time_intervals.sql"
+sha256 = "a69de85c9e4090048e12e40d0b0cf270d0546d7b39685dc4f9521f96b1d6982a"
+
+[[release.migration]]
+set = "branch"
+name = "0038_context_source_subscription_dataset_ids.sql"
+sha256 = "5c181ca0f458eb905799aad425635061975e8287bbf7ee604588c579da872236"
+
+[[release.migration]]
+set = "tenant"
+name = "0039_entity_map_request_inputs.sql"
+sha256 = "296c179b970711317be60aca40cfd787ac6b44920703d710781cc9b4f6fbbc2a"
+
+[[release.migration]]
+set = "tenant"
+name = "0040_subscription_receiver_redirects.sql"
+sha256 = "856db048b1b3e94849d4ff888518ba60e5ab39dd10effb05426e9e99cfaae086"
+
+[[release.migration]]
+set = "tenant"
+name = "0041_snapshot_queries_with_the_bare_any_scope_alone.sql"
+sha256 = "495ad0b92a645ed1d626946a11af530ac87b796fbaaaae141706eb5ef6882650"
+
+[[release.migration]]
+set = "branch"
+name = "0042_scope_queries_with_the_bare_any_scope_alone.sql"
+sha256 = "745018553efcc030827d887b3c2538236712f1a7ddb9e645bbc3005fd11c5a45"
+
+[[release.migration]]
+set = "tenant"
+name = "0043_scope_queries_without_the_rewrite.sql"
+sha256 = "8e61775b893a3b4595b207276a3c38ed5b8d75adcbff7d86bd354a424f8e0eb9"
+
+[[release.migration]]
+set = "tenant"
+name = "0044_snapshot_queries_with_colon_names_quoted.sql"
+sha256 = "60c0ff2a03ecc44bad2f3669f50abd8647b3318599b647b9d0278c2bcfd6dead"
+
+[[release.migration]]
+set = "branch"
+name = "0045_subscription_queries_with_colon_names_quoted.sql"
+sha256 = "ef54c46680f15701e3a53d7bd91a0a43eb121cee6d4308a7897a07e5dd3ec389"
+
+[[release.migration]]
+set = "tenant"
+name = "0046_query_names_without_the_rewrite.sql"
+sha256 = "a0534d5dfb07d8f9106bdb214fff85304446c21f240acad9049b491905fa1b7a"
+
+[[release.migration]]
+set = "branch"
+name = "0047_delivery_change_order.sql"
+sha256 = "3c09b47dd36adcd6fb26f387755a54c17e823153e1234473ccb7b8324c3da792"
+
+[[release.migration]]
+set = "branch"
+name = "0048_delivery_holds_without_a_stored_probe.sql"
+sha256 = "8ae3abbb3515bcbfd918a3c8be21184d4a9e413faa30035d1b520ed3d185c68e"

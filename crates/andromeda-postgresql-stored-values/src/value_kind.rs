@@ -23,9 +23,9 @@ compact_code_registry! {
     /// Andromeda owns this vocabulary rather than the specification, so the
     /// labels are kebab-case.
     ValueKind {
-        frozen_at: (1, 0, 0),
-        frozen_prefix: 12,
-        frozen_digest: 0xe1d0_1f1b_808a_d8b1,
+        frozen_at: (1, 1, 0),
+        frozen_prefix: 13,
+        frozen_digest: 0xd850_e4df_39fa_4b9a,
         codes: {
             /// The row records a deletion and carries no typed value.
             Tombstone = 0, "tombstone";
