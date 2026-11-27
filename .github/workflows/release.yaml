@@ -198,14 +198,16 @@ jobs:
           image: ${{ env.IMAGE }}
           digest: ${{ steps.digest.outputs.digest }}
 
-      # The release attaches the CycloneDX SBOMs for consumers that fetch nothing from a registry, and needs them only
-      # until it is published.
-      - name: Hand the CycloneDX SBOMs to the release
+      # The release attaches the SPDX and CycloneDX SBOMs for consumers that fetch nothing from a registry, and needs
+      # them only until it is published.
+      - name: Hand the SBOMs to the release
         if: ${{ github.event.repository.visibility == 'public' }}
         uses: actions/upload-artifact@v7
         with:
-          name: cyclonedx-sboms
-          path: ${{ steps.sboms.outputs.directory }}/*.cdx.json
+          name: sboms
+          path: |
+            ${{ steps.sboms.outputs.directory }}/*.spdx.json
+            ${{ steps.sboms.outputs.directory }}/*.cdx.json
           if-no-files-found: error
           retention-days: 1
           overwrite: true
@@ -244,16 +246,16 @@ jobs:
       - name: Stage the VEX document
         run: cp .vex/andromeda.openvex.json "dist/andromeda-${{ github.ref_name }}.openvex.json"
 
-      # The CycloneDX SBOM of each platform image, for consumers that fetch nothing from a registry. The image-merge job
-      # generates them only where it attests, on a public repository.
-      - name: Fetch the CycloneDX SBOMs
+      # The SPDX and the CycloneDX SBOM of each platform image, for consumers that fetch nothing from a registry. The
+      # image-merge job generates them only where it attests, on a public repository.
+      - name: Fetch the SBOMs
         if: ${{ github.event.repository.visibility == 'public' }}
         uses: actions/download-artifact@v8
         with:
-          name: cyclonedx-sboms
+          name: sboms
           path: ${{ runner.temp }}/sboms
 
-      - name: Stage the CycloneDX SBOMs
+      - name: Stage the SBOMs
         if: ${{ github.event.repository.visibility == 'public' }}
         env:
           SBOMS: ${{ runner.temp }}/sboms
@@ -261,7 +263,9 @@ jobs:
         run: |
           set -euo pipefail
           for platform in amd64 arm64; do
-            cp "${SBOMS}/andromeda-linux-${platform}.cdx.json" "dist/andromeda-${TAG}-linux-${platform}.cdx.json"
+            for format in spdx cdx; do
+              cp "${SBOMS}/andromeda-linux-${platform}.${format}.json" "dist/andromeda-${TAG}-linux-${platform}.${format}.json"
+            done
           done
 
       # Every release, a pre-release too, lists the changes since the previous stable release. git-cliff's --current
