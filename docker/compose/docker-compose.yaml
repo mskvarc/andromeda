@@ -8,7 +8,7 @@ name: andromeda
 
 services:
   postgresql:
-    image: ghcr.io/mskvarc/postgresql:18.6-timescaledb2.31.0-postgis3.6.4-tsl
+    image: ghcr.io/mskvarc/postgresql:18.7-timescaledb2.32.1-postgis3.7.0-tsl
     restart: unless-stopped
     environment:
       POSTGRES_USER: andromeda
@@ -24,7 +24,7 @@ services:
       - postgresql-data:/var/lib/postgresql
 
   andromeda:
-    image: ghcr.io/mskvarc/andromeda:1.0.0
+    image: ghcr.io/mskvarc/andromeda:1.1.0
     restart: unless-stopped
     # The broker stops within server.graceful_drain_timeout plus notifications.evaluation.drain_timeout,
     # 60 seconds by default; Docker waits only 10 seconds before it kills a container.
