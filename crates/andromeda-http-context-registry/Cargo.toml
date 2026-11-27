@@ -36,7 +36,7 @@ hex = "0.4.3"
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 percent-encoding = "2.3.2"
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
-sha2 = "0.11.1"
+sha2 = "0.11.2"
 thiserror = "2.0.21"
 url = { version = "2.5.9", features = ["serde"] }
 
