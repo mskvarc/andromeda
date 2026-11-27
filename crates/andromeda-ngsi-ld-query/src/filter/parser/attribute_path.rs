@@ -65,11 +65,11 @@ pub(super) fn attribute_path(input: &mut LocatingSlice<&str>, leading: &str, dep
 
 /// Reads the head of a hop in one pass: its type list, empty when it holds none, and the leading name of its inner path.
 ///
-/// The head's first name is read, then the JSON whitespace after it, and the next mark decides. A comma or a colon makes the name the first type of a list, which continues with names separated by commas and ends at the colon. Anything else makes it the leading name of the inner path. No unquoted name holds a colon, so an unquoted colon at the head of a hop always ends the list. Each type is validated before the next is read.
+/// The head's first name is read, then the JSON whitespace after it, and the next mark decides. A comma or a colon makes the name the first type of a list, which continues with names separated by commas and ends at the colon. Anything else makes it the leading name of the inner path. An unquoted name at the head of a hop and in its list is exactly an `AttrName` or `EntityType`, which holds no colon, so an unquoted colon there always ends the list, and the name after the list's colon runs through its own colons (`sensor{Device:ex:humidity}`). Each type is validated before the next is read.
 ///
 /// # Errors
 ///
-/// Refuses with [`FilterError::Expected`] when the head holds no name, a comma has no type after it, the list's colon is absent or no name follows it, with [`FilterError::InvalidAttributeName`] when a type is outside the clause 4.6.2 grammar, and with [`FilterError::UnquotedColonName`] when the inner path's leading name is unquoted and directly followed by a colon.
+/// Refuses with [`FilterError::Expected`] when the head holds no name, a comma has no type after it, the list's colon is absent or no name follows it, and with [`FilterError::InvalidAttributeName`] when a type is outside the clause 4.6.2 grammar.
 fn hop_head<'i>(input: &mut LocatingSlice<&'i str>) -> Result<(Vec<EntityTypeName>, Cow<'i, str>), GrammarFault<FilterError>> {
     let first = expected(Expectation::AttributeName, list_name).parse_next(input)?;
     Whitespace::Json.skip::<FilterError>().parse_next(input)?;
@@ -196,16 +196,33 @@ mod tests {
         }
     }
 
-    /// No unquoted name holds a colon, so the colon after the head's first name ends the list, and a name after it directly followed by a colon is refused at its first character.
+    /// An unquoted type holds no colon, so the colon after it ends the list, and the name after that colon runs through its own colons.
     #[test]
-    fn an_unquoted_name_after_a_type_list_directly_followed_by_a_colon_is_refused_at_its_first_character() {
-        for (text, position) in [("sensor{ex:T:humidity}==40", 10), ("sensor{T1,ex:T2:b}==1", 13)] {
-            let (path, _) = hop(text, 6);
-            assert!(
-                matches!(path, Err(FilterError::UnquotedColonName { position: at }) if at == position),
-                "{text}: got {path:?}"
-            );
+    fn the_name_after_a_type_list_runs_through_its_colons() {
+        for (text, guard, attribute) in [
+            ("sensor{ex:T:humidity}==40", vec!["ex"], "T:humidity"),
+            ("sensor{Device:ex:humidity}==40", vec!["Device"], "ex:humidity"),
+            ("sensor{T1,ex:T2:b}==1", vec!["T1", "ex"], "T2:b"),
+            ("sensor{Device:urn:x:humidity}==40", vec!["Device"], "urn:x:humidity"),
+            ("sensor{\"ex:Device\":ex:humidity}==40", vec!["ex:Device"], "ex:humidity"),
+        ] {
+            let (path, rest) = hop(text, 6);
+            let path = path.unwrap_or_else(|error| panic!("{text}: {error:?}"));
+            let (_, read, inner) = linked(&path);
+            pretty_assertions::assert_eq!((read, local(inner)), (guard, attribute), "{text}");
+            assert!(rest.starts_with("=="), "{text}: {rest}");
         }
+    }
+
+    /// The Relationship of a hop is read where no colon means anything, so it runs through its colons up to its brace.
+    #[test]
+    fn a_prefixed_relationship_before_its_brace_is_one_name() {
+        let text = "ex:sensor{Device:humidity}==40";
+        let (path, rest) = hop(text, 9);
+        let path = path.unwrap_or_else(|error| panic!("{text}: {error:?}"));
+        let (relationship, guard, inner) = linked(&path);
+        pretty_assertions::assert_eq!((relationship, guard, local(inner)), ("ex:sensor", vec!["Device"], "humidity"));
+        pretty_assertions::assert_eq!(rest, "==40");
     }
 
     /// A colon after an unquoted first name ends the list, so a comma after the name that follows it stands where the closing brace was required.
@@ -225,7 +242,7 @@ mod tests {
         );
     }
 
-    /// A quoted first name with no comma or colon after it is the leading name of the inner path, the colons it holds belonging to it, while an unquoted first name before a colon is a type.
+    /// A quoted first name with no comma or colon after it is the leading name of the inner path, the colons it holds belonging to it, while an unquoted first name before a colon is a type, prefix-shaped or not.
     #[test]
     fn a_quoted_first_name_with_no_list_mark_after_it_is_the_inner_path() {
         let (path, _) = hop("a{\"prefix:name\"}", 1);
@@ -236,6 +253,10 @@ mod tests {
         let path = path.expect("an unquoted first name before a colon is a type");
         let (_, guard, inner) = linked(&path);
         pretty_assertions::assert_eq!((guard, local(inner)), (vec!["ex"], "humidity"));
+        let (path, _) = hop("sensor{ex:Device:humidity}==40", 6);
+        let path = path.expect("the type ends at the first colon");
+        let (_, guard, inner) = linked(&path);
+        pretty_assertions::assert_eq!((guard, local(inner)), (vec!["ex"], "Device:humidity"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 ---
 source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+assertion_line: 86
 ---
 "datasetId"
   accepted AggregationGrouping([GroupingTerm { key: Member(DatasetId), bucket: None }])
@@ -278,9 +279,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected attribute name, found '[' at position 10"
 "data#etId.foo"
-  refused Key(UnexpectedCharacter { character: '#', position: 4 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 4"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "datasetId.fo]"
   refused Key(UnexpectedCharacter { character: ']', position: 12 })
   variant Key/UnexpectedCharacter
@@ -312,9 +313,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant BucketOnNonTemporalKey/Month
   detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "spe:d;month"
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused BucketOnNonTemporalKey(Month)
+  variant BucketOnNonTemporalKey/Month
+  detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "speed;month:"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
@@ -324,9 +325,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '~' at position 4"
 "s:eed;month"
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused BucketOnNonTemporalKey(Month)
+  variant BucketOnNonTemporalKey/Month
+  detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "datasetId;month"
   refused BucketOnNonTemporalKey(Month)
   variant BucketOnNonTemporalKey/Month
@@ -400,9 +401,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant EmptyTerm
   detail "aggrGroupBy has an empty grouping term"
 "zo#ne,"
-  refused Key(UnexpectedCharacter { character: '#', position: 2 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 2"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "azone,"
   refused EmptyTerm
   variant EmptyTerm
@@ -430,9 +431,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "zone,type"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("zone"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Type), bucket: None }])
 "zone#,,type"
-  refused Key(UnexpectedCharacter { character: '#', position: 4 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 4"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "zone,|,type"
   refused Key(Expected { expected: AttributeName, found: Character('|'), position: 0 })
   variant Key/Expected
@@ -696,9 +697,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "datasetId\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(DatasetId), bucket: None }])
 "dat#setId\t"
-  refused Key(UnexpectedCharacter { character: '#', position: 3 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 3"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "daasetId\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("daasetId"), sub_attributes: [], trailing: None }), bucket: None }])
 " id "
@@ -918,9 +919,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant BucketOnNonTemporalKey/Week
   detail "aggrGroupBy bucket 'week' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "o/bservedAt;week"
-  refused Key(UnexpectedCharacter { character: '/', position: 1 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '/' at position 1"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " modifiedAt;\tweek , observedAt, id"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Member(Id), bucket: None }])
 " modifiedAt;\tweek ,ZobservedAt, id"
@@ -1060,9 +1061,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 " deletedAt; hour ,\tcreatedAt;year "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
 " deletedAt; hour ,\tcreated#t;year "
-  refused Key(UnexpectedCharacter { character: '#', position: 7 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 7"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " delet\tdAt; hour ,\tcreatedAt;year "
   refused Key(UnexpectedCharacter { character: 'd', position: 6 })
   variant Key/UnexpectedCharacter
@@ -1202,9 +1203,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\tdeletedAt;monthOfYear, createdAt;hour "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(MonthOfYear) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }])
 "\tdeletedAt;monthOfYear, create-dAt;hour "
-  refused Key(UnexpectedCharacter { character: '-', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 6"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tdeletedA;monthOfYear, createdAt;hour "
   refused BucketOnNonTemporalKey(MonthOfYear)
   variant BucketOnNonTemporalKey/MonthOfYear
@@ -1412,9 +1413,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\tdeletedAt;\tmonth "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
 "\tdel:etedAt;\tmonth "
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused BucketOnNonTemporalKey(Month)
+  variant BucketOnNonTemporalKey/Month
+  detail "aggrGroupBy bucket 'month' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "\tdeletedAt;\tmonth, "
   refused EmptyTerm
   variant EmptyTerm
@@ -1476,17 +1477,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant BucketOnNonTemporalKey/Year
   detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "createdAt\t,\tcreatedAt\t,mod#fiedAt;year "
-  refused Key(UnexpectedCharacter { character: '#', position: 3 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 3"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " scope, deletedAt,\tdeletedAt;hour "
   accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }])
 " scpe, deletedAt,\tdeletedAt;hour "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("scpe"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }])
 " scope, deletedAt,\tde/etedAt;hour "
-  refused Key(UnexpectedCharacter { character: '/', position: 2 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '/' at position 2"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "observedAt;dayOfWeek,\tobservedAt;\tday,\tcreatedAt; hour\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Hour) }])
 "observedt;dayOfWeek,\tobservedAt;\tday,\tcreatedAt; hour\t"
@@ -1818,9 +1819,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
 "del-tedAt; monthOfYear ,deletedAt\t"
-  refused Key(UnexpectedCharacter { character: '-', position: 3 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 3"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tdeletedAt;\tweek "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }])
 "\td+letedAt;\tweek "
@@ -1888,9 +1889,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Key/Expected
   detail "invalid aggrGroupBy key: q expression: expected ], found end of input at position 6"
 "scop- ,deletedAt; year "
-  refused Key(UnexpectedCharacter { character: '-', position: 4 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 4"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " modifiedAt;day"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }])
 " modifiedAt;dy"
@@ -2070,9 +2071,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\"htps://example.com/q\".\"https://example.com/a.b=c!d~e\".observedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("htps://example.com/q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("observedAt")], trailing: None }), bucket: None }])
 "\"https://example.com/q\".\"https://example.com/a.b=c!d~e\".obse:rvedAt\t"
-  refused Key(UnquotedColonName { position: 56 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 56 holds ':' and goes in double quotes"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("obse:rvedAt")], trailing: None }), bucket: None }])
 " modifiedAt; day, createdAt"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Day) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " modifiedAt; day, createAt"
@@ -2152,13 +2151,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\ttype ,\tmodifiedAt;month "
   accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
 "\ttype ,\tmodifie#dAt;month "
-  refused Key(UnexpectedCharacter { character: '#', position: 7 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 7"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\ttype ,\tmod-ifiedAt;month "
-  refused Key(UnexpectedCharacter { character: '-', position: 3 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 3"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "modifiedAt; year ,\tdeletedAt;year"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }])
 "modified{At; year ,\tdeletedAt;year"
@@ -2380,9 +2379,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant InvalidBucket/VariantNotFound
   detail "invalid aggrGroupBy bucket: Matching variant not found"
 "\tob#ervedAt[*]\t,observedAt\t"
-  refused Key(UnexpectedCharacter { character: '#', position: 2 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 2"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "datasetId ,observedAt;dayOfWeek, deletedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(DatasetId), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "datasetId ,observeAt;dayOfWeek, deletedAt\t"
@@ -2396,9 +2395,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "type ,\tmodifiedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(Type), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "type ,\tmodifi/edAt\t"
-  refused Key(UnexpectedCharacter { character: '/', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '/' at position 6"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "type.,\tmodifiedAt\t"
   refused Key(Expected { expected: AttributeName, found: EndOfInput, position: 5 })
   variant Key/Expected
@@ -2542,9 +2541,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "createdAt; year , type "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Member(Type), bucket: None }])
 "created:At; year , type "
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused BucketOnNonTemporalKey(Year)
+  variant BucketOnNonTemporalKey/Year
+  detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 "creatdAt; year , type "
   refused BucketOnNonTemporalKey(Year)
   variant BucketOnNonTemporalKey/Year
@@ -2598,9 +2597,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\tobservedAt, createdAt;\tdayOfWeek"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }])
 "\tobservedAt, createdAt#\tdayOfWeek"
-  refused Key(UnexpectedCharacter { character: '#', position: 9 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 9"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tobservedAt, cretedAt;\tdayOfWeek"
   refused BucketOnNonTemporalKey(DayOfWeek)
   variant BucketOnNonTemporalKey/DayOfWeek
@@ -2700,9 +2699,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant Key/UnexpectedCharacter
   detail "invalid aggrGroupBy key: q expression: unexpected character '~' at position 2"
 "id:\t"
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("id:"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tmodifiedAt;\tdayOfWeek\t, x_1[en.city] ,speed.brandName.speed[b] "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(DayOfWeek) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("x_1"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("en"), AttributeName("city")], written: [AttributeName("en"), AttributeName("city")] })) }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName"), AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }), bucket: None }])
 "\tmodifiedAt;\tdayOfWeek\t, x_1[en.city] ,spee*.brandName.speed[b] "
@@ -2716,17 +2713,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "unitCode\t, observedAt; hourOfDay "
   accepted AggregationGrouping([GroupingTerm { key: Member(UnitCode), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
 "un-tCode\t, observedAt; hourOfDay "
-  refused Key(UnexpectedCharacter { character: '-', position: 2 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 2"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "nitCode\t, observedAt; hourOfDay "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("nitCode"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
 "deletedAt;\tmonth"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
 "del/tedAt;\tmonth"
-  refused Key(UnexpectedCharacter { character: '/', position: 3 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '/' at position 3"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "deletedAt;\tmonth;"
   refused InvalidBucket(VariantNotFound)
   variant InvalidBucket/VariantNotFound
@@ -2774,9 +2771,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant BucketOnNonTemporalKey/Year
   detail "aggrGroupBy bucket 'year' is on a key that is not a temporal property: a bucket applies only to a temporal property"
 " unitCo#de"
-  refused Key(UnexpectedCharacter { character: '#', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 6"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " unitCod"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("unitCod"), sub_attributes: [], trailing: None }), bucket: None }])
 "modifiedAt , modifiedAt; year"
@@ -2996,15 +2993,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\tdatastId\t,\tdeletedAt, modifiedAt"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("datastId"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tdatasetId\t,\tde-etedAt, modifiedAt"
-  refused Key(UnexpectedCharacter { character: '-', position: 2 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 2"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " modifiedAt; year\t, deletedAt;week\t, createdAt; hourOfDay\t"
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("createdAt"), sub_attributes: [], trailing: None }), bucket: Some(HourOfDay) }])
 " modifiedAt; year\t, deletedAt;week\t, create-At; hourOfDay\t"
-  refused Key(UnexpectedCharacter { character: '-', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '-' at position 6"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " modifiedAt; year\t, deletedAt;week\t, cr)atedAt; hourOfDay\t"
   refused Key(UnexpectedCharacter { character: ')', position: 2 })
   variant Key/UnexpectedCharacter
@@ -3012,9 +3009,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\tid\t,\tdeletedAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(Id), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deletedAt"), sub_attributes: [], trailing: None }), bucket: None }])
 "\tid\t,\tdelete#dAt\t"
-  refused Key(UnexpectedCharacter { character: '#', position: 6 })
-  variant Key/UnexpectedCharacter
-  detail "invalid aggrGroupBy key: q expression: unexpected character '#' at position 6"
+  refused Key(InvalidAttributeName(Invalid))
+  variant Key/InvalidAttributeName/Invalid
+  detail "invalid aggrGroupBy key: invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\tid\t,\tdeleteAt\t"
   accepted AggregationGrouping([GroupingTerm { key: Member(Id), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("deleteAt"), sub_attributes: [], trailing: None }), bucket: None }])
 " observedAt;hourOfDay,datasetId\t, modifiedAt;hourOfDay"
@@ -3098,9 +3095,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 "\tscope, obseredAt[city.zip]"
   accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("obseredAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("zip")], written: [AttributeName("city"), AttributeName("zip")] })) }), bucket: None }])
 "\tscope, observedAt[ci:y.zip]"
-  refused Key(UnquotedColonName { position: 11 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 11 holds ':' and goes in double quotes"
+  accepted AggregationGrouping([GroupingTerm { key: Member(Scope), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("ci:y"), AttributeName("zip")], written: [AttributeName("ci:y"), AttributeName("zip")] })) }), bucket: None }])
 "modifiedAt;\tweek ,\t\"https://example.com/a.b=c!d~e\".\"ex:q\".x_1 "
   accepted AggregationGrouping([GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Week) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("x_1")], trailing: None }), bucket: None }])
 "modifiedAt;\teek ,\t\"https://example.com/a.b=c!d~e\".\"ex:q\".x_1 "
@@ -3202,9 +3197,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
 " unitCode, modifiedAt; year\t,\tmodifiedAt;\tmonth "
   accepted AggregationGrouping([GroupingTerm { key: Member(UnitCode), bucket: None }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Year) }, GroupingTerm { key: Path(ValuePath { attribute: AttributeName("modifiedAt"), sub_attributes: [], trailing: None }), bucket: Some(Month) }])
 " unitCode, modifiedAt; year\t,\tmodifiedAt:\tmonth "
-  refused Key(UnquotedColonName { position: 0 })
-  variant Key/UnquotedColonName
-  detail "invalid aggrGroupBy key: q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Key(UnexpectedCharacter { character: 'm', position: 12 })
+  variant Key/UnexpectedCharacter
+  detail "invalid aggrGroupBy key: q expression: unexpected character 'm' at position 12"
 " unitCode, mdifiedAt; year\t,\tmodifiedAt;\tmonth "
   refused BucketOnNonTemporalKey(Year)
   variant BucketOnNonTemporalKey/Year

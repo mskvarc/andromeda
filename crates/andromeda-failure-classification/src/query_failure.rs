@@ -52,7 +52,6 @@ const fn filter_error_type(error: &FilterError) -> NgsiLdErrorType {
         | FilterError::InvalidUnicodeEscape { .. }
         | FilterError::UnescapedControlCharacter { .. }
         | FilterError::Expected { .. }
-        | FilterError::UnquotedColonName { .. }
         | FilterError::UnexpectedCharacter { .. }
         | FilterError::InvalidNumber(_)
         | FilterError::PathTooDeep { .. }
@@ -335,7 +334,7 @@ mod tests {
         for error in [
             FilterError::Empty,
             FilterError::BareWord,
-            FilterError::UnquotedColonName { position: 0 },
+            FilterError::UnexpectedCharacter { character: ':', position: 0 },
             FilterError::Pattern(PatternError::RepeatedQuantifier),
         ] {
             let error = QueryError::Filter(error);

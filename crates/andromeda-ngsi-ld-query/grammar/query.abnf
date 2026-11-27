@@ -3,8 +3,8 @@
 ; ============================================================================
 ; Mirrors the ABNF of ETSI GS CIM 009 v1.9.1 clause 4.9 verbatim. Every rule is
 ; reproduced exactly as the specification states it; only layout, section
-; headers, these comments and the two alternatives marked as Andromeda's under
-; "Lexical" are local additions.
+; headers, these comments and the two alternatives and the one rule marked as
+; Andromeda's under "Lexical" are local additions.
 ;
 ; DOCUMENTATION ONLY. Nothing derives a parser from this file: no
 ; `#[grammar(file = ...)]` attribute references it, and this crate has no build
@@ -151,7 +151,8 @@ LogicalOp = andOp / orOp
 ; ----------------------------------------------------------------------------
 ; Attribute and type names are expanded against the request's `@context`
 ; before the filter is evaluated (clause 4.9). Unquoted, a name begins with a
-; letter and continues with letters, digits or `_`.
+; letter and continues with letters, digits or `_`, and outside the head of a
+; hop's braces also with the characters `PathName` below admits.
 
 TermChar = unicodeNumber / unicodeLetter
 TermChar =/ %x5F                                ; _
@@ -167,6 +168,19 @@ quotedStr = String                              ; "*char"
 ; delimit, and the name inside is expanded as an unquoted one is.
 AttrName =/ quotedStr
 EntityType =/ quotedStr
+
+; Andromeda's own reading, not in clause 4.9: wherever an unquoted colon after a
+; name has no meaning of its own, an unquoted name is a `PathName`, so a prefixed
+; name or an absolute IRI holding no dot is written as it is. Those positions are
+; the attribute of a Query Term, a sub-attribute or member after it, the
+; Relationship of a hop before its brace, the attribute after a hop's type list
+; and each name of an `orderBy` term. The first name inside a hop's braces and
+; every type of its list stay exactly `AttrName` and `EntityType`, since an
+; unquoted colon there ends the list, and `X:y` alone never tells a type list
+; from an absolute IRI whose scheme is `X` (RFC 3986 section 3.1). A `PathName`
+; ends at the first character outside it, so an IRI holding a dot is written as
+; a `quotedStr`, which every position reads.
+PathName = unicodeLetter *(TermChar / %x2D / %x3A / %x2F / %x23)   ; - : / #
 
 ; ============================================================================
 ; Raw projection list (`pick` / `omit`) -- ABNF grammar (clause 4.21)

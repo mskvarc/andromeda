@@ -1,5 +1,6 @@
 ---
 source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
+assertion_line: 96
 ---
 "a"
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [], trailing: None }
@@ -316,9 +317,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("https://example.com#/q"), sub_attributes: [], trailing: None }
   written "\"https://example.com#/q\"", read back to the same tree
 "https://example.com/q\""
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"https://exa,ple.com/q\""
   accepted ValuePath { attribute: AttributeName("https://exa,ple.com/q"), sub_attributes: [], trailing: None }
   written "\"https://exa,ple.com/q\"", read back to the same tree
@@ -326,41 +327,39 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("https://exampl{.com/q"), sub_attributes: [], trailing: None }
   written "\"https://exampl{.com/q\"", read back to the same tree
 "ex:name"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("ex:name"), sub_attributes: [], trailing: None }
+  written "ex:name", read back to the same tree
 "ex:name:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("ex:name:"), sub_attributes: [], trailing: None }
+  written "ex:name:", read back to the same tree
 "ex:~name"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '~', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '~' at position 3"
 ":x:name"
   refused Expected { expected: AttributeName, found: Character(':'), position: 0 }
   variant Expected
   detail "q expression: expected attribute name, found ':' at position 0"
 "https://example.com/Vehicle#speed"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "https://examp<le.com/Vehicle#speed"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '<', position: 13 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '<' at position 13"
 "https://example.com/Vehicle#speéed"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "https://example.com/ZVehicle#speed"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "https://example.com/V]ehicle#speed"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a..b"
   refused UnexpectedCharacter { character: '.', position: 1 }
   variant UnexpectedCharacter
@@ -405,9 +404,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("b"), sub_attributes: [], trailing: None }
   written "b", read back to the same tree
 "a# b"
-  refused UnexpectedCharacter { character: '#', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "aa b"
   refused UnexpectedCharacter { character: 'b', position: 3 }
   variant UnexpectedCharacter
@@ -436,9 +435,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("ab"), sub_attributes: [], trailing: None }
   written "ab", read back to the same tree
 "a#;b"
-  refused UnexpectedCharacter { character: '#', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a;|b"
   refused UnexpectedCharacter { character: ';', position: 1 }
   variant UnexpectedCharacter
@@ -615,7 +614,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: unexpected character '{' at position 3"
 "\"ex:q\"[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(AllLanguages) }
-  written "\"ex:q\"[*]", read back to the same tree
+  written "ex:q[*]", read back to the same tree
 "|\"ex:q\"[*]"
   refused Expected { expected: AttributeName, found: Character('|'), position: 0 }
   variant Expected
@@ -700,7 +699,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "x1.\"https://example.com/q\"[zip]", read back to the same tree
 "x_1.\"https://examplecom/q\"[zip]"
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("https://examplecom/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }
-  written "x_1.\"https://examplecom/q\"[zip]", read back to the same tree
+  written "x_1.https://examplecom/q[zip]", read back to the same tree
 "\"urn:x:(a,b)\""
   accepted ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [], trailing: None }
   written "\"urn:x:(a,b)\"", read back to the same tree
@@ -709,24 +708,24 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"urn:x:(a,)\"", read back to the same tree
 "\"ex:q\".brandName"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName")], trailing: None }
-  written "\"ex:q\".brandName", read back to the same tree
+  written "ex:q.brandName", read back to the same tree
 "\"ex:q\".brandName/"
-  refused UnexpectedCharacter { character: '/', position: 16 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '/' at position 16"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\".9brandName"
   refused Expected { expected: AttributeName, found: Character('9'), position: 7 }
   variant Expected
   detail "q expression: expected attribute name, found '9' at position 7"
 "speed.\"ex:q\"[city]"
   accepted ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }
-  written "speed.\"ex:q\"[city]", read back to the same tree
+  written "speed.ex:q[city]", read back to the same tree
 "seed.\"ex:q\"[city]"
   accepted ValuePath { attribute: AttributeName("seed"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }
-  written "seed.\"ex:q\"[city]", read back to the same tree
+  written "seed.ex:q[city]", read back to the same tree
 "séeed.\"ex:q\"[city]"
   accepted ValuePath { attribute: AttributeName("séeed"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city")], written: [AttributeName("city")] })) }
-  written "séeed.\"ex:q\"[city]", read back to the same tree
+  written "séeed.ex:q[city]", read back to the same tree
 "brandName.brandName.brandName[b.city]"
   accepted ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName"), AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
   written "brandName.brandName.brandName[b.city]", read back to the same tree
@@ -784,13 +783,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "a[b.en]", read back to the same tree
 "\"ex:q\".speed.\"https://example.com/q\""
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed"), AttributeName("https://example.com/q")], trailing: None }
-  written "\"ex:q\".speed.\"https://example.com/q\"", read back to the same tree
+  written "ex:q.speed.\"https://example.com/q\"", read back to the same tree
 "\"ex:q\".speed.\"ttps://example.com/q\""
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed"), AttributeName("ttps://example.com/q")], trailing: None }
-  written "\"ex:q\".speed.\"ttps://example.com/q\"", read back to the same tree
+  written "ex:q.speed.\"ttps://example.com/q\"", read back to the same tree
 "\"ex:q\".speed.\"https:é//example.com/q\""
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("speed"), AttributeName("https:é//example.com/q")], trailing: None }
-  written "\"ex:q\".speed.\"https:é//example.com/q\"", read back to the same tree
+  written "ex:q.speed.\"https:é//example.com/q\"", read back to the same tree
 "\"urn:x:a;b\".observedAt.a"
   accepted ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("observedAt"), AttributeName("a")], trailing: None }
   written "\"urn:x:a;b\".observedAt.a", read back to the same tree
@@ -813,7 +812,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: unexpected character '_' at position 2"
 "\"ex:q\".x_1.observedAt[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("x_1"), AttributeName("observedAt")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".x_1.observedAt[*]", read back to the same tree
+  written "ex:q.x_1.observedAt[*]", read back to the same tree
 "\"ex:q\".x_1.observe,dAt[*]"
   refused UnexpectedCharacter { character: ',', position: 18 }
   variant UnexpectedCharacter
@@ -834,7 +833,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"https://example.com/a.b=c!d~e\"[zp.b]", read back to the same tree
 "\"ex:q\".a[en]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }
-  written "\"ex:q\".a[en]", read back to the same tree
+  written "ex:q.a[en]", read back to the same tree
 "\"ex:q\t.a[en]"
   refused UnterminatedString
   variant UnterminatedString
@@ -903,13 +902,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected ], found '>' at position 63"
 "\"urn:x:a;b\".\"ex:q\".\"urn:x:(a,b)\"[*]"
   accepted ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }
-  written "\"urn:x:a;b\".\"ex:q\".\"urn:x:(a,b)\"[*]", read back to the same tree
+  written "\"urn:x:a;b\".ex:q.\"urn:x:(a,b)\"[*]", read back to the same tree
 "\"urn:x:a;b\".\"ex:q\".\"urn:x:(ab)\"[*]"
   accepted ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:(ab)")], trailing: Some(AllLanguages) }
-  written "\"urn:x:a;b\".\"ex:q\".\"urn:x:(ab)\"[*]", read back to the same tree
+  written "\"urn:x:a;b\".ex:q.\"urn:x:(ab)\"[*]", read back to the same tree
 "\"urnx:a;b\".\"ex:q\".\"urn:x:(a,b)\"[*]"
   accepted ValuePath { attribute: AttributeName("urnx:a;b"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }
-  written "\"urnx:a;b\".\"ex:q\".\"urn:x:(a,b)\"[*]", read back to the same tree
+  written "\"urnx:a;b\".ex:q.\"urn:x:(a,b)\"[*]", read back to the same tree
 "\"urn:x:(a,b)\"[zip]"
   accepted ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }
   written "\"urn:x:(a,b)\"[zip]", read back to the same tree
@@ -986,15 +985,15 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/a.b=c!d~e")], trailing: None }
   written "a.a.\"https://example.com/a.b=c!d~e\"", read back to the same tree
 "a.a.https://example.com/a.b=c!d~e\""
-  refused UnquotedColonName { position: 4 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 4 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a.a.\"https://example.com/a.b=c!#~e\""
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/a.b=c!#~e")], trailing: None }
   written "a.a.\"https://example.com/a.b=c!#~e\"", read back to the same tree
 "\"urn:x:(a,b)\".\"ex:q\"[*]"
   accepted ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) }
-  written "\"urn:x:(a,b)\".\"ex:q\"[*]", read back to the same tree
+  written "\"urn:x:(a,b)\".ex:q[*]", read back to the same tree
 "\"urn:x:(a,b)\".\"ex:;q\"[*]"
   accepted ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("ex:;q")], trailing: Some(AllLanguages) }
   written "\"urn:x:(a,b)\".\"ex:;q\"[*]", read back to the same tree
@@ -1051,7 +1050,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"https://example.com/q\".a[b.n]", read back to the same tree
 "\"ex:q\".brandName[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".brandName[*]", read back to the same tree
+  written "ex:q.brandName[*]", read back to the same tree
 "\"ex:q\"]brandName[*]"
   refused UnexpectedCharacter { character: ']', position: 6 }
   variant UnexpectedCharacter
@@ -1073,14 +1072,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected ], found '@' at position 14"
 "\"ex:q\".observedAt[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".observedAt[*]", read back to the same tree
+  written "ex:q.observedAt[*]", read back to the same tree
 "\"ex-q\".observedAt[*]"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\".obsrvedAt[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("obsrvedAt")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".obsrvedAt[*]", read back to the same tree
+  written "ex:q.obsrvedAt[*]", read back to the same tree
 "\"urn:x:(a,b)\".\"urn:x:a;b\".\"https://example.com/q\"[*]"
   accepted ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }
   written "\"urn:x:(a,b)\".\"urn:x:a;b\".\"https://example.com/q\"[*]", read back to the same tree
@@ -1219,9 +1218,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("brandN0ame"), sub_attributes: [], trailing: Some(AllLanguages) }
   written "brandN0ame[*]", read back to the same tree
 "spe:ed"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("spe:ed"), sub_attributes: [], trailing: None }
+  written "spe:ed", read back to the same tree
 "s!peed"
   refused UnexpectedCharacter { character: '!', position: 1 }
   variant UnexpectedCharacter
@@ -1242,11 +1240,11 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected ], found '!' at position 3"
 "\"https://example.com/a.b=c!d~e\".\"ex:q\"[*]"
   accepted ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\"[*]", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q[*]", read back to the same tree
 "https://example.com/a.b=c!d~e\".\"ex:q\"[*]"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"https://example.com/a.b=c!d~e\".\"ex:;q\"[*]"
   accepted ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:;q")], trailing: Some(AllLanguages) }
   written "\"https://example.com/a.b=c!d~e\".\"ex:;q\"[*]", read back to the same tree
@@ -1333,7 +1331,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "speed.\"urn:x:a;b\".\"https://example.com/q\"", read back to the same tree
 "speed.\"urn:x:a;b\".\"https://examplecom/q\""
   accepted ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("https://examplecom/q")], trailing: None }
-  written "speed.\"urn:x:a;b\".\"https://examplecom/q\"", read back to the same tree
+  written "speed.\"urn:x:a;b\".https://examplecom/q", read back to the same tree
 "peed.\"urn:x:a;b\".\"https://example.com/q\""
   accepted ValuePath { attribute: AttributeName("peed"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("https://example.com/q")], trailing: None }
   written "peed.\"urn:x:a;b\".\"https://example.com/q\"", read back to the same tree
@@ -1394,22 +1392,22 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("bandName")], trailing: Some(AllLanguages) }
   written "x_1.bandName[*]", read back to the same tree
 "urn:x:(a,b)\""
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '(', position: 6 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '(' at position 6"
 "\"urn:x:(,b)\""
   accepted ValuePath { attribute: AttributeName("urn:x:(,b)"), sub_attributes: [], trailing: None }
   written "\"urn:x:(,b)\"", read back to the same tree
 "\"urn:x:a;b\".\"ex:q\"[zip.en]"
   accepted ValuePath { attribute: AttributeName("urn:x:a;b"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }
-  written "\"urn:x:a;b\".\"ex:q\"[zip.en]", read back to the same tree
+  written "\"urn:x:a;b\".ex:q[zip.en]", read back to the same tree
 "\"urn:x:a;b\".\"ex:q\"[zip{.en]"
   refused Expected { expected: Punctuation(CloseBracket), found: Character('{'), position: 22 }
   variant Expected
   detail "q expression: expected ], found '{' at position 22"
 "\"urn:x:éa;b\".\"ex:q\"[zip.en]"
   accepted ValuePath { attribute: AttributeName("urn:x:éa;b"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }
-  written "\"urn:x:éa;b\".\"ex:q\"[zip.en]", read back to the same tree
+  written "\"urn:x:éa;b\".ex:q[zip.en]", read back to the same tree
 "observedAt.speed[b.b]"
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("speed")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("b")], written: [AttributeName("b"), AttributeName("b")] })) }
   written "observedAt.speed[b.b]", read back to the same tree
@@ -1433,9 +1431,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://example.com/q")], trailing: None }
   written "observedAt.\"https://example.com/q\"", read back to the same tree
 "observe:dAt.\"https://example.com/q\""
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("observe:dAt"), sub_attributes: [AttributeName("https://example.com/q")], trailing: None }
+  written "observe:dAt.\"https://example.com/q\"", read back to the same tree
 "observedAt.\"https://exampl.com/q\""
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://exampl.com/q")], trailing: None }
   written "observedAt.\"https://exampl.com/q\"", read back to the same tree
@@ -1500,13 +1497,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"urn::(a,b)\".\"https://example.com/a.b=c!d~e\"[*]", read back to the same tree
 "\"ex:q\".\"urn:x:(a,b)\"[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:(a,b)")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"urn:x:(a,b)\"[*]", read back to the same tree
+  written "ex:q.\"urn:x:(a,b)\"[*]", read back to the same tree
 "\"ex:q\".\"urn::(a,b)\"[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn::(a,b)")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"urn::(a,b)\"[*]", read back to the same tree
+  written "ex:q.\"urn::(a,b)\"[*]", read back to the same tree
 "\"ex:q\".\"u.rn:x:(a,b)\"[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("u.rn:x:(a,b)")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"u.rn:x:(a,b)\"[*]", read back to the same tree
+  written "ex:q.\"u.rn:x:(a,b)\"[*]", read back to the same tree
 "\"urn:x:(a,b)\".a.\"https://example.com/a.b=c!d~e\"[*]"
   accepted ValuePath { attribute: AttributeName("urn:x:(a,b)"), sub_attributes: [AttributeName("a"), AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(AllLanguages) }
   written "\"urn:x:(a,b)\".a.\"https://example.com/a.b=c!d~e\"[*]", read back to the same tree
@@ -1528,20 +1525,19 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "observedAt.\"https://example.com/a.b=c!d~e\".\"ex:q\""
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("ex:q")], trailing: None }
-  written "observedAt.\"https://example.com/a.b=c!d~e\".\"ex:q\"", read back to the same tree
+  written "observedAt.\"https://example.com/a.b=c!d~e\".ex:q", read back to the same tree
 "observedA.\"https://example.com/a.b=c!d~e\".\"ex:q\""
   accepted ValuePath { attribute: AttributeName("observedA"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("ex:q")], trailing: None }
-  written "observedA.\"https://example.com/a.b=c!d~e\".\"ex:q\"", read back to the same tree
+  written "observedA.\"https://example.com/a.b=c!d~e\".ex:q", read back to the same tree
 "observedAt.\"https://example.coma.b=c!d~e\".\"ex:q\""
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("https://example.coma.b=c!d~e"), AttributeName("ex:q")], trailing: None }
-  written "observedAt.\"https://example.coma.b=c!d~e\".\"ex:q\"", read back to the same tree
+  written "observedAt.\"https://example.coma.b=c!d~e\".ex:q", read back to the same tree
 "observedAt.a.observedAt[*]"
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a"), AttributeName("observedAt")], trailing: Some(AllLanguages) }
   written "observedAt.a.observedAt[*]", read back to the same tree
 "observedAt.a.ob:servedAt[*]"
-  refused UnquotedColonName { position: 13 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 13 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [AttributeName("a"), AttributeName("ob:servedAt")], trailing: Some(AllLanguages) }
+  written "observedAt.a.ob:servedAt[*]", read back to the same tree
 "observedAt.a.observe{dAt[*]"
   refused UnexpectedCharacter { character: '{', position: 20 }
   variant UnexpectedCharacter
@@ -1558,13 +1554,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\".a[b.city]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
-  written "\"ex:q\".a[b.city]", read back to the same tree
+  written "ex:q.a[b.city]", read back to the same tree
 "\"exq\".a[b.city]"
   accepted ValuePath { attribute: AttributeName("exq"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
   written "exq.a[b.city]", read back to the same tree
 "\"ex:\".a[b.city]"
   accepted ValuePath { attribute: AttributeName("ex:"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
-  written "\"ex:\".a[b.city]", read back to the same tree
+  written "ex:.a[b.city]", read back to the same tree
 "x_[*]"
   accepted ValuePath { attribute: AttributeName("x_"), sub_attributes: [], trailing: Some(AllLanguages) }
   written "x_[*]", read back to the same tree
@@ -1591,9 +1587,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '+' at position 57"
 "\"urn:x:(a,b)\".urn:x:a;b\".\"https://example.com/a.b=c!d~e\"[en]"
-  refused UnquotedColonName { position: 14 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 14 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: ';', position: 21 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 21"
 "a.\"https://example.com/q\"[zip]"
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }
   written "a.\"https://example.com/q\"[zip]", read back to the same tree
@@ -1606,10 +1602,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "a.\"htps://example.com/q\"[zip]", read back to the same tree
 "\"ex:q\"[zip.en]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("en")], written: [AttributeName("zip"), AttributeName("en")] })) }
-  written "\"ex:q\"[zip.en]", read back to the same tree
+  written "ex:q[zip.en]", read back to the same tree
 "\"ex:q\"[zip.ean]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip"), AttributeName("ean")], written: [AttributeName("zip"), AttributeName("ean")] })) }
-  written "\"ex:q\"[zip.ean]", read back to the same tree
+  written "ex:q[zip.ean]", read back to the same tree
 "\"ex:q\"[zip[.en]"
   refused Expected { expected: Punctuation(CloseBracket), found: Character('['), position: 10 }
   variant Expected
@@ -1626,13 +1622,13 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected attribute name, found ';' at position 22"
 "\"ex:q\".observedAt.observedAt"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt"), AttributeName("observedAt")], trailing: None }
-  written "\"ex:q\".observedAt.observedAt", read back to the same tree
+  written "ex:q.observedAt.observedAt", read back to the same tree
 "\"ex:q\".observedAt.observeAt"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedAt"), AttributeName("observeAt")], trailing: None }
-  written "\"ex:q\".observedAt.observeAt", read back to the same tree
+  written "ex:q.observedAt.observeAt", read back to the same tree
 "\"ex:q\".observedA.observedAt"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("observedA"), AttributeName("observedAt")], trailing: None }
-  written "\"ex:q\".observedA.observedAt", read back to the same tree
+  written "ex:q.observedA.observedAt", read back to the same tree
 "s<eed"
   refused UnexpectedCharacter { character: '<', position: 1 }
   variant UnexpectedCharacter
@@ -1655,9 +1651,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brandName")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
   written "a.brandName[b.city]", read back to the same tree
 "a.brandNa#e[b.city]"
-  refused UnexpectedCharacter { character: '#', position: 9 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 9"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a.brand9ame[b.city]"
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("brand9ame")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
   written "a.brand9ame[b.city]", read back to the same tree
@@ -1693,7 +1689,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "a.\"urn:x:(a,b)\"[enzip]", read back to the same tree
 "x_1.\"ex:q\"[*]"
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) }
-  written "x_1.\"ex:q\"[*]", read back to the same tree
+  written "x_1.ex:q[*]", read back to the same tree
 "x_1.\"exq\"[*]"
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("exq")], trailing: Some(AllLanguages) }
   written "x_1.exq[*]", read back to the same tree
@@ -1712,10 +1708,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"https://e.xample.com/a.b=c!d~e\".x_1[*]", read back to the same tree
 "\"https://example.com/a.b=c!d~\".\"ex:q\"[*]"
   accepted ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) }
-  written "\"https://example.com/a.b=c!d~\".\"ex:q\"[*]", read back to the same tree
+  written "\"https://example.com/a.b=c!d~\".ex:q[*]", read back to the same tree
 "\"https://example.com/a.bZ=c!d~e\".\"ex:q\"[*]"
   accepted ValuePath { attribute: AttributeName("https://example.com/a.bZ=c!d~e"), sub_attributes: [AttributeName("ex:q")], trailing: Some(AllLanguages) }
-  written "\"https://example.com/a.bZ=c!d~e\".\"ex:q\"[*]", read back to the same tree
+  written "\"https://example.com/a.bZ=c!d~e\".ex:q[*]", read back to the same tree
 "speed.brandName.\"https://example.com/a.b=c!d~e\"[en]"
   accepted ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(Members(MemberPath { addressed: [AttributeName("en")], written: [AttributeName("en")] })) }
   written "speed.brandName.\"https://example.com/a.b=c!d~e\"[en]", read back to the same tree
@@ -1736,10 +1732,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "x_1[zip.ity]", read back to the same tree
 "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\"[b]"
   accepted ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:a;b")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\"[b]", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q.\"urn:x:a;b\"[b]", read back to the same tree
 "\"https://eample.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\"[b]"
   accepted ValuePath { attribute: AttributeName("https://eample.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:a;b")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b")], written: [AttributeName("b")] })) }
-  written "\"https://eample.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\"[b]", read back to the same tree
+  written "\"https://eample.com/a.b=c!d~e\".ex:q.\"urn:x:a;b\"[b]", read back to the same tree
 "(https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\"[b]"
   refused Expected { expected: AttributeName, found: Character('('), position: 0 }
   variant Expected
@@ -1767,7 +1763,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected attribute name, found '[' at position 0"
 "\"ex:q\".\"ex:q\".brandName[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("ex:q"), AttributeName("brandName")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"ex:q\".brandName[*]", read back to the same tree
+  written "ex:q.ex:q.brandName[*]", read back to the same tree
 "\"ex:q\".\"ex:q\".brandName[*]/"
   refused UnexpectedCharacter { character: '/', position: 26 }
   variant UnexpectedCharacter
@@ -1778,7 +1774,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected attribute name, found '~' at position 7"
 "\"ex:q\".\"urn:x:a;b\".\"https://example.com/q\"[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("urn:x:a;b"), AttributeName("https://example.com/q")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"urn:x:a;b\".\"https://example.com/q\"[*]", read back to the same tree
+  written "ex:q.\"urn:x:a;b\".\"https://example.com/q\"[*]", read back to the same tree
 "%ex:q\".\"urn:x:a;b\".\"https://example.com/q\"[*]"
   refused Expected { expected: AttributeName, found: Character('%'), position: 0 }
   variant Expected
@@ -1792,7 +1788,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"urn:x:a;b\".a[b.en]", read back to the same tree
 "\"urn:x:ab\".a[b.en]"
   accepted ValuePath { attribute: AttributeName("urn:x:ab"), sub_attributes: [AttributeName("a")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }
-  written "\"urn:x:ab\".a[b.en]", read back to the same tree
+  written "urn:x:ab.a[b.en]", read back to the same tree
 "\"ur]:x:a;b\".a[b.en]"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -1805,7 +1801,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "speed.\"urn:x:a;\"[*]", read back to the same tree
 "speed.\"urn:x:aab\"[*]"
   accepted ValuePath { attribute: AttributeName("speed"), sub_attributes: [AttributeName("urn:x:aab")], trailing: Some(AllLanguages) }
-  written "speed.\"urn:x:aab\"[*]", read back to the same tree
+  written "speed.urn:x:aab[*]", read back to the same tree
 "observedAt[b.city]"
   accepted ValuePath { attribute: AttributeName("observedAt"), sub_attributes: [], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("city")], written: [AttributeName("b"), AttributeName("city")] })) }
   written "observedAt[b.city]", read back to the same tree
@@ -1869,17 +1865,17 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   accepted ValuePath { attribute: AttributeName("a"), sub_attributes: [AttributeName("observedAt")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("en")], written: [AttributeName("b"), AttributeName("en")] })) }
   written "a.observedAt[b.en]", read back to the same tree
 "a.ob/ervedAt[b.en]"
-  refused UnexpectedCharacter { character: '/', position: 4 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '/' at position 4"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a.observedAtb.en]"
   refused UnexpectedCharacter { character: ']', position: 16 }
   variant UnexpectedCharacter
   detail "q expression: unexpected character ']' at position 16"
 "observedA/t"
-  refused UnexpectedCharacter { character: '/', position: 9 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '/' at position 9"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "observed\"At"
   refused UnexpectedCharacter { character: '"', position: 8 }
   variant UnexpectedCharacter
@@ -1943,7 +1939,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"https://example.céom/a.b=c!d~e\"[b]", read back to the same tree
 "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\""
   accepted ValuePath { attribute: AttributeName("https://example.com/a.b=c!d~e"), sub_attributes: [AttributeName("ex:q"), AttributeName("urn:x:a;b")], trailing: None }
-  written "\"https://example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\"", read back to the same tree
+  written "\"https://example.com/a.b=c!d~e\".ex:q.\"urn:x:a;b\"", read back to the same tree
 "\"https|//example.com/a.b=c!d~e\".\"ex:q\".\"urn:x:a;b\""
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
@@ -1982,10 +1978,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "observedAt[ciy]", read back to the same tree
 "\"https://example.com/q\".a.\"ex:q\"[city.en]"
   accepted ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("en")], written: [AttributeName("city"), AttributeName("en")] })) }
-  written "\"https://example.com/q\".a.\"ex:q\"[city.en]", read back to the same tree
+  written "\"https://example.com/q\".a.ex:q[city.en]", read back to the same tree
 "\"htps://example.com/q\".a.\"ex:q\"[city.en]"
   accepted ValuePath { attribute: AttributeName("htps://example.com/q"), sub_attributes: [AttributeName("a"), AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("city"), AttributeName("en")], written: [AttributeName("city"), AttributeName("en")] })) }
-  written "\"htps://example.com/q\".a.\"ex:q\"[city.en]", read back to the same tree
+  written "\"htps://example.com/q\".a.ex:q[city.en]", read back to the same tree
 "\"https://example.com/q\".a.\"ex:q\"[[city.en]"
   refused Expected { expected: AttributeName, found: Character('['), position: 33 }
   variant Expected
@@ -2060,7 +2056,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"https://xample.com/a.b=c!d~e\"", read back to the same tree
 "x_1.\"ex:q\"[zip]"
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("ex:q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("zip")], written: [AttributeName("zip")] })) }
-  written "x_1.\"ex:q\"[zip]", read back to the same tree
+  written "x_1.ex:q[zip]", read back to the same tree
 "x_1.\"ex:q[zip]"
   refused UnterminatedString
   variant UnterminatedString
@@ -2084,7 +2080,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "\"ex:}q\"[*]", read back to the same tree
 "\"x:q\"[*]"
   accepted ValuePath { attribute: AttributeName("x:q"), sub_attributes: [], trailing: Some(AllLanguages) }
-  written "\"x:q\"[*]", read back to the same tree
+  written "x:q[*]", read back to the same tree
 "x_1.x_1[*]"
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("x_1")], trailing: Some(AllLanguages) }
   written "x_1.x_1[*]", read back to the same tree
@@ -2098,14 +2094,14 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: unexpected character '<' at position 10"
 "\"ex:q\".\"https://example.com/a.b=c!d~e\".speed[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/a.b=c!d~e"), AttributeName("speed")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"https://example.com/a.b=c!d~e\".speed[*]", read back to the same tree
+  written "ex:q.\"https://example.com/a.b=c!d~e\".speed[*]", read back to the same tree
 "\"+ex:q\".\"https://example.com/a.b=c!d~e\".speed[*]"
   refused InvalidAttributeName(Invalid)
   variant InvalidAttributeName/Invalid
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"ex:q\".\"https://example.com/.b=c!d~e\".speed[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("https://example.com/.b=c!d~e"), AttributeName("speed")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".\"https://example.com/.b=c!d~e\".speed[*]", read back to the same tree
+  written "ex:q.\"https://example.com/.b=c!d~e\".speed[*]", read back to the same tree
 "brandName.brandName"
   accepted ValuePath { attribute: AttributeName("brandName"), sub_attributes: [AttributeName("brandName")], trailing: None }
   written "brandName.brandName", read back to the same tree
@@ -2114,9 +2110,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '>' at position 7"
 "brandName.br#ndName"
-  refused UnexpectedCharacter { character: '#', position: 12 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '#' at position 12"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "x_1.brandName.\"https://example.com/q\"[b.zip]"
   accepted ValuePath { attribute: AttributeName("x_1"), sub_attributes: [AttributeName("brandName"), AttributeName("https://example.com/q")], trailing: Some(Members(MemberPath { addressed: [AttributeName("b"), AttributeName("zip")], written: [AttributeName("b"), AttributeName("zip")] })) }
   written "x_1.brandName.\"https://example.com/q\"[b.zip]", read back to the same tree
@@ -2197,9 +2193,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '{' at position 1"
 "x_1.urn:x:a;b\"[city.b]"
-  refused UnquotedColonName { position: 4 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 4 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: ';', position: 11 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ';' at position 11"
 "a[c+ty]"
   refused Expected { expected: Punctuation(CloseBracket), found: Character('+'), position: 3 }
   variant Expected
@@ -2209,7 +2205,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   written "a[cit]", read back to the same tree
 "\"ex:q\""
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [], trailing: None }
-  written "\"ex:q\"", read back to the same tree
+  written "ex:q", read back to the same tree
 "(ex:q\""
   refused Expected { expected: AttributeName, found: Character('('), position: 0 }
   variant Expected
@@ -2236,7 +2232,7 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "q expression: expected attribute name, found '>' at position 0"
 "\"ex:q\".brandName.a[*]"
   accepted ValuePath { attribute: AttributeName("ex:q"), sub_attributes: [AttributeName("brandName"), AttributeName("a")], trailing: Some(AllLanguages) }
-  written "\"ex:q\".brandName.a[*]", read back to the same tree
+  written "ex:q.brandName.a[*]", read back to the same tree
 "\"ex:q\".,randName.a[*]"
   refused Expected { expected: AttributeName, found: Character(','), position: 7 }
   variant Expected
@@ -2364,10 +2360,10 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "\"https://example.com/q\".\"ex:q\".\"https://example.com/a.b=c!d~e\"[*]"
   accepted ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("ex:q"), AttributeName("https://example.com/a.b=c!d~e")], trailing: Some(AllLanguages) }
-  written "\"https://example.com/q\".\"ex:q\".\"https://example.com/a.b=c!d~e\"[*]", read back to the same tree
+  written "\"https://example.com/q\".ex:q.\"https://example.com/a.b=c!d~e\"[*]", read back to the same tree
 "\"https://example.com/q\".\"ex:q\".\"https://example.com/a.!b=c!d~e\"[*]"
   accepted ValuePath { attribute: AttributeName("https://example.com/q"), sub_attributes: [AttributeName("ex:q"), AttributeName("https://example.com/a.!b=c!d~e")], trailing: Some(AllLanguages) }
-  written "\"https://example.com/q\".\"ex:q\".\"https://example.com/a.!b=c!d~e\"[*]", read back to the same tree
+  written "\"https://example.com/q\".ex:q.\"https://example.com/a.!b=c!d~e\"[*]", read back to the same tree
 "\"https://example.com/q\".\"ex:q\".\"http\"s://example.com/a.b=c!d~e\"[*]"
   refused UnexpectedCharacter { character: 's', position: 37 }
   variant UnexpectedCharacter
@@ -2423,9 +2419,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 1"
 "a-"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a{"
   refused UnexpectedCharacter { character: '{', position: 1 }
   variant UnexpectedCharacter
@@ -2435,9 +2431,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 1"
 "a:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:"), sub_attributes: [], trailing: None }
+  written "a:", read back to the same tree
 "a\""
   refused UnexpectedCharacter { character: '"', position: 1 }
   variant UnexpectedCharacter
@@ -3022,9 +3017,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 2"
 "en-"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en{"
   refused UnexpectedCharacter { character: '{', position: 2 }
   variant UnexpectedCharacter
@@ -3034,9 +3029,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 2"
 "en:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:"), sub_attributes: [], trailing: None }
+  written "en:", read back to the same tree
 "en\""
   refused UnexpectedCharacter { character: '"', position: 2 }
   variant UnexpectedCharacter
@@ -3070,9 +3064,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 2"
 "aa-"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "aa{"
   refused UnexpectedCharacter { character: '{', position: 2 }
   variant UnexpectedCharacter
@@ -3082,9 +3076,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 2"
 "aa:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("aa:"), sub_attributes: [], trailing: None }
+  written "aa:", read back to the same tree
 "aa\""
   refused UnexpectedCharacter { character: '"', position: 2 }
   variant UnexpectedCharacter
@@ -3293,57 +3286,56 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 1"
 "a-a"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-."
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-["
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-]"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-*"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a--"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-{"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-}"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-:"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  accepted ValuePath { attribute: AttributeName("a-:"), sub_attributes: [], trailing: None }
+  written "a-:", read back to the same tree
 "a-\""
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a- "
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-1"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a-en"
-  refused UnexpectedCharacter { character: '-', position: 1 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 1"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a{a"
   refused UnexpectedCharacter { character: '{', position: 1 }
   variant UnexpectedCharacter
@@ -3445,57 +3437,51 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 1"
 "a:a"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:a"), sub_attributes: [], trailing: None }
+  written "a:a", read back to the same tree
 "a:."
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 3 }
+  variant Expected
+  detail "q expression: expected attribute name, found end of input at position 3"
 "a:["
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 3 }
+  variant Expected
+  detail "q expression: expected attribute name, found end of input at position 3"
 "a:]"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: ']', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ']' at position 2"
 "a:*"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '*', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 2"
 "a:-"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:-"), sub_attributes: [], trailing: None }
+  written "a:-", read back to the same tree
 "a:{"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '{', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 2"
 "a:}"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '}', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 2"
 "a::"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a::"), sub_attributes: [], trailing: None }
+  written "a::", read back to the same tree
 "a:\""
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '"', position: 2 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 2"
 "a: "
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:"), sub_attributes: [], trailing: None }
+  written "a:", read back to the same tree
 "a:1"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:1"), sub_attributes: [], trailing: None }
+  written "a:1", read back to the same tree
 "a:en"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:en"), sub_attributes: [], trailing: None }
+  written "a:en", read back to the same tree
 "a\"a"
   refused UnexpectedCharacter { character: '"', position: 1 }
   variant UnexpectedCharacter
@@ -3619,9 +3605,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 2"
 "a1-"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "a1{"
   refused UnexpectedCharacter { character: '{', position: 2 }
   variant UnexpectedCharacter
@@ -3631,9 +3617,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 2"
 "a1:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a1:"), sub_attributes: [], trailing: None }
+  written "a1:", read back to the same tree
 "a1\""
   refused UnexpectedCharacter { character: '"', position: 2 }
   variant UnexpectedCharacter
@@ -3667,9 +3652,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 3"
 "aen-"
-  refused UnexpectedCharacter { character: '-', position: 3 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 3"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "aen{"
   refused UnexpectedCharacter { character: '{', position: 3 }
   variant UnexpectedCharacter
@@ -3679,9 +3664,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 3"
 "aen:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("aen:"), sub_attributes: [], trailing: None }
+  written "aen:", read back to the same tree
 "aen\""
   refused UnexpectedCharacter { character: '"', position: 3 }
   variant UnexpectedCharacter
@@ -9785,9 +9769,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 2"
 " a-"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " a{"
   refused UnexpectedCharacter { character: '{', position: 2 }
   variant UnexpectedCharacter
@@ -9797,9 +9781,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 2"
 " a:"
-  refused UnquotedColonName { position: 1 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 1 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("a:"), sub_attributes: [], trailing: None }
+  written "a:", read back to the same tree
 " a\""
   refused UnexpectedCharacter { character: '"', position: 2 }
   variant UnexpectedCharacter
@@ -10396,9 +10379,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 3"
 " en-"
-  refused UnexpectedCharacter { character: '-', position: 3 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 3"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 " en{"
   refused UnexpectedCharacter { character: '{', position: 3 }
   variant UnexpectedCharacter
@@ -10408,9 +10391,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 3"
 " en:"
-  refused UnquotedColonName { position: 1 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 1 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:"), sub_attributes: [], trailing: None }
+  written "en:", read back to the same tree
 " en\""
   refused UnexpectedCharacter { character: '"', position: 3 }
   variant UnexpectedCharacter
@@ -11120,9 +11102,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 3"
 "ena-"
-  refused UnexpectedCharacter { character: '-', position: 3 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 3"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "ena{"
   refused UnexpectedCharacter { character: '{', position: 3 }
   variant UnexpectedCharacter
@@ -11132,9 +11114,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 3"
 "ena:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("ena:"), sub_attributes: [], trailing: None }
+  written "ena:", read back to the same tree
 "ena\""
   refused UnexpectedCharacter { character: '"', position: 3 }
   variant UnexpectedCharacter
@@ -11355,57 +11336,56 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 2"
 "en-a"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-."
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-["
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-]"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-*"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en--"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-{"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-}"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-:"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  accepted ValuePath { attribute: AttributeName("en-:"), sub_attributes: [], trailing: None }
+  written "en-:", read back to the same tree
 "en-\""
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en- "
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-1"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en-en"
-  refused UnexpectedCharacter { character: '-', position: 2 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 2"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en{a"
   refused UnexpectedCharacter { character: '{', position: 2 }
   variant UnexpectedCharacter
@@ -11511,57 +11491,51 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 2"
 "en:a"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:a"), sub_attributes: [], trailing: None }
+  written "en:a", read back to the same tree
 "en:."
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 4 }
+  variant Expected
+  detail "q expression: expected attribute name, found end of input at position 4"
 "en:["
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused Expected { expected: AttributeName, found: EndOfInput, position: 4 }
+  variant Expected
+  detail "q expression: expected attribute name, found end of input at position 4"
 "en:]"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: ']', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character ']' at position 3"
 "en:*"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '*', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '*' at position 3"
 "en:-"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:-"), sub_attributes: [], trailing: None }
+  written "en:-", read back to the same tree
 "en:{"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '{', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '{' at position 3"
 "en:}"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '}', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '}' at position 3"
 "en::"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en::"), sub_attributes: [], trailing: None }
+  written "en::", read back to the same tree
 "en:\""
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  refused UnexpectedCharacter { character: '"', position: 3 }
+  variant UnexpectedCharacter
+  detail "q expression: unexpected character '\"' at position 3"
 "en: "
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:"), sub_attributes: [], trailing: None }
+  written "en:", read back to the same tree
 "en:1"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:1"), sub_attributes: [], trailing: None }
+  written "en:1", read back to the same tree
 "en:en"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en:en"), sub_attributes: [], trailing: None }
+  written "en:en", read back to the same tree
 "en\"a"
   refused UnexpectedCharacter { character: '"', position: 2 }
   variant UnexpectedCharacter
@@ -11685,9 +11659,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 3"
 "en1-"
-  refused UnexpectedCharacter { character: '-', position: 3 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 3"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "en1{"
   refused UnexpectedCharacter { character: '{', position: 3 }
   variant UnexpectedCharacter
@@ -11697,9 +11671,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 3"
 "en1:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("en1:"), sub_attributes: [], trailing: None }
+  written "en1:", read back to the same tree
 "en1\""
   refused UnexpectedCharacter { character: '"', position: 3 }
   variant UnexpectedCharacter
@@ -11733,9 +11706,9 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '*' at position 4"
 "enen-"
-  refused UnexpectedCharacter { character: '-', position: 4 }
-  variant UnexpectedCharacter
-  detail "q expression: unexpected character '-' at position 4"
+  refused InvalidAttributeName(Invalid)
+  variant InvalidAttributeName/Invalid
+  detail "invalid attribute name: a name must be a term, a compact IRI or an absolute IRI"
 "enen{"
   refused UnexpectedCharacter { character: '{', position: 4 }
   variant UnexpectedCharacter
@@ -11745,9 +11718,8 @@ source: crates/andromeda-ngsi-ld-query/src/parse_behaviour_tests/mod.rs
   variant UnexpectedCharacter
   detail "q expression: unexpected character '}' at position 4"
 "enen:"
-  refused UnquotedColonName { position: 0 }
-  variant UnquotedColonName
-  detail "q expression: the name at position 0 holds ':' and goes in double quotes"
+  accepted ValuePath { attribute: AttributeName("enen:"), sub_attributes: [], trailing: None }
+  written "enen:", read back to the same tree
 "enen\""
   refused UnexpectedCharacter { character: '"', position: 4 }
   variant UnexpectedCharacter

@@ -420,16 +420,19 @@ mod tests {
     }
 
     /// Clause 5.5.7 renders a name no term matches as its Fully Qualified Name,
-    /// which no `AttrName` spells, so it is written back quoted, dotted or not.
+    /// which is written back as it is where it reads back unquoted, and quoted
+    /// where it holds a dot or stands at the head of a hop's braces.
     #[tokio::test]
-    async fn an_iri_no_term_abbreviates_is_written_back_as_a_quoted_string() {
+    async fn an_iri_no_term_abbreviates_is_written_back_quoted_only_where_it_would_not_read_back_bare() {
         for (stored_text, written) in [
             ("\"https://other.example/speed\">50", "\"https://other.example/speed\">50"),
-            ("\"urn:x:weight\">1", "\"urn:x:weight\">1"),
+            ("\"urn:x:weight\">1", "urn:x:weight>1"),
             (
                 "\"https://example.com/a\"{\"https://other.example/T\":\"https://example.com/b\"}",
                 "a{\"https://other.example/T\":b}",
             ),
+            ("\"https://example.com/a\"{\"urn:x:T\":\"urn:x:b\"}", "a{\"urn:x:T\":urn:x:b}"),
+            ("\"https://example.com/a\"{\"urn:x:b\"}", "a{\"urn:x:b\"}"),
         ] {
             let compacted = compact_filter(stored(stored_text), &PrefixCompactor).await.expect("compacts");
             pretty_assertions::assert_eq!(compacted.to_string(), written, "{stored_text}");
@@ -461,14 +464,30 @@ mod tests {
         }
     }
 
-    /// A compact IRI holds a colon, which no `AttrName` holds, so it is
-    /// written back quoted.
+    /// A compact IRI is written back as it is where a colon after a name means
+    /// nothing of its own, and quoted at the head of a hop's braces, where an
+    /// unquoted colon would end the type list.
     #[tokio::test]
-    async fn a_compact_iri_compaction_answers_is_written_back_as_a_quoted_string() {
-        let compacted = compact_filter(stored("\"https://example.org/speed\">50"), &PrefixedCompactor)
-            .await
-            .expect("compacts");
-        pretty_assertions::assert_eq!(compacted.to_string(), "\"ex:speed\">50");
+    async fn a_compact_iri_compaction_answers_is_written_back_unquoted_outside_the_head_of_a_hop() {
+        for (stored_text, written) in [
+            ("\"https://example.org/speed\">50", "ex:speed>50"),
+            (
+                "\"https://example.org/sensor\"{\"https://example.org/humidity\"}==40",
+                "ex:sensor{\"ex:humidity\"}==40",
+            ),
+            (
+                "\"https://example.org/sensor\"{\"https://example.org/Device\":\"https://example.org/humidity\"}==40",
+                "ex:sensor{\"https://example.org/Device\":ex:humidity}==40",
+            ),
+        ] {
+            let compacted = compact_filter(stored(stored_text), &PrefixedCompactor).await.expect("compacts");
+            pretty_assertions::assert_eq!(compacted.to_string(), written, "{stored_text}");
+            pretty_assertions::assert_eq!(
+                compacted.to_string().parse::<Filter<Written>>().expect("reads back"),
+                compacted,
+                "{stored_text}"
+            );
+        }
     }
 
     /// A hop's two halves compact through different vocabularies, the mirror

@@ -342,17 +342,20 @@ mod tests {
     }
 
     /// Clause 4.3.6.6 compacts the forwarded query parameters as JSON-LD section 4.1.5 compacts IRIs, so a name the
-    /// forwarding context holds no term for travels as the compact IRI its prefix gives, or as its absolute IRI, and is
-    /// written quoted, since neither is a clause 4.9 `AttrName`.
+    /// forwarding context holds no term for travels as the compact IRI its prefix gives, written as it is, or as its
+    /// absolute IRI, written quoted where it holds a dot.
     #[tokio::test]
-    async fn a_name_with_no_term_in_the_forwarding_context_travels_quoted() {
+    async fn a_name_with_no_term_in_the_forwarding_context_travels_unquoted_as_a_compact_iri_and_quoted_as_a_dotted_iri() {
         let engine = engine();
-        let inbound = context(&json!({"brand": "https://example.org/brand"}));
+        let inbound = context(&json!({"brand": "https://example.org/brand", "weight": "urn:x:weight"}));
         let resolver = TermResolver::new(&engine, &inbound);
-        let query = "brand==\"x\"".parse::<Filter<Written>>().expect("a query");
+        let query = "brand==\"x\";weight>1".parse::<Filter<Written>>().expect("a query");
         for (forwarding, forwarded) in [
-            (json!({"ex": "https://example.org/"}), "\"ex:brand\"==\"x\""),
-            (json!({"velocity": "https://example.org/speed"}), "\"https://example.org/brand\"==\"x\""),
+            (json!({"ex": "https://example.org/"}), "ex:brand==\"x\";urn:x:weight>1"),
+            (
+                json!({"velocity": "https://example.org/speed"}),
+                "\"https://example.org/brand\"==\"x\";urn:x:weight>1",
+            ),
         ] {
             let naming = context(&forwarding);
             let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)

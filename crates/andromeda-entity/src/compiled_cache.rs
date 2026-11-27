@@ -364,6 +364,19 @@ mod tests {
         assert_ne!(key("q=%22urn:x:a%3Bb%22%3E50").await, key("q=%22urn:x:a%22%3Bb%3E50").await);
     }
 
+    /// The key holds `q` and `orderBy` as the writer renders what was read, so
+    /// a name written unquoted or quoted shares one compilation.
+    #[tokio::test]
+    async fn a_name_written_unquoted_or_quoted_produces_one_key() {
+        assert_eq!(key("q=ex:speed%3E50").await, key("q=%22ex:speed%22%3E50").await);
+        assert_eq!(key("q=urn:x:weight%3E1000").await, key("q=%22urn:x:weight%22%3E1000").await);
+        assert_eq!(key("orderBy=ex:speed%3Bdesc").await, key("orderBy=%22ex:speed%22%3Bdesc").await);
+        assert_ne!(
+            key("q=sensor%7Bex:humidity%7D%3D%3D40").await,
+            key("q=sensor%7B%22ex:humidity%22%7D%3D%3D40").await
+        );
+    }
+
     #[tokio::test]
     async fn different_parameters_produce_different_keys() {
         assert_ne!(key("q=speed>50").await, key("q=speed>10").await);
