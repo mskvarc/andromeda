@@ -24,4 +24,4 @@ thiserror = "2.0.21"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-toml = "1.2.2"
+toml = "1.2.3"

@@ -20,9 +20,9 @@ headers = "0.4.2"
 http-body = "1.1.0"
 httpdate = "1.0.3"
 humantime = "2.4.0"
-hyper = "1.12.0"
+hyper = "1.13.0"
 hyper-util = { version = "0.1.21", features = ["http1", "http2", "server-auto", "server-graceful", "service", "tokio"] }
-interprocess = { version = "2.4.9", features = ["tokio"] }
+interprocess = { version = "2.4.10", features = ["tokio"] }
 thiserror = "2.0.21"
 tls-listener = { version = "0.11.2", default-features = false, features = ["rustls-aws-lc", "tokio-net"] }
 tokio = { version = "1.54.1", features = ["net", "sync", "time"] }
@@ -33,7 +33,7 @@ tracing = "0.1.44"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-server-tls = { workspace = true, features = ["test-identity"] }
-hyper = { version = "1.12.0", features = ["client", "http2"] }
+hyper = { version = "1.13.0", features = ["client", "http2"] }
 pretty_assertions = "1.4.1"
 reqwest = { version = "0.13.5", features = ["http2"] }
 tempfile = "3.27.0"

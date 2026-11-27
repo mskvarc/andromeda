@@ -20,7 +20,7 @@ andromeda-ngsi-ld-request.workspace = true
 andromeda-persistence-failure.workspace = true
 chrono = "0.4.45"
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
-sha2 = "0.11.1"
+sha2 = "0.11.2"
 thiserror = "2.0.21"
 
 [dev-dependencies]
