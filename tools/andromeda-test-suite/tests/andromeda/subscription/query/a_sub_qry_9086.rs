@@ -1,4 +1,5 @@
-//! A Subscription's q hop with a type list reads back with every name quoted under no @context.
+//! A Subscription's q hop with a type list reads back with every name quoted under no @context, and under a prefix with
+//! only its prefixed type quoted.
 
 use andromeda_test_suite::{
     body_json::json_equals,
@@ -21,13 +22,17 @@ use ngsi_ld::{
 use std::{num::NonZeroU32, slice};
 
 /// Pins: a Subscription created with q=sensor{Device:humidity}==40 under an @context holding the terms sensor,
-/// humidity and Device is retrieved under that @context with sensor{Device:humidity}==40 and with no Link header with
-/// "<sensor IRI>"{"<Device IRI>":"<humidity IRI>"}==40, and each q returned, sent to Query Entities with join and
-/// joinLevel under the @context it was returned for, selects the weather station the first form selects
+/// humidity and Device is retrieved under that @context with sensor{Device:humidity}==40, with no Link header with
+/// "<sensor IRI>"{"<Device IRI>":"<humidity IRI>"}==40, each IRI holding a dot, and under an @context holding only the
+/// prefix ex for the vocabulary with ex:sensor{"ex:Device":ex:humidity}==40, and each q returned, sent to Query
+/// Entities with join and joinLevel under the @context it was returned for, selects the weather station the first form
+/// selects
 /// Clause: 4.9, 5.5.7, 5.7.2.4, 5.8.3
+/// Recorded: an unquoted colon at the head of a hop's braces ends its type list, so Andromeda writes a type holding a
+/// colon there as a `quotedStr`, and a compact IRI as the Relationship and after the list's colon unquoted
 #[gtest]
 #[tokio::test]
-async fn a_sub_qry_9086_a_subscription_q_hop_with_a_type_list_reads_back_quoted_under_no_context() -> Result<()> {
+async fn a_sub_qry_9086_a_subscription_q_hop_reads_back_quoted_where_an_unquoted_name_would_read_otherwise() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -38,6 +43,11 @@ async fn a_sub_qry_9086_a_subscription_q_hop_with_a_type_list_reads_back_quoted_
         &Context::Single(ContextEntry::Inline(
             format!(r#"{{"sensor":"{vocabulary}/sensor","humidity":"{vocabulary}/humidity","Device":"{vocabulary}/Device"}}"#).parse::<InlineContext>()?,
         )),
+    )
+    .await?;
+    let prefixed = HostedContext::add(
+        &broker,
+        &Context::Single(ContextEntry::Inline(format!(r#"{{"ex":"{vocabulary}/"}}"#).parse::<InlineContext>()?)),
     )
     .await?;
     let writer = broker.with_context(Context::Single(termed.entry()?))?;
@@ -93,6 +103,12 @@ async fn a_sub_qry_9086_a_subscription_q_hop_with_a_type_list_reads_back_quoted_
         .format(Lossless::Normalized)
         .build();
     let page = send_written(&broker, &joined, &[(QueryParameter::Q, expanded.as_str())]).await?;
+    expect_that!(page.items(), ids_in_order(slice::from_ref(&station_id)));
+    let prefixed_reader = broker.with_context(Context::Single(prefixed.entry()?))?;
+    let compact = r#"ex:sensor{"ex:Device":ex:humidity}==40"#;
+    let received = retrieved_as_received(&prefixed_reader, &subscription_id, EntitySubscription).await?;
+    expect_that!(received.body(), json_equals("$.q", compact));
+    let page = send_written(&prefixed_reader, &joined, &[(QueryParameter::Q, compact)]).await?;
     expect_that!(page.items(), ids_in_order(slice::from_ref(&station_id)));
     broker.subscriptions().delete(&subscription_id).send().await?;
     Ok(())

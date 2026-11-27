@@ -1,5 +1,5 @@
 //! A Context Source Registration Subscription's csf reads back in the terms of the reader's @context, and a name it has
-//! no term for comes back quoted.
+//! no term for comes back as a compact IRI or an absolute IRI, quoted where it holds a dot.
 
 use andromeda_test_suite::{
     body_json::json_equals,
@@ -18,14 +18,15 @@ use ngsi_ld::{
 };
 
 /// Pins: a Context Source Registration Subscription created with csf=tier=="gold" under an @context holding the term
-/// tier is retrieved under that @context with tier=="gold", with no Link header with "<the IRI>"=="gold" and under
-/// an @context holding only a prefix for the namespace with "ex:tier"=="gold"
+/// tier is retrieved under that @context with tier=="gold", with no Link header with "<the IRI>"=="gold", the IRI
+/// holding a dot, and under an @context holding only a prefix for the namespace with ex:tier=="gold"
 /// Clause: 4.9, 5.5.7, 5.11.2, 5.11.4
 /// Recorded: clause 5.5.7 renders a name no term of the reader's @context matches as its Fully Qualified Name;
-/// Andromeda writes a name of a csf back compacted, unquoted when it is an `AttrName` and as a `quotedStr` otherwise
+/// Andromeda writes a name of a csf back compacted, unquoted where it reads back unquoted as itself and as a
+/// `quotedStr` otherwise
 #[gtest]
 #[tokio::test]
-async fn a_css_qry_9100_a_csf_reads_back_in_the_reader_terms_and_quoted_where_it_has_none() -> Result<()> {
+async fn a_css_qry_9100_a_csf_reads_back_in_the_reader_terms_and_unquoted_where_it_reads_back_so() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -54,7 +55,7 @@ async fn a_css_qry_9100_a_csf_reads_back_in_the_reader_terms_and_quoted_where_it
     let quoted_iri = format!(r#""{iri}"=="gold""#);
     // The q model reads a name only as an unquoted AttrName, so a csf naming an IRI or a prefixed name is read as
     // received.
-    for (reader, read) in [(&broker, quoted_iri.as_str()), (&prefixed_reader, r#""ex:tier"=="gold""#)] {
+    for (reader, read) in [(&broker, quoted_iri.as_str()), (&prefixed_reader, r#"ex:tier=="gold""#)] {
         let retrieved = retrieved_as_received(reader, &subscription_id, RegistrationSubscription).await?;
         expect_that!(retrieved.body(), json_equals("$.csf", read), "{read}");
     }

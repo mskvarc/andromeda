@@ -22,7 +22,7 @@ use ngsi_ld::{
 /// `"https://example.org/<namespace>/brand"=="x"`
 /// Clause: 4.9, 5.5.7, 5.8.1.4
 /// Recorded: the copy is written under the Subscription's `jsonldContext`, which has no term for the IRI, so clause
-/// 5.5.7 renders it as its Fully Qualified Name; Andromeda writes every name that is no `AttrName` as a `quotedStr`
+/// 5.5.7 renders it as its Fully Qualified Name; Andromeda writes a name holding a dot as a `quotedStr`
 /// Tenant: private (the Subscription's q lists back under the core @context as a quoted IRI, which the suite's client
 /// cannot read, so in the shared tenant every other file's Query Subscriptions would fail to read its listing)
 #[gtest]

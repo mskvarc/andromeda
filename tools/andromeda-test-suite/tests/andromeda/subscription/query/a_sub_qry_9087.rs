@@ -25,7 +25,7 @@ use std::slice;
 /// Query Entities under the @context it was returned for, selects the Car speed>50 selects
 /// Clause: 4.9, 5.5.7, 5.8.3
 /// Recorded: clause 5.5.7 renders a name no term of the reader's @context matches as its Fully Qualified Name, and `;`
-/// joins two Query Terms; Andromeda writes every name that is no `AttrName` as a `quotedStr`, so the IRI reads back as
+/// joins two Query Terms; Andromeda writes a name holding a `;` as a `quotedStr`, so the IRI reads back as
 /// one name
 #[gtest]
 #[tokio::test]
