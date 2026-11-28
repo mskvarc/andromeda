@@ -1321,7 +1321,14 @@ mod tests {
         pretty_assertions::assert_eq!(gathered(&outcome), numbered(0..3));
         let requests = received(&source).await;
         let queries: Vec<Option<&str>> = requests.iter().map(|request| request.url.query()).collect();
-        pretty_assertions::assert_eq!(queries, vec![Some("limit=1000"), Some("limit=1000&offset=2"), Some("limit=1000&offset=3")]);
+        pretty_assertions::assert_eq!(
+            queries,
+            vec![
+                Some("limit=1000&options=sysAttrs"),
+                Some("limit=1000&options=sysAttrs&offset=2"),
+                Some("limit=1000&options=sysAttrs&offset=3")
+            ]
+        );
     }
 
     /// One temporal page holding `urn:ngsi-ld:Vehicle:0000` with one `speed`

@@ -130,7 +130,7 @@ pub(crate) async fn get(
     // The history is compacted under the request context once every holder's
     // part has been merged into it (clause 5.7.3); the join then reads the
     // compact roots.
-    let bodies = service.compact_histories(vec![history], &context).await.with_instance(&uri)?;
+    let bodies = read.compacted(vec![history]).await.with_instance(&uri)?;
     let (resolved, warnings) = apply_temporal_join(&read, &bodies, warnings).await.with_instance(&uri)?;
     let plan = resolved.plan();
     let Some(body) = bodies.first() else {

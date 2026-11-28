@@ -176,7 +176,9 @@ impl<'a> EntityCompactor<'a> {
     /// request context: every attribute the sequence of its instances, the
     /// Scope history the attribute `scope`, and every attribute a clause 6.3.10
     /// page cut left without an instance named by the term of its expanded
-    /// name, with the family its instances recorded.
+    /// name, with the family its instances recorded. The clause 4.8 times of
+    /// the entity and of its instances are written only as `system_times`
+    /// says: the document carries every holder's, which the merge read.
     ///
     /// # Errors
     ///
@@ -185,7 +187,12 @@ impl<'a> EntityCompactor<'a> {
     /// [`CompactionError::Encode`] when the document cannot be written for the
     /// processor, and [`CompactionError::Refused`] when the compact model
     /// refuses the compacted entity.
-    pub async fn temporal(&self, document: &TemporalDocument) -> Result<TemporalEntity, CompactionError> {
+    pub async fn temporal(&self, mut document: TemporalDocument, system_times: SysAttrsInclusion) -> Result<TemporalEntity, CompactionError> {
+        match system_times {
+            SysAttrsInclusion::Include => {}
+            SysAttrsInclusion::Strip => document.forget_system_times(),
+        }
+        let document = document;
         let terms = self.terms().await?;
         let walked = Walk::new(terms).compact_document(document.entity()).map(Compacted::Object);
         let mut entity = match walked {

@@ -7,7 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     identifier::Identifier,
-    time::date_time::NgsiLdDateTime,
+    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
     time_prop::TimeProp,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -68,6 +68,109 @@ fn inclusive_sources_are_deduplicated_by_instance_id() {
     ]);
     local.merge(remote, MergeMode::Inclusive, TimeProp::Observed);
     pretty_assertions::assert_eq!(observed(&local), vec![at("2020-01-01T00:00:00Z"), at("2020-01-02T00:00:00Z")]);
+}
+
+/// An instance carrying `instanceId` `id`, observed at `observed` when given,
+/// last modified at `modified`.
+fn modified(id: &str, observed: Option<&str>, modified: &str) -> InstanceDocument {
+    InstanceDocument::builder()
+        .family(Some(AttributeType::Property))
+        .observed_at(observed.map(|raw| Slot::Set(raw.parse::<NgsiLdDateTime>().expect("an instant"))))
+        .modified_at(Some(modified.parse::<SystemInstant>().expect("an instant")))
+        .instance_id(Some(id.parse::<Identifier>().expect("an identifier")))
+        .build()
+}
+
+/// The `modifiedAt` of every instance of the document, in order.
+fn modifications(document: &TemporalDocument) -> Vec<Option<SystemInstant>> {
+    document.instances().map(|(_, instance)| instance.modified_at()).collect()
+}
+
+/// Clause 4.5.5.3: two holders answering one `instanceId` without
+/// `observedAt` are in conflict, and the instance modified later is provided,
+/// whichever holder answered first.
+#[test]
+fn a_shared_instance_is_the_one_modified_later_whichever_holder_answered_first() {
+    let earlier = || document(vec![modified("urn:ngsi-ld:i:1", None, "2020-01-01T00:00:00Z")]);
+    let later = || document(vec![modified("urn:ngsi-ld:i:1", None, "2020-02-01T00:00:00Z")]);
+    let expected = vec![Some("2020-02-01T00:00:00Z".parse::<SystemInstant>().expect("an instant"))];
+    let mut held_earlier = earlier();
+    held_earlier.merge(later(), MergeMode::Inclusive, TimeProp::Modified);
+    pretty_assertions::assert_eq!(modifications(&held_earlier), expected);
+    let mut held_later = later();
+    held_later.merge(earlier(), MergeMode::Inclusive, TimeProp::Modified);
+    pretty_assertions::assert_eq!(modifications(&held_later), expected);
+}
+
+/// Clause 4.5.5.3: `observedAt` decides before `modifiedAt`, and an instance
+/// carrying it is the more current over one carrying none.
+#[test]
+fn a_shared_instance_is_the_observed_one_before_the_modified_one() {
+    let mut local = document(vec![modified("urn:ngsi-ld:i:1", None, "2020-03-01T00:00:00Z")]);
+    local.merge(
+        document(vec![modified("urn:ngsi-ld:i:1", Some("2020-01-01T00:00:00Z"), "2020-01-01T00:00:00Z")]),
+        MergeMode::Inclusive,
+        TimeProp::Observed,
+    );
+    pretty_assertions::assert_eq!(observed(&local), vec![at("2020-01-01T00:00:00Z")]);
+    let mut observed_later = document(vec![modified("urn:ngsi-ld:i:1", Some("2020-02-01T00:00:00Z"), "2020-01-01T00:00:00Z")]);
+    observed_later.merge(
+        document(vec![modified("urn:ngsi-ld:i:1", Some("2020-01-01T00:00:00Z"), "2020-05-01T00:00:00Z")]),
+        MergeMode::Inclusive,
+        TimeProp::Observed,
+    );
+    pretty_assertions::assert_eq!(observed(&observed_later), vec![at("2020-02-01T00:00:00Z")]);
+}
+
+/// A replaced instance takes its place in the order of the time property.
+#[test]
+fn a_replaced_instance_is_reordered_on_the_time_property() {
+    let mut local = document(vec![
+        modified("urn:ngsi-ld:i:1", None, "2020-01-01T00:00:00Z"),
+        modified("urn:ngsi-ld:i:2", None, "2020-01-02T00:00:00Z"),
+    ]);
+    local.merge(
+        document(vec![modified("urn:ngsi-ld:i:1", None, "2020-01-03T00:00:00Z")]),
+        MergeMode::Inclusive,
+        TimeProp::Modified,
+    );
+    let ids: Vec<Option<&str>> = local.instances().map(|(_, instance)| instance.instance_id().map(Identifier::as_str)).collect();
+    pretty_assertions::assert_eq!(ids, vec![Some("urn:ngsi-ld:i:2"), Some("urn:ngsi-ld:i:1")]);
+}
+
+/// Clause 6.3.11: without `sysAttrs` neither the entity nor an instance keeps
+/// its `createdAt` or `modifiedAt`; an instance's `deletedAt` and
+/// `observedAt` stay.
+#[test]
+fn forgetting_the_system_times_keeps_the_observations_and_deletions() {
+    let instant = || "2020-01-01T00:00:00Z".parse::<SystemInstant>().expect("an instant");
+    let deleted_at = "2020-01-02T00:00:00Z".parse::<NgsiLdDateTime>().expect("an instant");
+    let instance = InstanceDocument::builder()
+        .family(Some(AttributeType::Property))
+        .observed_at(Some(Slot::Set("2019-12-31T00:00:00Z".parse::<NgsiLdDateTime>().expect("an instant"))))
+        .created_at(Some(instant()))
+        .modified_at(Some(instant()))
+        .deleted_at(Some(deleted_at))
+        .build();
+    let entity = EntityDocument::new(
+        Some("urn:ngsi-ld:Vehicle:1".parse().expect("an identifier")),
+        vec!["https://example.com/Vehicle".parse().expect("a type")],
+        None,
+        None,
+        IndexMap::from([(speed(), AttributeMember::Instances(vec![instance]))]),
+    );
+    let times = EntitySystemTimes {
+        created_at: Some(at("2020-01-01T00:00:00Z")),
+        modified_at: Some(at("2020-01-01T00:00:00Z")),
+        deleted_at: None,
+    };
+    let mut evolution = TemporalDocument::new(entity, times, IndexMap::new());
+    evolution.forget_system_times();
+    pretty_assertions::assert_eq!(evolution.system_times(), EntitySystemTimes::default());
+    let (_, kept) = evolution.instances().next().expect("the instance");
+    pretty_assertions::assert_eq!((kept.created_at(), kept.modified_at()), (None, None));
+    pretty_assertions::assert_eq!(kept.deleted_at(), Some(deleted_at));
+    pretty_assertions::assert_eq!(kept.instant_on(TimeProp::Observed), Some(at("2019-12-31T00:00:00Z")));
 }
 
 /// Clause 5.7.3.4: an auxiliary instance is added only where no instance

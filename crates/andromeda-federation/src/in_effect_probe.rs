@@ -188,16 +188,17 @@ mod tests {
         assert!(query.contains("timeproperty=deletedAt") && query.contains("lastN=1"), "{query}");
     }
 
-    /// Clause 4.8: an instance carries its system times only when asked, so a
-    /// probe on `modifiedAt` asks for them, and the deletion probe, on
-    /// `deletedAt`, does not.
+    /// Clause 4.8: an instance carries its system times only when asked, and
+    /// a probe on `modifiedAt` reads them, as clause 4.5.5.3 does wherever
+    /// holders conflict, so every probe asks, the deletion probe on
+    /// `deletedAt` included.
     #[tokio::test]
-    async fn a_probe_on_a_system_time_asks_for_system_attributes() {
+    async fn every_probe_asks_for_system_attributes() {
         let query = format!("type=Vehicle&{WINDOW}&timeproperty=modifiedAt&scopeQ=/Madrid");
         let placed = forwarded(&query, InEffectReading::Placed).await.expect("probed");
         assert!(placed.contains("timeproperty=modifiedAt") && placed.contains("options=sysAttrs"), "{placed}");
         let deleted = forwarded(&query, InEffectReading::Deletion).await.expect("probed");
-        assert!(deleted.contains("timeproperty=deletedAt") && !deleted.contains("sysAttrs"), "{deleted}");
+        assert!(deleted.contains("timeproperty=deletedAt") && deleted.contains("options=sysAttrs"), "{deleted}");
     }
 
     /// The probe reaches the entities the client's query selects, so the

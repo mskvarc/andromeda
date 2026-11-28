@@ -20,7 +20,6 @@ use andromeda_ngsi_ld_model::temporal::{
     text_annotation::TextAnnotation,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, ngsi_ld_null::NULL_URI};
 use chrono::{DateTime, TimeZone, Utc};
 use langtag::LangTagBuf;
@@ -79,8 +78,8 @@ fn one() -> TemporalValue {
 }
 
 /// The expanded instance `row` renders as.
-fn rendered(row: TemporalHistoryRow, sys_attrs: SysAttrsInclusion) -> Value {
-    serde_json::to_value(neutral_row_to_instance(row, sys_attrs).expect("the row renders")).expect("the instance writes")
+fn rendered(row: TemporalHistoryRow) -> Value {
+    serde_json::to_value(neutral_row_to_instance(row).expect("the row renders")).expect("the instance writes")
 }
 
 fn member<'a>(rendered: &'a Value, key: &str) -> Option<&'a Value> {
@@ -93,7 +92,7 @@ fn member<'a>(rendered: &'a Value, key: &str) -> Option<&'a Value> {
 #[test]
 fn a_tombstone_renders_the_synthesised_null_uri_and_its_deletion_instant() {
     let deleted_at = instant(1_700_000_300);
-    let rendered = rendered(row(TemporalValue::Tombstone { deleted_at }), SysAttrsInclusion::Strip);
+    let rendered = rendered(row(TemporalValue::Tombstone { deleted_at }));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": NULL_URI.as_str()}]))
@@ -109,12 +108,9 @@ fn a_tombstone_renders_the_synthesised_null_uri_and_its_deletion_instant() {
 #[test]
 fn a_written_deletion_renders_its_observed_at() {
     let observed_at = instant(1_700_000_000);
-    let rendered = rendered(
-        row(TemporalValue::Tombstone {
-            deleted_at: instant(1_700_000_300),
-        }),
-        SysAttrsInclusion::Include,
-    );
+    let rendered = rendered(row(TemporalValue::Tombstone {
+        deleted_at: instant(1_700_000_300),
+    }));
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::OBSERVED_AT.as_str()),
         Some(&json!([{"@value": instant_text(observed_at), "@type": DATE_TIME}]))
@@ -131,10 +127,7 @@ fn a_deletion_declaring_no_observed_at_renders_none() {
         deleted_at: instant(1_700_000_300),
     });
     row.observed_at = None;
-    pretty_assertions::assert_eq!(
-        member(&rendered(row, SysAttrsInclusion::Strip), expanded_properties::OBSERVED_AT.as_str()),
-        None
-    );
+    pretty_assertions::assert_eq!(member(&rendered(row), expanded_properties::OBSERVED_AT.as_str()), None);
 }
 
 /// Clause 5.2.21 admits only the four Temporal Properties, so the operational
@@ -144,7 +137,7 @@ fn a_deletion_declaring_no_observed_at_renders_none() {
 fn the_operational_write_clock_is_never_rendered() {
     let row = row(one());
     let recorded_at = row.recorded_at;
-    let rendered = rendered(row, SysAttrsInclusion::Include);
+    let rendered = rendered(row);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::DELETED_AT.as_str()), None);
     assert!(
         !rendered.to_string().contains(&instant_text(recorded_at)),
@@ -159,10 +152,20 @@ fn an_axis_the_observation_does_not_carry_is_absent_from_the_rendering() {
     let mut row = row(one());
     row.observed_at = None;
     row.created_at = None;
-    let rendered = rendered(row, SysAttrsInclusion::Include);
+    let rendered = rendered(row);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::OBSERVED_AT.as_str()), None);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::CREATED_AT.as_str()), None);
     assert!(member(&rendered, expanded_properties::MODIFIED_AT.as_str()).is_some());
+}
+
+/// Merging holders' instances (clause 4.5.5.3) reads the clause 4.8 times, so
+/// a live observation keeps both; the response leaves them out later, when
+/// the request did not ask for `sysAttrs`.
+#[test]
+fn a_live_observation_keeps_its_system_times() {
+    let rendered = rendered(row(one()));
+    assert!(member(&rendered, expanded_properties::CREATED_AT.as_str()).is_some(), "{rendered}");
+    assert!(member(&rendered, expanded_properties::MODIFIED_AT.as_str()).is_some(), "{rendered}");
 }
 
 /// A broker-minted identifier renders through the permanently stable template
@@ -170,13 +173,10 @@ fn an_axis_the_observation_does_not_carry_is_absent_from_the_rendering() {
 #[test]
 fn a_generated_identifier_renders_through_the_permanent_template() {
     let expected = json!([{"@id": "urn:ngsi-ld:attribute:instance:01942f6c-7f00-7000-8000-000000000001"}]);
-    let live = rendered(row(one()), SysAttrsInclusion::Strip);
-    let deleted = rendered(
-        row(TemporalValue::Tombstone {
-            deleted_at: instant(1_700_000_300),
-        }),
-        SysAttrsInclusion::Strip,
-    );
+    let live = rendered(row(one()));
+    let deleted = rendered(row(TemporalValue::Tombstone {
+        deleted_at: instant(1_700_000_300),
+    }));
     pretty_assertions::assert_eq!(member(&live, expanded_properties::INSTANCE_ID.as_str()), Some(&expected));
     pretty_assertions::assert_eq!(member(&deleted, expanded_properties::INSTANCE_ID.as_str()), Some(&expected));
 }
@@ -201,7 +201,7 @@ fn a_tombstone_renders_the_null_member_of_the_family_the_instance_belonged_to() 
         (AttributeType::ListRelationship, json!([{"@list": [{"@value": null_uri}]}])),
     ];
     for (attribute_type, expected) in families {
-        let rendered = rendered(row_of(attribute_type, TemporalValue::Tombstone { deleted_at }), SysAttrsInclusion::Strip);
+        let rendered = rendered(row_of(attribute_type, TemporalValue::Tombstone { deleted_at }));
         pretty_assertions::assert_eq!(member(&rendered, attribute_type.value_key_str()), Some(&expected), "{attribute_type}");
         pretty_assertions::assert_eq!(member(&rendered, "@type"), Some(&json!([attribute_type.iri().as_str()])));
     }
@@ -219,7 +219,7 @@ fn a_list_observation_renders_as_the_ordered_list_its_member_contains() {
         r#"[{"@value": "first"}, {"@value": "second"}]"#,
     )
     .expect("a stored list");
-    let rendered_list = rendered(row_of(AttributeType::ListProperty, TemporalValue::Structured(list)), SysAttrsInclusion::Strip);
+    let rendered_list = rendered(row_of(AttributeType::ListProperty, TemporalValue::Structured(list)));
     pretty_assertions::assert_eq!(
         member(&rendered_list, AttributeType::ListProperty.value_key_str()),
         Some(&json!([{"@list": [{"@value": "first"}, {"@value": "second"}]}]))
@@ -229,10 +229,7 @@ fn a_list_observation_renders_as_the_ordered_list_its_member_contains() {
         "urn:ngsi-ld:Room:1".parse().expect("a valid URI"),
         "urn:ngsi-ld:Room:2".parse().expect("a valid URI"),
     ]);
-    let rendered_targets = rendered(
-        row_of(AttributeType::ListRelationship, TemporalValue::Structured(targets)),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered_targets = rendered(row_of(AttributeType::ListRelationship, TemporalValue::Structured(targets)));
     let object = expanded_properties::OBJECT.as_str();
     pretty_assertions::assert_eq!(
         member(&rendered_targets, AttributeType::ListRelationship.value_key_str()),
@@ -254,21 +251,15 @@ fn a_relationship_renders_one_identifier_node_per_target() {
         ])
         .expect("two targets"),
     );
-    let rendered_several = rendered(
-        row_of(AttributeType::Relationship, TemporalValue::Structured(several)),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered_several = rendered(row_of(AttributeType::Relationship, TemporalValue::Structured(several)));
     pretty_assertions::assert_eq!(
         member(&rendered_several, AttributeType::Relationship.value_key_str()),
         Some(&json!([{"@id": "urn:ngsi-ld:Device:14142"}, {"@id": "urn:ngsi-ld:Device:13562"}]))
     );
-    let single = rendered(
-        row_of(
-            AttributeType::Relationship,
-            TemporalValue::Uri("urn:ngsi-ld:Device:14142".parse().expect("a valid URI")),
-        ),
-        SysAttrsInclusion::Strip,
-    );
+    let single = rendered(row_of(
+        AttributeType::Relationship,
+        TemporalValue::Uri("urn:ngsi-ld:Device:14142".parse().expect("a valid URI")),
+    ));
     pretty_assertions::assert_eq!(
         member(&single, AttributeType::Relationship.value_key_str()),
         Some(&json!([{"@id": "urn:ngsi-ld:Device:14142"}]))
@@ -281,7 +272,7 @@ fn a_number_renders_in_the_shape_it_was_stored_in() {
     for raw in ["1.0", "9007199254740993", "-0.00025"] {
         let number = raw.parse::<JsonNumber>().expect("an exact number");
         let expected: Value = serde_json::from_str(&format!(r#"[{{"@value": {number}}}]"#)).expect("the expected node parses");
-        let rendered = rendered(row(TemporalValue::Number { number, datatype: None }), SysAttrsInclusion::Strip);
+        let rendered = rendered(row(TemporalValue::Number { number, datatype: None }));
         pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&expected), "{raw}");
     }
 }
@@ -305,7 +296,7 @@ fn a_structured_property_renders_the_values_it_was_stored_as() {
         ),
     ] {
         let value = StructuredValue::from_stored(AttributeType::Property, &attribute, &stored.to_string()).expect("a stored value");
-        let rendered = rendered(row(TemporalValue::Structured(value)), SysAttrsInclusion::Strip);
+        let rendered = rendered(row(TemporalValue::Structured(value)));
         pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&expected), "{stored}");
     }
 }
@@ -318,10 +309,10 @@ fn a_structured_property_renders_the_values_it_was_stored_as() {
 fn a_history_geometry_renders_the_expanded_geojson_node() {
     let polygon = json!({"type": "Polygon", "coordinates": [[[0.0, 0.0, 12.5], [4.0, 0.0, 12.5], [4.0, 4.0, 12.5], [0.0, 0.0, 12.5]]]});
     let geometry = serde_json::from_value::<Geometry>(polygon).expect("a polygon");
-    let rendered = rendered(
-        row_of(AttributeType::GeoProperty, TemporalValue::Geometry(GeometryValue::new(geometry.into_parts().0))),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered = rendered(row_of(
+        AttributeType::GeoProperty,
+        TemporalValue::Geometry(GeometryValue::new(geometry.into_parts().0)),
+    ));
     let position = |ordinates: &[f64]| json!({"@list": ordinates.iter().map(|ordinate| json!({"@value": ordinate})).collect::<Vec<_>>()});
     let expected = json!([{
         "@type": ["https://purl.org/geojson/vocab#Polygon"],
@@ -361,7 +352,7 @@ fn unlist(list: &Value) -> Value {
 fn a_verbatim_identifier_renders_in_the_spelling_it_arrived_in() {
     let mut row = row(one());
     row.instance = EvolutionInstance::Attribute(InstanceIdentity::Verbatim("https://example.org/instances/1".parse().expect("valid URI")));
-    let rendered = rendered(row, SysAttrsInclusion::Strip);
+    let rendered = rendered(row);
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::INSTANCE_ID.as_str()),
         Some(&json!([{"@id": "https://example.org/instances/1"}]))
@@ -376,7 +367,7 @@ fn a_scope_instance_carries_no_identity_members() {
     scope.attribute_name = expanded_properties::SCOPE.as_str().parse().expect("valid attribute name");
     scope.instance = EvolutionInstance::Scope;
     scope.dataset_id = Some("urn:ngsi-ld:Dataset:a".parse().expect("a valid identifier"));
-    let rendered = rendered(scope, SysAttrsInclusion::Strip);
+    let rendered = rendered(scope);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::INSTANCE_ID.as_str()), None);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::DATASET_ID.as_str()), None);
     pretty_assertions::assert_eq!(
@@ -394,7 +385,7 @@ fn observed_at_keeps_exactly_the_sub_second_precision_it_carries() {
     for (nanos, expected) in [(123_000_000, "2023-11-14T22:13:20.123Z"), (0, "2023-11-14T22:13:20Z")] {
         let mut row = row(one());
         row.observed_at = Some(instant_with_fraction(1_700_000_000, nanos));
-        let rendered = rendered(row, SysAttrsInclusion::Strip);
+        let rendered = rendered(row);
         pretty_assertions::assert_eq!(
             member(&rendered, expanded_properties::OBSERVED_AT.as_str()),
             Some(&json!([{"@value": expected, "@type": DATE_TIME}]))
@@ -405,13 +396,10 @@ fn observed_at_keeps_exactly_the_sub_second_precision_it_carries() {
 /// A `DateTime`-typed value keeps its sub-second precision too.
 #[test]
 fn a_datetime_value_keeps_its_sub_second_precision() {
-    let rendered = rendered(
-        row(TemporalValue::DateTime {
-            instant: instant_with_fraction(1_700_000_000, 456_000_000),
-            datatype: Some(datatype(DATE_TIME)),
-        }),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered = rendered(row(TemporalValue::DateTime {
+        instant: instant_with_fraction(1_700_000_000, 456_000_000),
+        datatype: Some(datatype(DATE_TIME)),
+    }));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "2023-11-14T22:13:20.456Z", "@type": DATE_TIME}]))
@@ -426,7 +414,7 @@ fn broker_minted_system_times_render_at_their_stored_resolution() {
     let mut row = row(one());
     row.created_at = Some(instant_with_fraction(1_700_000_100, 999_000_000));
     row.modified_at = Some(instant_with_fraction(1_700_000_200, 999_000_000));
-    let rendered = rendered(row, SysAttrsInclusion::Include);
+    let rendered = rendered(row);
     pretty_assertions::assert_eq!(
         member(&rendered, expanded_properties::CREATED_AT.as_str()),
         Some(&json!([{"@value": "2023-11-14T22:15:00.999Z", "@type": DATE_TIME}]))
@@ -449,7 +437,7 @@ fn the_stored_metadata_renders_beside_the_value() {
     });
     let document = InstanceDocument::from_slice(&row.attribute_name, &serde_json::to_vec(&members).expect("JSON")).expect("expanded members");
     row.metadata = ObservationMetadata::admit(document.into_parts()).expect("the members are committed");
-    let rendered = rendered(row, SysAttrsInclusion::Strip);
+    let rendered = rendered(row);
     pretty_assertions::assert_eq!(member(&rendered, expanded_properties::UNIT_CODE.as_str()), Some(&json!([{"@value": "KMH"}])));
     pretty_assertions::assert_eq!(member(&rendered, AttributeType::Property.value_key_str()), Some(&json!([{"@value": 1}])));
     assert!(member(&rendered, "https://example.org/accuracy").is_some());
@@ -492,7 +480,7 @@ fn time_of_day_declared_by_value_type(text: &str) -> TemporalValue {
 /// spelling a `Time` is served in, whatever width the store holds it at.
 #[test]
 fn a_time_renders_typed_in_its_served_spelling() {
-    let rendered = rendered(row(time_of_day("12:00:00.5Z")), SysAttrsInclusion::Strip);
+    let rendered = rendered(row(time_of_day("12:00:00.5Z")));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "12:00:00.500Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]))
@@ -502,13 +490,10 @@ fn a_time_renders_typed_in_its_served_spelling() {
 /// A typed `Date` renders typed, as Retrieve Entity serves it.
 #[test]
 fn a_date_renders_typed() {
-    let rendered = rendered(
-        row(TemporalValue::Date {
-            date: "2024-06-15".parse().expect("a date"),
-            datatype: Some(datatype("https://uri.etsi.org/ngsi-ld/Date")),
-        }),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered = rendered(row(TemporalValue::Date {
+        date: "2024-06-15".parse().expect("a date"),
+        datatype: Some(datatype("https://uri.etsi.org/ngsi-ld/Date")),
+    }));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "2024-06-15", "@type": "https://uri.etsi.org/ngsi-ld/Date"}]))
@@ -519,10 +504,7 @@ fn a_date_renders_typed() {
 /// written plain renders plain beside it, as current state holds it.
 #[test]
 fn a_time_declared_by_its_value_type_renders_plain() {
-    let rendered = rendered(
-        row_with_value_type(time_of_day_declared_by_value_type("12:00:00.5Z"), TIME),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered = rendered(row_with_value_type(time_of_day_declared_by_value_type("12:00:00.5Z"), TIME));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "12:00:00.500Z"}]))
@@ -533,10 +515,7 @@ fn a_time_declared_by_its_value_type_renders_plain() {
 /// the value keeps its own `@type`.
 #[test]
 fn a_time_under_a_value_type_naming_another_datatype_renders_typed() {
-    let rendered = rendered(
-        row_with_value_type(time_of_day("12:00:00Z"), "http://example.org/Reading"),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered = rendered(row_with_value_type(time_of_day("12:00:00Z"), "http://example.org/Reading"));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "12:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]))
@@ -548,13 +527,10 @@ fn a_time_under_a_value_type_naming_another_datatype_renders_typed() {
 #[test]
 fn an_untyped_string_in_a_time_value_form_renders_as_recorded() {
     for text in ["2024-01-01T00:00:00.250000Z", "12:00:00.5Z", "2024-06-15"] {
-        let rendered = rendered(
-            row(TemporalValue::String {
-                text: text.to_owned(),
-                annotation: TextAnnotation::Plain,
-            }),
-            SysAttrsInclusion::Strip,
-        );
+        let rendered = rendered(row(TemporalValue::String {
+            text: text.to_owned(),
+            annotation: TextAnnotation::Plain,
+        }));
         pretty_assertions::assert_eq!(
             member(&rendered, AttributeType::Property.value_key_str()),
             Some(&json!([{"@value": text}])),
@@ -567,13 +543,10 @@ fn an_untyped_string_in_a_time_value_form_renders_as_recorded() {
 /// language-tagged string keeps its `@language` in its Temporal Evolution.
 #[test]
 fn a_language_tagged_string_renders_with_its_language() {
-    let rendered = rendered(
-        row(TemporalValue::String {
-            text: "hola".to_owned(),
-            annotation: TextAnnotation::Language(LangTagBuf::new("es".to_owned()).expect("a language tag")),
-        }),
-        SysAttrsInclusion::Strip,
-    );
+    let rendered = rendered(row(TemporalValue::String {
+        text: "hola".to_owned(),
+        annotation: TextAnnotation::Language(LangTagBuf::new("es".to_owned()).expect("a language tag")),
+    }));
     pretty_assertions::assert_eq!(
         member(&rendered, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "hola", "@language": "es"}]))
@@ -585,24 +558,18 @@ fn a_language_tagged_string_renders_with_its_language() {
 fn a_typed_literal_renders_with_its_datatype() {
     const INTEGER: &str = "http://www.w3.org/2001/XMLSchema#integer";
     const DOUBLE: &str = "http://www.w3.org/2001/XMLSchema#double";
-    let text = rendered(
-        row(TemporalValue::String {
-            text: "42".to_owned(),
-            annotation: TextAnnotation::Datatype(datatype(INTEGER)),
-        }),
-        SysAttrsInclusion::Strip,
-    );
+    let text = rendered(row(TemporalValue::String {
+        text: "42".to_owned(),
+        annotation: TextAnnotation::Datatype(datatype(INTEGER)),
+    }));
     pretty_assertions::assert_eq!(
         member(&text, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": "42", "@type": INTEGER}]))
     );
-    let number = rendered(
-        row(TemporalValue::Number {
-            number: JsonNumber::from(7),
-            datatype: Some(datatype(DOUBLE)),
-        }),
-        SysAttrsInclusion::Strip,
-    );
+    let number = rendered(row(TemporalValue::Number {
+        number: JsonNumber::from(7),
+        datatype: Some(datatype(DOUBLE)),
+    }));
     pretty_assertions::assert_eq!(
         member(&number, AttributeType::Property.value_key_str()),
         Some(&json!([{"@value": 7, "@type": DOUBLE}]))

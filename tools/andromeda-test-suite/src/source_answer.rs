@@ -56,6 +56,14 @@ pub fn temporal_entity(entity: &TemporalEntity<Input>) -> ResponseTemplate {
     json(StatusCode::OK, entity.render(Lossless::Normalized).to_string())
 }
 
+/// 200 OK holding the temporal evolution `entity` in normalized temporal representation with the members only a
+/// broker writes (`instanceId`, `createdAt`, `modifiedAt`), as a broker serving as a source answers Retrieve Temporal
+/// Evolution of an Entity under `sysAttrs`.
+#[must_use]
+pub fn broker_temporal_entity(entity: &TemporalEntity<Output>) -> ResponseTemplate {
+    json(StatusCode::OK, entity.render(Lossless::Normalized).to_string())
+}
+
 /// 207 Multi-Status holding `result`, as a source answers a batch operation that succeeded only partly (clause
 /// 5.2.16).
 #[must_use]

@@ -7,14 +7,7 @@ use crate::temporal::{
 };
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-    temporal_format::TemporalFormat,
-    time_prop::TimeProp,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
     temporal::{TemporalHistoryRow, temporal_document::TemporalDocument},
@@ -23,7 +16,6 @@ use andromeda_ngsi_ld_query::{
     projection::{attribute_iri_index::AttributeIriIndex, expanded_projection::ExpandedProjection},
     temporal::compiled::CompiledTemporalQuery,
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -111,7 +103,6 @@ impl TemporalEntityRenderer<'_> {
         let mut attrs: TemporalAttrMap = IndexMap::with_capacity(rows.len().min(64));
         let mut min_time: Option<DateTime<Utc>> = None;
         let mut max_time: Option<DateTime<Utc>> = None;
-        let timestamps = rendered_timestamps(compiled);
 
         for mut row in rows {
             let kept = cut.is_none_or(|cut| cut.keeps(&row, timeproperty));
@@ -135,7 +126,7 @@ impl TemporalEntityRenderer<'_> {
             let (_, instances) = attrs.entry(row.attribute_name.clone()).or_insert_with(|| (family, Vec::new()));
             if kept {
                 leave_deleted_scope_unobserved(&mut row);
-                instances.push(neutral_row_to_instance(row, timestamps)?);
+                instances.push(neutral_row_to_instance(row)?);
             }
         }
 
@@ -157,22 +148,6 @@ impl TemporalEntityRenderer<'_> {
             document: TemporalDocument::new(entity, EntitySystemTimes::default(), emptied),
             time_range: min_time.zip(max_time),
         })
-    }
-}
-
-/// Which clause 4.8 system timestamps the assembled instances carry.
-///
-/// `sysAttrs` decides it (clause 6.3.11), except that the clause 4.5.9
-/// `temporalValues` pairs need the instant on the Temporal Property the query
-/// ran on as their second element: over `createdAt` or `modifiedAt` that
-/// instant is a system timestamp, so the instances keep them. The projection
-/// that builds the pairs reads the value and that one instant alone, so the
-/// other timestamps kept alongside never reach the response.
-const fn rendered_timestamps(compiled: &CompiledTemporalQuery) -> SysAttrsInclusion {
-    match (compiled.representation.format, compiled.window.timeproperty) {
-        (TemporalFormat::TemporalValues, TimeProp::Created | TimeProp::Modified) => SysAttrsInclusion::Include,
-        (TemporalFormat::TemporalValues, TimeProp::Observed | TimeProp::Deleted)
-        | (TemporalFormat::Normalized | TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues, _) => compiled.representation.sys_attrs,
     }
 }
 

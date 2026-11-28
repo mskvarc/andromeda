@@ -11,6 +11,7 @@ use crate::{
         window::TemporalWindow,
     },
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use typed_builder::TypedBuilder;
 
 /// Compiled temporal query ready to be lowered to a store query.
@@ -56,4 +57,15 @@ pub struct CompiledTemporalQuery {
     /// value, geo and scope filters; empty for every other query.
     #[builder(default = Default::default())]
     pub contributed: ContributedEntities,
+}
+
+impl CompiledTemporalQuery {
+    /// Whether the evolutions this query answers with are written with the
+    /// `createdAt` and `modifiedAt` of their instances.
+    #[must_use]
+    pub const fn written_system_times(&self) -> SysAttrsInclusion {
+        self.representation
+            .sys_attrs
+            .in_temporal_evolution(self.representation.format, self.window.timeproperty)
+    }
 }

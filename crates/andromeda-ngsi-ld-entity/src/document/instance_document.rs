@@ -303,6 +303,14 @@ impl InstanceDocument {
         self.instance_id = None;
     }
 
+    /// Drop the clause 4.8 `createdAt` and `modifiedAt` of this instance,
+    /// leaving its sub-attributes as they are: a representation that did not
+    /// ask for `sysAttrs` leaves them out (Table 5.2.14-1).
+    pub const fn forget_system_times(&mut self) {
+        self.created_at = None;
+        self.modified_at = None;
+    }
+
     /// The written sub-attributes, for a mutation.
     pub const fn sub_attributes_mut(&mut self) -> &mut IndexMap<AttributeName, AttributeMember> {
         &mut self.sub_attributes

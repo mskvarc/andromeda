@@ -105,7 +105,9 @@ impl<'s> TemporalLinkedSource<'s> {
                 .render_one_temporal_entity(&self.scope, &candidate.id, types, self.compiled, &compactor)
                 .await;
             let body = match rendered {
-                Ok(rendered) if rendered.presence == HistoryPresence::Present => compact_history(&compactor, rendered.history).await,
+                Ok(rendered) if rendered.presence == HistoryPresence::Present => {
+                    compact_history(&compactor, rendered.history, self.compiled.written_system_times()).await
+                }
                 Ok(_) => continue,
                 Err(error) => Err(error),
             };
@@ -146,7 +148,7 @@ impl<'s> TemporalLinkedSource<'s> {
                     // candidate's.
                     // clone: the failure outlives the history the compaction consumes.
                     let named = history.id().unwrap_or(&candidate.id).clone();
-                    match compact_history(&compactor, history).await {
+                    match compact_history(&compactor, history, self.compiled.written_system_times()).await {
                         Ok(body) => {
                             TemporalEvolutions::edges(&body, &mut edges);
                             nodes.push(body);

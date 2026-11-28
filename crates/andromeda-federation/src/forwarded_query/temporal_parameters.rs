@@ -1,24 +1,18 @@
 //! The temporal parameters a forwarded temporal query carries (clauses 5.7.3.4,
 //! 5.7.4.4, 6.3.12).
 
-use crate::{
-    forwarded_parameter::ForwardedParameter,
-    forwarded_query::{ForwardedQuery, SYS_ATTRS_OPTION},
-    request::TemporalAnswer,
-};
-use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time::rendering::instant_text, time_prop::TimeProp};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use crate::{forwarded_parameter::ForwardedParameter, forwarded_query::ForwardedQuery, request::TemporalAnswer};
+use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time::rendering::instant_text};
+use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 
 impl ForwardedQuery {
     /// The temporal window, representation and aggregation parameters a temporal
-    /// query forwards (clauses 5.7.3.4, 5.7.4.4, 6.3.12).
+    /// query forwards (clauses 5.7.3.4, 5.7.4.4, 6.3.12), and the request for
+    /// system-generated attributes every forwarded read carries.
     ///
     /// A source asked for [`TemporalAnswer::Instances`] is sent the window
     /// alone: no `format`, no aggregation and no `lastN`, so it answers with
-    /// every normalized instance of the window, and `sysAttrs` whenever the
-    /// window is positioned on a system time, so every instance carries the
-    /// instant it is aggregated on.
+    /// every normalized instance of the window.
     pub(super) fn push_temporal_parameters(&mut self, params: &TemporalQueryParameters, answer: TemporalAnswer) {
         self.push_optional(ForwardedParameter::Timerel, params.timerel.map(|timerel| timerel.to_string()));
         self.push_optional(ForwardedParameter::TimeAt, params.time_at.map(instant_text));
@@ -26,8 +20,9 @@ impl ForwardedQuery {
         self.push_optional(ForwardedParameter::Timeproperty, params.timeproperty.map(|property| property.to_string()));
         match answer {
             TemporalAnswer::AsRequested => self.push_requested_representation(params),
-            TemporalAnswer::Instances => self.push_instance_representation(params),
+            TemporalAnswer::Instances => {}
         }
+        self.push_system_attributes();
     }
 
     /// The representation and aggregation the client asked for.
@@ -61,24 +56,6 @@ impl ForwardedQuery {
             }
             TemporalFormat::Normalized | TemporalFormat::TemporalValues => {}
         }
-        self.push_instance_representation(params);
-    }
-
-    /// The normalized instance representation, with the system times when the
-    /// window is positioned on one (clause 4.8).
-    fn push_instance_representation(&mut self, params: &TemporalQueryParameters) {
-        let requested = params
-            .options
-            .as_ref()
-            .and_then(WrittenValue::if_supported)
-            .is_some_and(|options| options.sys_attrs == SysAttrsInclusion::Include);
-        let positioned_on_a_system_time = match params.timeproperty_or_default() {
-            TimeProp::Created | TimeProp::Modified => true,
-            TimeProp::Observed | TimeProp::Deleted => false,
-        };
-        if requested || positioned_on_a_system_time {
-            self.push(ForwardedParameter::Options, SYS_ATTRS_OPTION.to_string());
-        }
     }
 }
 
@@ -100,7 +77,10 @@ mod tests {
     #[test]
     fn the_instance_representation_drops_every_aggregation_parameter() {
         let query = "timerel=after&timeAt=2020-01-01T00:00:00Z&format=aggregatedValues&aggrMethods=avg,max&aggrPeriodDuration=PT1H&lastN=5";
-        pretty_assertions::assert_eq!(forwarded(query, TemporalAnswer::Instances), "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z");
+        pretty_assertions::assert_eq!(
+            forwarded(query, TemporalAnswer::Instances),
+            "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&options=sysAttrs"
+        );
         let requested = forwarded(query, TemporalAnswer::AsRequested);
         assert!(
             requested.contains("aggrMethods=avg%2Cmax") && requested.contains("format=aggregatedValues"),
@@ -116,20 +96,23 @@ mod tests {
             "timerel=after&timeAt=2020-01-01T00:00:00Z&format=temporalValues&lastN=3",
             TemporalAnswer::AsRequested,
         );
-        pretty_assertions::assert_eq!(requested, "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&lastN=3");
+        pretty_assertions::assert_eq!(requested, "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&lastN=3&options=sysAttrs");
     }
 
-    /// Clause 4.8: an instance carries its system times only when asked, so a
-    /// window positioned on one asks for them.
+    /// Clause 4.8: an instance carries its system times only when asked, and
+    /// clause 4.5.5.3 reads `modifiedAt` to settle a conflict, so every window
+    /// asks for them, on a system time or not, whether the client did or not.
     #[test]
-    fn a_non_observed_timeproperty_asks_for_system_attributes() {
-        pretty_assertions::assert_eq!(
-            forwarded("timerel=after&timeAt=2020-01-01T00:00:00Z&timeproperty=modifiedAt", TemporalAnswer::Instances),
-            "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&timeproperty=modifiedAt&options=sysAttrs"
-        );
-        pretty_assertions::assert_eq!(
-            forwarded("timerel=after&timeAt=2020-01-01T00:00:00Z", TemporalAnswer::Instances),
-            "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z"
-        );
+    fn every_forwarded_temporal_read_asks_for_system_attributes() {
+        for answer in [TemporalAnswer::Instances, TemporalAnswer::AsRequested] {
+            pretty_assertions::assert_eq!(
+                forwarded("timerel=after&timeAt=2020-01-01T00:00:00Z&timeproperty=modifiedAt", answer),
+                "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&timeproperty=modifiedAt&options=sysAttrs"
+            );
+            pretty_assertions::assert_eq!(
+                forwarded("timerel=after&timeAt=2020-01-01T00:00:00Z", answer),
+                "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&options=sysAttrs"
+            );
+        }
     }
 }
