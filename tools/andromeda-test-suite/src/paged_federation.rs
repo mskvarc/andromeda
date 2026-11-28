@@ -155,7 +155,7 @@ mod tests {
     use crate::{
         context_source::ContextSource,
         namespace::Namespace,
-        paged_federation::{local_entities, serve_pages},
+        paged_federation::{local_entities, local_evolutions, serve_pages},
     };
     use googletest::prelude::*;
 
@@ -170,7 +170,7 @@ mod tests {
     #[gtest]
     fn the_broker_holds_fourteen_evolutions_of_the_namespace() -> Result<()> {
         let namespace = Namespace::fresh();
-        verify_that!(super::local_evolutions(&namespace)?.len(), eq(14))
+        verify_that!(local_evolutions(&namespace)?.len(), eq(14))
     }
 
     #[gtest]

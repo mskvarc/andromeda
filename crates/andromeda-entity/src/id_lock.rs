@@ -66,7 +66,7 @@ pub(crate) fn gc_id_locks(map: &IdLockMap) {
 
 #[cfg(test)]
 mod tests {
-    use super::{IdLockMap, acquire_id_locks_in, gc_id_locks};
+    use crate::id_lock::{IdLockMap, acquire_id_locks_in, gc_id_locks};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use std::sync::Arc;

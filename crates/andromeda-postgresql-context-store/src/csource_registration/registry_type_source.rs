@@ -185,7 +185,8 @@ impl RegistryTypeSource for PostgresRegistrationStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::csource_registration::registry_type_source::{RegisteredPair, registered_attributes_of, registered_pairs_sql, registered_types_of};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use sea_query::PostgresQueryBuilder;
 
     fn pair(entity_types: &[&str], attribute_name: Option<&str>) -> RegisteredPair {

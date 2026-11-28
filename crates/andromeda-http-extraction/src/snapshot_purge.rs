@@ -89,8 +89,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::http::Request;
+    use crate::snapshot_purge::SnapshotPurgeQ;
+    use andromeda_ngsi_ld_model::snapshot_filter::SnapshotPurgeFilter;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use axum::{extract::FromRequestParts, http::Request};
 
     #[tokio::test]
     async fn missing_q_produces_bad_request_data() {

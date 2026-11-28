@@ -83,7 +83,10 @@ impl PurgeMode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        dataset_selector::DatasetSelector,
+        projection::purge::{DatasetPurgeScope, PurgeMode},
+    };
 
     /// The unfiltered scope removes the whole attribute, which is what
     /// preserves the clause 5.6.21 default.

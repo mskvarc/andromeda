@@ -122,8 +122,14 @@ impl headers::Header for Accept {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        accept::Accept,
+        media_type::{GeoJsonSupport, ResponseMediaType},
+        quality::Quality,
+    };
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     /// Helper: decode an `Accept` from a raw header string.
     fn decode_accept(raw: &str) -> Result<Accept, headers::Error> {

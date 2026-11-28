@@ -53,7 +53,7 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
 
 #[cfg(test)]
 mod tests {
-    use super::{StatusUpdateFields, compute_updated_status};
+    use crate::status::{StatusUpdateFields, compute_updated_status, requested_status_change};
     use andromeda_ngsi_ld_model::{clearable::Clearable, subscription::SubscriptionStatus, subscription_request::SubscriptionRequest};
     use chrono::{Duration, Utc};
 
@@ -147,11 +147,11 @@ mod tests {
     /// A request names the status members it writes, and no others.
     #[test]
     fn a_request_names_only_the_status_members_it_writes() {
-        let none = super::requested_status_change(&SubscriptionRequest::default());
+        let none = requested_status_change(&SubscriptionRequest::default());
         assert!(none.is_active.is_none() && none.expires_at.is_none());
 
         let expires_at = Utc::now() + Duration::hours(1);
-        let written = super::requested_status_change(&SubscriptionRequest {
+        let written = requested_status_change(&SubscriptionRequest {
             is_active: Clearable::Set(false),
             expires_at: Clearable::Set(expires_at),
             ..SubscriptionRequest::default()
@@ -164,7 +164,7 @@ mod tests {
     /// `true`, and a deleted `expiresAt` is a member that is not present.
     #[test]
     fn a_deleted_member_is_the_default_or_a_member_that_is_not_present() {
-        let cleared = super::requested_status_change(&SubscriptionRequest {
+        let cleared = requested_status_change(&SubscriptionRequest {
             is_active: Clearable::NgsiLdNull,
             expires_at: Clearable::NgsiLdNull,
             ..SubscriptionRequest::default()
@@ -177,7 +177,7 @@ mod tests {
     /// subscription becomes active, and an expired one stays expired.
     #[test]
     fn a_deleted_is_active_reactivates_a_paused_subscription_but_not_an_expired_one() {
-        let cleared = super::requested_status_change(&SubscriptionRequest {
+        let cleared = requested_status_change(&SubscriptionRequest {
             is_active: Clearable::NgsiLdNull,
             ..SubscriptionRequest::default()
         });
@@ -189,7 +189,7 @@ mod tests {
     /// status the subscription has.
     #[test]
     fn a_deleted_expires_at_alone_leaves_the_status() {
-        let cleared = super::requested_status_change(&SubscriptionRequest {
+        let cleared = requested_status_change(&SubscriptionRequest {
             expires_at: Clearable::NgsiLdNull,
             ..SubscriptionRequest::default()
         });

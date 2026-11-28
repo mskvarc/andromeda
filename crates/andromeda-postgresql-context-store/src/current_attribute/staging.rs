@@ -184,7 +184,7 @@ pub(crate) fn with_instances_alias<S>(statement: UnnestAliased<S>) -> UnnestAlia
 #[cfg(test)]
 mod tests {
     use crate::{
-        current_attribute::staging::{instances_cte, staged_columns},
+        current_attribute::staging::{Staged, instances_cte, staged_columns},
         statement_text::text_of,
     };
     use andromeda_postgresql_seaquery::unnest::UnnestAliased;
@@ -196,7 +196,7 @@ mod tests {
         let mut with_clause = WithClause::new();
         let arrays = (0..28).map(|index| Expr::val(vec![index])).collect();
         with_clause.cte(instances_cte(arrays));
-        let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(super::Staged, &staged_columns()));
+        let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(Staged, &staged_columns()));
         pretty_assertions::assert_eq!(staged_columns().len(), 28);
         assert!(sql.contains("UNNEST($1::text[], $2::integer[]"), "{sql}");
         assert!(sql.contains("$27::sub_attribute_tree[], $28::text[]) AS r(id, attribute_name_key,"), "{sql}");
@@ -215,7 +215,7 @@ mod tests {
         let mut with_clause = WithClause::new();
         let arrays = (0..29).map(|index| Expr::val(vec![index])).collect();
         with_clause.cte(instances_cte(arrays));
-        let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(super::Staged, &staged_columns()));
+        let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(Staged, &staged_columns()));
         assert!(
             sql.contains(
                 r#"(CASE WHEN (ST_IsValid(ST_GeomFromEWKB("r"."value_geometry"))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB("r"."value_geometry")) END) AS "value_geometry_valid""#

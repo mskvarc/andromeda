@@ -117,8 +117,15 @@ impl headers::Header for Prefer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        geo_json_body::GeoJsonBodyPreference,
+        prefer::Prefer,
+        preference::{Preference, RespondMode},
+    };
+    use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     /// Helper: decode a `Prefer` from a raw header string.
     fn decode_prefer(raw: &str) -> Prefer {

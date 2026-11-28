@@ -72,8 +72,10 @@ impl headers::Header for NgsiLdEntityMap {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ngsild_entity_map::NgsiLdEntityMap;
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     fn decode_from(raw: &str) -> Result<NgsiLdEntityMap, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");

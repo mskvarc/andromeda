@@ -40,8 +40,10 @@ pub fn some_information_row(row_matches: Condition) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use crate::csr::information_row::{ri_col, some_information_row};
+    use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use sea_query::{Condition, ExprTrait, Query};
 
     #[test]
     fn the_scan_is_correlated_with_the_registration_and_carries_the_row_condition() {

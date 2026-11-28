@@ -51,7 +51,7 @@ macro_rules! selector_tests {
     ($($operation:ident => |$service:ident, $entity:ident| $write:expr),+ $(,)?) => {
         $(
             mod $operation {
-                use super::*;
+                use crate::write_target_recording::*;
 
                 /// Clause 5.6.x.4: an entity outside the selector is not the target.
                 #[tokio::test]

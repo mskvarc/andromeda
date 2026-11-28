@@ -191,7 +191,10 @@ impl TryFrom<&[f64]> for Position {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        dimension::GeometryDimension,
+        position::{Position, PositionError},
+    };
 
     #[test]
     fn a_two_ordinate_position_decodes_without_an_altitude() {

@@ -396,7 +396,7 @@ impl SubscriptionCache {
 mod tests {
     use crate::{
         answering_store::{AnsweringStore, StoredAnswer},
-        cache::SubscriptionCache,
+        cache::{REFRESH_RETRY, SubscriptionCache},
         change::SubscriptionChange,
         compiled::CompiledSubscription,
         error::SubscriptionError,
@@ -580,7 +580,7 @@ mod tests {
         cache.reconcile_dirty(&store, &ImmediateRetryDelay).await;
 
         assert_eq!(cache.dirty_len(), 1);
-        assert_eq!(store.reads(), 1 + super::REFRESH_RETRY.attempts.get());
+        assert_eq!(store.reads(), 1 + REFRESH_RETRY.attempts.get());
     }
 
     /// A row that cannot be decoded is not mended by reading it again, so no

@@ -64,9 +64,9 @@ impl<'request> Coverage<'request> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::TypeSelection};
+    use crate::csr::coverage::Coverage;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_query::{csr::expanded_entity_specification::ExpandedEntitySpecification, pattern::Pattern, type_selection::TypeSelection};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use iri_rs::IriBuf;
     use sea_query::{Query, SelectStatement};

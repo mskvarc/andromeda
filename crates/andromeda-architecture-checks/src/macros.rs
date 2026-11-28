@@ -110,6 +110,12 @@ macro_rules! workspace_architecture {
                 $crate::module_naming::assert_no_dumping_ground_modules(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// No import, in production or test code, starts its path at `super`.
+            #[test]
+            fn imports_name_their_path_from_the_crate_root() {
+                $crate::super_import::assert_no_super_imports(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Every Rust base image carries the toolchain the workspace pins.
             #[test]
             fn images_build_from_the_pinned_toolchain() {

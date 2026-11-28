@@ -45,7 +45,8 @@ pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapsh
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::query_validation::validate_snapshot_query_shapes;
+    use andromeda_ngsi_ld_model::query::body::Query;
     use serde_json::json;
 
     #[test]

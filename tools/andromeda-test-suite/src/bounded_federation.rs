@@ -113,8 +113,7 @@ async fn register_peer_for(
 
 #[cfg(test)]
 mod tests {
-    use super::vehicles;
-    use crate::namespace::Namespace;
+    use crate::{bounded_federation::vehicles, namespace::Namespace};
     use googletest::prelude::*;
     use ngsi_ld::model::OneOrMany;
 

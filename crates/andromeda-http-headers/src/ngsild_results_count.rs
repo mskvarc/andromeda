@@ -54,8 +54,10 @@ impl headers::Header for NgsiLdResultsCount {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ngsild_results_count::NgsiLdResultsCount;
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     fn decode_from(raw: &str) -> Result<NgsiLdResultsCount, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");

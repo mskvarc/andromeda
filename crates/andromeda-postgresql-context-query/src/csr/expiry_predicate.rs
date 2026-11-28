@@ -21,7 +21,7 @@ pub fn not_expired() -> Condition {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::csr::expiry_predicate::not_expired;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use sea_query::{Alias, Query};
 

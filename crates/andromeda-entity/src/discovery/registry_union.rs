@@ -54,7 +54,11 @@ pub(super) fn union_type_summaries(local: &mut Vec<(EntityTypeName, Vec<Attribut
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        discovery::registry_union::{extend_without_repetition, union_type_summaries},
+        port::registry_types::RegisteredType,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 
     fn type_name(raw: &str) -> EntityTypeName {
         raw.parse().expect("valid type name")

@@ -14,7 +14,7 @@ pub fn ltree_matches(col: SimpleExpr, lquery: SimpleExpr) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ltree::ltree_matches;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
     #[test]

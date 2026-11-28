@@ -68,7 +68,9 @@ impl PreferHeader {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::prefer::{PreferHeader, preferences};
+    use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, preference::RespondMode};
+    use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use axum::http::Request;
 
     fn parse_from_header(value: Option<&str>) -> PreferHeader {

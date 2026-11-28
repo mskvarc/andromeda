@@ -41,9 +41,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::entity_query::EntityQuery;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
-    use axum::{body::Body, http::Request};
+    use axum::{body::Body, extract::FromRequestParts, http::Request};
 
     /// A query string the parameter set can decode is extracted whatever the
     /// clause 5.7.2.4 narrowing rule will make of it: that rule is applied by
