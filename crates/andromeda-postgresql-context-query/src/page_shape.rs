@@ -4,10 +4,10 @@
 
 use crate::{
     carrier_page::{carrier_page, carriers},
-    entity::window_and_sort_keys,
-    entity_page::{StepColumn, heads_of, heads_over},
+    entity::{Filtering, window_and_sort_keys},
+    entity_page::{PageTotal, StepColumn, heads_of, heads_over},
     entity_relations::EntityRelations,
-    entity_total::TotalCandidates,
+    entity_total::{TotalCandidates, TotalSource, selection_count},
     gated_page::{GatedColumns, PageSource},
     geo_page::{GeoMatches, geo_matches, geo_page, matches_of},
     id_pattern_page::{PatternMatches, id_pattern_page, pattern_matches},
@@ -130,6 +130,7 @@ impl<'q> PageShape<'q> {
         self,
         source: &PageSource<'_>,
         condition: &Condition,
+        filtering: Filtering,
         count: CountPolicy,
         counted_on_page: CountPolicy,
     ) -> Result<CutPage<'q>, RenderError> {
@@ -141,7 +142,7 @@ impl<'q> PageShape<'q> {
                 page.cond_where(condition.clone());
                 let (keys, read_order) = window_and_sort_keys(&mut page, source.rows, source.query, source.window, &source.names.attributes)?;
                 return Ok(CutPage {
-                    select: heads_of(page, source.rows, keys, counted_on_page),
+                    select: heads_of(page, source.rows, keys, plain_total(source, condition, filtering, counted_on_page)),
                     read_order,
                     planning,
                     total_planning: StatementPlanning::Cached,
@@ -208,6 +209,35 @@ impl<'q> PageShape<'q> {
             PageShape::Plain => StatementPlanning::Cached,
             PageShape::Keyed(reads) => reads.planning(query),
             PageShape::Geo(_) | PageShape::Carriers(_) | PageShape::ValueWalk(_) | PageShape::IdPattern(_) => StatementPlanning::GatedBranches,
+        }
+    }
+}
+
+/// What the rows of the plain page of `source`, filtered by `condition`,
+/// carry as its total when `counted_on_page` says they carry one.
+///
+/// A selection no filter narrows is counted on its own, once, beside the
+/// page, which then reads no more of it than its window. The census counts a
+/// selection by one type alone without reading its members at all. The
+/// window would buffer every member before the page's first row: over the
+/// 719 663 stop times of a GTFS feed it spills a 44.9 MB tuplestore and takes
+/// 225 to 280 ms, where counting the members alone takes 35 ms. A filtered
+/// selection keeps the window, which buffers only the matches: counted apart,
+/// its filters would be tested on every Entity once for the count and again
+/// for the page wherever the matches are sparse.
+fn plain_total(source: &PageSource<'_>, condition: &Condition, filtering: Filtering, counted_on_page: CountPolicy) -> PageTotal {
+    match (counted_on_page, filtering) {
+        (CountPolicy::Omit, Filtering::Unfiltered | Filtering::Filtered) => PageTotal::Omitted,
+        (CountPolicy::Emit, Filtering::Filtered) => PageTotal::Windowed,
+        (CountPolicy::Emit, Filtering::Unfiltered) => {
+            let total_source = TotalSource {
+                query: source.query,
+                names: source.names,
+                rows: source.rows,
+                schema: source.schema,
+            };
+            let relations = EntityRelations::for_count(source.query, &source.names.types, source.schema);
+            PageTotal::Counted(Box::new(selection_count(&total_source, relations, condition.clone())))
         }
     }
 }

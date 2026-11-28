@@ -1,0 +1,28 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (1)
+      AND "is_current_member"
+  ) AS "selected"
+  JOIN "entity_search" ON "entity_search"."entity_key" = "selected"."entity_key"
+WHERE
+  "selected"."entity_key" NOT IN (
+    SELECT
+      "entity_key"
+    FROM
+      "entities"
+    WHERE
+      "expires_at" <= NOW()
+  )
+  AND ("entity_search"."scope_paths" ~ ($1::lquery))
+1: String 'Madrid'

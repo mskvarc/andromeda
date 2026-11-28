@@ -8,8 +8,9 @@ use crate::{
     projection::projected_members::ProjectedMembers,
     scope::scope_query::ScopeQuery,
     standing_instant::StandingInstant,
+    type_selection::TypeSelection,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
@@ -125,6 +126,44 @@ impl EntitySelection {
         !self.selectors.is_empty() && self.selectors.iter().all(EntityConstraint::constrains)
     }
 
+    /// The one entity type whose Entities are exactly the ones this selection
+    /// selects, `None` when anything else narrows it.
+    ///
+    /// That is one selector naming that type alone, with no identifier and no
+    /// pattern, and no `attrs`, `q`, geo-query, `scopeQ` or projected member
+    /// beside it. Its matches are then the Entities carrying the type (clause
+    /// 4.17), as many as the type has. The instant the selection stands at
+    /// decides which of them have expired (clause 4.22), not which carry the
+    /// type, and the default `location` narrowing only narrows a geo-query.
+    #[must_use]
+    pub const fn sole_type(&self) -> Option<&EntityTypeIri> {
+        let EntitySelection {
+            selectors,
+            attrs,
+            q,
+            geo,
+            default_location: _,
+            scope_q,
+            considered,
+            projected_members,
+            standing: _,
+        } = self;
+        let filtered = !attrs.is_empty() || q.is_some() || geo.is_some() || scope_q.is_some() || projected_members.constrains();
+        match (considered, selectors.as_slice()) {
+            (
+                ConsideredEntities::Selected,
+                [
+                    EntityConstraint {
+                        ids,
+                        id_pattern: None,
+                        type_selection: Some(TypeSelection::Alternatives(alternatives)),
+                    },
+                ],
+            ) if ids.is_empty() && !filtered => alternatives.as_single_type(),
+            (ConsideredEntities::Selected | ConsideredEntities::NoEntity, _) => None,
+        }
+    }
+
     /// Drop every identifier constraint, leaving the pattern, type and value
     /// filters to decide alone.
     ///
@@ -178,9 +217,10 @@ mod tests {
         pattern::Pattern,
         projection::projected_members::{ProjectedMembers, ScopeRetention},
         scope::scope_query::ScopeQuery,
+        type_selection::TypeSelection,
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, identifier::Identifier};
     use iri_rs::IriBuf;
 
     /// `q` expanded under the example namespace.
@@ -276,6 +316,85 @@ mod tests {
         assert!(selection.selectors[0].id_pattern.is_some(), "the id pattern stays");
         pretty_assertions::assert_eq!(selection.attrs, vec![speed]);
         pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::NoEntity);
+    }
+
+    fn of_type(name: &str) -> EntityConstraint<Expanded> {
+        EntityConstraint::builder()
+            .type_selection(Some(TypeSelection::single(
+                format!("https://example.com/{name}").parse().expect("valid type IRI"),
+            )))
+            .build()
+    }
+
+    fn by_type(name: &str) -> EntitySelection {
+        EntitySelection::builder().selectors(vec![of_type(name)]).build()
+    }
+
+    #[test]
+    fn a_selection_by_one_type_alone_selects_the_entities_of_that_type() {
+        let vehicle: EntityTypeIri = "https://example.com/Vehicle".parse().expect("valid type IRI");
+        pretty_assertions::assert_eq!(by_type("Vehicle").sole_type(), Some(&vehicle));
+    }
+
+    /// Clause 4.17: a second alternative or a conjunction selects other
+    /// Entities than one type's, and clause 5.2.33 makes two selectors their
+    /// union.
+    #[test]
+    fn a_selection_of_several_types_or_selectors_has_no_sole_type() {
+        let several = |text: &str| {
+            EntitySelection::builder()
+                .selectors(vec![
+                    EntityConstraint::builder()
+                        .type_selection(Some(
+                            text.parse::<TypeSelection<Written>>()
+                                .expect("valid type selection")
+                                .into_expanded()
+                                .expect("absolute type IRIs"),
+                        ))
+                        .build(),
+                ])
+                .build()
+        };
+        for text in [
+            "https://example.com/A,https://example.com/B",
+            "(https://example.com/A;https://example.com/B)",
+            "*",
+        ] {
+            assert!(several(text).sole_type().is_none(), "{text}");
+        }
+        let union = EntitySelection::builder().selectors(vec![of_type("A"), of_type("B")]).build();
+        assert!(union.sole_type().is_none());
+        assert!(EntitySelection::default().sole_type().is_none());
+    }
+
+    #[test]
+    fn a_selection_narrowed_beside_its_type_has_no_sole_type() {
+        let narrowed: [fn(&mut EntitySelection); 8] = [
+            |selection| selection.selectors[0].ids = vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")],
+            |selection| selection.selectors[0].id_pattern = Some("^urn:".parse::<Pattern>().expect("valid pattern")),
+            |selection| selection.attrs = vec!["https://example.com/speed".parse().expect("valid IRI")],
+            |selection| selection.q = Some(CompiledFilter::new(expanded("speed>10"), LanguageMatching::TagEquality)),
+            |selection| {
+                selection.geo = Some(CompiledGeoQuery {
+                    georel: GeoRel::Within,
+                    geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+                    geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+                });
+            },
+            |selection| selection.scope_q = Some("/Madrid".parse::<ScopeQuery>().expect("scopeQ parses")),
+            |selection| selection.considered = ConsideredEntities::NoEntity,
+            |selection| {
+                selection.projected_members = ProjectedMembers::AnyOf {
+                    attributes: vec!["https://example.com/speed".parse().expect("valid IRI")],
+                    scope: ScopeRetention::Removed,
+                };
+            },
+        ];
+        for (index, narrow) in narrowed.into_iter().enumerate() {
+            let mut selection = by_type("Vehicle");
+            narrow(&mut selection);
+            assert!(selection.sole_type().is_none(), "narrowing {index}");
+        }
     }
 
     /// Clause 5.14.4.4: under split entities the Attribute list and the

@@ -35,7 +35,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     standing_instant::instant_of,
-    type_membership::{drives, members_of_any},
+    type_membership::{disjoint_members_of_any, drives, members_of_any},
 };
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
@@ -78,6 +78,11 @@ pub enum RowSource {
     TypeMembers {
         /// The walk: every Entity the selection selects, as `(entity_key, id)`.
         walk: Box<SelectStatement>,
+        /// The walk's Entities as one stream per alternative of a selection
+        /// of several, each holding those no alternative before it selects,
+        /// which a count sums instead of merging the walk; empty for a
+        /// selection of one alternative, whose walk is its one stream.
+        parts: Vec<SelectStatement>,
         /// Whether `entities` is joined for a lifecycle column.
         entities: Demand,
     },
@@ -175,6 +180,33 @@ impl EntityRelations {
         }
     }
 
+    /// These relations as the disjoint parts a count sums, the first and the
+    /// rest: one per alternative of a type walk of several
+    /// ([`RowSource::TypeMembers`]), each driven by its part, and these
+    /// relations alone otherwise.
+    #[must_use]
+    pub fn counted_apart(self) -> (EntityRelations, Vec<EntityRelations>) {
+        let search = self.search;
+        let driven_by = |walk: SelectStatement, entities: Demand| EntityRelations {
+            source: RowSource::TypeMembers {
+                walk: Box::new(walk),
+                parts: Vec::new(),
+                entities,
+            },
+            search,
+        };
+        match self.source {
+            RowSource::TypeMembers { walk, parts, entities } => {
+                let mut parts = parts.into_iter();
+                match parts.next() {
+                    Some(first) => (driven_by(first, entities), parts.map(|part| driven_by(part, entities)).collect()),
+                    None => (driven_by(*walk, entities), Vec::new()),
+                }
+            }
+            RowSource::Entities => (self, Vec::new()),
+        }
+    }
+
     /// Add the driving relation and the joins this demand asks for to
     /// `select`, every relation qualified by the branch schema (`None` for the
     /// live branch), the driving Entity standing at `standing`.
@@ -189,7 +221,7 @@ impl EntityRelations {
                     .from(qualified(schema, Entities::Table))
                     .and_where(holds_standing_state(Entities::Table, instant_of(standing)));
             }
-            RowSource::TypeMembers { walk, entities } => {
+            RowSource::TypeMembers { walk, entities, .. } => {
                 select.from_subquery(*walk, Selected);
                 join_on_key(select, entities, schema, (Entities::Table, Entities::EntityKey), &driving_key);
                 // The walk reads current-side memberships alone, so only the
@@ -240,21 +272,18 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
         }
         ConsideredEntities::NoEntity => false,
     };
+    let selections = || selection.selectors.iter().filter_map(|selector| selector.type_selection.as_ref());
+    let memberships = Memberships {
+        side: MembershipSide::Current,
+        schema,
+    };
     let walk = walkable
-        .then(|| {
-            members_of_any(
-                selection.selectors.iter().filter_map(|selector| selector.type_selection.as_ref()),
-                types,
-                Memberships {
-                    side: MembershipSide::Current,
-                    schema,
-                },
-            )
-        })
+        .then(|| members_of_any(selections(), types, memberships).zip(disjoint_members_of_any(selections(), types, memberships)))
         .flatten();
     match walk {
-        Some(walk) => RowSource::TypeMembers {
+        Some((walk, parts)) => RowSource::TypeMembers {
             walk: Box::new(walk),
+            parts,
             entities: lifecycle,
         },
         None => RowSource::Entities,

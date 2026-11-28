@@ -9,6 +9,7 @@
 
 mod carried_names;
 pub mod carrier_page;
+mod census_total;
 pub mod csr;
 pub mod entity;
 pub mod entity_head;

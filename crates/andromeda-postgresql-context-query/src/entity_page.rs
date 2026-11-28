@@ -24,17 +24,17 @@ use andromeda_postgresql_query::{
     sort_key::{KeyOrder, SortKey},
 };
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
-use andromeda_postgresql_seaquery::{aggregate::count_over_all, branch::qualified};
+use andromeda_postgresql_seaquery::{aggregate::count_over_all, branch::qualified, scalar_subquery::scalar_subquery};
 use derive_more::TryFrom;
 use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Query, SelectStatement};
 
 /// Column name the total of a counted query is read back under.
 ///
-/// The page counts every matching entity as `COUNT(*) OVER ()`, which
-/// PostgreSQL evaluates over the whole unbounded partition before the window
-/// cuts the page, and the head statement carries it through to each row.
-/// The entity repository reads it back under this name, so the two have to
-/// agree; it is a constant rather than a literal for exactly that reason.
+/// A plain page carries the total on every row as [`PageTotal`] says, a gated
+/// page on the rows of the branch that read every candidate, and the head
+/// statement carries it through to each row. The entity repository reads it
+/// back under this name, so the two have to agree; it is a constant rather
+/// than a literal for exactly that reason.
 pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 
 /// Column name a gated page's rows name the step that answered it under.
@@ -58,6 +58,31 @@ pub enum GatedStep {
     /// the matches are sparser where the selection starts than a short walk
     /// fills a page from.
     ContinuedWalk = 4,
+}
+
+/// What the rows of a plain page carry as the clause 6.3.13 total.
+#[derive(Debug, Clone)]
+pub enum PageTotal {
+    /// No total.
+    Omitted,
+    /// `COUNT(*) OVER ()`, which PostgreSQL evaluates over every row the
+    /// page's filters keep, buffering them all, before the window cuts the
+    /// page.
+    Windowed,
+    /// The count statement, run once as a scalar subquery of the page, which
+    /// then reads no more of its selection than its window does.
+    Counted(Box<SelectStatement>),
+}
+
+impl PageTotal {
+    /// Whether the page's rows carry a total.
+    #[must_use]
+    pub const fn carried(&self) -> CountPolicy {
+        match self {
+            PageTotal::Omitted => CountPolicy::Omit,
+            PageTotal::Windowed | PageTotal::Counted(_) => CountPolicy::Emit,
+        }
+    }
 }
 
 /// Whether a page's rows name the step of a gated page that answered it.
@@ -91,8 +116,9 @@ const LOOKUP: &str = "stored";
 /// projects its keys under and the head statement by the same columns read
 /// back through the page.
 #[must_use]
-pub fn heads_of(page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, count: CountPolicy) -> SelectStatement {
-    heads_over(projected_page(page, rows, keys, count), rows, count, StepColumn::Unnamed)
+pub fn heads_of(page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, total: PageTotal) -> SelectStatement {
+    let carried = total.carried();
+    heads_over(projected_page(page, rows, keys, total), rows, carried, StepColumn::Unnamed)
 }
 
 /// A page projecting its entity key and its sort keys, and the order it is
@@ -105,16 +131,19 @@ pub struct ProjectedPage {
     pub order: Vec<(Alias, KeyOrder)>,
 }
 
-/// Project `page`'s entity key, its total when `count` asks for it, and each
-/// of `keys` under `sort_<n>`, and order it by those columns.
+/// Project `page`'s entity key, its total as `total` says, and each of
+/// `keys` under `sort_<n>`, and order it by those columns.
 #[must_use]
-pub fn projected_page(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, count: CountPolicy) -> ProjectedPage {
+pub fn projected_page(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, total: PageTotal) -> ProjectedPage {
     page.expr(rows.entity_key_column());
-    match count {
-        CountPolicy::Emit => {
+    match total {
+        PageTotal::Omitted => {}
+        PageTotal::Windowed => {
             page.expr_as(count_over_all(), Alias::new(TOTAL_COUNT_COLUMN));
         }
-        CountPolicy::Omit => {}
+        PageTotal::Counted(count) => {
+            page.expr_as(scalar_subquery(*count), Alias::new(TOTAL_COUNT_COLUMN));
+        }
     }
     let order = keys
         .into_iter()
@@ -195,14 +224,14 @@ fn stored_head_lookup(rows: &EntityRowRefs) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_page::heads_of;
-    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, ordering::sort_direction::SortDirection};
+    use crate::entity_page::{PageTotal, heads_of};
+    use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
     use andromeda_postgresql_query::{
         entity_row_refs::EntityRowRefs,
         sort_key::{KeyOrder, NullPlacement, SortKey},
     };
     use andromeda_postgresql_schema::current::Entities;
-    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_seaquery::{aggregate::count_all, assert_statement_snapshot};
     use sea_query::{Alias, IntoIden, Query, SelectStatement};
 
     fn windowed_page() -> SelectStatement {
@@ -221,7 +250,7 @@ mod tests {
     #[test]
     fn the_heads_are_read_outside_the_window_in_the_pages_order() {
         let rows = EntityRowRefs::unaliased(None);
-        let heads = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Omit);
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), PageTotal::Omitted);
         assert_statement_snapshot!("entity-page-the-heads-are-read-outside-the-window-in-the-pages-order", heads);
     }
 
@@ -230,8 +259,18 @@ mod tests {
     #[test]
     fn the_total_is_counted_inside_the_page_and_carried_out() {
         let rows = EntityRowRefs::unaliased(None);
-        let heads = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Emit);
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), PageTotal::Windowed);
         assert_statement_snapshot!("entity-page-the-total-is-counted-inside-the-page-and-carried-out", heads);
+    }
+
+    /// A total counted on its own is read once beside the page, as a scalar
+    /// subquery of it, and carried out under the same name.
+    #[test]
+    fn a_counted_total_is_read_once_beside_the_page_and_carried_out() {
+        let rows = EntityRowRefs::unaliased(None);
+        let count = Query::select().expr(count_all()).from(Entities::Table).take();
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), PageTotal::Counted(Box::new(count)));
+        assert_statement_snapshot!("entity-page-a-counted-total-is-read-once-beside-the-page-and-carried-out", heads);
     }
 
     /// Every key keeps its direction and its null placement at both levels.
@@ -248,7 +287,7 @@ mod tests {
                 KeyOrder::new(SortDirection::Ascending, NullPlacement::Unstated),
             ),
         ];
-        let heads = heads_of(windowed_page(), &rows, keys, CountPolicy::Omit);
+        let heads = heads_of(windowed_page(), &rows, keys, PageTotal::Omitted);
         assert_statement_snapshot!("entity-page-each-key-is-restated-with-its-direction-and-null-placement", heads);
     }
 
@@ -256,7 +295,7 @@ mod tests {
     #[test]
     fn a_branch_page_looks_its_heads_up_in_the_branch_schema() {
         let rows = EntityRowRefs::unaliased(Some(Alias::new("snap_5").into_iden()));
-        let heads = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Omit);
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), PageTotal::Omitted);
         assert_statement_snapshot!("entity-page-a-branch-page-looks-its-heads-up-in-the-branch-schema", heads);
     }
 }

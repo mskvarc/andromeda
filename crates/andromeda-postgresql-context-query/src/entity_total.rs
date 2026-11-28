@@ -2,6 +2,7 @@
 //! reads it, and the statement that counts it when the page cannot carry it.
 
 use crate::{
+    census_total::{census_counted_type, census_total},
     entity::{GeoFilter, QFilter, build_entity_conditions},
     entity_page::GatedStep,
     entity_relations::EntityRelations,
@@ -17,18 +18,18 @@ use andromeda_postgresql_query::{
     q_predicate::keyed_term::{CandidateRead, KeyedCandidates},
     query_names::QueryNames,
 };
-use sea_query::{Asterisk, Condition, DynIden, Expr, Func, Query, SelectStatement};
+use andromeda_postgresql_seaquery::scalar_subquery::scalar_subquery;
+use sea_query::{Asterisk, Condition, DynIden, Expr, ExprTrait, Func, Query, SelectStatement};
 
 /// How the store reads the total a counted entity query reports (clause
 /// 6.3.13).
 pub enum EntityTotal {
     /// The query asked for no total.
     Omitted,
-    /// The rows of an offset page carry the total as `COUNT(*) OVER ()`, so
-    /// the common case runs in one round-trip: every row of a plain page, the
-    /// rows of a gated page when its index branch answered. An empty page,
-    /// or a gated page another branch answered, carries none, and only then
-    /// is the count run.
+    /// The rows of an offset page carry the total, so the common case runs
+    /// in one round-trip: every row of a plain page, the rows of a gated page
+    /// when its index branch answered. An empty page, or a gated page another
+    /// branch answered, carries none, and only then is the count run.
     OnPageRows {
         /// The count run when the page carries no total.
         uncounted: TotalCount,
@@ -136,7 +137,7 @@ pub(crate) fn entity_total(
     let relations = EntityRelations::for_count(source.query, &source.names.types, source.schema);
     let total = match candidates {
         None => TotalCount {
-            count: count_over(relations, source.schema, source.rows.standing(), whole),
+            count: selection_count(source, relations, whole),
             walked: None,
         },
         Some(candidates) => {
@@ -200,10 +201,35 @@ fn walked_after(reads: impl IntoIterator<Item = CandidateRead>, page_bound: impl
     }
 }
 
+/// The statement counting every match of `source`'s query under `whole` with
+/// no candidates to read: the census count of a selection by one type alone
+/// ([`census_total`]), `SELECT COUNT(*)` over `relations` otherwise.
+pub(crate) fn selection_count(source: &TotalSource<'_>, relations: EntityRelations, whole: Condition) -> SelectStatement {
+    match census_counted_type(source.query, source.names) {
+        Some(entity_type) => census_total(entity_type, source.schema, source.rows.standing()),
+        None => count_over(relations, source.schema, source.rows.standing(), whole),
+    }
+}
+
 /// `SELECT COUNT(*)` over `relations` in the branch `schema` (`None` for the
 /// live branch), the driving Entity standing at `standing`, filtered by
-/// `condition`.
+/// `condition`, summed over the disjoint parts of a type walk of several
+/// alternatives ([`EntityRelations::counted_apart`]), which are counted
+/// without merging them.
 pub(crate) fn count_over(relations: EntityRelations, schema: Option<&DynIden>, standing: StandingInstant, condition: Condition) -> SelectStatement {
+    let (first, rest) = relations.counted_apart();
+    if rest.is_empty() {
+        return count_one(first, schema, standing, condition);
+    }
+    let first = scalar_subquery(count_one(first, schema, standing, condition.clone()));
+    let summed = rest.into_iter().fold(first, |sum, part| {
+        sum.add(scalar_subquery(count_one(part, schema, standing, condition.clone())))
+    });
+    Query::select().expr(summed).take()
+}
+
+/// `SELECT COUNT(*)` over the one walk or relation `relations` reads.
+fn count_one(relations: EntityRelations, schema: Option<&DynIden>, standing: StandingInstant, condition: Condition) -> SelectStatement {
     let mut count = Query::select();
     count.expr(Func::count(Expr::col(Asterisk)));
     relations.apply_from(&mut count, schema, standing);

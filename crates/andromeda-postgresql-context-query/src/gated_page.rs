@@ -46,7 +46,7 @@
 
 use crate::{
     entity::{EntityConditions, GeoFilter, QFilter, build_entity_conditions, selection_conditions, tested_conditions, window_and_sort_keys},
-    entity_page::{GatedStep, ProjectedPage, StepColumn, projected_page},
+    entity_page::{GatedStep, PageTotal, ProjectedPage, StepColumn, projected_page},
     entity_relations::EntityRelations,
     gated_steps::{GatedSteps, Total, named},
     page_walk::{PageWalk, continued_walk, full_walk, short_walk, walked_rows},
@@ -102,7 +102,7 @@ impl PageSource<'_> {
         relations.apply_from(&mut page, self.schema, self.rows.standing());
         page.cond_where(condition);
         let (keys, read_order) = window_and_sort_keys(&mut page, self.rows, self.query, window, &self.names.attributes)?;
-        Ok((projected_page(page, self.rows, keys, CountPolicy::Omit), read_order))
+        Ok((projected_page(page, self.rows, keys, PageTotal::Omitted), read_order))
     }
 
     /// The selection filtered as `q` and `geo` say.

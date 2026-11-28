@@ -2,24 +2,23 @@
 source: crates/andromeda-postgresql-context-query/src/entity.rs
 ---
 SELECT
-  COUNT(*)
-FROM
   (
     SELECT
-      "entity_key",
-      "id"
+      COALESCE(SUM("entity_delta")::bigint, $1)
     FROM
-      "entity_type_members"
+      "entity_type_census"
     WHERE
       "entity_type_name_key" = (1)
-      AND "is_current_member"
-  ) AS "selected"
-WHERE
-  "selected"."entity_key" NOT IN (
+  ) - (
     SELECT
-      "entity_key"
+      COUNT(*)
     FROM
       "entities"
+      INNER JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
     WHERE
-      "expires_at" <= NOW()
+      "entities"."expires_at" <= NOW()
+      AND (
+        "entity_search"."entity_type_name_keys" @> (ARRAY[1])
+      )
   )
+1: BigInt 0

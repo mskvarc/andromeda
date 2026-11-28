@@ -34,6 +34,11 @@ struct Typed;
 #[iden = "candidate"]
 struct Candidate;
 
+/// One alternative's members no alternative before it selects, `unseen`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "unseen"]
+struct Unseen;
+
 /// The membership row a key probe reads, `type_member`.
 #[derive(Iden, Clone, Copy)]
 #[iden = "type_member"]
@@ -62,6 +67,73 @@ pub fn members_of_any<'a>(
 ) -> Option<SelectStatement> {
     let streams = exprs.into_iter().map(|expr| members_of(expr, types, memberships)).collect::<Option<Vec<_>>>()?;
     Some(merged(streams, memberships))
+}
+
+/// The Entities any of `exprs` selects, as one stream of `(key, id)` per
+/// alternative, each holding the alternative's Entities that no alternative
+/// before it selects; no stream for a selection of one alternative, whose
+/// range is the walk itself, and `None` when one of them has no range to
+/// walk (see [`drives`]).
+///
+/// The streams are disjoint and their union is what [`members_of_any`]
+/// merges, so a count of every Entity the selection selects under a filter
+/// of each Entity is the sum of the counts of the streams. Each stream is a
+/// range of the membership index, its members tested by key against the
+/// types of the alternatives before it. Counted as one merge in identifier
+/// order instead, the ranges are sorted whole, since PostgreSQL merges no two
+/// ranges of one index in order: the 757 134 members of two types of a GTFS
+/// feed spill a 47 MB sort and take 510 ms, where their two streams take
+/// 46 ms.
+#[must_use]
+pub fn disjoint_members_of_any<'a>(
+    exprs: impl IntoIterator<Item = &'a TypeSelection<Expanded>>,
+    types: &ResolvedNames<EntityTypeName>,
+    memberships: Memberships<'_>,
+) -> Option<Vec<SelectStatement>> {
+    let alternatives = exprs
+        .into_iter()
+        .map(|expr| match expr {
+            TypeSelection::Wildcard => None,
+            TypeSelection::Alternatives(alternatives) => Some(alternatives.iter()),
+        })
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<&[EntityTypeIri]>>();
+    if alternatives.len() < 2 {
+        return Some(Vec::new());
+    }
+    alternatives
+        .iter()
+        .enumerate()
+        .map(|(position, conjunction)| {
+            let stream = members_of_conjunction(conjunction, types, memberships)?;
+            let earlier = alternatives.get(..position).unwrap_or_default();
+            if earlier.is_empty() {
+                return Some(stream);
+            }
+            let id = Expr::col((Unseen, EntityTypeMembers::Id));
+            // Each earlier alternative is excluded on its own, so one naming a
+            // single type is a `NOT EXISTS` PostgreSQL can answer as an
+            // anti-join of the two ranges.
+            let unselected_before = earlier.iter().fold(Condition::all(), |unselected, conjunction| {
+                unselected.add(
+                    conjunction
+                        .iter()
+                        .fold(Condition::all(), |carried, iri| carried.add(type_probe(iri, types, &id, memberships)))
+                        .not(),
+                )
+            });
+            Some(
+                Query::select()
+                    .column((Unseen, EntityTypeMembers::EntityKey))
+                    .column((Unseen, EntityTypeMembers::Id))
+                    .from_subquery(stream, Unseen)
+                    .cond_where(unselected_before)
+                    .take(),
+            )
+        })
+        .collect()
 }
 
 /// The Entities `expr` selects, as `(key, id)` with no repeat, or `None` when
@@ -177,7 +249,7 @@ fn merged(streams: Vec<SelectStatement>, memberships: Memberships<'_>) -> Select
 
 #[cfg(test)]
 mod tests {
-    use crate::type_membership::{drives, members_of_any, membership};
+    use crate::type_membership::{disjoint_members_of_any, drives, members_of_any, membership};
     use andromeda_ngsi_ld_lexicon::{entity_type_iri::EntityTypeIri, entity_type_name::EntityTypeName};
     use andromeda_ngsi_ld_query::{name_stage::Expanded, type_selection::TypeSelection};
     use andromeda_postgresql_schema::type_membership::MembershipSide;
@@ -243,6 +315,29 @@ mod tests {
     #[test]
     fn several_selectors_merge_as_a_disjunction_does() {
         assert_eq!(stream(&[ty("A"), ty("B")]), stream(&[alternatives(&[&["A"], &["B"]])]));
+    }
+
+    /// Every alternative after the first keeps only the Entities no
+    /// alternative before it selects, so each Entity is in one stream.
+    #[test]
+    fn each_alternative_keeps_the_entities_no_earlier_one_selects() {
+        let streams = disjoint_members_of_any([&alternatives(&[&["A"], &["B", "C"]]), &ty("Unknown")], &known(), CURRENT).expect("the selection has ranges");
+        assert_eq!(streams.len(), 3);
+        assert_eq!(streams[0], stream(&[ty("A")]));
+        for (index, part) in streams.into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("type-membership-each-alternative-keeps-the-entities-no-earlier-one-selects-{}", index + 1),
+                part
+            );
+        }
+    }
+
+    /// The wildcard has no range, so a union holding it has no streams, and
+    /// one alternative's range is its walk.
+    #[test]
+    fn a_union_with_the_wildcard_has_no_disjoint_streams_and_one_alternative_needs_none() {
+        assert!(disjoint_members_of_any([&ty("A"), &TypeSelection::Wildcard], &known(), CURRENT).is_none());
+        assert_eq!(disjoint_members_of_any([&alternatives(&[&["A", "B"]])], &known(), CURRENT), Some(Vec::new()));
     }
 
     /// Clause 4.17 `;`: the first range is narrowed by a key probe per other

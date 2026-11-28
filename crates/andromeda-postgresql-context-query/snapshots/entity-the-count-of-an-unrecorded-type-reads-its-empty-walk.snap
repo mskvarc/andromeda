@@ -11,8 +11,7 @@ FROM
     FROM
       "entity_type_members"
     WHERE
-      "entity_type_name_key" = (1)
-      AND "is_current_member"
+      FALSE
   ) AS "selected"
 WHERE
   "selected"."entity_key" NOT IN (

@@ -94,7 +94,9 @@ pub fn build_query(
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone(), query.selection.standing);
-    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole, GeoFilter::Matched)?;
+    let conditions = entity_conditions(query, names, &rows, &relations.source, QFilter::Whole, GeoFilter::Matched)?;
+    let filtering = conditions.filtering();
+    let condition = conditions.whole();
     let shape = PageShape::of(query, names, window, count, &relations, &rows, schema.as_ref())?;
     let counted_on_page = shape.counted_on_page(count, window);
     let source = PageSource {
@@ -105,7 +107,7 @@ pub fn build_query(
         window,
         names,
     };
-    let page = shape.cut(&source, &condition, count, counted_on_page)?;
+    let page = shape.cut(&source, &condition, filtering, count, counted_on_page)?;
 
     let total_source = TotalSource {
         query,
@@ -232,10 +234,29 @@ pub(crate) struct EntityConditions {
 }
 
 impl EntityConditions {
+    /// Whether any of these filters narrows what the driving relation yields.
+    pub(crate) const fn filtering(&self) -> Filtering {
+        if self.selection.is_empty() && self.tested.is_empty() {
+            Filtering::Unfiltered
+        } else {
+            Filtering::Filtered
+        }
+    }
+
     /// Every filter in one condition, the selection's first.
     pub(crate) fn whole(self) -> Condition {
         all_of(self.selection.into_iter().chain(self.tested))
     }
+}
+
+/// Whether a statement's filters narrow the rows its driving relation yields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Filtering {
+    /// No filter: every row the driving relation yields matches, as every
+    /// member of a type selection's walk does when nothing else is asked.
+    Unfiltered,
+    /// A selector or a filter tests the rows the driving relation yields.
+    Filtered,
 }
 
 /// Every condition of `conditions`, each a term of one conjunction.
@@ -763,17 +784,67 @@ mod tests {
         assert_statement_snapshot!("entity-an-unknown-type-selector-matches-nothing", built.select);
     }
 
-    /// A counted page of one type counts the walk it pages.
-    #[test]
-    fn the_count_of_a_type_page_counts_the_walk() {
+    /// The query selecting every Entity of `types`, a clause 4.17 selection.
+    fn of_types(types: &str) -> CompiledEntityQuery {
         let mut q = empty_query();
         q.selection.selectors = vec![
             EntityConstraint::builder()
-                .type_selection(Some(TypeSelection::single(iri("https://example.com/Vehicle").into())))
+                .type_selection(Some(
+                    types
+                        .parse::<TypeSelection<Written>>()
+                        .expect("valid type selection")
+                        .into_expanded()
+                        .expect("absolute type IRIs"),
+                ))
                 .build(),
         ];
-        let count = build_counted(&q, &known_types()).count.expect("count requested");
-        assert_statement_snapshot!("entity-the-count-of-a-type-page-counts-the-walk", count);
+        q
+    }
+
+    /// A counted page of one type alone reads its total from the census, and
+    /// the page carries it beside its rows, reading no more members than its
+    /// window.
+    #[test]
+    fn the_count_of_a_type_page_reads_the_census() {
+        let built = build_counted(&of_types("https://example.com/Vehicle"), &known_types());
+        assert_statement_snapshot!("entity-the-count-of-a-type-page-reads-the-census", built.count.expect("count requested"));
+        assert_statement_snapshot!("entity-a-counted-page-of-one-type-carries-the-census-count-beside-its-rows", built.select);
+    }
+
+    /// Two types select their union, which the census cannot count without
+    /// counting an Entity of both twice. Each type's members that no earlier
+    /// type selects are counted instead, and the counts summed, once, beside
+    /// the page.
+    #[test]
+    fn a_counted_page_of_two_types_sums_their_disjoint_counts_beside_its_rows() {
+        let built = build_counted(&of_types("https://example.com/Vehicle,https://example.com/Home"), &known_types());
+        assert_statement_snapshot!("entity-a-counted-page-of-two-types-sums-their-disjoint-counts-beside-its-rows", built.select);
+    }
+
+    /// A type no Entity was ever written with has no census row, and its
+    /// count reads the empty walk its selection renders.
+    #[test]
+    fn the_count_of_an_unrecorded_type_reads_its_empty_walk() {
+        let built = build_counted(&of_types("https://example.com/NeverWritten"), &known_types());
+        assert_statement_snapshot!(
+            "entity-the-count-of-an-unrecorded-type-reads-its-empty-walk",
+            built.count.expect("count requested")
+        );
+    }
+
+    /// A filter the page tests on every Entity keeps the window, which counts
+    /// only the matches it buffers, where a count of its own would test the
+    /// filter on every Entity again.
+    #[test]
+    fn a_counted_filtered_plain_page_keeps_the_window() {
+        let mut q = of_types("https://example.com/Vehicle");
+        q.selection.scope_q = Some("/Madrid".parse::<ScopeQuery>().expect("scopeQ parses"));
+        let built = build_counted(&q, &known_types());
+        assert_statement_snapshot!("entity-a-counted-filtered-plain-page-keeps-the-window", built.select);
+        assert_statement_snapshot!(
+            "entity-a-counted-filtered-plain-page-counts-its-filter-when-empty",
+            built.count.expect("count requested")
+        );
     }
 
     /// Clause 5.2.33: a selector naming identifiers is answered by the

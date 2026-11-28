@@ -142,6 +142,7 @@ mod tests {
     fn walked() -> RowSource {
         RowSource::TypeMembers {
             walk: Box::new(Query::select().take()),
+            parts: Vec::new(),
             entities: Demand::NotJoined,
         }
     }

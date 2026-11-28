@@ -33,13 +33,12 @@
 
 use crate::{
     entity::{GeoFilter, QFilter},
-    entity_page::{ProjectedPage, projected_page},
+    entity_page::{PageTotal, ProjectedPage, projected_page},
     gated_page::PageSource,
     occupied_columns::{OccupiedColumns, held_alone, occupied_columns},
     walked_column::{WalkedCarriers, WalkedColumn},
 };
 use andromeda_ngsi_ld_query::{
-    count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
     ordering::{expanded_ordering_target::ExpandedOrderingTarget, sort_direction::SortDirection},
@@ -206,7 +205,7 @@ fn carriers(source: &PageSource<'_>, order: &ValueWalkOrder, column: WalkedColum
     )
     .limit(need);
     let value = column.ranked_value(order.direction, &order.collation);
-    projected_page(page, rows, keys(value, order, rows), CountPolicy::Omit).select
+    projected_page(page, rows, keys(value, order, rows), PageTotal::Omitted).select
 }
 
 /// The first `need` Entities `condition` keeps that carry no standing instance
@@ -230,7 +229,7 @@ fn without_attribute(source: &PageSource<'_>, order: &ValueWalkOrder, condition:
         instant: typed_null(PostgresType::Timestamptz),
         text: collate(typed_null(PostgresType::Text), &order.collation),
     };
-    projected_page(page, rows, keys(value, order, rows), CountPolicy::Omit).select
+    projected_page(page, rows, keys(value, order, rows), PageTotal::Omitted).select
 }
 
 /// The keys a branch orders `value` by: the term's four, then the identifier.
