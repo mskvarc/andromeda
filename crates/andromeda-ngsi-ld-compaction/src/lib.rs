@@ -29,6 +29,8 @@ mod compacted;
 mod compacted_mode;
 mod compacted_node;
 pub mod compaction_error;
+#[cfg(any(test, feature = "test-support"))]
+pub mod compaction_failure_fixture;
 #[cfg(test)]
 mod differential_tests;
 mod document_compaction;

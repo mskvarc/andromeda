@@ -12,6 +12,11 @@ description = "Compacting the typed entity model into the compact representation
 [lints]
 workspace = true
 
+[features]
+# Compaction failures of stored state, for tests that classify one without a
+# store or a processor.
+test-support = []
+
 [dependencies]
 andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true

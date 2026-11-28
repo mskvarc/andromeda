@@ -321,8 +321,40 @@ impl TemporalError {
 
 #[cfg(test)]
 mod tests {
-    use crate::error::TemporalError;
+    use crate::{error::TemporalError, temporal_invariant::TemporalInvariant};
+    use andromeda_jsonld::error::JsonLdError;
+    use andromeda_ngsi_ld_compaction::{
+        compaction_error::CompactionError,
+        compaction_failure_fixture::{refused_stored_entity, unencodable_stored_entity},
+    };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use iri_rs::IriBuf;
+
+    /// Clause 5.5.2: a stored history that the compact model refuses or that
+    /// cannot be written for the processor is the broker's fault, an internal
+    /// error on a read and never the client's `BadRequestData`.
+    #[test]
+    fn a_stored_history_that_fails_to_compact_is_an_internal_error() {
+        let refused = TemporalError::from(refused_stored_entity());
+        assert!(
+            matches!(refused, TemporalError::Internal(TemporalInvariant::Compaction(CompactionError::Refused(_)))),
+            "{refused:?}"
+        );
+        let unencodable = TemporalError::from(unencodable_stored_entity());
+        assert!(
+            matches!(unencodable, TemporalError::Internal(TemporalInvariant::Compaction(CompactionError::Encode(_)))),
+            "{unencodable:?}"
+        );
+    }
+
+    /// A compaction the request's own `@context` fails is the JSON-LD failure
+    /// of that context, which is the client's doing.
+    #[test]
+    fn a_compaction_the_request_context_fails_stays_the_json_ld_failure() {
+        let url = IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI");
+        let error = TemporalError::from(CompactionError::JsonLd(JsonLdError::ContextFetchDisabled { url }));
+        assert!(matches!(error, TemporalError::JsonLd(JsonLdError::ContextFetchDisabled { .. })), "{error:?}");
+    }
 
     /// A store that cannot be reached is retryable, answered 503 rather than
     /// the 500 of a fault; a configuration no retry mends stays a fault.

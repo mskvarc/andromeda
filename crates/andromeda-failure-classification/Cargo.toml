@@ -29,6 +29,7 @@ tracing = "0.1.44"
 andromeda-architecture-checks.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-http-headers.workspace = true
+andromeda-ngsi-ld-compaction = { workspace = true, features = ["test-support"] }
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true

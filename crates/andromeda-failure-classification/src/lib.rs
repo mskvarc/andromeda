@@ -33,14 +33,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-registration",
         "andromeda-temporal",
     ],
-    allow_workspace_dev_dependencies: [
-        "andromeda-context-commit",
-        "andromeda-http-headers",
-        "andromeda-ngsi-ld-geometry",
-        "andromeda-ngsi-ld-lexicon",
-        "andromeda-ngsi-ld-number",
-        "andromeda-ngsi-ld-representation",
-    ],
+    allow_workspace_dev_dependencies: ["andromeda-context-commit", "andromeda-http-headers", "andromeda-ngsi-ld-compaction", "andromeda-ngsi-ld-geometry", "andromeda-ngsi-ld-lexicon", "andromeda-ngsi-ld-number", "andromeda-ngsi-ld-representation"],
     allow_production_dependencies: [],
 }
 

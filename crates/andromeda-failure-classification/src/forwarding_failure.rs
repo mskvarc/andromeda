@@ -156,7 +156,7 @@ pub fn local_federation_failure(error: &FederationError) -> Option<ClassifiedRep
 mod tests {
     use crate::{
         classified_report::ClassifiedReport,
-        forwarding_failure::{classify_forwarding_error, local_federation_failure},
+        forwarding_failure::{classify_federation_error, classify_forwarding_error, local_federation_failure},
         internal_failure_summary::InternalFailureSummary,
     };
     use andromeda_federation::{
@@ -167,6 +167,7 @@ mod tests {
         remote_answer::RemoteAnswer,
     };
     use andromeda_http_headers::received_protocol::ReceivedProtocol;
+    use andromeda_ngsi_ld_compaction::compaction_failure_fixture::{refused_stored_entity, unencodable_stored_entity};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -295,6 +296,25 @@ mod tests {
             ),
         ] {
             pretty_assertions::assert_eq!(classify_forwarding_error(&error).classification(), expected, "{error}");
+        }
+    }
+
+    /// A federated answer that fails to compact is this broker's fault, an
+    /// internal forwarding failure (clause 5.5.2) and never `BadRequestData`,
+    /// whether the forwarding or the route binding classifies it.
+    #[test]
+    fn a_compaction_failure_inside_a_federated_answer_is_an_internal_error() {
+        for compaction in [refused_stored_entity(), unencodable_stored_entity()] {
+            let error = FederationError::Compaction(compaction);
+            let internal = ClassifiedReport::internal(&error, InternalFailureSummary::CONTEXT_FEDERATION);
+            for classified in [classify_forwarding_error(&error), classify_federation_error(&error)] {
+                pretty_assertions::assert_eq!(
+                    classified.classification(),
+                    ProblemClassification::Category(NgsiLdErrorType::InternalError),
+                    "{error}"
+                );
+                pretty_assertions::assert_eq!(classified.detail(), internal.detail(), "{error}");
+            }
         }
     }
 
