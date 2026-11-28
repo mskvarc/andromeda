@@ -1,20 +1,22 @@
 //! A query or retrieve whose single exclusive source answers 501 is answered 501.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, context_source::ContextSource, namespace::Namespace, outcome::Done, problem::answered, source_answer};
+use andromeda_test_suite::{broker, cleanup::Cleanup, context_source::ContextSource, namespace::Namespace, outcome::Done, problem::problem, source_answer};
 use googletest::prelude::*;
-use http::{Method, StatusCode};
+use http::{Method, StatusCode, header::CONTENT_TYPE};
 use ngsi_ld::{
     http::headers::Accept,
-    model::Entity,
+    model::{Entity, ErrorType},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
 };
 
 /// Pins: Query Entities and Retrieve Entity whose only matching registration is an exclusive one whose source
-/// answers 501 answer 501
-/// Clause: 6.3.7, 6.4.3.2, 6.3.17
+/// answers 501 answer 501 with an `application/json` `ProblemDetails` of type `OperationNotSupported`, a title and
+/// a detail that differs from it
+/// Clause: 6.3.7, 6.4.3.2, 6.3.17, 6.3.3, 5.5.3
 /// Recorded: clause 6.3.7 has a source answer 501 for a representation it cannot serve and clause 6.3.17 maps only
 /// unsafe methods onto client statuses, so the status of a GET answered from one exclusive source is the broker
-/// choice
+/// choice. Table 6.3.2-1 binds no error type to a declined representation, so the type is the broker choice too:
+/// `OperationNotSupported`, which Table 5.5.2-1 describes as "The operation is not supported"
 #[gtest]
 #[tokio::test]
 async fn o_fed_err_7211_a_query_or_retrieve_whose_single_exclusive_source_answers_501_is_answered_501() -> Result<()> {
@@ -61,8 +63,13 @@ async fn o_fed_err_7211_a_query_or_retrieve_whose_single_exclusive_source_answer
         .entity_type(&vehicle_type)
         .send()
         .await;
-    expect_that!(&answer, answered(StatusCode::NOT_IMPLEMENTED));
+    let declined = || {
+        problem(StatusCode::NOT_IMPLEMENTED, ErrorType::OperationNotSupported)
+            .with_distinct_detail()
+            .with_header(CONTENT_TYPE, "application/json")
+    };
+    expect_that!(&answer, declined());
     let answer_2 = broker.with_responses().with_accept(Accept::any()).entities().retrieve(&vehicle_id).send().await;
-    expect_that!(&answer_2, answered(StatusCode::NOT_IMPLEMENTED));
+    expect_that!(&answer_2, declined());
     Ok(())
 }
