@@ -1,8 +1,8 @@
 //! Composition of focused subscription HTTP capabilities.
 
 use crate::{routes::context_target::BrokerSnapshotTargetResolver, tenant_factory::BrokerTenantFactory};
-use andromeda_http_extraction::context_target::SnapshotTargetResolver;
-use andromeda_http_subscription::state::{SubscriptionRouteServices, SubscriptionStateResolver};
+use andromeda_http_extraction::{context_target::SnapshotTargetResolver, tenant_state::TenantServicesResolver};
+use andromeda_http_subscription::state::SubscriptionRouteServices;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -27,7 +27,7 @@ impl BrokerSubscriptionStateResolver {
     }
 }
 
-impl SubscriptionStateResolver for BrokerSubscriptionStateResolver {
+impl TenantServicesResolver<SubscriptionRouteServices> for BrokerSubscriptionStateResolver {
     fn resolve<'a>(
         &'a self,
         tenant: &'a TenantRef,

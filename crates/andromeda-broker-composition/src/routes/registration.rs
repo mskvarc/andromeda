@@ -1,7 +1,8 @@
 //! Composition of focused registration HTTP capabilities.
 
 use crate::tenant_factory::BrokerTenantFactory;
-use andromeda_http_registration::state::{RegistrationRouteServices, RegistrationStateResolver};
+use andromeda_http_extraction::tenant_state::TenantServicesResolver;
+use andromeda_http_registration::state::RegistrationRouteServices;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -26,7 +27,7 @@ impl BrokerRegistrationStateResolver {
     }
 }
 
-impl RegistrationStateResolver for BrokerRegistrationStateResolver {
+impl TenantServicesResolver<RegistrationRouteServices> for BrokerRegistrationStateResolver {
     fn resolve<'a>(
         &'a self,
         tenant: &'a TenantRef,

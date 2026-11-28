@@ -1,11 +1,7 @@
 //! Typed, state-complete inventory of subscription routes.
 
-use crate::{
-    csource_subscription,
-    state::{SubscriptionRouteState, SubscriptionStateResolver},
-    subscription,
-};
-use andromeda_http_extraction::{scoped_response::echo_scope_headers, snapshot_scope_guard::reject_snapshot_scope};
+use crate::{csource_subscription, state::SubscriptionRouteServices, subscription};
+use andromeda_http_extraction::{scoped_response::echo_scope_headers, snapshot_scope_guard::reject_snapshot_scope, tenant_state::TenantServicesResolver};
 use axum::{
     Router,
     middleware::from_fn,
@@ -24,7 +20,7 @@ impl SubscriptionRoutes {
     /// Subscriptions belong to the Core API and take a Snapshot; Context
     /// Source Registration Subscriptions belong to the Registry API and
     /// refuse one (clause 5.5.15).
-    pub fn new(resolver: Arc<dyn SubscriptionStateResolver>) -> SubscriptionRoutes {
+    pub fn new(resolver: Arc<dyn TenantServicesResolver<SubscriptionRouteServices>>) -> SubscriptionRoutes {
         let subscriptions = Router::new()
             .route("/", post(subscription::create).get(subscription::query))
             .route(
@@ -44,7 +40,7 @@ impl SubscriptionRoutes {
         let router = Router::new()
             .nest("/subscriptions", subscriptions)
             .nest("/csourceSubscriptions", csource_subscriptions)
-            .with_state(SubscriptionRouteState::new(resolver));
+            .with_state(resolver);
         SubscriptionRoutes { router }
     }
 
@@ -56,10 +52,8 @@ impl SubscriptionRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::SubscriptionRoutes,
-        state::{SubscriptionRouteServices, SubscriptionStateResolver},
-    };
+    use crate::{routes::SubscriptionRoutes, state::SubscriptionRouteServices};
+    use andromeda_http_extraction::tenant_state::TenantServicesResolver;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -72,7 +66,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl SubscriptionStateResolver for RejectingResolver {
+    impl TenantServicesResolver<SubscriptionRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

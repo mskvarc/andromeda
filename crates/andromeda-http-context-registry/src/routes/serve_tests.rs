@@ -2,11 +2,7 @@
 //! `/jsonldContexts` operations accept (clause 6.3.20), and of the payload
 //! limit Create @context (clause 5.13.2) applies (clause 6.3.2).
 
-use crate::{
-    routes::ContextRegistryRoutes,
-    state::{ContextRegistryRouteServices, ContextRegistryStateResolver},
-    tenant_context_hosting::TenantContextHosting,
-};
+use crate::{routes::ContextRegistryRoutes, state::ContextRegistryRouteServices, tenant_context_hosting::TenantContextHosting};
 use andromeda_context_registry::{
     context_page::ContextPage,
     creation_kind::ContextCreationKind,
@@ -20,7 +16,7 @@ use andromeda_context_registry::{
     store::{ContextRegistryFuture, ContextRegistryStore},
     stored_context::StoredContext,
 };
-use andromeda_http_extraction::request_json_value_limit::RequestJsonValueLimit;
+use andromeda_http_extraction::{request_json_value_limit::RequestJsonValueLimit, tenant_state::TenantServicesResolver};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId, tenant::TenantName};
@@ -144,7 +140,7 @@ struct ResidentResolver {
     acme: TenantContextHosting,
 }
 
-impl ContextRegistryStateResolver for ResidentResolver {
+impl TenantServicesResolver<ContextRegistryRouteServices> for ResidentResolver {
     fn resolve<'a>(
         &'a self,
         tenant: &'a TenantRef,

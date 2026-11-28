@@ -1,8 +1,8 @@
 //! Composition adapters that supply focused broker capabilities to entity HTTP routes.
 
 use crate::{routes::context_target::BrokerSnapshotTargetResolver, tenant_factory::BrokerTenantFactory};
-use andromeda_http_entity::state::{EntityRouteServices, EntityStateResolver};
-use andromeda_http_extraction::context_target::SnapshotTargetResolver;
+use andromeda_http_entity::state::EntityRouteServices;
+use andromeda_http_extraction::{context_target::SnapshotTargetResolver, tenant_state::TenantServicesResolver};
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -27,7 +27,7 @@ impl BrokerEntityStateResolver {
     }
 }
 
-impl EntityStateResolver for BrokerEntityStateResolver {
+impl TenantServicesResolver<EntityRouteServices> for BrokerEntityStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<EntityRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;

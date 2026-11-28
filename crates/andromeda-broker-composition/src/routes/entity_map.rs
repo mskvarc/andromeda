@@ -1,7 +1,8 @@
 //! Composition of focused Entity Map HTTP capabilities.
 
 use crate::tenant_factory::BrokerTenantFactory;
-use andromeda_http_entity_map::state::{EntityMapRouteServices, EntityMapStateResolver};
+use andromeda_http_entity_map::state::EntityMapRouteServices;
+use andromeda_http_extraction::tenant_state::TenantServicesResolver;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -26,7 +27,7 @@ impl BrokerEntityMapStateResolver {
     }
 }
 
-impl EntityMapStateResolver for BrokerEntityMapStateResolver {
+impl TenantServicesResolver<EntityMapRouteServices> for BrokerEntityMapStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<EntityMapRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;

@@ -1,10 +1,7 @@
 //! Typed, state-complete inventory of snapshot routes.
 
-use crate::{
-    handler,
-    state::{SnapshotRouteState, SnapshotStateResolver},
-};
-use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
+use crate::{handler, state::SnapshotRouteServices};
+use andromeda_http_extraction::{snapshot_scope_guard::reject_snapshot_scope, tenant_state::TenantServicesResolver};
 use axum::{
     Router,
     middleware::from_fn,
@@ -22,14 +19,14 @@ impl SnapshotRoutes {
     /// Construct every snapshot route with only its focused resolver. The
     /// Snapshot API itself takes no Snapshot (clause 5.5.15), so each route
     /// refuses one.
-    pub fn new(resolver: Arc<dyn SnapshotStateResolver>) -> SnapshotRoutes {
+    pub fn new(resolver: Arc<dyn TenantServicesResolver<SnapshotRouteServices>>) -> SnapshotRoutes {
         let snapshot_routes = Router::new()
             .route("/", post(handler::create).delete(handler::purge))
             .route("/{snapshot_id}", get(handler::get).patch(handler::update).delete(handler::delete))
             .route("/{snapshot_id}/clone", post(handler::clone));
         let router = Router::new()
             .nest("/snapshots", snapshot_routes)
-            .with_state(SnapshotRouteState::new(resolver))
+            .with_state(resolver)
             .layer(from_fn(reject_snapshot_scope));
         SnapshotRoutes { router }
     }
@@ -42,10 +39,8 @@ impl SnapshotRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::SnapshotRoutes,
-        state::{SnapshotRouteServices, SnapshotStateResolver},
-    };
+    use crate::{routes::SnapshotRoutes, state::SnapshotRouteServices};
+    use andromeda_http_extraction::tenant_state::TenantServicesResolver;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -58,7 +53,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl SnapshotStateResolver for RejectingResolver {
+    impl TenantServicesResolver<SnapshotRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

@@ -1,10 +1,7 @@
 //! Typed, state-complete inventory of context-source registration routes.
 
-use crate::{
-    handler,
-    state::{RegistrationRouteState, RegistrationStateResolver},
-};
-use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
+use crate::{handler, state::RegistrationRouteServices};
+use andromeda_http_extraction::{snapshot_scope_guard::reject_snapshot_scope, tenant_state::TenantServicesResolver};
 use axum::{
     Router,
     middleware::from_fn,
@@ -24,13 +21,13 @@ impl RegistrationRoutes {
     /// one. No route reads `Accept-Language`: the clause 4.15 language filter
     /// converts the `LanguageProperty` Attributes of Entities, and a
     /// registration holds none (Table 5.2.9-1).
-    pub fn new(resolver: Arc<dyn RegistrationStateResolver>) -> RegistrationRoutes {
+    pub fn new(resolver: Arc<dyn TenantServicesResolver<RegistrationRouteServices>>) -> RegistrationRoutes {
         let registration_routes = Router::new()
             .route("/", post(handler::create).get(handler::query))
             .route("/{registration_id}", get(handler::get).patch(handler::update).delete(handler::delete));
         let router = Router::new()
             .nest("/csourceRegistrations", registration_routes)
-            .with_state(RegistrationRouteState::new(resolver))
+            .with_state(resolver)
             .layer(from_fn(reject_snapshot_scope));
         RegistrationRoutes { router }
     }
@@ -43,10 +40,8 @@ impl RegistrationRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::RegistrationRoutes,
-        state::{RegistrationRouteServices, RegistrationStateResolver},
-    };
+    use crate::{routes::RegistrationRoutes, state::RegistrationRouteServices};
+    use andromeda_http_extraction::tenant_state::TenantServicesResolver;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -59,7 +54,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl RegistrationStateResolver for RejectingResolver {
+    impl TenantServicesResolver<RegistrationRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

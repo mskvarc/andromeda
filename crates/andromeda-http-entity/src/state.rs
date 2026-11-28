@@ -5,16 +5,9 @@ use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
-use andromeda_http_extraction::{
-    classification::classify_tenancy_error,
-    context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
-    tenant_state::TenantStateResolver,
-};
-use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_http_extraction::context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver};
 use andromeda_posted_query::service::PostedQueryService;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
-use axum::http::Uri;
-use futures::future::BoxFuture;
+use andromeda_tenancy::runtime::lease::RuntimeLease;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -59,41 +52,5 @@ impl ContextTargetProvider for EntityRouteServices {
 
     fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
         self.snapshot_targets.as_ref()
-    }
-}
-
-/// Resolves the focused entity capabilities for one typed tenant scope.
-pub trait EntityStateResolver: Send + Sync {
-    /// Resolve or create the tenant according to `creation_policy`, returning no unrelated tenant capabilities.
-    fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<EntityRouteServices>, TenancyError>>;
-}
-
-/// Axum state held only by the state-complete entity route fragment.
-#[derive(Clone)]
-pub(crate) struct EntityRouteState {
-    /// Focused per-tenant capability resolver.
-    resolver: Arc<dyn EntityStateResolver>,
-}
-
-impl EntityRouteState {
-    /// Construct route state around the composition-supplied resolver.
-    pub(crate) const fn new(resolver: Arc<dyn EntityStateResolver>) -> EntityRouteState {
-        EntityRouteState { resolver }
-    }
-}
-
-impl TenantStateResolver<Arc<EntityRouteServices>> for EntityRouteState {
-    fn resolve_tenant<'a>(
-        &'a self,
-        tenant: &'a TenantRef,
-        creation_policy: TenantCreationPolicy,
-        instance: &'a Uri,
-    ) -> BoxFuture<'a, Result<Arc<EntityRouteServices>, ProblemResponse>> {
-        Box::pin(async move {
-            self.resolver
-                .resolve(tenant, creation_policy)
-                .await
-                .map_err(|error| ProblemResponse::classified(classify_tenancy_error(&error), instance.clone()))
-        })
     }
 }

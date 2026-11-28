@@ -4,17 +4,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
-use andromeda_http_extraction::{
-    classification::classify_tenancy_error,
-    context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
-    tenant_state::TenantStateResolver,
-};
-use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_http_extraction::context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver};
 use andromeda_posted_query::service::PostedQueryService;
 use andromeda_temporal::service::TemporalService;
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
-use axum::http::Uri;
-use futures::future::BoxFuture;
+use andromeda_tenancy::runtime::lease::RuntimeLease;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -55,41 +48,5 @@ impl ContextTargetProvider for TemporalRouteServices {
 
     fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
         self.snapshot_targets.as_ref()
-    }
-}
-
-/// Resolves only the temporal capabilities for one tenant scope.
-pub trait TemporalStateResolver: Send + Sync {
-    /// Resolve or create the tenant according to the supplied policy.
-    fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<TemporalRouteServices>, TenancyError>>;
-}
-
-/// Axum state held by the state-complete temporal fragment.
-#[derive(Clone)]
-pub(crate) struct TemporalRouteState {
-    /// Focused composition-supplied resolver.
-    resolver: Arc<dyn TemporalStateResolver>,
-}
-
-impl TemporalRouteState {
-    /// Construct route state around one focused resolver.
-    pub(crate) const fn new(resolver: Arc<dyn TemporalStateResolver>) -> TemporalRouteState {
-        TemporalRouteState { resolver }
-    }
-}
-
-impl TenantStateResolver<Arc<TemporalRouteServices>> for TemporalRouteState {
-    fn resolve_tenant<'a>(
-        &'a self,
-        tenant: &'a TenantRef,
-        creation_policy: TenantCreationPolicy,
-        instance: &'a Uri,
-    ) -> BoxFuture<'a, Result<Arc<TemporalRouteServices>, ProblemResponse>> {
-        Box::pin(async move {
-            self.resolver
-                .resolve(tenant, creation_policy)
-                .await
-                .map_err(|error| ProblemResponse::classified(classify_tenancy_error(&error), instance.clone()))
-        })
     }
 }

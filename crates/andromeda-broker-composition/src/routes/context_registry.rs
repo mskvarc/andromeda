@@ -1,7 +1,8 @@
 //! Composition of focused Context Registry HTTP capabilities.
 
 use crate::tenant_factory::BrokerTenantFactory;
-use andromeda_http_context_registry::state::{ContextRegistryRouteServices, ContextRegistryStateResolver};
+use andromeda_http_context_registry::state::ContextRegistryRouteServices;
+use andromeda_http_extraction::tenant_state::TenantServicesResolver;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -26,7 +27,7 @@ impl BrokerContextRegistryStateResolver {
     }
 }
 
-impl ContextRegistryStateResolver for BrokerContextRegistryStateResolver {
+impl TenantServicesResolver<ContextRegistryRouteServices> for BrokerContextRegistryStateResolver {
     fn resolve<'a>(
         &'a self,
         tenant: &'a TenantRef,

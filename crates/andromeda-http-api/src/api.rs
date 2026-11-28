@@ -139,51 +139,31 @@ mod tests {
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_health::aggregate::Health;
     use andromeda_http_component_report::routes::ComponentReportRoutes;
-    use andromeda_http_context_registry::{
-        routes::ContextRegistryRoutes,
-        state::{ContextRegistryRouteServices, ContextRegistryStateResolver},
-    };
-    use andromeda_http_entity::{
-        routes::EntityRoutes,
-        state::{EntityRouteServices, EntityStateResolver},
-    };
-    use andromeda_http_entity_map::{
-        routes::EntityMapRoutes,
-        state::{EntityMapRouteServices, EntityMapStateResolver},
-    };
+    use andromeda_http_context_registry::{routes::ContextRegistryRoutes, state::ContextRegistryRouteServices};
+    use andromeda_http_entity::{routes::EntityRoutes, state::EntityRouteServices};
+    use andromeda_http_entity_map::{routes::EntityMapRoutes, state::EntityMapRouteServices};
     use andromeda_http_extraction::{
         accept_language::AcceptLanguageReading,
         api_root::{ApiRoot, ConfiguredApiRoot},
         pagination_policy::RequestPagination,
+        tenant_state::TenantServicesResolver,
     };
     use andromeda_http_health::routes::HealthRoutes;
     use andromeda_http_notification_receiver::{
         routes::NotificationReceiverRoutes,
         state::{LeasedForwarding, NotificationReceiverResolver, ReceiverResolutionError},
     };
-    use andromeda_http_registration::{
-        routes::RegistrationRoutes,
-        state::{RegistrationRouteServices, RegistrationStateResolver},
-    };
-    use andromeda_http_snapshot::{
-        routes::SnapshotRoutes,
-        state::{SnapshotRouteServices, SnapshotStateResolver},
-    };
+    use andromeda_http_registration::{routes::RegistrationRoutes, state::RegistrationRouteServices};
+    use andromeda_http_snapshot::{routes::SnapshotRoutes, state::SnapshotRouteServices};
     use andromeda_http_source_identity::{
         default_tenant_contexts::{DefaultTenantContexts, DefaultTenantContextsResolver},
         routes::SourceIdentityRoutes,
         state::SourceIdentityState,
     };
     use andromeda_http_stack::stack::HttpStack;
-    use andromeda_http_subscription::{
-        routes::SubscriptionRoutes,
-        state::{SubscriptionRouteServices, SubscriptionStateResolver},
-    };
+    use andromeda_http_subscription::{routes::SubscriptionRoutes, state::SubscriptionRouteServices};
     use andromeda_http_telemetry::routes::TelemetryRoutes;
-    use andromeda_http_temporal::{
-        routes::TemporalRoutes,
-        state::{TemporalRouteServices, TemporalStateResolver},
-    };
+    use andromeda_http_temporal::{routes::TemporalRoutes, state::TemporalRouteServices};
     use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
     use andromeda_ngsi_ld_lexicon::{
         context_source_alias::ContextSourceAlias,
@@ -225,10 +205,10 @@ mod tests {
     use url::Url;
 
     macro_rules! rejecting_resolver {
-        ($name:ident, $resolver:ident, $services:ident) => {
+        ($name:ident, $services:ident) => {
             struct $name;
 
-            impl $resolver for $name {
+            impl TenantServicesResolver<$services> for $name {
                 fn resolve<'a>(
                     &'a self,
                     _tenant: &'a TenantRef,
@@ -240,13 +220,13 @@ mod tests {
         };
     }
 
-    rejecting_resolver!(RejectEntity, EntityStateResolver, EntityRouteServices);
-    rejecting_resolver!(RejectTemporal, TemporalStateResolver, TemporalRouteServices);
-    rejecting_resolver!(RejectContextRegistry, ContextRegistryStateResolver, ContextRegistryRouteServices);
-    rejecting_resolver!(RejectRegistration, RegistrationStateResolver, RegistrationRouteServices);
-    rejecting_resolver!(RejectSubscription, SubscriptionStateResolver, SubscriptionRouteServices);
-    rejecting_resolver!(RejectEntityMap, EntityMapStateResolver, EntityMapRouteServices);
-    rejecting_resolver!(RejectSnapshot, SnapshotStateResolver, SnapshotRouteServices);
+    rejecting_resolver!(RejectEntity, EntityRouteServices);
+    rejecting_resolver!(RejectTemporal, TemporalRouteServices);
+    rejecting_resolver!(RejectContextRegistry, ContextRegistryRouteServices);
+    rejecting_resolver!(RejectRegistration, RegistrationRouteServices);
+    rejecting_resolver!(RejectSubscription, SubscriptionRouteServices);
+    rejecting_resolver!(RejectEntityMap, EntityMapRouteServices);
+    rejecting_resolver!(RejectSnapshot, SnapshotRouteServices);
 
     struct RejectDefaultTenant;
 

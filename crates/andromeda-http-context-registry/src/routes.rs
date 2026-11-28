@@ -1,11 +1,7 @@
 //! Typed, state-complete inventory of Context Registry routes.
 
-use crate::{
-    handler,
-    served_document::vary_on_tenant,
-    state::{ContextRegistryRouteState, ContextRegistryStateResolver},
-};
-use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
+use crate::{handler, served_document::vary_on_tenant, state::ContextRegistryRouteServices};
+use andromeda_http_extraction::{snapshot_scope_guard::reject_snapshot_scope, tenant_state::TenantServicesResolver};
 use axum::{
     Router,
     handler::Handler,
@@ -24,13 +20,13 @@ impl ContextRegistryRoutes {
     /// Construct all `/jsonldContexts` routes with focused state. The
     /// `@context` API takes no Snapshot (clause 5.5.15), so each route
     /// refuses one.
-    pub fn new(resolver: Arc<dyn ContextRegistryStateResolver>) -> ContextRegistryRoutes {
+    pub fn new(resolver: Arc<dyn TenantServicesResolver<ContextRegistryRouteServices>>) -> ContextRegistryRoutes {
         let context_routes = Router::new()
             .route("/", post(handler::create).get(handler::query))
             .route("/{context_id}", get(handler::get.layer(map_response(vary_on_tenant))).delete(handler::delete));
         let router = Router::new()
             .nest("/jsonldContexts", context_routes)
-            .with_state(ContextRegistryRouteState::new(resolver))
+            .with_state(resolver)
             .layer(from_fn(reject_snapshot_scope));
         ContextRegistryRoutes { router }
     }
@@ -46,10 +42,8 @@ mod serve_tests;
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::ContextRegistryRoutes,
-        state::{ContextRegistryRouteServices, ContextRegistryStateResolver},
-    };
+    use crate::{routes::ContextRegistryRoutes, state::ContextRegistryRouteServices};
+    use andromeda_http_extraction::tenant_state::TenantServicesResolver;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::{Body, to_bytes},
@@ -62,7 +56,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl ContextRegistryStateResolver for RejectingResolver {
+    impl TenantServicesResolver<ContextRegistryRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

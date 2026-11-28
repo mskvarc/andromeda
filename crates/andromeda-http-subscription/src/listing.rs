@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_request::{
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
     },
-    subscription_listing::{ListParams, SUBSCRIPTION_PAGE_SIZE},
+    subscription_listing::{SUBSCRIPTION_PAGE_SIZE, SubscriptionListParams},
 };
 use axum::{
     http::Uri,
@@ -59,7 +59,7 @@ impl ListingRequest {
     ///
     /// Returns the `InvalidRequest` of an `options` value clause 6.3.11 does
     /// not define, and whatever the pagination policy refuses.
-    pub(crate) fn of(pagination: RequestPagination, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
+    pub(crate) fn of(pagination: RequestPagination, params: &SubscriptionListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
         let RequestPagination {
             policy,
             context,

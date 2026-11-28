@@ -164,7 +164,7 @@ mod tests {
         entity::{AppendParams, AttributeWriteParams, GetEntityParams, MergeParams},
         entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
         entity_write::{EntityWriteParams, UpdateAttributesParams},
-        jsonld_context::{DeleteParams, ListParams as ContextListParams, ServeParams},
+        jsonld_context::{ContextListParams, DeleteParams, ServeParams},
         local::LocalOnlyParams,
         query::{
             csr::CsrQueryParameters,
@@ -178,7 +178,7 @@ mod tests {
         },
         query_parameter::{QueryParameter, QueryParameterSet},
         registration_retrieval::RegistrationRetrieveParams,
-        subscription_listing::ListParams as SubscriptionListParams,
+        subscription_listing::SubscriptionListParams,
         sys_attrs_parameters::SysAttrsParams,
     };
     use serde::de::DeserializeOwned;
