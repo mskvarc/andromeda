@@ -360,6 +360,19 @@ mod tests {
     }
 
     #[gtest]
+    fn an_error_status_without_a_problem_body_fails_a_problem_check() -> Result<()> {
+        let answer: Answer = Err(ClientError::Response(ResponseError::Status {
+            status: StatusCode::NOT_IMPLEMENTED,
+            head: Box::new(ResponseHead::default()),
+        }));
+        expect_that!(&answer, answered(StatusCode::NOT_IMPLEMENTED));
+        verify_that!(
+            &answer,
+            not(problem(StatusCode::NOT_IMPLEMENTED, ErrorType::OperationNotSupported).with_distinct_detail())
+        )
+    }
+
+    #[gtest]
     fn a_problem_of_the_expected_status_and_type_matches() -> Result<()> {
         let answer = refused(StatusCode::BAD_REQUEST, ErrorType::BadRequestData, "Bad request")?;
         expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_title());
