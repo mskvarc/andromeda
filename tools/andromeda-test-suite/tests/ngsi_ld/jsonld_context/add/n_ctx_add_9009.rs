@@ -26,7 +26,7 @@ async fn n_ctx_add_9009_an_unknown_container_is_bad_request_data() -> Result<()>
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
-            .with_detail("the @context has a member speed/@container holding a value JSON-LD does not allow there")
+            .with_detail(r#"the @context has a member "speed"/@container holding a value JSON-LD does not allow there"#)
             .without_header(HeaderName::from_static("location"))
     );
     let contexts = tenant

@@ -24,7 +24,7 @@ async fn n_ctx_add_9007_a_term_with_a_number_id_is_bad_request_data() -> Result<
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
-            .with_detail("the @context has a member speed/@id that is a number, but a string is expected")
+            .with_detail(r#"the @context has a member "speed"/@id that is a number, but a string is expected"#)
             .without_header(HeaderName::from_static("location"))
     );
     let contexts = tenant

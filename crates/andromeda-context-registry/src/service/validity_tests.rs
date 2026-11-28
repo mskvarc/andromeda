@@ -46,7 +46,7 @@ async fn a_refusal_names_the_term_and_what_a_term_definition_may_be() {
         .expect_err("an invalid @context is refused");
     pretty_assertions::assert_eq!(
         refusal.to_string(),
-        "the @context defines the term speed as a number, but a term definition is null, a string or an object"
+        r#"the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#
     );
 }
 

@@ -26,7 +26,7 @@ async fn n_ctx_del_9012_a_reloaded_term_with_a_number_id_is_ld_context_not_avail
     expect_that!(
         &answer,
         problem(StatusCode::GATEWAY_TIMEOUT, ErrorType::LdContextNotAvailable).with_detail(&format!(
-            "the context downloaded from {} is not valid JSON-LD: the @context has a member speed/@id that is a number, but a string is expected",
+            r#"the context downloaded from {} is not valid JSON-LD: the @context has a member "speed"/@id that is a number, but a string is expected"#,
             cached.url()
         ))
     );

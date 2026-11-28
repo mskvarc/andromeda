@@ -19,7 +19,7 @@ async fn n_ctx_exp_9061_a_linked_term_defined_as_a_number_is_refused_and_not_cac
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
-            "invalid JSON-LD context at {}: the @context defines the term speed as a number, but a term definition is null, a string or an object",
+            r#"invalid JSON-LD context at {}: the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#,
             linked.url()
         ))
     );

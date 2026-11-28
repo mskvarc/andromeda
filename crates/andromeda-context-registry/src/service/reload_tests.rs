@@ -98,7 +98,7 @@ async fn a_refused_download_names_its_url_and_what_is_wrong_with_it() {
     pretty_assertions::assert_eq!(
         refusal.to_string(),
         format!(
-            "the context downloaded from {} is not valid JSON-LD: the @context defines the term speed as a number, but a term definition is null, a string or an object",
+            r#"the context downloaded from {} is not valid JSON-LD: the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#,
             reloaded.url
         )
     );

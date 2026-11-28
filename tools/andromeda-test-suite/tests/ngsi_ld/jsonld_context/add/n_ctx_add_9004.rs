@@ -24,7 +24,7 @@ async fn n_ctx_add_9004_a_term_defined_as_a_boolean_is_bad_request_data() -> Res
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
-            .with_detail("the @context defines the term speed as a boolean, but a term definition is null, a string or an object")
+            .with_detail(r#"the @context defines the term "speed" as a boolean, but a term definition is null, a string or an object"#)
             .without_header(HeaderName::from_static("location"))
     );
     let contexts = tenant

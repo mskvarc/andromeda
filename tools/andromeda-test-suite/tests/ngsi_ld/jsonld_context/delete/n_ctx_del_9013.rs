@@ -26,7 +26,7 @@ async fn n_ctx_del_9013_a_reloaded_cyclic_iri_mapping_is_ld_context_not_availabl
     expect_that!(
         &answer,
         problem(StatusCode::GATEWAY_TIMEOUT, ErrorType::LdContextNotAvailable).with_detail(&format!(
-            "the context downloaded from {} is not valid JSON-LD: the @context cannot define the term a: cyclic IRI mapping",
+            r#"the context downloaded from {} is not valid JSON-LD: the @context cannot define the term "a": cyclic IRI mapping"#,
             cached.url()
         ))
     );

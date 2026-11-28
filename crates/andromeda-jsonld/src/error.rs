@@ -18,7 +18,7 @@ use crate::{
     },
     loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError},
 };
-use andromeda_json_literal::admission::JsonLiteralError;
+use andromeda_json_literal::{admission::JsonLiteralError, json_text::quoted};
 use andromeda_ngsi_ld_representation::embedded_context_admission::EmbeddedContext;
 use iri_rs::{InvalidIri, IriBuf};
 use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, compaction, context_processing, expansion};
@@ -148,9 +148,10 @@ pub enum JsonLdError {
     /// contain JSON-LD Scoped Contexts", because one "could be used to modify
     /// terms defined in the Core `@context` or to reshape NGSI-LD Elements
     /// during the expansion of terms".
-    #[error("the user @context defines the term {term} with a scoped @context, which is not allowed")]
+    #[error("the user @context defines the term {} with a scoped @context, which is not allowed", quoted(.term.as_str()))]
     ScopedUserContext {
-        /// The term whose definition carries the scoped `@context`.
+        /// The term whose definition carries the scoped `@context`, named
+        /// quoted as JSON writes the key.
         term: ContextTerm,
     },
 
@@ -628,8 +629,23 @@ mod tests {
         );
         pretty_assertions::assert_eq!(
             fault.to_string(),
-            "the @context https://example.com/ctx.jsonld cannot define the term speed: protected term redefinition"
+            r#"the @context https://example.com/ctx.jsonld cannot define the term "speed": protected term redefinition"#
         );
+    }
+
+    /// The empty key is a term to the scan, and it reads as `""`.
+    #[test]
+    fn a_scoped_user_context_names_its_term_in_quotes() {
+        for (term, detail) in [
+            (
+                "speed",
+                r#"the user @context defines the term "speed" with a scoped @context, which is not allowed"#,
+            ),
+            ("", r#"the user @context defines the term "" with a scoped @context, which is not allowed"#),
+        ] {
+            let error = JsonLdError::ScopedUserContext { term: ContextTerm::new(term) };
+            pretty_assertions::assert_eq!(error.to_string(), detail);
+        }
     }
 
     #[test]

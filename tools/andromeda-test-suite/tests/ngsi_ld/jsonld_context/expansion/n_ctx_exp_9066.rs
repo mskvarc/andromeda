@@ -20,7 +20,7 @@ async fn n_ctx_exp_9066_a_linked_cyclic_iri_mapping_is_refused_and_not_cached() 
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
-            "invalid JSON-LD context at {}: the @context cannot define the term a: cyclic IRI mapping",
+            r#"invalid JSON-LD context at {}: the @context cannot define the term "a": cyclic IRI mapping"#,
             linked.url()
         ))
     );

@@ -20,7 +20,7 @@ async fn n_ctx_exp_9067_a_linked_unknown_container_is_refused_and_not_cached() -
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
-            "invalid JSON-LD context at {}: the @context has a member speed/@container holding a value JSON-LD does not allow there",
+            r#"invalid JSON-LD context at {}: the @context has a member "speed"/@container holding a value JSON-LD does not allow there"#,
             linked.url()
         ))
     );
