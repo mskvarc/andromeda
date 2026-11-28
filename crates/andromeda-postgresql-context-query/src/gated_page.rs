@@ -86,23 +86,29 @@ pub(crate) struct PageSource<'a> {
 impl PageSource<'_> {
     /// The page cut from the selection filtered by `condition` over `window`,
     /// projected, with the order it is read in.
+    ///
+    /// A type walk of several alternatives is read as the union of its
+    /// streams, which the page sorts whole: it is for a selection narrowed to
+    /// few candidates, or one ordered by keys no stream is read in.
     pub(crate) fn page(&self, condition: Condition, window: &PageWindow) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-        self.page_through(self.relations.clone(), condition, window)
+        self.page_through(self.relations.clone(), condition, window, PageTotal::Omitted)
     }
 
     /// The page cut from the selection read through `relations`, filtered by
-    /// `condition` over `window`, projected, with the order it is read in.
+    /// `condition` over `window`, projected and carrying `total`, with the
+    /// order it is read in.
     pub(crate) fn page_through(
         &self,
         relations: EntityRelations,
         condition: Condition,
         window: &PageWindow,
+        total: PageTotal,
     ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
         let mut page = Query::select();
         relations.apply_from(&mut page, self.schema, self.rows.standing());
         page.cond_where(condition);
         let (keys, read_order) = window_and_sort_keys(&mut page, self.rows, self.query, window, &self.names.attributes)?;
-        Ok((projected_page(page, self.rows, keys, PageTotal::Omitted), read_order))
+        Ok((projected_page(page, self.rows, keys, total), read_order))
     }
 
     /// The selection filtered as `q` and `geo` say.
@@ -240,7 +246,7 @@ pub(crate) fn gated_page(
         }
     }
     if walks {
-        let mut walk = wrapped(full_walk(walk, source.window, steps.fell_short)?, "walk");
+        let mut walk = wrapped(full_walk(walk, source.window, &steps.fell_short)?, "walk");
         named(&mut walk, columns, Total::Absent, GatedStep::FullWalk);
         union.union(UnionType::All, walk);
     }
@@ -248,12 +254,16 @@ pub(crate) fn gated_page(
     Ok((ProjectedPage { select: union.take(), order }, read_order))
 }
 
-/// Cut `select`, ordered as the page is, to `window`: past its offset, or
-/// from its cursor, which the selection it reads is already past.
-pub(crate) fn cut(select: &mut SelectStatement, window: &PageWindow) {
+/// Cut `select`, ordered as the page is, to the rows of `window` past its
+/// first `skipped`: past its offset and `skipped`, or past `skipped` from its
+/// cursor, which the selection it reads is already past.
+pub(crate) fn cut(select: &mut SelectStatement, window: &PageWindow, skipped: u64) {
     match window.start {
         PageStart::Offset(offset) => {
-            select.offset(u64::from(offset));
+            select.offset(u64::from(offset).saturating_add(skipped));
+        }
+        PageStart::Cursor(_) if skipped > 0 => {
+            select.offset(skipped);
         }
         PageStart::Cursor(_) => {}
     }

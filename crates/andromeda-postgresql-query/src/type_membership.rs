@@ -7,8 +7,13 @@
 //! the index carries both flags and the walk never visits the heap. A type selection
 //! therefore renders to a stream of `(key, id)` a statement can page in the
 //! clause 5.5.9 `id` order by walking the key, reading only the Entities it
-//! skips and keeps: one range for a type, the merge of the ranges without
-//! repeats for `,`, and the first range narrowed by key probes for `;`.
+//! skips and keeps: one range for a type, and the first range narrowed by key
+//! probes for `;`. A `,` selects the union of its alternatives' ranges, each
+//! Entity once, either as their merge without repeats or as disjoint streams,
+//! each an alternative's range less the Entities an earlier alternative
+//! selects. PostgreSQL merges no two ranges of one index in order, so the
+//! merge sorts every member before its first row, where each stream reads in
+//! the order of its range and a statement can stop each at the rows it needs.
 //! [`crate::type_predicate`] renders the same expression as a filter on a type
 //! key array instead; this module is for the statement the selection drives.
 //!
@@ -70,26 +75,26 @@ pub fn members_of_any<'a>(
 }
 
 /// The Entities any of `exprs` selects, as one stream of `(key, id)` per
-/// alternative, each holding the alternative's Entities that no alternative
-/// before it selects; no stream for a selection of one alternative, whose
-/// range is the walk itself, and `None` when one of them has no range to
-/// walk (see [`drives`]).
+/// alternative, each a range in identifier order holding the alternative's
+/// Entities that no alternative before it selects: the first stream and the
+/// rest, none for a selection of one alternative. `None` when `exprs` holds
+/// no alternative or one of them has no range to walk (see [`drives`]).
 ///
 /// The streams are disjoint and their union is what [`members_of_any`]
 /// merges, so a count of every Entity the selection selects under a filter
-/// of each Entity is the sum of the counts of the streams. Each stream is a
-/// range of the membership index, its members tested by key against the
-/// types of the alternatives before it. Counted as one merge in identifier
-/// order instead, the ranges are sorted whole, since PostgreSQL merges no two
-/// ranges of one index in order: the 757 134 members of two types of a GTFS
-/// feed spill a 47 MB sort and take 510 ms, where their two streams take
-/// 46 ms.
+/// of each Entity is the sum of the counts of the streams, and the first `n`
+/// of the selection in an order are among the first `n` of each stream in that
+/// order. Each stream is a range of the membership index, its members tested
+/// by key against the types of the alternatives before it. Merged in
+/// identifier order instead, the ranges are sorted whole: the 757 134 members
+/// of two types of a GTFS feed spill a 47 MB sort, counted in 510 ms where
+/// their two streams take 46 ms, and paged in 260 ms for the first row.
 #[must_use]
 pub fn disjoint_members_of_any<'a>(
     exprs: impl IntoIterator<Item = &'a TypeSelection<Expanded>>,
     types: &ResolvedNames<EntityTypeName>,
     memberships: Memberships<'_>,
-) -> Option<Vec<SelectStatement>> {
+) -> Option<(SelectStatement, Vec<SelectStatement>)> {
     let alternatives = exprs
         .into_iter()
         .map(|expr| match expr {
@@ -100,10 +105,7 @@ pub fn disjoint_members_of_any<'a>(
         .into_iter()
         .flatten()
         .collect::<Vec<&[EntityTypeIri]>>();
-    if alternatives.len() < 2 {
-        return Some(Vec::new());
-    }
-    alternatives
+    let mut streams = alternatives
         .iter()
         .enumerate()
         .map(|(position, conjunction)| {
@@ -133,7 +135,10 @@ pub fn disjoint_members_of_any<'a>(
                     .take(),
             )
         })
-        .collect()
+        .collect::<Option<Vec<SelectStatement>>>()?
+        .into_iter();
+    let first = streams.next()?;
+    Some((first, streams.collect()))
 }
 
 /// The Entities `expr` selects, as `(key, id)` with no repeat, or `None` when
@@ -223,8 +228,11 @@ fn range(key: Option<i32>, memberships: Memberships<'_>) -> SelectStatement {
 /// Entity carrying two of the types is in two ranges (clause 4.17 selects on
 /// membership, not on a single type).
 ///
-/// `DISTINCT ON` over the ordered union is what lets PostgreSQL merge the
-/// ranges as they stream rather than collecting and sorting them.
+/// `DISTINCT ON` over the union keeps the first row of each identifier, which
+/// PostgreSQL reads by sorting the whole union: it merges no two ranges of one
+/// index in order, so the merge yields its first row once every member is
+/// sorted. A statement that stops at its first rows reads
+/// [`disjoint_members_of_any`] instead.
 fn merged(streams: Vec<SelectStatement>, memberships: Memberships<'_>) -> SelectStatement {
     let mut streams = streams.into_iter();
     let Some(first) = streams.next() else {
@@ -321,10 +329,11 @@ mod tests {
     /// alternative before it selects, so each Entity is in one stream.
     #[test]
     fn each_alternative_keeps_the_entities_no_earlier_one_selects() {
-        let streams = disjoint_members_of_any([&alternatives(&[&["A"], &["B", "C"]]), &ty("Unknown")], &known(), CURRENT).expect("the selection has ranges");
-        assert_eq!(streams.len(), 3);
-        assert_eq!(streams[0], stream(&[ty("A")]));
-        for (index, part) in streams.into_iter().enumerate() {
+        let (first, rest) =
+            disjoint_members_of_any([&alternatives(&[&["A"], &["B", "C"]]), &ty("Unknown")], &known(), CURRENT).expect("the selection has ranges");
+        assert_eq!(rest.len(), 2);
+        assert_eq!(first, stream(&[ty("A")]));
+        for (index, part) in [first].into_iter().chain(rest).enumerate() {
             assert_statement_snapshot!(
                 format!("type-membership-each-alternative-keeps-the-entities-no-earlier-one-selects-{}", index + 1),
                 part
@@ -333,11 +342,25 @@ mod tests {
     }
 
     /// The wildcard has no range, so a union holding it has no streams, and
-    /// one alternative's range is its walk.
+    /// one alternative is one stream, its walk.
     #[test]
-    fn a_union_with_the_wildcard_has_no_disjoint_streams_and_one_alternative_needs_none() {
+    fn a_union_with_the_wildcard_has_no_streams_and_one_alternative_is_its_walk() {
         assert!(disjoint_members_of_any([&ty("A"), &TypeSelection::Wildcard], &known(), CURRENT).is_none());
-        assert_eq!(disjoint_members_of_any([&alternatives(&[&["A", "B"]])], &known(), CURRENT), Some(Vec::new()));
+        let conjunction = alternatives(&[&["A", "B"]]);
+        assert_eq!(
+            disjoint_members_of_any([&conjunction], &known(), CURRENT),
+            Some((stream(&[alternatives(&[&["A", "B"]])]), Vec::new()))
+        );
+    }
+
+    /// Clause 4.17: an alternative after a conjunction leaves out the
+    /// Entities carrying every type of the conjunction, probing each by key.
+    #[test]
+    fn a_type_beside_a_conjunction_leaves_out_the_entities_of_the_conjunction() {
+        let (first, rest) = disjoint_members_of_any([&alternatives(&[&["A", "B"], &["C"]])], &known(), CURRENT).expect("the selection has ranges");
+        assert_eq!(first, stream(&[alternatives(&[&["A", "B"]])]));
+        let [later] = <[SelectStatement; 1]>::try_from(rest).expect("one stream after the first");
+        assert_statement_snapshot!("type-membership-a-type-beside-a-conjunction-leaves-out-the-entities-of-the-conjunction", later);
     }
 
     /// Clause 4.17 `;`: the first range is narrowed by a key probe per other

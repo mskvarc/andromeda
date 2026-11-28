@@ -12,7 +12,9 @@
 //! A statement of branches gated by one-time filters runs one branch, but a
 //! `Gather` planned under a branch whose gate fails still launches its
 //! workers: they start with the executor and only then read the gate. Such a
-//! statement runs without parallel workers.
+//! statement runs without parallel workers, and so does a merge of streams
+//! each read up to a bound, whose `Gather` under a stream starts its workers
+//! for rows the merge never takes.
 
 use crate::{
     setting::Setting,
@@ -36,6 +38,14 @@ pub enum StatementPlanning {
     /// takes one access path whatever values are bound, so a plan made with
     /// them would cost its planning on every execution and buy nothing.
     GenericGatedBranches,
+    /// Any plan the plan cache chooses serves it, run without parallel
+    /// workers: a merge of streams each read in order up to a bound. The
+    /// planner prices a stream for every row of its bound and gives it a
+    /// `Gather`, whose workers start before the merge takes the few rows it
+    /// reads from that stream: among the members of two GTFS types a page
+    /// of 100 past 1 000 is answered in 17.7 ms that way and in 4.5 ms
+    /// serially.
+    BoundedStreams,
     /// Planned once per connection without its values: its one access path
     /// serves every value it is given, while the custom plans' exact count of
     /// a bound array makes the generic plan, which counts ten elements, look
@@ -59,6 +69,7 @@ impl StatementPlanning {
         let generic_plans = || TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::PlanCacheMode, "force_generic_plan");
         match self {
             StatementPlanning::Cached => None,
+            StatementPlanning::BoundedStreams => Some(TransactionStart::at(Isolation::ReadCommitted).with_local(Setting::MaxParallelWorkersPerGather, "0")),
             StatementPlanning::BoundValues => Some(planned_with_bound_values()),
             StatementPlanning::GatedBranches => Some(planned_with_bound_values().with_local(Setting::MaxParallelWorkersPerGather, "0")),
             StatementPlanning::GenericGatedBranches => Some(generic_plans().with_local(Setting::MaxParallelWorkersPerGather, "0")),
@@ -75,6 +86,14 @@ mod tests {
     #[test]
     fn a_cached_statement_runs_outside_a_transaction_of_its_own() {
         assert_eq!(StatementPlanning::Cached.transaction(), None);
+    }
+
+    #[test]
+    fn bounded_streams_keep_the_cached_plan_and_run_serially() {
+        assert_eq!(
+            StatementPlanning::BoundedStreams.transaction().map(|start| start.rendered()).as_deref(),
+            Some("BEGIN; SET LOCAL max_parallel_workers_per_gather = '0'")
+        );
     }
 
     #[test]

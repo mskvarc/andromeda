@@ -6,13 +6,19 @@
 //! selection (clause 4.17), which carries the same `entity_key` and `id` and
 //! yields a type's Entities in identifier order without visiting any other.
 //! `entities` is then joined only for the `createdAt` or `modifiedAt` a sort
-//! reads. A geo-query keeps `entities` driving a statement narrowed to its
-//! matches, as the plain page and the index branch of a geo page are. Its
-//! matches come from the spatial index as a set of keys, and the walk of
-//! several types is a merge the planner cannot see into, so it would merge
-//! every member of the types before the few matches narrow them. Driven by
-//! `entities`, the statement starts from the matches and tests the type on the
-//! search row the geo-query joins anyway. The walks of a geo page probe each
+//! reads. The walk of a selection of several alternatives is one stream per
+//! alternative, each a range in identifier order holding the alternative's
+//! Entities that no alternative before it selects. A statement that reads
+//! every Entity of the walk, or the few its filters narrow it to, reads their
+//! union, in no order. A statement that stops at its first rows in page order
+//! reads each stream up to those rows and merges what they yield
+//! ([`EntityRelations::streams`]): PostgreSQL merges no two ranges of one index
+//! in order, so the union in page order sorts every member of the types
+//! before its first row. A geo-query keeps `entities` driving a statement
+//! narrowed to its matches, as the plain page and the index branch of a geo
+//! page are. Its matches come from the spatial index as a set of keys, so the
+//! statement starts from them and tests the type on the search row the
+//! geo-query joins anyway. The walks of a geo page probe each
 //! Entity they visit for the geo-query instead, so they take the membership
 //! walk when the selectors are types alone, and join the search row only for
 //! the other filters that read it. `entity_search` is joined only when some
@@ -35,7 +41,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     standing_instant::instant_of,
-    type_membership::{disjoint_members_of_any, drives, members_of_any},
+    type_membership::{disjoint_members_of_any, drives},
 };
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
@@ -47,7 +53,7 @@ use andromeda_postgresql_stored_form::{
     memberships::Memberships,
 };
 use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
-use sea_query::{Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Asterisk, Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// The type-membership walk a type-driven statement reads, `selected`.
 #[derive(Iden, Clone, Copy)]
@@ -74,18 +80,29 @@ pub enum RowSource {
     /// `entities`, walked or probed as the filters choose.
     Entities,
     /// The type-membership walk of the request's type selection, read under
-    /// [`Selected`], with `entities` joined as `entities` says.
+    /// [`Selected`], with `entities` joined as `entities` says: one stream of
+    /// `(entity_key, id)` per alternative of the selection, each in identifier
+    /// order and holding the alternative's Entities that no alternative
+    /// before it selects.
     TypeMembers {
-        /// The walk: every Entity the selection selects, as `(entity_key, id)`.
-        walk: Box<SelectStatement>,
-        /// The walk's Entities as one stream per alternative of a selection
-        /// of several, each holding those no alternative before it selects,
-        /// which a count sums instead of merging the walk; empty for a
-        /// selection of one alternative, whose walk is its one stream.
-        parts: Vec<SelectStatement>,
+        /// The first alternative's stream.
+        first: Box<SelectStatement>,
+        /// The stream of each alternative after the first, none for a
+        /// selection of one alternative.
+        rest: Vec<SelectStatement>,
         /// Whether `entities` is joined for a lifecycle column.
         entities: Demand,
     },
+}
+
+/// How many streams drive a statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamCount {
+    /// One: `entities`, or the type walk of a selection of one alternative.
+    One,
+    /// Several: the type walk of a selection of several alternatives, one
+    /// stream per alternative.
+    Several,
 }
 
 /// The relations of one entity statement.
@@ -180,28 +197,37 @@ impl EntityRelations {
         }
     }
 
-    /// These relations as the disjoint parts a count sums, the first and the
-    /// rest: one per alternative of a type walk of several
-    /// ([`RowSource::TypeMembers`]), each driven by its part, and these
-    /// relations alone otherwise.
+    /// How many streams drive these relations.
     #[must_use]
-    pub fn counted_apart(self) -> (EntityRelations, Vec<EntityRelations>) {
+    pub const fn stream_count(&self) -> StreamCount {
+        match &self.source {
+            RowSource::TypeMembers { rest, .. } if !rest.is_empty() => StreamCount::Several,
+            RowSource::TypeMembers { .. } | RowSource::Entities => StreamCount::One,
+        }
+    }
+
+    /// These relations one stream at a time, the first and the rest: one per
+    /// stream of a type walk of several alternatives
+    /// ([`RowSource::TypeMembers`]), each driven by its stream alone, and
+    /// these relations alone otherwise.
+    ///
+    /// The streams are disjoint, so the first `n` Entities of the selection
+    /// in page order are among the first `n` of each stream in that order.
+    #[must_use]
+    pub fn streams(self) -> (EntityRelations, Vec<EntityRelations>) {
         let search = self.search;
-        let driven_by = |walk: SelectStatement, entities: Demand| EntityRelations {
-            source: RowSource::TypeMembers {
-                walk: Box::new(walk),
-                parts: Vec::new(),
-                entities,
-            },
-            search,
-        };
         match self.source {
-            RowSource::TypeMembers { walk, parts, entities } => {
-                let mut parts = parts.into_iter();
-                match parts.next() {
-                    Some(first) => (driven_by(first, entities), parts.map(|part| driven_by(part, entities)).collect()),
-                    None => (driven_by(*walk, entities), Vec::new()),
-                }
+            RowSource::TypeMembers { first, rest, entities } => {
+                let driven_by = |stream: Box<SelectStatement>| EntityRelations {
+                    source: RowSource::TypeMembers {
+                        first: stream,
+                        rest: Vec::new(),
+                        entities,
+                    },
+                    search,
+                };
+                let rest = rest.into_iter().map(|stream| driven_by(Box::new(stream))).collect();
+                (driven_by(first), rest)
             }
             RowSource::Entities => (self, Vec::new()),
         }
@@ -221,8 +247,14 @@ impl EntityRelations {
                     .from(qualified(schema, Entities::Table))
                     .and_where(holds_standing_state(Entities::Table, instant_of(standing)));
             }
-            RowSource::TypeMembers { walk, entities, .. } => {
-                select.from_subquery(*walk, Selected);
+            RowSource::TypeMembers { first, rest, entities } => {
+                // The streams are disjoint, so their union holds each Entity
+                // once, in no order.
+                let walk = rest.into_iter().fold(*first, |mut union, stream| {
+                    union.union(UnionType::All, stream);
+                    union
+                });
+                select.from_subquery(walk, Selected);
                 join_on_key(select, entities, schema, (Entities::Table, Entities::EntityKey), &driving_key);
                 // The walk reads current-side memberships alone, so only the
                 // clause 4.22 expiry is left to test.
@@ -272,18 +304,15 @@ fn source(selection: &EntitySelection, types: &ResolvedNames<EntityTypeName>, sc
         }
         ConsideredEntities::NoEntity => false,
     };
-    let selections = || selection.selectors.iter().filter_map(|selector| selector.type_selection.as_ref());
+    let selections = selection.selectors.iter().filter_map(|selector| selector.type_selection.as_ref());
     let memberships = Memberships {
         side: MembershipSide::Current,
         schema,
     };
-    let walk = walkable
-        .then(|| members_of_any(selections(), types, memberships).zip(disjoint_members_of_any(selections(), types, memberships)))
-        .flatten();
-    match walk {
-        Some((walk, parts)) => RowSource::TypeMembers {
-            walk: Box::new(walk),
-            parts,
+    match walkable.then(|| disjoint_members_of_any(selections, types, memberships)).flatten() {
+        Some((first, rest)) => RowSource::TypeMembers {
+            first: Box::new(first),
+            rest,
             entities: lifecycle,
         },
         None => RowSource::Entities,

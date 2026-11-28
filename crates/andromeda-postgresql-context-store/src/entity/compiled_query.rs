@@ -131,7 +131,7 @@ impl EntityRepository {
         let names = self.resolve_names(compiled).await?;
         let statement = entity_sql::build_ids_query(target, compiled, window, &names)?;
 
-        let rows = self.fetch_on(PoolLane::Reads, &statement.select).await?;
+        let rows = self.reads.acquire().await?.fetch_planned(&statement.select, statement.planning).await?;
         let mut ids: Vec<Identifier> = rows
             .iter()
             .map(|row| -> Result<Identifier, ContextStoreError> { stored_uri(row.try_get("id")?) })

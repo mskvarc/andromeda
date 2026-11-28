@@ -2,11 +2,13 @@
 
 use crate::{
     carried_names::{attrs_condition, projected_member_condition},
-    entity_relations::{EntityRelations, RowSource},
+    entity_page::{PageTotal, ProjectedPage, projected_page},
+    entity_relations::{EntityRelations, RowSource, StreamCount},
     entity_total::{EntityTotal, TotalSource, entity_total},
     gated_page::PageSource,
     page_shape::PageShape,
     selector_predicate::condition as selector_condition,
+    walk_streams::merged,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -66,6 +68,10 @@ pub struct EntityIdsQuery {
     /// The order the page's identifiers come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
+    /// How PostgreSQL may plan and run `select`: any plan the plan cache
+    /// chooses, without parallel workers over the several streams of a type
+    /// walk.
+    pub planning: StatementPlanning,
 }
 
 /// Builds a parameterized SQL query to retrieve the heads of the entities
@@ -98,7 +104,7 @@ pub fn build_query(
     let filtering = conditions.filtering();
     let condition = conditions.whole();
     let shape = PageShape::of(query, names, window, count, &relations, &rows, schema.as_ref())?;
-    let counted_on_page = shape.counted_on_page(count, window);
+    let counted_on_page = shape.counted_on_page(count, window, &relations, filtering);
     let source = PageSource {
         relations: &relations,
         schema: schema.as_ref(),
@@ -129,8 +135,10 @@ pub fn build_query(
 /// Builds a parameterized SQL query to retrieve only the identifiers of the
 /// entities `window` selects.
 ///
-/// Similar to [`build_query`] but selects `id` alone, used for operations that
-/// only need to identify matching entities.
+/// Similar to [`build_query`] but selects `id`, beside the entity key and the
+/// sort keys it is ordered by, used for operations that only need to identify
+/// matching entities. A type walk of several alternatives is read stream by
+/// stream, as a page is.
 ///
 /// # Errors
 ///
@@ -144,20 +152,29 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, wind
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone(), query.selection.standing);
     let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole, GeoFilter::Matched)?;
-
-    let mut select = Query::select();
-    select.expr_as(rows.identity_column(Entities::Id), Entities::Id);
-    relations.apply_from(&mut select, schema.as_ref(), query.selection.standing);
-    select.cond_where(condition);
-
-    let (keys, read_order) = window_and_sort_keys(&mut select, &rows, query, window, &names.attributes)?;
-    for key in keys {
-        key.order_by(&mut select);
-    }
-
+    let identifiers = |stream: EntityRelations| -> Result<(ProjectedPage, ReadOrder), RenderError> {
+        let mut select = Query::select();
+        select.expr_as(rows.identity_column(Entities::Id), Entities::Id);
+        stream.apply_from(&mut select, schema.as_ref(), query.selection.standing);
+        // clone: every stream is read under the same filter
+        select.cond_where(condition.clone());
+        let (keys, read_order) = window_and_sort_keys(&mut select, &rows, query, window, &names.attributes)?;
+        Ok((projected_page(select, &rows, keys, PageTotal::Omitted), read_order))
+    };
+    let planning = match relations.stream_count() {
+        StreamCount::One => StatementPlanning::Cached,
+        StreamCount::Several => StatementPlanning::BoundedStreams,
+    };
+    let (first, rest) = relations.streams();
+    let (first, read_order) = identifiers(first)?;
+    let rest = rest
+        .into_iter()
+        .map(|stream| Ok(identifiers(stream)?.0))
+        .collect::<Result<Vec<ProjectedPage>, RenderError>>()?;
     Ok(EntityIdsQuery {
-        select: select.take(),
+        select: merged(first, rest, window, 0).select,
         read_order,
+        planning,
     })
 }
 
@@ -423,7 +440,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{error::RenderError, query_names::QueryNames};
-    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
@@ -812,13 +829,28 @@ mod tests {
     }
 
     /// Two types select their union, which the census cannot count without
-    /// counting an Entity of both twice. Each type's members that no earlier
-    /// type selects are counted instead, and the counts summed, once, beside
-    /// the page.
+    /// counting an Entity of both twice. The union of each type's members
+    /// that no earlier type selects is counted instead, in a statement of its
+    /// own, and the page reads each type's stream up to its window.
     #[test]
-    fn a_counted_page_of_two_types_sums_their_disjoint_counts_beside_its_rows() {
-        let built = build_counted(&of_types("https://example.com/Vehicle,https://example.com/Home"), &known_types());
-        assert_statement_snapshot!("entity-a-counted-page-of-two-types-sums-their-disjoint-counts-beside-its-rows", built.select);
+    fn a_counted_page_of_two_types_counts_their_disjoint_streams_on_its_own() {
+        let entity_query = build_query(
+            &ContextTarget::Live,
+            &of_types("https://example.com/Vehicle,https://example.com/Home"),
+            &first_offset_page(),
+            CountPolicy::Emit,
+            &known_types(),
+        )
+        .expect("valid entity query");
+        let EntityTotal::Counted(count) = entity_query.total else {
+            panic!("the page of several types is counted on its own");
+        };
+        assert_eq!(entity_query.total_planning, StatementPlanning::Cached);
+        assert_statement_snapshot!(
+            "entity-a-counted-page-of-two-types-counts-their-disjoint-streams-on-its-own-1",
+            entity_query.select
+        );
+        assert_statement_snapshot!("entity-a-counted-page-of-two-types-counts-their-disjoint-streams-on-its-own-2", count.count);
     }
 
     /// A type no Entity was ever written with has no census row, and its
@@ -864,7 +896,7 @@ mod tests {
 
     /// A geo-query's matches drive the statement and its count, so the types
     /// of a typed geo-query are tested on the search row and no membership
-    /// range is merged.
+    /// range is walked.
     #[test]
     fn a_typed_geo_query_tests_its_types_on_the_search_row() {
         let mut q = empty_query();

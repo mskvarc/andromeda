@@ -2,7 +2,9 @@
 source: crates/andromeda-postgresql-context-query/src/entity.rs
 ---
 SELECT
-  "entities"."id" AS "id"
+  "entities"."id" AS "id",
+  "entities"."entity_key",
+  "entities"."id" AS "sort_0"
 FROM
   "entities"
 WHERE
@@ -13,7 +15,7 @@ WHERE
   )
   AND "entities"."id" > $1
 ORDER BY
-  "entities"."id" ASC
+  "sort_0" ASC
 LIMIT
   20
 1: String 'urn:ngsi-ld:Building:001'

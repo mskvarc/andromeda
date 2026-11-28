@@ -106,21 +106,6 @@ const IDENTITY: &str = "e";
 /// The name the head statement reads one kept row's lookup under.
 const LOOKUP: &str = "stored";
 
-/// Read the heads of the entities `page` keeps, in the order `keys` sorts
-/// them.
-///
-/// `page` is the filtered, windowed statement over the entity rows `rows`
-/// names, carrying its `FROM`, its `WHERE`, its `LIMIT` and `OFFSET` or keyset
-/// predicate, and any lateral its keys read, but no projection and no `ORDER
-/// BY`: both are added here, because the page is ordered by the columns it
-/// projects its keys under and the head statement by the same columns read
-/// back through the page.
-#[must_use]
-pub fn heads_of(page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, total: PageTotal) -> SelectStatement {
-    let carried = total.carried();
-    heads_over(projected_page(page, rows, keys, total), rows, carried, StepColumn::Unnamed)
-}
-
 /// A page projecting its entity key and its sort keys, and the order it is
 /// read in.
 #[derive(Debug, Clone)]
@@ -224,7 +209,7 @@ fn stored_head_lookup(rows: &EntityRowRefs) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_page::{PageTotal, heads_of};
+    use crate::entity_page::{PageTotal, StepColumn, heads_over, projected_page};
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
     use andromeda_postgresql_query::{
         entity_row_refs::EntityRowRefs,
@@ -236,6 +221,13 @@ mod tests {
 
     fn windowed_page() -> SelectStatement {
         Query::select().from(Entities::Table).limit(100).offset(5000).take()
+    }
+
+    /// The heads of the Entities `page` keeps, in the order `keys` sorts
+    /// them, carrying `total`.
+    fn heads_of(page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, total: PageTotal) -> SelectStatement {
+        let carried = total.carried();
+        heads_over(projected_page(page, rows, keys, total), rows, carried, StepColumn::Unnamed)
     }
 
     fn by_id(rows: &EntityRowRefs) -> Vec<SortKey> {

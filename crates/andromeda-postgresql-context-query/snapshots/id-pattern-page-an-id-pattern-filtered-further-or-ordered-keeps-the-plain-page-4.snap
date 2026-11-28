@@ -13,75 +13,150 @@ SELECT
 FROM
   (
     SELECT
-      "selected"."entity_key",
-      "selected"."id" AS "sort_0"
+      *
     FROM
       (
-        SELECT DISTINCT
-          ON ("typed"."id") "typed"."entity_key",
-          "typed"."id"
+        SELECT
+          *
         FROM
           (
             SELECT
-              "entity_key",
-              "id"
+              "selected"."entity_key",
+              "selected"."id" AS "sort_0"
             FROM
-              "entity_type_members"
+              (
+                SELECT
+                  "entity_key",
+                  "id"
+                FROM
+                  "entity_type_members"
+                WHERE
+                  "entity_type_name_key" = (18)
+                  AND "is_current_member"
+              ) AS "selected"
             WHERE
-              "entity_type_name_key" = (18)
-              AND "is_current_member"
-            UNION ALL
+              "selected"."entity_key" NOT IN (
+                SELECT
+                  "entity_key"
+                FROM
+                  "entities"
+                WHERE
+                  "expires_at" <= NOW()
+              )
+              AND (
+                (
+                  ((("selected"."id") COLLATE "default") ~ $1)
+                  AND EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "entity_type_members" AS "type_member"
+                    WHERE
+                      "type_member"."entity_type_name_key" = (18)
+                      AND "type_member"."id" = "selected"."id"
+                      AND "type_member"."is_current_member"
+                  )
+                )
+                OR (
+                  ((("selected"."id") COLLATE "default") ~ $2)
+                  AND EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "entity_type_members" AS "type_member"
+                    WHERE
+                      "type_member"."entity_type_name_key" = (3)
+                      AND "type_member"."id" = "selected"."id"
+                      AND "type_member"."is_current_member"
+                  )
+                )
+              )
+            ORDER BY
+              "sort_0" ASC
+            LIMIT
+              100
+          ) AS "stream"
+        UNION ALL
+        (
+          SELECT
+            *
+          FROM
             (
               SELECT
-                "entity_key",
-                "id"
+                "selected"."entity_key",
+                "selected"."id" AS "sort_0"
               FROM
-                "entity_type_members"
+                (
+                  SELECT
+                    "unseen"."entity_key",
+                    "unseen"."id"
+                  FROM
+                    (
+                      SELECT
+                        "entity_key",
+                        "id"
+                      FROM
+                        "entity_type_members"
+                      WHERE
+                        "entity_type_name_key" = (3)
+                        AND "is_current_member"
+                    ) AS "unseen"
+                  WHERE
+                    NOT EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "entity_type_members" AS "type_member"
+                      WHERE
+                        "type_member"."entity_type_name_key" = (18)
+                        AND "type_member"."id" = "unseen"."id"
+                        AND "type_member"."is_current_member"
+                    )
+                ) AS "selected"
               WHERE
-                "entity_type_name_key" = (3)
-                AND "is_current_member"
-            )
-          ) AS "typed"
-        ORDER BY
-          "typed"."id" ASC
-      ) AS "selected"
-    WHERE
-      "selected"."entity_key" NOT IN (
-        SELECT
-          "entity_key"
-        FROM
-          "entities"
-        WHERE
-          "expires_at" <= NOW()
-      )
-      AND (
-        (
-          ((("selected"."id") COLLATE "default") ~ $1)
-          AND EXISTS (
-            SELECT
-              1
-            FROM
-              "entity_type_members" AS "type_member"
-            WHERE
-              "type_member"."entity_type_name_key" = (18)
-              AND "type_member"."id" = "selected"."id"
-              AND "type_member"."is_current_member"
-          )
+                "selected"."entity_key" NOT IN (
+                  SELECT
+                    "entity_key"
+                  FROM
+                    "entities"
+                  WHERE
+                    "expires_at" <= NOW()
+                )
+                AND (
+                  (
+                    ((("selected"."id") COLLATE "default") ~ $3)
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "entity_type_members" AS "type_member"
+                      WHERE
+                        "type_member"."entity_type_name_key" = (18)
+                        AND "type_member"."id" = "selected"."id"
+                        AND "type_member"."is_current_member"
+                    )
+                  )
+                  OR (
+                    ((("selected"."id") COLLATE "default") ~ $4)
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "entity_type_members" AS "type_member"
+                      WHERE
+                        "type_member"."entity_type_name_key" = (3)
+                        AND "type_member"."id" = "selected"."id"
+                        AND "type_member"."is_current_member"
+                    )
+                  )
+                )
+              ORDER BY
+                "sort_0" ASC
+              LIMIT
+                100
+            ) AS "stream"
         )
-        OR (
-          ((("selected"."id") COLLATE "default") ~ $2)
-          AND EXISTS (
-            SELECT
-              1
-            FROM
-              "entity_type_members" AS "type_member"
-            WHERE
-              "type_member"."entity_type_name_key" = (3)
-              AND "type_member"."id" = "selected"."id"
-              AND "type_member"."is_current_member"
-          )
-        )
-      )
+      ) AS "streams"
     ORDER BY
       "sort_0" ASC
     LIMIT
@@ -109,3 +184,5 @@ ORDER BY
   "page"."sort_0" ASC
 1: String '.*_1196287$'
 2: String '.*_1$'
+3: String '.*_1196287$'
+4: String '.*_1$'

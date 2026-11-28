@@ -18,8 +18,7 @@ use andromeda_postgresql_query::{
     q_predicate::keyed_term::{CandidateRead, KeyedCandidates},
     query_names::QueryNames,
 };
-use andromeda_postgresql_seaquery::scalar_subquery::scalar_subquery;
-use sea_query::{Asterisk, Condition, DynIden, Expr, ExprTrait, Func, Query, SelectStatement};
+use sea_query::{Asterisk, Condition, DynIden, Expr, Func, Query, SelectStatement};
 
 /// How the store reads the total a counted entity query reports (clause
 /// 6.3.13).
@@ -213,23 +212,12 @@ pub(crate) fn selection_count(source: &TotalSource<'_>, relations: EntityRelatio
 
 /// `SELECT COUNT(*)` over `relations` in the branch `schema` (`None` for the
 /// live branch), the driving Entity standing at `standing`, filtered by
-/// `condition`, summed over the disjoint parts of a type walk of several
-/// alternatives ([`EntityRelations::counted_apart`]), which are counted
-/// without merging them.
+/// `condition`.
+///
+/// A type walk of several alternatives is counted over the union of its
+/// disjoint streams, each read in the order of its range: counted as their
+/// merge, the members would be sorted whole first.
 pub(crate) fn count_over(relations: EntityRelations, schema: Option<&DynIden>, standing: StandingInstant, condition: Condition) -> SelectStatement {
-    let (first, rest) = relations.counted_apart();
-    if rest.is_empty() {
-        return count_one(first, schema, standing, condition);
-    }
-    let first = scalar_subquery(count_one(first, schema, standing, condition.clone()));
-    let summed = rest.into_iter().fold(first, |sum, part| {
-        sum.add(scalar_subquery(count_one(part, schema, standing, condition.clone())))
-    });
-    Query::select().expr(summed).take()
-}
-
-/// `SELECT COUNT(*)` over the one walk or relation `relations` reads.
-fn count_one(relations: EntityRelations, schema: Option<&DynIden>, standing: StandingInstant, condition: Condition) -> SelectStatement {
     let mut count = Query::select();
     count.expr(Func::count(Expr::col(Asterisk)));
     relations.apply_from(&mut count, schema, standing);

@@ -111,7 +111,7 @@ impl<'p, 'a> GatedSteps<'p, 'a> {
         for (column, key_order) in order {
             key_order.order_by(&mut answered, Expr::col(column.clone()));
         }
-        cut(&mut answered, self.source.window);
+        cut(&mut answered, self.source.window, 0);
         wrapped(answered.take(), alias)
     }
 }

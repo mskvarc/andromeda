@@ -32,6 +32,7 @@ mod page_shape;
 mod page_walk;
 pub mod selector_predicate;
 pub mod value_walk_page;
+mod walk_streams;
 mod walked_column;
 
 #[cfg(test)]

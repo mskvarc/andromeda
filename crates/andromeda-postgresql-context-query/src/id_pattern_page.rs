@@ -241,13 +241,21 @@ mod tests {
         }];
         let mut paired = by_pattern(".*_1196287$");
         paired.selection.selectors.push(selector(Some("Trip"), ".*_1$"));
-        for (index, query) in [filtered, by_attrs, ordered, paired].into_iter().enumerate() {
+        // The paired selectors walk two types, whose streams the plain page
+        // reads without parallel workers.
+        let shapes = [
+            (filtered, StatementPlanning::Cached),
+            (by_attrs, StatementPlanning::Cached),
+            (ordered, StatementPlanning::Cached),
+            (paired, StatementPlanning::BoundedStreams),
+        ];
+        for (index, (query, planning)) in shapes.into_iter().enumerate() {
             let built = built(&query, CountPolicy::Omit);
             assert_statement_snapshot!(
                 format!("id-pattern-page-an-id-pattern-filtered-further-or-ordered-keeps-the-plain-page-{}", index + 1),
                 built.select
             );
-            assert_eq!(built.planning, StatementPlanning::Cached);
+            assert_eq!(built.planning, planning);
         }
     }
 

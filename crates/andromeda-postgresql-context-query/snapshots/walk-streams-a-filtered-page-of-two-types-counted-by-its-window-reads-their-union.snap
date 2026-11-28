@@ -1,0 +1,95 @@
+---
+source: crates/andromeda-postgresql-context-query/src/walk_streams.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths",
+  "page"."total_count" AS "total_count"
+FROM
+  (
+    SELECT
+      "selected"."entity_key",
+      COUNT(*) OVER () AS "total_count",
+      "selected"."id" AS "sort_0"
+    FROM
+      (
+        SELECT
+          "entity_key",
+          "id"
+        FROM
+          "entity_type_members"
+        WHERE
+          "entity_type_name_key" = (3)
+          AND "is_current_member"
+        UNION ALL
+        (
+          SELECT
+            "unseen"."entity_key",
+            "unseen"."id"
+          FROM
+            (
+              SELECT
+                "entity_key",
+                "id"
+              FROM
+                "entity_type_members"
+              WHERE
+                "entity_type_name_key" = (4)
+                AND "is_current_member"
+            ) AS "unseen"
+          WHERE
+            NOT EXISTS (
+              SELECT
+                1
+              FROM
+                "entity_type_members" AS "type_member"
+              WHERE
+                "type_member"."entity_type_name_key" = (3)
+                AND "type_member"."id" = "unseen"."id"
+                AND "type_member"."is_current_member"
+            )
+        )
+      ) AS "selected"
+      JOIN "entity_search" ON "entity_search"."entity_key" = "selected"."entity_key"
+    WHERE
+      "selected"."entity_key" NOT IN (
+        SELECT
+          "entity_key"
+        FROM
+          "entities"
+        WHERE
+          "expires_at" <= NOW()
+      )
+      AND ("entity_search"."scope_paths" ~ ($1::lquery))
+    ORDER BY
+      "sort_0" ASC
+    LIMIT
+      100 OFFSET 0
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: String 'Madrid'

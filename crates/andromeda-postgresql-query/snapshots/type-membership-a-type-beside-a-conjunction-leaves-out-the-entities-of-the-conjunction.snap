@@ -1,0 +1,40 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership.rs
+---
+SELECT
+  "unseen"."entity_key",
+  "unseen"."id"
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (3)
+      AND "is_current_member"
+  ) AS "unseen"
+WHERE
+  NOT (
+    EXISTS (
+      SELECT
+        1
+      FROM
+        "entity_type_members" AS "type_member"
+      WHERE
+        "type_member"."entity_type_name_key" = (1)
+        AND "type_member"."id" = "unseen"."id"
+        AND "type_member"."is_current_member"
+    )
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        "entity_type_members" AS "type_member"
+      WHERE
+        "type_member"."entity_type_name_key" = (2)
+        AND "type_member"."id" = "unseen"."id"
+        AND "type_member"."is_current_member"
+    )
+  )

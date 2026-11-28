@@ -8,6 +8,14 @@
 //! the skipped Entities without probing them, and hands on the short walk's
 //! matches with its own.
 //!
+//! The walk of several types is one stream per alternative, each in
+//! identifier order and disjoint from the others, which PostgreSQL never
+//! merges in order without sorting every member first. The short and the
+//! continued walk read each stream up to the end of their span and visit the
+//! span of the merge in page order, so a short walk of 1 000 Entities reads
+//! at most 1 000 of each type. The full walk walks each stream on its own up
+//! to the matches the page needs, and merges what they keep.
+//!
 //! Every walk reads the selection as a subquery in page order and probes each
 //! Entity it yields in a lateral subquery behind `OFFSET 0`, which the
 //! planner can neither merge into the walk nor turn into a join. Probed as a
@@ -44,8 +52,10 @@
 
 use crate::{
     entity::{EntityConditions, all_of},
-    entity_page::ProjectedPage,
-    gated_page::{PageSource, cut},
+    entity_page::{PageTotal, ProjectedPage},
+    entity_relations::EntityRelations,
+    gated_page::PageSource,
+    walk_streams::{merged, streamed_page},
 };
 use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
@@ -191,11 +201,22 @@ fn short_length(walk: &PageWalk<'_>, need: u64) -> u32 {
 /// The full walk: every Entity of the selection in page order the filters
 /// and the probe keep, cut to `window`, behind the gates `fell_short` of
 /// every earlier step.
-pub(crate) fn full_walk(walk: PageWalk<'_>, window: &PageWindow, fell_short: Vec<SimpleExpr>) -> Result<SelectStatement, RenderError> {
-    let (matches, _) = walked_in_order(&walk.source, walk.walked, walk.probe, fell_short, window, WalkSpan::Every)?;
-    let mut matches = matches.select;
-    cut(&mut matches, window);
-    Ok(matches)
+///
+/// A type walk of several alternatives is walked stream by stream, each
+/// walk stopping at the matches the window reaches, and their matches merged
+/// ([`merged`]): walked as one, the union of the streams would be sorted
+/// whole before its first probe.
+pub(crate) fn full_walk(walk: PageWalk<'_>, window: &PageWindow, fell_short: &[SimpleExpr]) -> Result<SelectStatement, RenderError> {
+    let PageWalk { source, walked, probe, .. } = walk;
+    let walk_stream = |relations: &EntityRelations| -> Result<ProjectedPage, RenderError> {
+        let stream = PageSource { relations, ..source };
+        // clone: every stream is walked under the same filters, probe and gates
+        let (matches, _) = walked_in_order(&stream, walked.clone(), probe.clone(), fell_short.to_vec(), window, WalkSpan::Every)?;
+        Ok(matches)
+    };
+    let (first, rest) = source.relations.clone().streams();
+    let rest = rest.iter().map(walk_stream).collect::<Result<Vec<ProjectedPage>, RenderError>>()?;
+    Ok(merged(walk_stream(&first)?, rest, window, 0).select)
 }
 
 /// Which Entities of the selection a walk visits, in page order from where
@@ -225,9 +246,11 @@ enum WalkSpan {
 /// `OFFSET 0`, which keeps the planner from merging any into another: it
 /// visits the Entities in page order, tests each in turn, and stops once the
 /// statement has its rows. The selection reads the walked relations
-/// ([`EntityRelations::walked`](crate::entity_relations::EntityRelations::walked))
-/// by its selectors, so a search row it reads is looked up for each Entity it
-/// yields.
+/// ([`EntityRelations::walked`]) by its selectors, so a search row it reads
+/// is looked up for each Entity it yields. A span with a length reads each
+/// stream of a type walk of several alternatives up to its end
+/// ([`streamed_page`]); every Entity is walked one stream at a time
+/// ([`full_walk`]).
 fn walked_in_order(
     source: &PageSource<'_>,
     walked: EntityConditions,
@@ -240,22 +263,26 @@ fn walked_in_order(
         PageStart::Offset(_) => PageStart::Offset(0),
         PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
     };
-    let limit = match span {
-        WalkSpan::First(length) | WalkSpan::Past { visited: length, .. } => length,
-        WalkSpan::Every => 0,
-    };
     let EntityConditions { selection: selectors, tested } = walked;
-    let (selection, read_order) = source.page_through(source.relations.walked(source.query), all_of(selectors), &PageWindow { limit, start })?;
-    let ProjectedPage { select: mut selection, order } = selection;
-    match span {
-        WalkSpan::First(_) => {}
-        WalkSpan::Past { skipped, .. } => {
-            selection.offset(u64::from(skipped));
-        }
+    let relations = source.relations.walked(source.query);
+    let selectors = all_of(selectors);
+    let (selection, read_order) = match span {
+        WalkSpan::First(limit) => streamed_page(source, relations, selectors, &PageWindow { limit, start }, 0, PageTotal::Omitted)?,
+        WalkSpan::Past { skipped, visited } => streamed_page(
+            source,
+            relations,
+            selectors,
+            &PageWindow { limit: visited, start },
+            u64::from(skipped),
+            PageTotal::Omitted,
+        )?,
         WalkSpan::Every => {
-            selection.reset_limit().offset(0);
+            let (mut every, read_order) = source.page_through(relations, selectors, &PageWindow { limit: 0, start }, PageTotal::Omitted)?;
+            every.select.reset_limit().offset(0);
+            (every, read_order)
         }
-    }
+    };
+    let ProjectedPage { select: selection, order } = selection;
     let mut matches = Query::select();
     matches.column((Walked, Asterisk)).from_subquery(selection, Walked);
     if !tested.is_empty() {

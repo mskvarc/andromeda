@@ -1,7 +1,7 @@
-//! The queries the page shape, geo page, keyed page, filter read and keyed
-//! count tests share: the Entities of type `Sensor`, and those within the
-//! square from `[0, 40]` to `[10, 50]`, read against a dictionary that has
-//! recorded `location`.
+//! The queries the page shape, geo page, keyed page, filter read, keyed
+//! count and walk stream tests share: the Entities of type `Sensor`, those of
+//! type `Sensor` or `Gateway`, and those within the square from `[0, 40]` to
+//! `[10, 50]`, read against a dictionary that has recorded `location`.
 
 use crate::entity::{EntityQuery, build_query};
 use andromeda_context_space::context_target::ContextTarget;
@@ -28,7 +28,7 @@ pub(crate) const OBSERVATION_SPACE: &str = "https://uri.etsi.org/ngsi-ld/observa
 
 /// `temperature` at key 12, `hasTrip` at 14, `status` at 15, `calibration`
 /// at 16, `inspection` at 17, `location` at 9 and `observationSpace` at 42;
-/// the type `Sensor` at key 3.
+/// the type `Sensor` at key 3 and `Gateway` at 4.
 pub(crate) fn names() -> QueryNames {
     QueryNames {
         attributes: ResolvedNames::from_pairs(
@@ -40,7 +40,12 @@ pub(crate) fn names() -> QueryNames {
                     (OBSERVATION_SPACE.parse().expect("valid name"), AttributeNameKey::from(42)),
                 ]),
         ),
-        types: ResolvedNames::from_pairs([("https://example.com/Sensor".parse().expect("valid type name"), EntityTypeNameKey::from(3))]),
+        types: ResolvedNames::from_pairs([("Sensor", 3), ("Gateway", 4)].map(|(name, key)| {
+            (
+                format!("https://example.com/{name}").parse().expect("valid type name"),
+                EntityTypeNameKey::from(key),
+            )
+        })),
         ..QueryNames::default()
     }
 }
@@ -56,6 +61,19 @@ pub(crate) fn sensors() -> CompiledEntityQuery {
         .selectors(vec![
             EntityConstraint::builder()
                 .type_selection(Some(TypeSelection::single(iri("Sensor").into())))
+                .build(),
+        ])
+        .build();
+    CompiledEntityQuery::builder().selection(selection).build()
+}
+
+/// The Entities of type `Sensor` or `Gateway`, a clause 4.17 selection of
+/// two alternatives.
+pub(crate) fn sensors_and_gateways() -> CompiledEntityQuery {
+    let selection = EntitySelection::builder()
+        .selectors(vec![
+            EntityConstraint::builder()
+                .type_selection(TypeSelection::of_alternatives(vec![vec![iri("Sensor").into()], vec![iri("Gateway").into()]]))
                 .build(),
         ])
         .build();
