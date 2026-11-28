@@ -21,10 +21,29 @@ pub enum TimeProp {
     Deleted,
 }
 
+impl TimeProp {
+    /// Whether `name` is the name of one of the temporal properties, the
+    /// system Attributes of clause 4.8, spelled exactly.
+    #[must_use]
+    pub fn names(name: &str) -> bool {
+        TimeProp::VARIANTS.contains(&name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::time_prop::TimeProp;
     use std::str::FromStr;
+
+    #[test]
+    fn every_temporal_property_and_nothing_else_is_named() {
+        for name in ["observedAt", "createdAt", "modifiedAt", "deletedAt"] {
+            assert!(TimeProp::names(name), "{name}");
+        }
+        for name in ["location", "observedat", "ObservedAt", "id", ""] {
+            assert!(!TimeProp::names(name), "{name}");
+        }
+    }
 
     #[test]
     fn time_prop_default_is_observed_at() {

@@ -44,7 +44,7 @@ use andromeda_ngsi_ld_query::{
     name_stage::Written,
     type_selection::TypeSelection,
 };
-use strum::{Display, IntoEnumIterator};
+use strum::Display;
 use typed_builder::TypedBuilder;
 
 /// Whether the operation's clause lists the local scope among its narrowings.
@@ -205,7 +205,7 @@ impl NarrowingInputs<'_> {
         let mut attributes = names.filter(|name| names_an_attribute(name));
         match self.admitted.system_attributes {
             SystemAttributeNarrowing::Counted => attributes.next().is_some(),
-            SystemAttributeNarrowing::Discounted => attributes.any(|name| !is_system_attribute(name)),
+            SystemAttributeNarrowing::Discounted => attributes.any(|name| !TimeProp::names(name.as_str())),
         }
     }
 }
@@ -217,14 +217,6 @@ impl NarrowingInputs<'_> {
 /// special scope Property" (clause 4.18), so it does.
 fn names_an_attribute(name: &AttributeName) -> bool {
     !matches!(name.as_str(), "id" | "type")
-}
-
-/// Whether a name addresses one of the system Attributes.
-///
-/// The system Attributes are the temporal properties of clause 4.8, which is
-/// also the set a temporal query selects an axis from.
-fn is_system_attribute(name: &AttributeName) -> bool {
-    TimeProp::iter().any(|property| name.as_str() == <&'static str>::from(property))
 }
 
 /// Require at least one of the narrowing inputs the operation's clause lists.
