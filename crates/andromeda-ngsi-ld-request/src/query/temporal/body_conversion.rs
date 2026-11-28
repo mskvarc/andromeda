@@ -38,45 +38,45 @@ impl TryFrom<Query> for TemporalQueryParameters {
             [] | [_, _, ..] => (None, None, None),
         };
 
-        let parameters = TemporalQueryParameters {
-            id,
-            entity_type,
-            id_pattern,
-            entity_selectors,
-            attrs: query.attrs,
-            q: query.q,
-            geo: OptionalGeoQuery(query.geo_q),
-            timerel: Some(temporal.timerel),
-            time_at: Some(temporal.time_at),
-            end_time_at: temporal.end_time_at,
-            timeproperty: temporal.timeproperty,
-            last_n: temporal.last_n,
-            format: None,
-            options: None,
-            aggr_methods: aggregation.0,
-            aggr_period_duration: aggregation.1,
-            aggr_group_by: aggregation.2,
+        let parameters = TemporalQueryParameters::builder()
+            .id(id)
+            .entity_type(entity_type)
+            .id_pattern(id_pattern)
+            .entity_selectors(entity_selectors)
+            .attrs(query.attrs)
+            .q(query.q)
+            .geo(OptionalGeoQuery(query.geo_q))
+            .timerel(Some(temporal.timerel))
+            .time_at(Some(temporal.time_at))
+            .end_time_at(temporal.end_time_at)
+            .timeproperty(temporal.timeproperty)
+            .last_n(temporal.last_n)
+            .format(None)
+            .options(None)
+            .aggr_methods(aggregation.0)
+            .aggr_period_duration(aggregation.1)
+            .aggr_group_by(aggregation.2)
             // Table 5.2.23-1 defines no pagination member: the POST binding
             // reads its page from the URL (clause 6.24.3.1).
-            page: PageParameters::default(),
-            count: CountPolicy::Omit,
-            ordering: query.ordering.unwrap_or_default(),
-            pick: query.pick,
-            omit: query.omit,
-            join: query.join,
-            join_level: query.join_level,
-            contained_by: query.contained_by,
-            dataset_id: query.dataset_id,
-            lang: query.lang,
-            local: None,
-            entity_map: query.entity_map,
-            entity_map_lifetime: query.entity_map_lifetime,
-            split_entities: query.split_entities,
-            scope_q: query.scope_q,
-            csf: query.csf,
-            expand_values: query.expand_values,
-            json_keys: query.json_keys,
-        };
+            .page(PageParameters::default())
+            .count(CountPolicy::Omit)
+            .ordering(query.ordering.unwrap_or_default())
+            .pick(query.pick)
+            .omit(query.omit)
+            .join(query.join)
+            .join_level(query.join_level)
+            .contained_by(query.contained_by)
+            .dataset_id(query.dataset_id)
+            .lang(query.lang)
+            .local(None)
+            .entity_map(query.entity_map)
+            .entity_map_lifetime(query.entity_map_lifetime)
+            .split_entities(query.split_entities)
+            .scope_q(query.scope_q)
+            .csf(query.csf)
+            .expand_values(query.expand_values)
+            .json_keys(query.json_keys)
+            .build();
         // Clause 4.21 governs the POST body's projection exactly as it
         // governs the query string's, so the body cannot smuggle two selectors
         // past the rule the GET binding enforces.

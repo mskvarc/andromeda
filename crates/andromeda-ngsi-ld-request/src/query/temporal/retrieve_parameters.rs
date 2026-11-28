@@ -162,30 +162,29 @@ impl From<TemporalRetrieveParameters> for TemporalQueryParameters {
     /// The retrieval as the temporal query model reads it: the members the
     /// retrieval does not define stay absent.
     fn from(retrieve: TemporalRetrieveParameters) -> TemporalQueryParameters {
-        TemporalQueryParameters {
-            timerel: retrieve.timerel,
-            time_at: retrieve.time_at,
-            end_time_at: retrieve.end_time_at,
-            timeproperty: retrieve.timeproperty,
-            last_n: retrieve.last_n,
-            attrs: retrieve.attrs,
-            pick: retrieve.pick,
-            omit: retrieve.omit,
-            dataset_id: retrieve.dataset_id,
-            lang: retrieve.lang,
-            aggr_methods: retrieve.aggr_methods,
-            aggr_period_duration: retrieve.aggr_period_duration,
-            aggr_group_by: retrieve.aggr_group_by,
-            format: retrieve.format,
-            options: retrieve.options,
-            local: retrieve.local,
-            entity_map: retrieve.entity_map,
-            entity_map_lifetime: retrieve.entity_map_lifetime,
-            join: retrieve.join,
-            join_level: retrieve.join_level,
-            contained_by: retrieve.contained_by,
-            ..TemporalQueryParameters::default()
-        }
+        TemporalQueryParameters::builder()
+            .timerel(retrieve.timerel)
+            .time_at(retrieve.time_at)
+            .end_time_at(retrieve.end_time_at)
+            .timeproperty(retrieve.timeproperty)
+            .last_n(retrieve.last_n)
+            .attrs(retrieve.attrs)
+            .pick(retrieve.pick)
+            .omit(retrieve.omit)
+            .dataset_id(retrieve.dataset_id)
+            .lang(retrieve.lang)
+            .aggr_methods(retrieve.aggr_methods)
+            .aggr_period_duration(retrieve.aggr_period_duration)
+            .aggr_group_by(retrieve.aggr_group_by)
+            .format(retrieve.format)
+            .options(retrieve.options)
+            .local(retrieve.local)
+            .entity_map(retrieve.entity_map)
+            .entity_map_lifetime(retrieve.entity_map_lifetime)
+            .join(retrieve.join)
+            .join_level(retrieve.join_level)
+            .contained_by(retrieve.contained_by)
+            .build()
     }
 }
 

@@ -17,13 +17,12 @@ impl TemporalQueryParameters {
     /// caller names the entities it asks about.
     #[must_use]
     pub fn latest_before(start: DateTime<Utc>, timeproperty: TimeProp) -> TemporalQueryParameters {
-        TemporalQueryParameters {
-            timerel: Some(TimeRel::Before),
-            time_at: Some(start),
-            timeproperty: Some(timeproperty),
-            last_n: Some(NonZeroU32::MIN),
-            ..TemporalQueryParameters::default()
-        }
+        TemporalQueryParameters::builder()
+            .timerel(Some(TimeRel::Before))
+            .time_at(Some(start))
+            .timeproperty(Some(timeproperty))
+            .last_n(Some(NonZeroU32::MIN))
+            .build()
     }
 }
 

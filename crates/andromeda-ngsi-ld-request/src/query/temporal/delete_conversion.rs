@@ -16,25 +16,24 @@ impl TemporalDeleteParameters {
     /// execution is pinned to the local scope: the delete is never forwarded, so
     /// its entity set is resolved against this broker's history alone.
     pub(crate) fn selection_params(&self) -> TemporalQueryParameters {
-        TemporalQueryParameters {
-            // clone: the compiled selection owns its filters independently of
-            // the reusable delete parameters, which the scope still reads.
-            id: self.id.clone(),
-            entity_type: self.entity_type.clone(),
-            id_pattern: self.id_pattern.clone(),
-            q: self.q.clone(),
-            geo: self.geo.clone(),
-            scope_q: self.scope_q.clone(),
-            csf: self.csf.clone(),
-            timerel: self.timerel,
-            time_at: self.time_at,
-            end_time_at: self.end_time_at,
-            timeproperty: self.timeproperty,
-            dataset_id: self.dataset_id.clone(),
+        // clone: the compiled selection owns its filters independently of the
+        // reusable delete parameters, which the scope still reads.
+        TemporalQueryParameters::builder()
+            .id(self.id.clone())
+            .entity_type(self.entity_type.clone())
+            .id_pattern(self.id_pattern.clone())
+            .q(self.q.clone())
+            .geo(self.geo.clone())
+            .scope_q(self.scope_q.clone())
+            .csf(self.csf.clone())
+            .timerel(self.timerel)
+            .time_at(self.time_at)
+            .end_time_at(self.end_time_at)
+            .timeproperty(self.timeproperty)
+            .dataset_id(self.dataset_id.clone())
             // The delete is local-only; it is never forwarded to a Context Source.
-            local: Some(true),
-            ..TemporalQueryParameters::default()
-        }
+            .local(Some(true))
+            .build()
     }
 }
 
