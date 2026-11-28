@@ -71,11 +71,12 @@ async fn mount_reply(source: &ContextSource, given: MockBuilder, status: StatusC
 }
 
 /// The stub rule of a retrieval of `urn:ngsi-ld:Vehicle:<ns>-<n>` at the source's `<below>`: the entity's path
-/// without a query, or any target with a query that names the id.
+/// without a query, or any target below `<below>` with a query that names the id. A forwarded retrieval carries a
+/// query, so the token alternative is held to `<below>`: two sources under one namespace each answer their own.
 pub(crate) fn vehicle_retrieval_rule(namespace: &Namespace, below: &str, n: u32) -> ForkRule {
     ForkRule::resource_or_tokens(
         Method::GET,
-        &source_path(namespace, ""),
+        &source_path(namespace, below),
         &source_path(namespace, &format!("{below}/ngsi-ld/v1/entities/{}", namespace.urn_text("Vehicle", n))),
         &["urn", "ngsi-ld", "vehicle", &format!("{namespace}-{n}")],
     )
