@@ -20,7 +20,12 @@
 //! instance, or waits until the prune has committed, and then adds the
 //! combination again.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
+use crate::{
+    error::TemporalStoreError,
+    repo::TemporalRepository,
+    statement_timeout_allowance::allow_unbounded_statements,
+    stream_value_rows::stream_value_rows,
+};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, TemporalAttributeStreams},
@@ -33,7 +38,7 @@ use andromeda_postgresql_seaquery::{
     scalar_subquery::scalar_subquery,
     statement::Statement,
 };
-use andromeda_postgresql_stored_form::{entity_sides::holds_evolution, tombstone::carries_a_value};
+use andromeda_postgresql_stored_form::entity_sides::holds_evolution;
 use andromeda_postgresql_temporal_query::{
     alias::Ah,
     shape_mask::{held_positions, no_shapes, position_mask, recorded_combination},
@@ -169,15 +174,17 @@ fn evolution_streams_statement(evolutions: &[i64]) -> SelectStatement {
 /// Each combination a mask holds is probed on its own, and the probe stops at
 /// the first instance carrying it, so a combination still held costs one row
 /// read. The probe binds the streams inside as well: correlated alone, the
-/// planner reads every history row of the relation to hash it. A mask that
-/// keeps every combination is left alone.
+/// planner reads every history row of the relation to hash it. The probe
+/// reads the stream's instances through its `createdAt` index, so its cost
+/// follows the instances of the stream, not the rows of the chunk. A mask
+/// that keeps every combination is left alone.
 fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> UpdateStatement {
     let carried = Query::select()
         .expr(int_literal(1))
         .from(qualified(schema, AttributeHistory::Table).alias(Ah))
         .and_where(is_any_of(Expr::col((Ah, AttributeHistory::StreamKey)), stream_keys.iter().copied()))
         .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).equals((Pruned, TemporalAttributeStreams::StreamKey)))
-        .and_where(carries_a_value(Ah))
+        .cond_where(stream_value_rows(Ah))
         .and_where(recorded_combination().eq(position_mask()))
         .take();
     let kept = held_positions(Expr::col((Pruned, TemporalAttributeStreams::ShapeMask)))
@@ -203,31 +210,19 @@ fn prune_statement(schema: Option<&DynIden>, stream_keys: &[i64]) -> UpdateState
 #[cfg(test)]
 mod tests {
     use crate::stream_shape_pruning::{evolution_lock_statement, evolution_streams_statement, prune_statement, retention_batch_lock_statement};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 
     /// A combination goes only when no instance of its stream carries it:
     /// each held bit is probed against the family and the refined shape of
-    /// the rows of the pruned streams that are not tombstones, and a mask is
-    /// rewritten only when it loses one.
+    /// the rows of the pruned streams that carry a `createdAt` and are not
+    /// tombstones, and a mask is rewritten only when it loses one.
     #[test]
     fn a_combination_goes_only_when_no_instance_of_its_stream_carries_it() {
-        let sql = prune_statement(None, &[4, 5]).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.starts_with(concat!(
-                r#"UPDATE "temporal_attribute_streams" SET "shape_mask" = "kept"."shape_mask""#,
-                r#" FROM (SELECT "ps"."stream_key", COALESCE((SELECT bit_or((B'1'::bit(80) >> ("position")))"#,
-                r#" FROM generate_series(0, 79) AS "position" WHERE get_bit("ps"."shape_mask", "position") = 1"#,
-                r#" AND EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = ANY(ARRAY [4,5]) AND "ah"."stream_key" = "ps"."stream_key" AND "ah"."value_kind" <> (0)"#
-            )),
-            "{sql}"
-        );
-        assert!(
-            sql.ends_with(concat!(
-                r#"B'0'::bit(80)) AS "shape_mask" FROM "temporal_attribute_streams" AS "ps" WHERE "ps"."stream_key" = ANY(ARRAY [4,5])) AS "kept""#,
-                r#" WHERE "temporal_attribute_streams"."stream_key" = "kept"."stream_key" AND "temporal_attribute_streams"."shape_mask" <> "kept"."shape_mask""#
-            )),
-            "{sql}"
+        assert_statement_snapshot!(
+            "stream-shape-pruning-a-combination-goes-only-when-no-instance-of-its-stream-carries-it",
+            prune_statement(None, &[4, 5])
         );
     }
 

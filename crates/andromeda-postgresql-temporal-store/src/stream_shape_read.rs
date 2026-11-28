@@ -17,7 +17,13 @@
 //! queue replaces. Those streams are few, and their history is all the read
 //! touches.
 
-use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape, stored_catalog_error::StoredCatalogError};
+use crate::{
+    error::TemporalStoreError,
+    repo::TemporalRepository,
+    stored_attribute_shape::StoredAttributeShape,
+    stored_catalog_error::StoredCatalogError,
+    stream_value_rows::stream_value_rows,
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_query::history_source::{
     HistoryBranch,
@@ -229,7 +235,7 @@ fn replaced_stream_shapes(branch: &HistoryBranch, keys: &[i32]) -> Option<Select
             Expr::col((Ah, AttributeHistory::StreamKey)).equals((Replaced, TemporalAttributeStreams::StreamKey)),
         )
         .and_where(named(keys))
-        .and_where(carries_a_value(Ah));
+        .cond_where(stream_value_rows(Ah));
     if let Some(kept) = kept_beside_pending(
         branch.pending(),
         Expr::col((Replaced, Entities::Id)),
@@ -268,6 +274,7 @@ fn queued_shapes(branch: &HistoryBranch, keys: &[i32]) -> Option<SelectStatement
 mod tests {
     use crate::stream_shape_read::recorded_attribute_shapes_query;
     use andromeda_postgresql_query::history_source::HistoryBranch;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 
     fn rendered(branch: &HistoryBranch) -> String {
@@ -311,26 +318,14 @@ mod tests {
 
     /// Clause 5.7.4.4 judges the instances that exist once the queue is
     /// applied: queued entries add their shapes, and a stream a queued client
-    /// `instanceId` replaces a row of is read from its rows, less that row.
+    /// `instanceId` replaces a row of is read from its rows carrying a value
+    /// and a `createdAt`, less that row.
     #[test]
     fn over_a_queue_the_read_answers_as_the_applied_queue_will() {
-        let sql = rendered(&HistoryBranch::live());
-        assert_eq!(
-            sql.matches(r#""ms"."stream_key" NOT IN (SELECT "rp"."stream_key" FROM (SELECT "rs"."stream_key""#)
-                .count(),
-            2,
-            "{sql}"
+        assert_statement_snapshot!(
+            "stream-shape-read-over-a-queue-the-read-answers-as-the-applied-queue-will",
+            recorded_attribute_shapes_query(&HistoryBranch::live(), &[7])
         );
-        assert!(
-            sql.contains(r#"JOIN "attribute_history" AS "ah" ON "ah"."stream_key" = "rp"."stream_key""#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#""ah"."verbatim_instance_id" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
-        assert_eq!(sql.matches("UNION (").count(), 2, "{sql}");
     }
 
     /// Tombstones carry no value and so no shape.

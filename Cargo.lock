@@ -2141,6 +2141,7 @@ dependencies = [
  "cefact-units",
  "chrono",
  "derive_more",
+ "insta",
  "iri-rs",
  "langtag",
  "pretty_assertions",

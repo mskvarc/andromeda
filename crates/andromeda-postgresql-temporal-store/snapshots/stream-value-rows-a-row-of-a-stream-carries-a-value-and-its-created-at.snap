@@ -1,0 +1,10 @@
+---
+source: crates/andromeda-postgresql-temporal-store/src/stream_value_rows.rs
+---
+SELECT
+  "ah"."stream_key"
+FROM
+  "attribute_history" AS "ah"
+WHERE
+  "ah"."created_at" IS NOT NULL
+  AND "ah"."value_kind" <> (0)

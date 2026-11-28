@@ -1,0 +1,80 @@
+---
+source: crates/andromeda-postgresql-temporal-store/src/stream_shape_pruning.rs
+---
+UPDATE
+  "temporal_attribute_streams"
+SET
+  "shape_mask" = "kept"."shape_mask"
+FROM
+  (
+    SELECT
+      "ps"."stream_key",
+      COALESCE(
+        (
+          SELECT
+            bit_or((B '1'::bit(80) >> ("position")))
+          FROM
+            generate_series(0, 79) AS "position"
+          WHERE
+            get_bit("ps"."shape_mask", "position") = $1
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                "attribute_history" AS "ah"
+              WHERE
+                "ah"."stream_key" = ANY($2)
+                AND "ah"."stream_key" = "ps"."stream_key"
+                AND "ah"."created_at" IS NOT NULL
+                AND "ah"."value_kind" <> (0)
+                AND (
+                  (
+                    B '1'::bit(80) >> (
+                      (("ah"."attribute_kind" - $3) * (10)) + (
+                        (
+                          CASE
+                            WHEN (
+                              "ah"."value_kind" = (5)
+                              AND jsonb_typeof(
+                                COALESCE(
+                                  (
+                                    CASE
+                                      WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                                    END
+                                  ),
+                                  "ah"."value_object"
+                                )
+                              ) = ('array')
+                            ) THEN 6::smallint
+                            WHEN ("ah"."value_kind" = (5)) THEN 5::smallint
+                            WHEN ("ah"."value_kind" = (9)) THEN 9::smallint
+                            WHEN ("ah"."value_kind" = (8)) THEN 8::smallint
+                            WHEN ("ah"."value_kind" = (2)) THEN 2::smallint
+                            WHEN ("ah"."value_kind" IN (1, 10)) THEN 1::smallint
+                            WHEN ("ah"."value_kind" IN (3, 11)) THEN 3::smallint
+                            WHEN ("ah"."value_kind" = (4)) THEN 4::smallint
+                            WHEN ("ah"."value_kind" = (6)) THEN 7::smallint
+                            WHEN ("ah"."value_kind" = (7)) THEN 10::smallint
+                          END
+                        ) - $4
+                      )
+                    )
+                  )
+                ) = ((B '1'::bit(80) >> ("position")))
+            )
+        ),
+        B '0'::bit(80)
+      ) AS "shape_mask"
+    FROM
+      "temporal_attribute_streams" AS "ps"
+    WHERE
+      "ps"."stream_key" = ANY($5)
+  ) AS "kept"
+WHERE
+  "temporal_attribute_streams"."stream_key" = "kept"."stream_key"
+  AND "temporal_attribute_streams"."shape_mask" <> "kept"."shape_mask"
+1: Int 1
+2: Array ARRAY [4,5]
+3: Int 1
+4: Int 1
+5: Array ARRAY [4,5]

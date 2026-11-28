@@ -121,6 +121,9 @@ pub(crate) mod stream_shape_growth;
 pub(crate) mod stream_shape_pruning;
 /// Reading the families and value shapes each attribute has been recorded with.
 pub(crate) mod stream_shape_read;
+/// The history rows of a stream that carry a value, stated through its
+/// `createdAt` index.
+pub(crate) mod stream_value_rows;
 /// Reading the temporal catalogue.
 pub mod temporal_catalog_read;
 /// Temporal Evolution deletion and the orphan audit that checks it.
@@ -170,6 +173,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-postgresql-pool",
+        "andromeda-postgresql-seaquery",
     ],
     allow_production_dependencies: ["sea-query", "sqlx", "tokio"],
 }
