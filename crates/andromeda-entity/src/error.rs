@@ -305,11 +305,17 @@ impl EntityError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+    use crate::{entity_invariant::EntityInvariant, entity_validation_reason::EntityValidationReason, error::EntityError};
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
+    use andromeda_jsonld::error::JsonLdError;
+    use andromeda_ngsi_ld_compaction::{
+        compaction_error::CompactionError,
+        compaction_failure_fixture::{refused_stored_entity, unencodable_stored_entity},
+    };
     use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use iri_rs::IriBuf;
 
     fn speed() -> AttributeName {
         "https://example.org/speed".parse().expect("a valid attribute name")
@@ -348,6 +354,29 @@ mod tests {
             matches!(&refused, EntityError::Validation(EntityValidationReason::Refused(refusal)) if matches!(**refusal, EntityRefusal::MissingId)),
             "{refused:?}"
         );
+    }
+
+    /// Clause 5.5.2: stored state that the compact model refuses or that
+    /// cannot be written for the processor is the broker's fault, an internal
+    /// error on a read and never the client's `BadRequestData`.
+    #[test]
+    fn a_stored_entity_that_fails_to_compact_is_an_internal_error() {
+        let refused = EntityError::from(refused_stored_entity());
+        assert!(matches!(refused, EntityError::Internal(EntityInvariant::CompactReading(_))), "{refused:?}");
+        let unencodable = EntityError::from(unencodable_stored_entity());
+        assert!(
+            matches!(unencodable, EntityError::Internal(EntityInvariant::StateEncoding(_))),
+            "{unencodable:?}"
+        );
+    }
+
+    /// A compaction the request's own `@context` fails is the JSON-LD failure
+    /// of that context, which is the client's doing.
+    #[test]
+    fn a_compaction_the_request_context_fails_stays_the_json_ld_failure() {
+        let url = IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI");
+        let error = EntityError::from(CompactionError::JsonLd(JsonLdError::ContextFetchDisabled { url }));
+        assert!(matches!(error, EntityError::JsonLd(JsonLdError::ContextFetchDisabled { .. })), "{error:?}");
     }
 
     #[test]

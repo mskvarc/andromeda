@@ -133,8 +133,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-retry",
         "andromeda-telemetry",
     ],
-    allow_workspace_dev_dependencies: [
-    ],
+    allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-compaction"],
     allow_production_dependencies: [],
 }
 

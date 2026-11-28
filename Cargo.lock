@@ -461,6 +461,7 @@ dependencies = [
  "andromeda-federation",
  "andromeda-http-headers",
  "andromeda-jsonld",
+ "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-number",
