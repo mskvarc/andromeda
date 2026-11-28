@@ -38,13 +38,9 @@ use tracing::warn;
 /// must reproduce, so the roots and their Linked Entities describe one
 /// consistent slice of history, plus the traversal continuation.
 fn linked_temporal_retrieval_parameters(depth: NonZeroU32, visited: &[Identifier], window: &TemporalLinkedWindow) -> TemporalQueryParameters {
-    let (join, join_level, contained_by) = traversal_continuation(depth, visited);
-    TemporalQueryParameters {
-        join,
-        join_level,
-        contained_by,
-        ..window.to_parameters()
-    }
+    let mut parameters = window.to_parameters();
+    (parameters.join, parameters.join_level, parameters.contained_by) = traversal_continuation(depth, visited);
+    parameters
 }
 
 /// How far the sources described by `configurations` resolve on their own:

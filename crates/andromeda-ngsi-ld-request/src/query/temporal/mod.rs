@@ -57,6 +57,7 @@ use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::{borrow::Cow, num::NonZeroU32};
+use typed_builder::TypedBuilder;
 
 /// A temporal query whose `q` filter request validation admitted.
 pub mod admitted;
@@ -89,8 +90,9 @@ pub mod validation;
 /// Corresponds to the query parameters defined in NGSI-LD 5.7.4 (Query Temporal
 /// Evolution of Entities) and 5.7.3 (Retrieve Temporal Representation of an Entity).
 /// All values are in their raw (compact) form before context expansion.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, TypedBuilder)]
 #[serde(deny_unknown_fields)]
+#[builder(field_defaults(default = Default::default()))]
 pub struct TemporalQueryParameters {
     /// Entity identifiers to select, comma-separated (clause 6.3.x `id`).
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]

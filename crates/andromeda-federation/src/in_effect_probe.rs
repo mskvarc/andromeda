@@ -55,13 +55,12 @@ impl InEffectReading {
             InEffectReading::Placed => client.timeproperty_or_default(),
             InEffectReading::Deletion => TimeProp::Deleted,
         };
-        Some(TemporalQueryParameters {
-            id: client.id.clone(),
-            entity_type: client.entity_type.clone(),
-            id_pattern: client.id_pattern.clone(),
-            csf: client.csf.clone(),
-            ..TemporalQueryParameters::latest_before(start, timeproperty)
-        })
+        let mut probe = TemporalQueryParameters::latest_before(start, timeproperty);
+        probe.id.clone_from(&client.id);
+        probe.entity_type.clone_from(&client.entity_type);
+        probe.id_pattern.clone_from(&client.id_pattern);
+        probe.csf.clone_from(&client.csf);
+        Some(probe)
     }
 }
 

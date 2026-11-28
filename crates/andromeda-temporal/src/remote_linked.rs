@@ -102,18 +102,17 @@ impl TemporalLinkedWindow {
     /// window's own `attrs` is set by the reader that needs fewer.
     #[must_use]
     pub fn to_parameters(&self) -> TemporalQueryParameters {
-        TemporalQueryParameters {
-            timerel: self.timerel,
-            time_at: self.time_at,
-            end_time_at: self.end_time_at,
-            timeproperty: Some(self.timeproperty),
-            last_n: self.last_n,
-            format: Some(WrittenValue::Supported(self.format)),
-            aggr_methods: self.aggr_methods.clone(),
-            aggr_period_duration: self.aggr_period_duration,
-            attrs: self.attrs.clone(),
-            ..TemporalQueryParameters::default()
-        }
+        TemporalQueryParameters::builder()
+            .timerel(self.timerel)
+            .time_at(self.time_at)
+            .end_time_at(self.end_time_at)
+            .timeproperty(Some(self.timeproperty))
+            .last_n(self.last_n)
+            .format(Some(WrittenValue::Supported(self.format)))
+            .aggr_methods(self.aggr_methods.clone())
+            .aggr_period_duration(self.aggr_period_duration)
+            .attrs(self.attrs.clone())
+            .build()
     }
 
     /// The query a Linked Entity's own history is read with, as
