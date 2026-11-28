@@ -20,7 +20,7 @@ use crate::{
     entity::EntityConditions,
     entity_page::{ProjectedPage, sort_column},
     entity_relations::{EntityRelations, RowSource},
-    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
+    gated_page::{GatedColumns, GatedReads, IndexRead, PageSource, gated_page},
     page_walk::{PageWalk, Walked},
 };
 use andromeda_ngsi_ld_query::{
@@ -107,6 +107,7 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
         walked: EntityConditions::default(),
         probe: Condition::all().add(pattern_predicate(walked_identifier, matches.pattern, PatternIndexes::None)),
         short: ID_PATTERN_SHORT_WALK,
+        continued: None,
     };
     let read = IndexRead {
         candidates: matches.select,
@@ -115,7 +116,7 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
         // rechecked against it.
         narrowed: Condition::all(),
     };
-    gated_page(source, walk, vec![read], columns)
+    gated_page(source, walk, GatedReads::after_walks(vec![read]), columns)
 }
 
 #[cfg(test)]

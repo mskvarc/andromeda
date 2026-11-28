@@ -6,26 +6,36 @@
 //! index drives. The candidates read each arm on its own instead, as one
 //! branch of a `UNION ALL`: a typed field through the partial B-tree over it,
 //! keyed by the attribute and the value, and the structured value through the
-//! containment keys of `idx_ca_value_object`, which the arm rechecks.
+//! containment keys of `idx_ca_value_object`, which the arm rechecks. Its
+//! index entries are each typed field's equality on its columns alone, beside
+//! the structured arm.
 
 use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         equality_term::{EqualityArms, equality_arms},
         instance_row::InstanceRow,
-        keyed_branches::{branch, union_of},
+        keyed_branches::{BoundedCandidates, branch, entries_of, entry, union_of},
     },
 };
 use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
 use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
-use sea_query::{Condition, SelectStatement};
+use sea_query::Condition;
 
 /// `SELECT "entity_key"` over the rows of `attribute` whose own value equals
-/// `operand`, one branch per arm of the equality.
-pub(crate) fn value_equality_candidates(attribute: AttributeNameKey, operand: &Operand, rows: &EntityRowRefs) -> Option<SelectStatement> {
-    let EqualityArms { fields, structured } = equality_arms(operand, InstanceRow::Current);
+/// `operand`, one branch per arm of the equality, and the index entries that
+/// bound them.
+pub(crate) fn value_equality_candidates(attribute: AttributeNameKey, operand: &Operand, rows: &EntityRowRefs) -> Option<BoundedCandidates> {
+    let EqualityArms { fields, keys, structured } = equality_arms(operand, InstanceRow::Current);
+    let entries = keys
+        .into_iter()
+        .map(|key| entry(rows, attribute, None, Condition::all().add(key)))
+        .chain([entry(rows, attribute, None, structured.clone())]);
     let fields = fields.into_iter().map(|field| branch(rows, attribute, None, Condition::all().add(field)));
-    union_of(fields.chain([branch(rows, attribute, None, structured)]))
+    Some(BoundedCandidates {
+        candidates: union_of(fields.chain([branch(rows, attribute, None, structured)]))?,
+        entries: entries_of(entries)?,
+    })
 }
 
 #[cfg(test)]

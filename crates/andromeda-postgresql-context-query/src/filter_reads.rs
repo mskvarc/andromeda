@@ -243,14 +243,16 @@ mod tests {
         &rest[..rest.find(" AS  MATERIALIZED (").unwrap_or(rest.len())]
     }
 
-    /// The scope matches are read first, their branch filtered by `q` and
-    /// rechecking `scopeQ`; the keyed read opens only past their bound, and
-    /// the full walk past both.
+    /// After the walks the scope matches are read first, their branch
+    /// filtered by `q` and rechecking `scopeQ`; the keyed read after the walks
+    /// opens only past their bound, and the full walk past both. The keyed
+    /// term's index entries are counted before the walks.
     #[test]
     fn a_keyed_page_beside_a_scope_query_reads_its_matches_before_the_terms() {
         let query = scoped(filtered(sensors(), STATUS_FAILS), "/Rare/Fifty");
         let built = page(&query, &names(), CountPolicy::Omit);
         let sql = built.select.to_string(PostgresQueryBuilder);
+        assert!(cte(&sql, "entries").contains("\"current_attributes\""), "{sql}");
         assert!(cte(&sql, "candidates").contains("\"scope_paths\" ~"), "{sql}");
         assert!(cte(&sql, "candidates_2").contains("\"current_attributes\""), "{sql}");
         assert_statement_snapshot!(
@@ -260,7 +262,8 @@ mod tests {
     }
 
     /// The census counts 50 instances of `calibration`, so its carriers are
-    /// all read and answer: no keyed read follows them.
+    /// all read after the walks and answer, and no keyed read follows them.
+    /// The keyed term's index entries are counted before the walks.
     #[test]
     fn a_keyed_page_beside_attrs_the_census_bounds_reads_their_carriers_alone() {
         let query = carrying(filtered(sensors(), STATUS_FAILS), &["calibration"]);
@@ -341,6 +344,7 @@ mod tests {
         let query = scoped(filtered(sensors_within_square(), STATUS_FAILS), "/Rare/Fifty");
         let built = page(&query, &names(), CountPolicy::Omit);
         let sql = built.select.to_string(PostgresQueryBuilder);
+        assert!(cte(&sql, "entries").contains("\"current_attributes\""), "{sql}");
         assert!(cte(&sql, "candidates").contains("\"location\""), "{sql}");
         assert!(cte(&sql, "candidates_2").contains("\"scope_paths\" ~"), "{sql}");
         assert!(cte(&sql, "candidates_3").contains("\"current_attributes\""), "{sql}");
@@ -366,14 +370,15 @@ mod tests {
     }
 
     /// Clause 6.3.13: the scope branch reads every match within its bound
-    /// before it cuts the window, as the keyed branch reads its candidates,
-    /// so both carry the total.
+    /// before it cuts the window, as the keyed branches read their
+    /// candidates, so the leading keyed read, the scope read and the trailing
+    /// keyed read each carry the total.
     #[test]
     fn a_counted_keyed_page_beside_a_scope_query_carries_its_total_on_every_index_branch() {
         let query = scoped(filtered(sensors(), STATUS_FAILS), "/Rare/Fifty");
         let built = page(&query, &names(), CountPolicy::Emit);
         assert!(matches!(built.total, EntityTotal::OnPageRows { .. }), "a first page carries the total it can");
-        assert_eq!(built.select.to_string(PostgresQueryBuilder).matches("COUNT(*) OVER ()").count(), 2);
+        assert_eq!(built.select.to_string(PostgresQueryBuilder).matches("COUNT(*) OVER ()").count(), 3);
     }
 
     /// The census keys `counted_attributes` names for the uncounted first

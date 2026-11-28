@@ -93,6 +93,17 @@ pub fn typed_field_conditions(operand: &Operand, comparator: Comparator, row: In
         .collect()
 }
 
+/// The arms of [`typed_field_conditions`] on their fields alone, without the
+/// value kind a field holding several data types is read beside.
+///
+/// Every row an arm keeps passes its key, and a key tests nothing but the
+/// columns the partial B-tree over its field keys, so an index-only scan
+/// counts the rows it keeps without visiting the heap.
+#[must_use]
+pub fn typed_field_keys(operand: &Operand, comparator: Comparator, row: InstanceRow) -> Vec<SimpleExpr> {
+    field_arms(operand, comparator).iter().map(|arm| arm.keyed(operand, comparator, row)).collect()
+}
+
 /// `compared`, a test of a String one of `row`'s String columns holds, read
 /// for the String kind alone where that field also holds kinds of another data
 /// type: a `Date` and a `Time` share it, and clause 4.9 makes no target of
@@ -177,28 +188,34 @@ fn field_arms(operand: &Operand, comparator: Comparator) -> Vec<FieldArm> {
 }
 
 impl FieldArm {
-    /// The comparison of `operand` by `comparator` on this field of `row`.
+    /// The comparison of `operand` by `comparator` on this field of `row`,
+    /// read beside the value kind the field tells apart.
+    fn condition(&self, operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
+        let compared = self.keyed(operand, comparator, row);
+        match self.told_apart {
+            Some(kind) => compared.and(row.value_kind_is(kind)),
+            None => compared,
+        }
+    }
+
+    /// The comparison of `operand` by `comparator` on this field of `row`
+    /// alone.
     ///
     /// The numbers beyond the decimals the field holds are answered as the
     /// reading orders them, where the comparison on the column answers them
     /// otherwise ([`beyond_decimals`]).
-    fn condition(&self, operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
+    fn keyed(&self, operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
         let Some(kind) = self.compared_kind(operand, comparator) else {
             return false_literal();
         };
         let compared = field_comparison(operand, comparator, self.field, kind, row);
-        let compared = self
-            .kinds
+        self.kinds
             .iter()
             .flat_map(|kind| stored_target_kinds(*kind))
             .filter_map(|target| target.non_finite())
             .fold(compared, |compared, value| {
                 beyond_decimals(compared, value, comparator, operand, row.value(ValueColumn::Field(self.field)))
-            });
-        match self.told_apart {
-            Some(kind) => compared.and(row.value_kind_is(kind)),
-            None => compared,
-        }
+            })
     }
 
     /// The target kind the field is compared with `operand` as: the first of

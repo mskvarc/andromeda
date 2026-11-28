@@ -54,6 +54,10 @@ pub enum GatedStep {
     Candidates = 2,
     /// More candidates qualified and the selection was walked.
     FullWalk = 3,
+    /// The short walk fell short and the walk on past it filled the page:
+    /// the matches are sparser where the selection starts than a short walk
+    /// fills a page from.
+    ContinuedWalk = 4,
 }
 
 /// Whether a page's rows name the step of a gated page that answered it.

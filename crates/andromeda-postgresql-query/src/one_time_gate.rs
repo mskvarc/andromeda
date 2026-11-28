@@ -40,10 +40,39 @@ impl Candidates {
     /// The CTE's name.
     #[must_use]
     pub fn iden(self) -> Alias {
-        match self.0.get() {
-            1 => Alias::new("candidates"),
-            ordinal => Alias::new(format!("candidates_{ordinal}")),
-        }
+        ordinal_name("candidates", self.0)
+    }
+}
+
+/// The CTE holding the index entries one leading read counts, up to one more
+/// than the short walk's length.
+///
+/// A statement names each leading read by its place in the order it tries
+/// them, the first `entries` and every later one `entries_<n>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexEntries(NonZeroUsize);
+
+impl IndexEntries {
+    /// The entries of the leading read at `position` in the order a statement
+    /// tries them, the first at 0.
+    #[must_use]
+    pub const fn at(position: usize) -> IndexEntries {
+        IndexEntries(NonZeroUsize::MIN.saturating_add(position))
+    }
+
+    /// The CTE's name.
+    #[must_use]
+    pub fn iden(self) -> Alias {
+        ordinal_name("entries", self.0)
+    }
+}
+
+/// `<stem>` for the first of a statement's CTEs of one kind, `<stem>_<n>` for
+/// the n-th.
+fn ordinal_name(stem: &str, ordinal: NonZeroUsize) -> Alias {
+    match ordinal.get() {
+        1 => Alias::new(stem),
+        ordinal => Alias::new(format!("{stem}_{ordinal}")),
     }
 }
 
@@ -53,6 +82,13 @@ impl Candidates {
 #[derive(Iden, Clone, Copy)]
 #[iden = "short_walk"]
 pub struct ShortWalkMatches;
+
+/// The CTE holding what a gated page's walks kept once the short walk fell
+/// short, the short walk's matches and then those of a bounded walk on past
+/// it, at most as many together as the page needs.
+#[derive(Iden, Clone, Copy)]
+#[iden = "continued_walk"]
+pub struct ContinuedWalkMatches;
 
 /// The most candidates a count reads before it walks the selection instead.
 ///
@@ -190,7 +226,7 @@ impl CandidateBound {
 
 #[cfg(test)]
 mod tests {
-    use crate::one_time_gate::{Candidates, beyond, bounded, column_of, narrowed_to, within};
+    use crate::one_time_gate::{Candidates, IndexEntries, beyond, bounded, column_of, narrowed_to, within};
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
@@ -229,6 +265,14 @@ mod tests {
             ["candidates", "candidates_2", "candidates_3"]
         );
         assert_eq!(Candidates::at(0), Candidates::FIRST);
+    }
+
+    #[test]
+    fn each_leading_read_has_its_own_entries() {
+        assert_eq!(
+            [0, 1].map(|position| IndexEntries::at(position).iden().unquoted().to_owned()),
+            ["entries", "entries_2"]
+        );
     }
 
     #[test]

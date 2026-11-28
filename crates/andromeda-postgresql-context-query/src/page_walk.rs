@@ -1,7 +1,14 @@
 //! The walks of a gated page: the selection read in page order, each Entity
 //! it yields tested and probed on its own.
 //!
-//! Both walks read the selection as a subquery in page order and probe each
+//! The short walk visits the first Entities of the selection, the continued
+//! walk the next ones when the short walk's matches project the page full
+//! within them, and the full walk every Entity. The continued walk skips what
+//! the short walk visited through the `OFFSET` of its selection, which reads
+//! the skipped Entities without probing them, and hands on the short walk's
+//! matches with its own.
+//!
+//! Every walk reads the selection as a subquery in page order and probes each
 //! Entity it yields in a lateral subquery behind `OFFSET 0`, which the
 //! planner can neither merge into the walk nor turn into a join. Probed as a
 //! filter of the walk, a term the planner prices as rare becomes a hash of
@@ -44,10 +51,15 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
-use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, error::RenderError};
+use andromeda_postgresql_query::{
+    entity_row_refs::EntityRowRefs,
+    error::RenderError,
+    one_time_gate::{ShortWalkMatches, count_of, wrapped},
+    sort_key::KeyOrder,
+};
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::literal::int_literal;
-use sea_query::{Asterisk, Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// The name the short walk reads the Entities it probes under.
 #[derive(Iden, Clone, Copy)]
@@ -87,6 +99,10 @@ pub(crate) struct PageWalk<'a> {
     pub(crate) probe: Condition,
     /// How many Entities the short walk visits.
     pub(crate) short: u32,
+    /// How many Entities past the short walk the continued walk visits, when
+    /// the short walk's matches project the page full within them; `None`
+    /// when the page never walks on.
+    pub(crate) continued: Option<u32>,
 }
 
 /// The short walk: the first `walk.short` Entities of the selection in page
@@ -98,24 +114,109 @@ pub(crate) struct PageWalk<'a> {
 /// they keep. A walk shorter than `need` cannot fill the page, so it visits
 /// none.
 pub(crate) fn short_walk(walk: &PageWalk<'_>, window: &PageWindow, need: u64) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-    let length = if need > u64::from(walk.short) { 0 } else { walk.short };
-    let (mut matches, read_order) = walked_in_order(&walk.source, walk.walked.clone(), walk.probe.clone(), Vec::new(), window, Some(length))?;
+    let (mut matches, read_order) = walked_in_order(
+        &walk.source,
+        walk.walked.clone(),
+        walk.probe.clone(),
+        Vec::new(),
+        window,
+        WalkSpan::First(short_length(walk, need)),
+    )?;
     matches.select.limit(need);
     Ok((matches, read_order))
+}
+
+/// The continued walk over the short walk's matches ([`ShortWalkMatches`]),
+/// which holds those matches and then the Entities among the next
+/// `walk.continued` of the selection in page order that the filters and the
+/// probe keep, at most `need` together, ordered as `order` orders the page.
+/// `None` when the page never walks on, its short walk visits no Entity, or
+/// no number of the short walk's matches short of `need` projects the page
+/// full.
+///
+/// The walk on runs only when the short walk fell short of `need` with
+/// matches enough to project the page full within the continued walk
+/// ([`projecting_matches`]). It needs the matches the short walk lacks, which
+/// the `LIMIT` of the whole stops it at when PostgreSQL merges the two walks
+/// in page order, and never more than the gate leaves the short walk
+/// lacking.
+pub(crate) fn continued_walk(walk: &PageWalk<'_>, window: &PageWindow, need: u64, order: &[(Alias, KeyOrder)]) -> Result<Option<SelectStatement>, RenderError> {
+    let Some(continued) = walk.continued else {
+        return Ok(None);
+    };
+    let short = short_length(walk, need);
+    let Some(least) = projecting_matches(short, continued, need) else {
+        return Ok(None);
+    };
+    let gates = vec![count_of(ShortWalkMatches).lt(need), count_of(ShortWalkMatches).gte(least)];
+    let span = WalkSpan::Past {
+        skipped: short,
+        visited: continued,
+    };
+    let (on, _) = walked_in_order(&walk.source, walk.walked.clone(), walk.probe.clone(), gates, window, span)?;
+    let mut on = on.select;
+    on.limit(need - least);
+    let mut walks = Query::select();
+    walks.column(Asterisk).from(ShortWalkMatches).union(UnionType::All, wrapped(on, "walked_on"));
+    let mut matches = wrapped(walks.take(), "walks");
+    for (column, key_order) in order {
+        key_order.order_by(&mut matches, Expr::col(column.clone()));
+    }
+    matches.limit(need);
+    Ok(Some(matches))
+}
+
+/// The fewest matches a short walk of `short` Entities keeps that project a
+/// page needing `need` full within the `continued` Entities past it, `None`
+/// when no number of them short of `need` does.
+///
+/// Matches found at the short walk's rate fill the page after `need * short /
+/// matches` Entities, so the projection stays within both walks from `need *
+/// short / (short + continued)` matches on, rounded up.
+fn projecting_matches(short: u32, continued: u32, need: u64) -> Option<u64> {
+    let visited = u64::from(short) + u64::from(continued);
+    if short == 0 || visited == 0 {
+        return None;
+    }
+    let least = (need * u64::from(short)).div_ceil(visited);
+    (least < need).then_some(least)
+}
+
+/// How many Entities the short walk of `walk` visits for a page needing
+/// `need`, none when it is shorter than `need`, since it cannot fill the page.
+fn short_length(walk: &PageWalk<'_>, need: u64) -> u32 {
+    if need > u64::from(walk.short) { 0 } else { walk.short }
 }
 
 /// The full walk: every Entity of the selection in page order the filters
 /// and the probe keep, cut to `window`, behind the gates `fell_short` of
 /// every earlier step.
 pub(crate) fn full_walk(walk: PageWalk<'_>, window: &PageWindow, fell_short: Vec<SimpleExpr>) -> Result<SelectStatement, RenderError> {
-    let (matches, _) = walked_in_order(&walk.source, walk.walked, walk.probe, fell_short, window, None)?;
+    let (matches, _) = walked_in_order(&walk.source, walk.walked, walk.probe, fell_short, window, WalkSpan::Every)?;
     let mut matches = matches.select;
     cut(&mut matches, window);
     Ok(matches)
 }
 
+/// Which Entities of the selection a walk visits, in page order from where
+/// the window starts.
+#[derive(Clone, Copy)]
+enum WalkSpan {
+    /// The first this many.
+    First(u32),
+    /// `visited` of them past the first `skipped`.
+    Past {
+        /// How many the walk passes over unprobed.
+        skipped: u32,
+        /// How many it visits after them.
+        visited: u32,
+    },
+    /// Every one.
+    Every,
+}
+
 /// The selection `walked` reads, in page order from where `window` starts,
-/// `length` Entities of it or every one, each it yields kept when the rest of
+/// the Entities of it `span` names, each it yields kept when the rest of
 /// `walked` and `probe` hold over [`walked_rows`], ordered as the page is,
 /// behind `gates`.
 ///
@@ -133,25 +234,25 @@ fn walked_in_order(
     probe: Condition,
     gates: Vec<SimpleExpr>,
     window: &PageWindow,
-    length: Option<u32>,
+    span: WalkSpan,
 ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let start = match &window.start {
         PageStart::Offset(_) => PageStart::Offset(0),
         PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
     };
+    let limit = match span {
+        WalkSpan::First(length) | WalkSpan::Past { visited: length, .. } => length,
+        WalkSpan::Every => 0,
+    };
     let EntityConditions { selection: selectors, tested } = walked;
-    let (selection, read_order) = source.page_through(
-        source.relations.walked(source.query),
-        all_of(selectors),
-        &PageWindow {
-            limit: length.unwrap_or(0),
-            start,
-        },
-    )?;
+    let (selection, read_order) = source.page_through(source.relations.walked(source.query), all_of(selectors), &PageWindow { limit, start })?;
     let ProjectedPage { select: mut selection, order } = selection;
-    match length {
-        Some(_) => {}
-        None => {
+    match span {
+        WalkSpan::First(_) => {}
+        WalkSpan::Past { skipped, .. } => {
+            selection.offset(u64::from(skipped));
+        }
+        WalkSpan::Every => {
             selection.reset_limit().offset(0);
         }
     }
@@ -197,4 +298,27 @@ fn searched(walked: &EntityRowRefs, condition: Condition) -> SelectStatement {
         )
         .offset(0);
     fence.take()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::page_walk::projecting_matches;
+    use pretty_assertions::assert_eq;
+
+    /// Matches at the short walk's rate fill the page within both walks from
+    /// `need * 1 000 / 5 000` of them, rounded up, and 101 / 5 is 20.2.
+    #[test]
+    fn the_short_walk_projects_the_page_full_from_the_rounded_up_rate() {
+        assert_eq!(projecting_matches(1000, 4000, 101), Some(21));
+        assert_eq!(projecting_matches(1000, 4000, 21), Some(5));
+    }
+
+    /// A page needing one match is filled by the short walk's first, and a
+    /// short walk visiting no Entity measures nothing.
+    #[test]
+    fn no_count_short_of_the_need_projects_a_page_of_one_or_a_walk_of_none() {
+        assert_eq!(projecting_matches(1000, 4000, 1), None);
+        assert_eq!(projecting_matches(1000, 4000, 0), None);
+        assert_eq!(projecting_matches(0, 4000, 101), None);
+    }
 }

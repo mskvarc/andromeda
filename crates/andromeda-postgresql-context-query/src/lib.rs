@@ -19,6 +19,7 @@ pub mod filter_reads;
 #[cfg(test)]
 mod fixed_instant_tests;
 mod gated_page;
+mod gated_steps;
 mod geo_page;
 #[cfg(test)]
 mod geo_page_fixtures;

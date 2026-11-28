@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_query::filter::{
     target_language::LanguageSelector,
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
-use sea_query::Condition;
+use sea_query::{Condition, Expr};
 
 /// Compile the reading of a `q` filter into a sea-query [`Condition`].
 ///
@@ -79,6 +79,31 @@ pub fn compile_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNa
 #[must_use]
 pub fn compile_except(reading: &FilterReading, answered: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
     ResolvedFilter::of(reading, names).map_or_else(unsatisfiable, |resolved| compile_resolved(&resolved, scan, Some(answered)))
+}
+
+/// [`compile`], with `first` (a term of the reading's top-level conjunction)
+/// tested before every other conjunct, which is tested only when `first`
+/// holds.
+///
+/// PostgreSQL orders the conditions of a conjunction by their estimated cost,
+/// so `first` leads a `CASE`, whose order it keeps. A walk that probes the
+/// term an index answers first rejects on one probe each Entity the term does
+/// not hold. Left to PostgreSQL's order, a walk of the first 1 000 stop times
+/// of a type for `hasStop==X;departureTime>="07:00:00";departureTime<"08:00:00"`
+/// tests 913 of them for the second term and 92 for the third before
+/// `hasStop` rejects every one, at 8.5 µs an Entity.
+#[must_use]
+pub fn compile_led_by(reading: &FilterReading, first: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    let Some(resolved) = ResolvedFilter::of(reading, names) else {
+        return unsatisfiable();
+    };
+    let rest = compile_resolved(&resolved, scan, Some(first));
+    let first = compile_term(first, scan, names);
+    if rest.is_empty() {
+        return first;
+    }
+    let led: Expr = Expr::case(first, rest).finally(false_literal()).into();
+    Condition::from(led)
 }
 
 /// Compile `filter`, leaving out the conjuncts equal to `answered`.
@@ -235,7 +260,7 @@ mod tests {
         q_predicate::{
             instance_scan::InstanceScan,
             lowered_filter::{reading_of, term_of},
-            projection::{compile, compile_except},
+            projection::{compile, compile_except, compile_led_by},
         },
         query_names::QueryNames,
     };
@@ -1232,6 +1257,29 @@ mod tests {
             assert_statement_snapshot!(
                 format!("projection-compile-except-leaves-out-every-conjunct-equal-to-the-answered-term-{}", index + 1),
                 select_where(compile_except(&reading_of(q), &answered, &scan, &names()))
+            );
+        }
+    }
+
+    /// The leading term is tested first, the rest of the conjunction only when
+    /// it holds, including a disjunction the rest holds; a filter of the term
+    /// alone is the term.
+    #[test]
+    fn a_led_conjunction_tests_its_leading_term_before_the_rest() {
+        let rows = EntityRowRefs::unaliased(None);
+        let scan = InstanceScan::Walked(&rows);
+        let first = term_of("\"https://example.com/a\"==1");
+        for (index, q) in [
+            "\"https://example.com/b\">2;\"https://example.com/a\"==1;\"https://example.com/c\"<3",
+            "\"https://example.com/a\"==1;(\"https://example.com/b\"==2|\"https://example.com/c\"==3)",
+            "\"https://example.com/a\"==1",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("projection-a-led-conjunction-tests-its-leading-term-before-the-rest-{}", index + 1),
+                select_where(compile_led_by(&reading_of(q), &first, &scan, &names()))
             );
         }
     }

@@ -6,7 +6,7 @@ use crate::q_predicate::{
     language_map::{LanguageMap, LanguageSelection},
     language_term::some_string_ordered,
     own_value_arms::OwnValueArms,
-    typed_column::typed_column_condition,
+    typed_column::{typed_column_condition, typed_field_keys},
 };
 use andromeda_ngsi_ld_query::filter::reading::{
     comparator::Comparator,
@@ -36,6 +36,7 @@ pub(crate) fn ordering_arms(relation: OrderRelation, operand: &Operand, row: Ins
         .then(|| some_string_ordered(&LanguageMap::of_instance(row), LanguageSelection::AnyLanguage, relation, operand));
     OwnValueArms {
         typed: Condition::all().add(typed_column_condition(operand, Comparator::Ordered(relation), row)),
+        keys: typed_field_keys(operand, Comparator::Ordered(relation), row),
         language,
     }
 }

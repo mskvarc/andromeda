@@ -8,7 +8,7 @@ use crate::q_predicate::{
     language_term::some_string_in_range,
     own_value_arms::OwnValueArms,
     structured_target::carries_operand,
-    typed_column::{typed_column_condition, typed_field_conditions},
+    typed_column::{typed_column_condition, typed_field_conditions, typed_field_keys},
     value_column::ValueColumn,
 };
 use andromeda_ngsi_ld_query::filter::reading::{
@@ -66,6 +66,10 @@ fn carries_any_target_value(operand: &Operand, row: InstanceRow) -> Condition {
 pub struct EqualityArms {
     /// The equality on each typed field, one field each.
     pub fields: Vec<SimpleExpr>,
+    /// The equality on each typed field's columns alone
+    /// ([`typed_field_keys`]), one field each, which every row `fields` keeps
+    /// passes.
+    pub keys: Vec<SimpleExpr>,
     /// The operand carried as the target value of a structured value.
     pub structured: Condition,
 }
@@ -86,6 +90,7 @@ pub(crate) fn equality_arms(operand: &Operand, row: InstanceRow) -> EqualityArms
     let column: SimpleExpr = row.value(ValueColumn::Field(ValueField::Object));
     EqualityArms {
         fields: typed_field_conditions(operand, Comparator::Equal, row),
+        keys: typed_field_keys(operand, Comparator::Equal, row),
         structured: carries_operand(&column, &row.value_type_key(), &row.attribute_family(), operand),
     }
 }
@@ -111,10 +116,17 @@ pub(crate) fn range_arms(interval: &Interval, row: InstanceRow) -> OwnValueArms 
         .min()
         .compares_with(TargetKind::String, Comparison::Order)
         .then(|| some_string_in_range(&LanguageMap::of_instance(row), LanguageSelection::AnyLanguage, interval));
+    let lower = Comparator::Ordered(OrderRelation::GreaterOrEqual);
+    let upper = Comparator::Ordered(OrderRelation::LessOrEqual);
     OwnValueArms {
         typed: Condition::all()
-            .add(typed_column_condition(interval.min(), Comparator::Ordered(OrderRelation::GreaterOrEqual), row))
-            .add(typed_column_condition(interval.max(), Comparator::Ordered(OrderRelation::LessOrEqual), row)),
+            .add(typed_column_condition(interval.min(), lower, row))
+            .add(typed_column_condition(interval.max(), upper, row)),
+        keys: typed_field_keys(interval.min(), lower, row)
+            .into_iter()
+            .zip(typed_field_keys(interval.max(), upper, row))
+            .map(|(min, max)| min.and(max))
+            .collect(),
         language,
     }
 }

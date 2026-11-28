@@ -34,6 +34,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     one_time_gate::CandidateBound,
     q_predicate::{
+        keyed_branches::BoundedCandidates,
         keyed_existence::existence_candidates,
         keyed_hop::hop_candidates,
         keyed_ordering::ordering_candidates,
@@ -86,6 +87,12 @@ pub struct KeyedCandidates<'q> {
     pub select: SelectStatement,
     /// How one candidate is read.
     pub read: CandidateRead,
+    /// `SELECT * …` over the index entries that bound the candidates from
+    /// above, each counted by an index-only scan. They are the rows an
+    /// equality on an own value or an ordering keeps, read through each typed
+    /// field's B-tree on its columns alone. `None` for a read a GIN gathers or
+    /// a hop joins, which no bound stops early.
+    pub entries: Option<SelectStatement>,
     /// What the census says of how many candidates the read finds.
     pub census: CensusCount,
 }
@@ -189,12 +196,13 @@ fn keyable_conjuncts<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names
     conjuncts
         .iter()
         .filter_map(|conjunct| match conjunct {
-            ResolvedFilter::Term(term) => candidates_of(term, rows).map(|(select, read)| {
+            ResolvedFilter::Term(term) => candidates_of(term, rows).map(|TermRead { select, read, entries }| {
                 (
                     KeyedCandidates {
                         term: term.term(),
                         select,
                         read,
+                        entries,
                         census: CensusCount::Unbounded,
                     },
                     term.carrier(),
@@ -205,18 +213,35 @@ fn keyable_conjuncts<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names
         .collect()
 }
 
-/// The candidate statement of one term and what reading it costs, `None`
-/// when no index answers it.
+/// What the index path reads for one term.
+struct TermRead {
+    /// Every candidate.
+    select: SelectStatement,
+    /// How one candidate is read.
+    read: CandidateRead,
+    /// The index entries bounding the candidates, for a read a B-tree yields.
+    entries: Option<SelectStatement>,
+}
+
+/// The candidate statement of one term, what reading it costs and the index
+/// entries that bound it, `None` when no index answers it.
 ///
 /// A hop is read inward, whatever its inner term compares. A complement
 /// (`!=`, `!~=`) never narrows: an Entity holds when none of its values pass
 /// the test, which no index of passing values can enumerate.
-fn candidates_of(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> Option<(SelectStatement, CandidateRead)> {
-    let rechecked = |select| (select, CandidateRead::Rechecked);
-    let ranged = |select| (select, CandidateRead::Ranged);
-    let probed = |select| (select, CandidateRead::Probed);
+fn candidates_of(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> Option<TermRead> {
+    let read = |read| move |select| TermRead { select, read, entries: None };
+    let bounded = |read| {
+        move |BoundedCandidates { candidates, entries }| TermRead {
+            select: candidates,
+            read,
+            entries: Some(entries),
+        }
+    };
+    let rechecked = read(CandidateRead::Rechecked);
+    let probed = read(CandidateRead::Probed);
     if !term.hops().is_empty() {
-        return hop_candidates(term, rows).map(|select| (select, CandidateRead::Linked));
+        return hop_candidates(term, rows).map(read(CandidateRead::Linked));
     }
     let value = match term.term().test() {
         Test::Exists => return Some(probed(existence_candidates(own_value_attribute(term)?, rows))),
@@ -225,14 +250,13 @@ fn candidates_of(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> Option<(Selec
     match (value.test(), value.polarity()) {
         (ScalarTest::EqualsAny(operands), Polarity::Asserted) => match operands.as_slice() {
             [operand] => match own_value_attribute(term) {
-                Some(attribute) => value_equality_candidates(attribute, operand, rows),
-                None => equality_candidates(term, operand, rows),
-            }
-            .map(rechecked),
+                Some(attribute) => value_equality_candidates(attribute, operand, rows).map(bounded(CandidateRead::Rechecked)),
+                None => equality_candidates(term, operand, rows).map(rechecked),
+            },
             [] | [_, _, ..] => None,
         },
         (ScalarTest::Ordered { .. } | ScalarTest::Within(_), Polarity::Asserted) => {
-            ordering_candidates(own_value_attribute(term)?, value.test(), rows).map(ranged)
+            ordering_candidates(own_value_attribute(term)?, value.test(), rows).map(bounded(CandidateRead::Ranged))
         }
         (ScalarTest::Matches(pattern), Polarity::Asserted) => pattern_candidates(own_value_attribute(term)?, pattern, rows).map(rechecked),
         (ScalarTest::Unsatisfiable, Polarity::Asserted)
@@ -320,6 +344,36 @@ mod tests {
             ("\"https://example.com/count\"==1..5", CandidateRead::Ranged),
         ] {
             assert_eq!(read(q), Some(expected), "{q}");
+        }
+    }
+
+    /// An own-value equality and an ordering have index entries, each typed
+    /// field counted on its columns alone; a GIN read and a hop have none.
+    #[test]
+    fn only_an_own_value_equality_or_an_ordering_has_index_entries() {
+        let entries = |q: &str| {
+            keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole)
+                .into_iter()
+                .next()
+                .and_then(|keyed| keyed.entries)
+        };
+        for (index, q) in ["\"https://example.com/name\"==\"x\"", "\"https://example.com/count\"==1..5"]
+            .into_iter()
+            .enumerate()
+        {
+            let statement = entries(q).unwrap_or_else(|| panic!("entries: {q}"));
+            assert_statement_snapshot!(
+                format!("keyed-term-only-an-own-value-equality-or-an-ordering-has-index-entries-{}", index + 1),
+                statement
+            );
+        }
+        for q in [
+            "\"https://example.com/name\".\"https://example.com/source\"==\"sensor-43\"",
+            "\"https://example.com/name\"~=\"text-71.*\"",
+            "\"https://example.com/count\"",
+            "\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"",
+        ] {
+            assert!(entries(q).is_none(), "{q}");
         }
     }
 

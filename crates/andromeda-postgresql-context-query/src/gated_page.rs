@@ -8,13 +8,22 @@
 //! therefore tries each way in turn, and a gate on what the earlier ones found
 //! switches each later one off:
 //!
-//! 1. a short walk: the first Entities of the selection in page order, each
-//!    probed for the filter. A term most Entities pass fills the page here.
-//! 2. the index reads, one term after another: the candidates read up to one
-//!    past a bound, and the page cut from the selection narrowed to them when
-//!    they number at most the bound;
-//! 3. the full walk: the selection in page order, each Entity probed for the
-//!    filter, when every read found more candidates than its bound.
+//! 1. the leading reads, one term after another, each counting the index
+//!    entries that bound its candidates up to one past the short walk's
+//!    length and, when they number at most that length, cutting the page from
+//!    the selection narrowed to its candidates. A term so rare never pays a
+//!    walk;
+//! 2. a short walk of the first Entities of the selection in page order,
+//!    each probed for the filter. A term most Entities pass fills the page
+//!    here;
+//! 3. on a page that has one, a continued walk of the next Entities in page
+//!    order, when the short walk's matches project the page full within them;
+//! 4. the trailing reads, one term after another, each reading its
+//!    candidates up to one past a bound and cutting the page from the
+//!    selection narrowed to them when they number at most the bound;
+//! 5. the full walk of the selection in page order, each Entity probed for
+//!    the filter, when every trailing read found more candidates than its
+//!    bound.
 //!
 //! Each step is one branch of a `UNION ALL` behind a
 //! [`one_time_gate`](andromeda_postgresql_query::one_time_gate). Every branch cuts the same window
@@ -30,16 +39,17 @@
 //! A counted page's index branch carries the total (clause 6.3.13) as
 //! `COUNT(*) OVER ()`: it reads every candidate before it cuts the window,
 //! so the count costs no second read of them. The walks carry no total, the
-//! short walk having seen part of the selection and the full walk stopping
-//! once the page is cut. Each branch can also name itself on its rows
-//! ([`GatedStep`]), so the count run when the page carries no total knows
-//! what the page found.
+//! short and continued walks having seen part of the selection and the full
+//! walk stopping once the page is cut. Each branch can also name itself on
+//! its rows ([`GatedStep`]), so the count run when the page carries no total
+//! knows what the page found.
 
 use crate::{
     entity::{EntityConditions, GeoFilter, QFilter, build_entity_conditions, selection_conditions, tested_conditions, window_and_sort_keys},
-    entity_page::{GATED_STEP_COLUMN, GatedStep, ProjectedPage, StepColumn, TOTAL_COUNT_COLUMN, projected_page},
+    entity_page::{GatedStep, ProjectedPage, StepColumn, projected_page},
     entity_relations::EntityRelations,
-    page_walk::{PageWalk, full_walk, short_walk, walked_rows},
+    gated_steps::{GatedSteps, Total, named},
+    page_walk::{PageWalk, continued_walk, full_walk, short_walk, walked_rows},
 };
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -50,12 +60,10 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    one_time_gate::{CandidateBound, Candidates, ShortWalkMatches, beyond, column_of, count_of, materialized, narrowed_to, within, wrapped},
+    one_time_gate::{CandidateBound, ContinuedWalkMatches, IndexEntries, ShortWalkMatches, count_of, materialized, wrapped},
     query_names::QueryNames,
 };
-use andromeda_postgresql_schema::current::Entities;
-use andromeda_postgresql_seaquery::aggregate::count_over_all;
-use sea_query::{Alias, Asterisk, Condition, DynIden, Expr, ExprTrait, Query, SelectStatement, SimpleExpr, UnionType, Value, WithClause};
+use sea_query::{Condition, DynIden, ExprTrait, Query, SelectStatement, UnionType};
 
 /// The statement a page is cut from: its relations, in the branch they are
 /// read in, and the query and window it answers.
@@ -133,6 +141,38 @@ pub(crate) struct IndexRead {
     pub(crate) narrowed: Condition,
 }
 
+/// A read a gated page tries before its walks, which counts the index
+/// entries bounding a term's candidates up to one past the short walk's
+/// length.
+///
+/// Within that length the candidates number no more, and cutting the page
+/// from them probes no more Entities than the short walk would, so the page
+/// reads them and answers without walking. Past it the page walks, having
+/// read no candidate.
+pub(crate) struct LeadingRead {
+    /// The index entries bounding the candidates, unbounded, as `SELECT * …`.
+    pub(crate) entries: SelectStatement,
+    /// The candidates, unbounded, as `SELECT "entity_key" …`.
+    pub(crate) candidates: SelectStatement,
+    /// Every filter the candidates do not answer.
+    pub(crate) narrowed: Condition,
+}
+
+/// The index reads of a gated page, by where they stand beside its walks.
+pub(crate) struct GatedReads {
+    /// The reads tried before the walks, in turn.
+    pub(crate) leading: Vec<LeadingRead>,
+    /// The reads tried in turn once the walks fell short of the page.
+    pub(crate) trailing: Vec<IndexRead>,
+}
+
+impl GatedReads {
+    /// `trailing` alone, every read tried once the walks fell short.
+    pub(crate) const fn after_walks(trailing: Vec<IndexRead>) -> GatedReads {
+        GatedReads { leading: Vec::new(), trailing }
+    }
+}
+
 /// What a gated page's rows carry beside the Entity's key and sort keys.
 #[derive(Clone, Copy)]
 pub(crate) struct GatedColumns {
@@ -143,10 +183,11 @@ pub(crate) struct GatedColumns {
     pub(crate) step: StepColumn,
 }
 
-/// The projected page of `source` cut by the gated steps: the short walk of
-/// `walk`, each of `reads` in turn, and the full walk of `walk` when every
-/// read passed its bound. Returns the order its rows come back in, its rows
-/// carrying what `columns` asks for.
+/// The projected page of `source` cut by the gated steps, which are each of
+/// the leading `reads` in turn, the short walk of `walk` and its continued
+/// walk, each of the trailing `reads` in turn, and the full walk of `walk`
+/// when every trailing read passed its bound. Returns the order its rows come
+/// back in, its rows carrying what `columns` asks for.
 ///
 /// # Errors
 ///
@@ -155,92 +196,56 @@ pub(crate) struct GatedColumns {
 pub(crate) fn gated_page(
     source: &PageSource<'_>,
     walk: PageWalk<'_>,
-    reads: Vec<IndexRead>,
+    reads: GatedReads,
     columns: GatedColumns,
 ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
     let need = source.need();
     let (short, read_order) = short_walk(&walk, source.window, need)?;
     let ProjectedPage { select: short, order } = short;
-    let mut ctes = WithClause::new();
-    ctes.cte(materialized(short, ShortWalkMatches));
+    let continued = continued_walk(&walk, source.window, need, &order)?;
+    let mut steps = GatedSteps::new(source, columns);
+    let leading = reads
+        .leading
+        .into_iter()
+        .enumerate()
+        .map(|(position, read)| steps.leading(IndexEntries::at(position), read, u64::from(walk.short)))
+        .collect::<Result<Vec<SelectStatement>, RenderError>>()?;
 
-    let mut answered = Query::select();
-    answered.column(Asterisk);
-    named(&mut answered, columns, Total::Absent, GatedStep::ShortWalk);
-    answered.from(ShortWalkMatches).and_where(count_of(ShortWalkMatches).gte(need));
-    for (column, key_order) in &order {
-        key_order.order_by(&mut answered, Expr::col(column.clone()));
+    steps.ctes.cte(materialized(short, ShortWalkMatches));
+    let filled = vec![count_of(ShortWalkMatches).gte(need)];
+    let mut union = steps.walked(ShortWalkMatches, filled, &order, GatedStep::ShortWalk, "answered");
+    for branch in leading {
+        union.union(UnionType::All, branch);
     }
-    cut(&mut answered, source.window);
-    let mut union = wrapped(answered.take(), "answered");
-
-    // Each later step runs only when every earlier one fell short of the page.
-    let mut fell_short = vec![count_of(ShortWalkMatches).lt(need)];
-    let mut walks = true;
-    for (position, read) in reads.into_iter().enumerate() {
-        let cte = Candidates::at(position);
-        let candidates = narrowed_to(source.rows.entity_key_column(), column_of(cte.iden(), Entities::EntityKey));
-        let mut narrowed = fell_short.iter().cloned().fold(read.narrowed.add(candidates), Condition::add);
-        match read.bound {
-            CandidateBound::AtMost(bound) => {
-                narrowed = narrowed.add(within(cte.iden(), bound));
-                fell_short.push(beyond(cte.iden(), bound));
-            }
-            CandidateBound::Whole => walks = false,
+    match continued {
+        Some(continued) => {
+            steps.ctes.cte(materialized(continued, ContinuedWalkMatches));
+            let filled = vec![count_of(ShortWalkMatches).lt(need), count_of(ContinuedWalkMatches).gte(need)];
+            union.union(
+                UnionType::All,
+                steps.walked(ContinuedWalkMatches, filled, &order, GatedStep::ContinuedWalk, "continued"),
+            );
+            steps.fell_short.push(count_of(ContinuedWalkMatches).lt(need));
         }
-        let (indexed, _) = source.page(narrowed, source.window)?;
-        let mut indexed = indexed.select;
-        named(&mut indexed, columns, Total::Counted, GatedStep::Candidates);
-        union.union(UnionType::All, wrapped(indexed, "indexed"));
-        ctes.cte(materialized(read.bound.read(read.candidates), cte.iden()));
-        if !walks {
+        None => steps.fell_short.push(count_of(ShortWalkMatches).lt(need)),
+    }
+
+    let mut walks = true;
+    for read in reads.trailing {
+        let bound = read.bound;
+        union.union(UnionType::All, steps.indexed(read.candidates, read.narrowed, bound)?);
+        if bound == CandidateBound::Whole {
+            walks = false;
             break;
         }
     }
     if walks {
-        let mut walk = wrapped(full_walk(walk, source.window, fell_short)?, "walk");
+        let mut walk = wrapped(full_walk(walk, source.window, steps.fell_short)?, "walk");
         named(&mut walk, columns, Total::Absent, GatedStep::FullWalk);
         union.union(UnionType::All, walk);
     }
-    union.with_cte(ctes);
+    union.with_cte(steps.ctes);
     Ok((ProjectedPage { select: union.take(), order }, read_order))
-}
-
-/// Whether a gated branch's rows carry the total.
-#[derive(Clone, Copy)]
-enum Total {
-    /// The branch read every candidate, so it counts its rows before the
-    /// window cuts them.
-    Counted,
-    /// The branch saw part of the selection: a null `bigint`, so the union's
-    /// column takes the type of the index branches' count.
-    Absent,
-}
-
-/// Project on `branch` what `columns` asks the rows of a gated page to carry:
-/// the total as `total` says the branch can, and `step` as the step that
-/// answered.
-fn named(branch: &mut SelectStatement, columns: GatedColumns, total: Total, step: GatedStep) {
-    match (columns.total, total) {
-        (CountPolicy::Emit, Total::Counted) => {
-            branch.expr_as(count_over_all(), Alias::new(TOTAL_COUNT_COLUMN));
-        }
-        (CountPolicy::Emit, Total::Absent) => {
-            branch.expr_as(Expr::val(Value::BigInt(None)), Alias::new(TOTAL_COUNT_COLUMN));
-        }
-        (CountPolicy::Omit, Total::Counted | Total::Absent) => {}
-    }
-    match columns.step {
-        StepColumn::Named => {
-            branch.expr_as(step_value(step), Alias::new(GATED_STEP_COLUMN));
-        }
-        StepColumn::Unnamed => {}
-    }
-}
-
-/// The `smallint` a branch names itself by.
-fn step_value(step: GatedStep) -> SimpleExpr {
-    Expr::val(Value::SmallInt(Some(step as i16)))
 }
 
 /// Cut `select`, ordered as the page is, to `window`: past its offset, or

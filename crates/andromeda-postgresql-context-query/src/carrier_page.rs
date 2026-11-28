@@ -27,7 +27,7 @@ use crate::{
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
     filter_reads::search_keys,
-    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
+    gated_page::{GatedColumns, GatedReads, IndexRead, PageSource, gated_page},
     page_walk::{PageWalk, Walked},
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
@@ -112,6 +112,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
         walked: EntityConditions::default(),
         probe: Condition::all().add(Expr::exists(probe.take())),
         short: CARRIER_SHORT_WALK,
+        continued: None,
     };
     let read = IndexRead {
         candidates: carriers,
@@ -124,7 +125,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
         total: carried,
         step: StepColumn::Unnamed,
     };
-    gated_page(source, walk, vec![read], columns)
+    gated_page(source, walk, GatedReads::after_walks(vec![read]), columns)
 }
 
 #[cfg(test)]

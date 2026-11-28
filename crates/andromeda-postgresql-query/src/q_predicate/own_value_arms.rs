@@ -13,6 +13,11 @@ use sea_query::{Condition, SimpleExpr};
 pub struct OwnValueArms {
     /// The comparison against the typed column holding the operand's kind.
     pub typed: Condition,
+    /// The comparison against each typed field's columns alone, one field
+    /// each, without the value kind a field is read beside, which every row
+    /// `typed` keeps passes
+    /// ([`typed_field_keys`](crate::q_predicate::typed_column::typed_field_keys)).
+    pub keys: Vec<SimpleExpr>,
     /// The comparison against the strings of a `languageMap`, `None` for an
     /// operand no language string compares with (a number, a boolean or a time
     /// value).
@@ -44,6 +49,7 @@ mod tests {
     fn both_readings_are_disjoined() {
         let arms = OwnValueArms {
             typed: Condition::all().add(Expr::col(Alias::new("t")).gt(1)),
+            keys: vec![Expr::col(Alias::new("t")).gt(1)],
             language: Some(Expr::col(Alias::new("l")).gt(2)),
         };
         assert_statement_snapshot!("own-value-arms-both-readings-are-disjoined", render(arms));
@@ -53,6 +59,7 @@ mod tests {
     fn an_operand_no_string_compares_with_reads_the_typed_column_alone() {
         let arms = OwnValueArms {
             typed: Condition::all().add(Expr::col(Alias::new("t")).gt(1)),
+            keys: vec![Expr::col(Alias::new("t")).gt(1)],
             language: None,
         };
         assert_statement_snapshot!("own-value-arms-an-operand-no-string-compares-with-reads-the-typed-column-alone", render(arms));

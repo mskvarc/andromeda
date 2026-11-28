@@ -20,14 +20,14 @@ use crate::{
     q_predicate::{
         equality_term::range_arms,
         instance_row::InstanceRow,
-        keyed_branches::{branch, language_property_rows, union_of},
+        keyed_branches::{BoundedCandidates, branch, entries_of, entry, language_property_rows, union_of},
         ordering_term::ordering_arms,
         own_value_arms::OwnValueArms,
     },
 };
 use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, scalar_test::ScalarTest};
 use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
-use sea_query::{Condition, SelectStatement};
+use sea_query::Condition;
 
 /// Whether a value index orders an operand the way the term compares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,14 +47,15 @@ const fn operand_order(operand: &Operand) -> OperandOrder {
 }
 
 /// `SELECT "entity_key"` over the rows of `attribute` whose own value passes
-/// `test`, asserted; `None` unless `test` is an ordering or a range with
-/// indexed operands and the attribute was recorded.
+/// `test`, asserted, and the index entries that bound them; `None` unless
+/// `test` is an ordering or a range with indexed operands and the attribute
+/// was recorded.
 ///
 /// The bounds of a range are of one kind, so the lower one says how both
 /// are ordered. A range outside its bounds (`!=a..b`) is a complement, which
 /// never narrows: an Entity holds when its value lies outside, which an index
 /// of values inside cannot enumerate.
-pub(crate) fn ordering_candidates(attribute: AttributeNameKey, test: &ScalarTest, rows: &EntityRowRefs) -> Option<SelectStatement> {
+pub(crate) fn ordering_candidates(attribute: AttributeNameKey, test: &ScalarTest, rows: &EntityRowRefs) -> Option<BoundedCandidates> {
     let row = InstanceRow::Current;
     let (operand, arms) = match test {
         ScalarTest::Ordered { relation, operand } => (operand, ordering_arms(*relation, operand, row)),
@@ -65,10 +66,18 @@ pub(crate) fn ordering_candidates(attribute: AttributeNameKey, test: &ScalarTest
         OperandOrder::Indexed => {}
         OperandOrder::Unindexed => return None,
     }
-    let OwnValueArms { typed, language } = arms;
-    let typed = branch(rows, attribute, None, typed);
-    let language = language.map(|language| branch(rows, attribute, Some(language_property_rows()), Condition::all().add(language)));
-    union_of([typed].into_iter().chain(language))
+    let OwnValueArms { typed, keys, language } = arms;
+    let language_rows = |language| (Some(language_property_rows()), Condition::all().add(language));
+    let language_entry = language.clone().map(language_rows).map(|(held, test)| entry(rows, attribute, held, test));
+    let entries = keys
+        .into_iter()
+        .map(|key| entry(rows, attribute, None, Condition::all().add(key)))
+        .chain(language_entry);
+    let language = language.map(language_rows).map(|(held, test)| branch(rows, attribute, held, test));
+    Some(BoundedCandidates {
+        candidates: union_of([branch(rows, attribute, None, typed)].into_iter().chain(language))?,
+        entries: entries_of(entries)?,
+    })
 }
 
 #[cfg(test)]

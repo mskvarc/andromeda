@@ -52,7 +52,7 @@ use crate::{
     entity_page::ProjectedPage,
     entity_relations::EntityRelations,
     filter_reads::filter_read_before,
-    gated_page::{GatedColumns, IndexRead, PageSource, gated_page},
+    gated_page::{GatedColumns, GatedReads, IndexRead, PageSource, gated_page},
     page_shape::carried_on_rows,
     page_walk::{PageWalk, walked_rows},
 };
@@ -204,16 +204,21 @@ impl GeoWalk {
 }
 
 /// The probe of a walk of `source` that leaves `geo` to each Entity it
-/// yields: `q`, when given, and `geo`, each over [`walked_rows`].
+/// yields, `geo` over [`walked_rows`] beside `q`, the condition a `q`
+/// compiles to over them when the query has one.
 ///
 /// # Errors
 ///
 /// Fails as rendering the geo-query fails: a reference geometry with no EWKB
 /// spelling, or `georel=near` naming no distance.
-pub(crate) fn geo_probe(source: &PageSource<'_>, geo: &CompiledGeoQuery, q: Option<&CompiledFilter>) -> Result<Condition, RenderError> {
+pub(crate) fn geo_probe(source: &PageSource<'_>, geo: &CompiledGeoQuery, q: Option<Condition>) -> Result<Condition, RenderError> {
     let walked = walked_rows(source.rows);
-    let q = q.map(|q| compile(q.reading(), &InstanceScan::Walked(&walked), source.names));
     Ok(Condition::all().add_option(q).add(geo_sql::probe(geo, &walked, &source.names.attributes)?))
+}
+
+/// `q` over [`walked_rows`] of `source`, as a geo page's walks probe it.
+fn walked_q(source: &PageSource<'_>, q: &CompiledFilter) -> Condition {
+    compile(q.reading(), &InstanceScan::Walked(&walked_rows(source.rows)), source.names)
 }
 
 /// The read of a geo-query's `matches` for a page of `source`: at most
@@ -246,13 +251,14 @@ pub(crate) fn geo_page(source: &PageSource<'_>, matches: GeoMatches<'_>, columns
     let walk = PageWalk {
         source: walked_source,
         walked: walked_source.conditions(QFilter::Omitted, GeoFilter::Omitted)?,
-        probe: geo_probe(source, matches.geo, source.query.selection.q.as_ref())?,
+        probe: geo_probe(source, matches.geo, source.query.selection.q.as_ref().map(|q| walked_q(source, q)))?,
         short: GEO_SHORT_WALK,
+        continued: None,
     };
     let reads = once(geo_read(source, matches)?)
         .chain(filter_read_before(source, GeoFilter::Probed, Vec::new(), CensusCount::Unbounded)?)
         .collect();
-    gated_page(source, walk, reads, columns)
+    gated_page(source, walk, GatedReads::after_walks(reads), columns)
 }
 
 #[cfg(test)]

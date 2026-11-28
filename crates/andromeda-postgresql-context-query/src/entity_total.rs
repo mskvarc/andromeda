@@ -65,7 +65,10 @@ pub struct TotalCount {
 /// against 3 ms. A term whose few matches cluster at the start is walked too,
 /// at the cost the walk has without the candidates. A page cut by its full
 /// walk found more candidates than its bound, which passes the count's own
-/// bound whenever that is no larger.
+/// bound whenever that is no larger. A page its continued walk filled found
+/// the matches a few in a hundred, and its term can stay within the count's
+/// bound. Among 80 000 Vehicles `speed>107;status=="moving"` keeps 3.6%, and
+/// its 8 672 `speed` candidates count without walking the selection.
 pub struct WalkedCount {
     /// `SELECT COUNT(*)` over the selection under the whole filter.
     pub select: SelectStatement,
@@ -80,7 +83,7 @@ impl TotalCount {
     pub fn for_step(self, step: Option<GatedStep>) -> SelectStatement {
         match (step, self.walked) {
             (Some(step), Some(walked)) if walked.after.contains(&step) => walked.select,
-            (Some(GatedStep::ShortWalk | GatedStep::Candidates | GatedStep::FullWalk) | None, _) => self.count,
+            (Some(GatedStep::ShortWalk | GatedStep::Candidates | GatedStep::FullWalk | GatedStep::ContinuedWalk) | None, _) => self.count,
         }
     }
 }
@@ -257,7 +260,10 @@ mod tests {
 
     #[test]
     fn a_page_another_step_answered_or_an_empty_page_reads_the_candidates() {
-        for (index, step) in [Some(GatedStep::Candidates), Some(GatedStep::FullWalk), None].into_iter().enumerate() {
+        for (index, step) in [Some(GatedStep::Candidates), Some(GatedStep::FullWalk), None, Some(GatedStep::ContinuedWalk)]
+            .into_iter()
+            .enumerate()
+        {
             assert_statement_snapshot!(
                 format!("entity-total-a-page-another-step-answered-or-an-empty-page-reads-the-candidates-{}", index + 1),
                 gated(&[GatedStep::ShortWalk]).for_step(step)
@@ -334,7 +340,12 @@ mod tests {
 
     #[test]
     fn each_step_is_read_back_from_the_value_its_branch_names_itself_by() {
-        for (value, step) in [(1, GatedStep::ShortWalk), (2, GatedStep::Candidates), (3, GatedStep::FullWalk)] {
+        for (value, step) in [
+            (1, GatedStep::ShortWalk),
+            (2, GatedStep::Candidates),
+            (3, GatedStep::FullWalk),
+            (4, GatedStep::ContinuedWalk),
+        ] {
             assert_eq!(GatedStep::try_from(value).ok(), Some(step));
         }
         assert!(GatedStep::try_from(0_i16).is_err());

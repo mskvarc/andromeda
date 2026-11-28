@@ -1,0 +1,29 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_branches.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+    UNION ALL
+    (
+      SELECT
+        1
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $2
+        AND (
+          "ca"."attribute_kind" = (5)
+          AND "ca"."value_object" IS NOT NULL
+        )
+    )
+  ) AS "matches"
+1: Int 4
+2: Int 4

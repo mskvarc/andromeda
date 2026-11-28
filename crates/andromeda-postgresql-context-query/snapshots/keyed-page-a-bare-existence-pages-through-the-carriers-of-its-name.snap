@@ -57,6 +57,84 @@ FROM
       LIMIT
         100
     ),
+    "continued_walk" AS MATERIALIZED (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            *
+          FROM
+            "short_walk"
+          UNION ALL
+          (
+            SELECT
+              *
+            FROM
+              (
+                SELECT
+                  "walked".*
+                FROM
+                  (
+                    SELECT
+                      "entities"."entity_key",
+                      "entities"."id" AS "sort_0"
+                    FROM
+                      "entities"
+                    WHERE
+                      "entities"."created_at" IS NOT NULL
+                      AND (
+                        "entities"."expires_at" IS NULL
+                        OR "entities"."expires_at" > NOW()
+                      )
+                    ORDER BY
+                      "sort_0" ASC
+                    LIMIT
+                      4000 OFFSET 1000
+                  ) AS "walked"
+                  INNER JOIN LATERAL (
+                    SELECT
+                      1
+                    WHERE
+                      EXISTS (
+                        SELECT
+                          1
+                        FROM
+                          "current_attributes" AS "ca"
+                        WHERE
+                          "ca"."attribute_name_key" = $2
+                          AND (
+                            "ca"."expires_at" IS NULL
+                            OR "ca"."expires_at" > NOW()
+                          )
+                          AND "ca"."entity_key" = "walked"."entity_key"
+                      ) OFFSET 0
+                  ) AS "kept" ON TRUE
+                WHERE
+                  (
+                    SELECT
+                      COUNT(*)
+                    FROM
+                      "short_walk"
+                  ) < $3
+                  AND (
+                    SELECT
+                      COUNT(*)
+                    FROM
+                      "short_walk"
+                  ) >= $4
+                ORDER BY
+                  "walked"."sort_0" ASC
+                LIMIT
+                  80
+              ) AS "walked_on"
+          )
+        ) AS "walks"
+      ORDER BY
+        "sort_0" ASC
+      LIMIT
+        100
+    ),
     "candidates" AS MATERIALIZED (
       SELECT
         "entity_search"."entity_key"
@@ -72,7 +150,7 @@ FROM
           FROM
             "current_attributes" AS "ca"
           WHERE
-            "ca"."attribute_name_key" = $2
+            "ca"."attribute_name_key" = $5
             AND (
               "ca"."expires_at" IS NULL
               OR "ca"."expires_at" > NOW()
@@ -96,12 +174,41 @@ FROM
               COUNT(*)
             FROM
               "short_walk"
-          ) >= $3
+          ) >= $6
         ORDER BY
           "sort_0" ASC
         LIMIT
           100 OFFSET 0
       ) AS "answered"
+    UNION ALL
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            *
+          FROM
+            "continued_walk"
+          WHERE
+            (
+              SELECT
+                COUNT(*)
+              FROM
+                "short_walk"
+            ) < $7
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "continued_walk"
+            ) >= $8
+          ORDER BY
+            "sort_0" ASC
+          LIMIT
+            100 OFFSET 0
+        ) AS "continued"
+    )
     UNION ALL
     (
       SELECT
@@ -132,14 +239,14 @@ FROM
               SELECT
                 COUNT(*)
               FROM
-                "short_walk"
-            ) < $4
+                "continued_walk"
+            ) < $9
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) <= $5
+            ) <= $10
           ORDER BY
             "sort_0" ASC
           LIMIT
@@ -180,7 +287,7 @@ FROM
                   FROM
                     "current_attributes" AS "ca"
                   WHERE
-                    "ca"."attribute_name_key" = $6
+                    "ca"."attribute_name_key" = $11
                     AND (
                       "ca"."expires_at" IS NULL
                       OR "ca"."expires_at" > NOW()
@@ -193,14 +300,14 @@ FROM
               SELECT
                 COUNT(*)
               FROM
-                "short_walk"
-            ) < $7
+                "continued_walk"
+            ) < $12
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) > $8
+            ) > $13
           ORDER BY
             "walked"."sort_0" ASC
           LIMIT
@@ -231,8 +338,13 @@ ORDER BY
 1: Int 12
 2: Int 12
 3: BigUnsigned 100
-4: BigUnsigned 100
-5: BigUnsigned 10000
-6: Int 12
+4: BigUnsigned 20
+5: Int 12
+6: BigUnsigned 100
 7: BigUnsigned 100
-8: BigUnsigned 10000
+8: BigUnsigned 100
+9: BigUnsigned 100
+10: BigUnsigned 10000
+11: Int 12
+12: BigUnsigned 100
+13: BigUnsigned 10000
