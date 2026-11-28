@@ -48,6 +48,7 @@ mod n_qry_geo_9099;
 mod n_qry_geo_9100;
 mod n_qry_geo_9101;
 mod n_qry_geo_9102;
+mod n_qry_geo_9103;
 mod o_qry_geo_9011;
 mod o_qry_geo_9014;
 mod round_trip;

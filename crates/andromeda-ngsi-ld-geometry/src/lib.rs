@@ -65,6 +65,7 @@ pub mod line_string_coordinates;
 pub mod linear_ring;
 pub mod near_envelope;
 mod nested_coordinates;
+mod noded_pair;
 pub mod planar;
 pub mod position;
 pub mod positive_distance;

@@ -9,9 +9,17 @@
 //! a geometry evaluated against many others is projected once rather than once
 //! per pair. The distance test measures on the WGS 84 spheroid, as
 //! [`crate::proximity`] sets out.
+//!
+//! Containment, equality and overlap are read off an intersection graph, and
+//! each is computed over the pair noded against each other ([`NodedPair`]), so a
+//! crossing on a segment both geometries share splits that segment at one
+//! point in each. `intersects` and `disjoint` ask only whether the geometries
+//! share a point, which orientation tests over the written coordinates decide
+//! without computing a crossing, so they read the pair as written.
 
 use crate::{
     geo_rel::GeoRel,
+    noded_pair::NodedPair,
     planar::PlanarGeometry,
     proximity::{Boundary, Proximity},
     relation_reading::{Operand, RelationReading, SpatialTest, TopologicalTest},
@@ -39,18 +47,30 @@ pub fn matches(georel: &GeoRel, subject: &PlanarGeometry, reference: &PlanarGeom
 /// the `geo` geometries their projections hold.
 fn topological(test: TopologicalTest, subject: &geo::Geometry<f64>, reference: &geo::Geometry<f64>) -> bool {
     match test {
-        TopologicalTest::Contains { container: Operand::Reference } => reference.contains(subject),
-        TopologicalTest::Contains { container: Operand::Subject } => subject.contains(reference),
+        TopologicalTest::Contains { container: Operand::Reference } => {
+            let noded = NodedPair::of(subject, reference);
+            noded.reference.contains(noded.subject.as_ref())
+        }
+        TopologicalTest::Contains { container: Operand::Subject } => {
+            let noded = NodedPair::of(subject, reference);
+            noded.subject.contains(noded.reference.as_ref())
+        }
         TopologicalTest::Intersects => subject.intersects(reference),
         TopologicalTest::Disjoint => !subject.intersects(reference),
         // Mutual containment is `geo`'s equivalent of topological equality,
         // which it has no predicate for.
-        TopologicalTest::Equals => subject.contains(reference) && reference.contains(subject),
+        TopologicalTest::Equals => {
+            let noded = NodedPair::of(subject, reference);
+            noded.subject.contains(noded.reference.as_ref()) && noded.reference.contains(noded.subject.as_ref())
+        }
         // OGC 06-103r4 `Overlaps` by its DE-9IM pattern, as `ST_Overlaps`
         // reads it: the interiors meet, each geometry reaches outside the
         // other, and both are of one dimension, so two polygons sharing only
         // an edge do not overlap.
-        TopologicalTest::Overlaps => subject.relate(reference).is_overlaps(),
+        TopologicalTest::Overlaps => {
+            let noded = NodedPair::of(subject, reference);
+            noded.subject.relate(noded.reference.as_ref()).is_overlaps()
+        }
     }
 }
 
@@ -324,6 +344,36 @@ mod tests {
                 expected: false,
             },
             Case {
+                description: "a line sharing a segment of the reference overlaps it",
+                georel: GeoRel::Overlaps,
+                subject: &fixtures.sharing_line,
+                reference: &fixtures.route,
+                expected: true,
+            },
+            Case {
+                // The interiors share the segment whatever the line does past
+                // it, so crossing back over it keeps the overlap.
+                description: "a line sharing a segment of the reference and crossing back over it overlaps it",
+                georel: GeoRel::Overlaps,
+                subject: &fixtures.crossing_back_line,
+                reference: &fixtures.route,
+                expected: true,
+            },
+            Case {
+                description: "the reference overlaps a line sharing a segment of it and crossing back over it",
+                georel: GeoRel::Overlaps,
+                subject: &fixtures.route,
+                reference: &fixtures.crossing_back_line,
+                expected: true,
+            },
+            Case {
+                description: "a line crossing back beside the reference is not within it",
+                georel: GeoRel::Within,
+                subject: &fixtures.crossing_back_line,
+                reference: &fixtures.route,
+                expected: false,
+            },
+            Case {
                 // Dimensions differ, so the pair can intersect but never
                 // overlap.
                 description: "a point inside an area does not overlap it",
@@ -561,6 +611,14 @@ mod tests {
         meeting_line_west: Geometry,
         /// A line starting where `meeting_line_west` ends.
         meeting_line_east: Geometry,
+        /// A route of three segments.
+        route: Geometry,
+        /// A line along the second segment of `route` that leaves it at its
+        /// far end.
+        sharing_line: Geometry,
+        /// A line along the second segment of `route` that turns back and
+        /// crosses that segment.
+        crossing_back_line: Geometry,
         /// The reference point the minimum-distance fixtures are placed
         /// around, in Bremen.
         bremen: Geometry,
@@ -606,6 +664,23 @@ mod tests {
                 adjacent_area: square(2.0, 0.0, 1.0),
                 meeting_line_west: line(&[(-1.0, -1.0), (0.0, 0.0)]),
                 meeting_line_east: line(&[(0.0, 0.0), (1.0, 1.0)]),
+                route: line(&[
+                    (17.041_112_899_780_3, 48.208_068_847_656_3),
+                    (17.044_538_497_924_8, 48.199_306_488_037_1),
+                    (17.049_634_933_471_7, 48.196_449_279_785_2),
+                    (17.052_634_9, 48.198_449_3),
+                ]),
+                sharing_line: line(&[
+                    (17.044_538_497_924_8, 48.199_306_488_037_1),
+                    (17.049_634_933_471_7, 48.196_449_279_785_2),
+                    (17.05, 48.19),
+                ]),
+                crossing_back_line: line(&[
+                    (17.044_538_497_924_8, 48.199_306_488_037_1),
+                    (17.049_634_933_471_7, 48.196_449_279_785_2),
+                    (17.048_576_354_980_5, 48.197_162_628_173_8),
+                    (17.046_571_731_567_4, 48.193_210_601_806_6),
+                ]),
                 bremen: point(x, y),
                 east_square: polygon(vec![box_ring(8.808_693, 53.075_171, 8.810_783, 53.076_429)]),
                 bremen_area: polygon(vec![box_ring(8.8069, 53.0753, 8.8372, 53.0763)]),
@@ -639,6 +714,9 @@ mod tests {
                 adjacent_area: lift(&flat.adjacent_area, 70.0),
                 meeting_line_west: lift(&flat.meeting_line_west, 70.0),
                 meeting_line_east: lift(&flat.meeting_line_east, 70.0),
+                route: lift(&flat.route, 180.0),
+                sharing_line: lift(&flat.sharing_line, 190.0),
+                crossing_back_line: lift(&flat.crossing_back_line, 200.0),
                 bremen: lift(&flat.bremen, 80.0),
                 east_square: lift(&flat.east_square, 500.0),
                 bremen_area: lift(&flat.bremen_area, 90.0),
