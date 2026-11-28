@@ -144,6 +144,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-jsonld",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-retry",

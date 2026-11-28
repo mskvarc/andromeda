@@ -52,6 +52,7 @@ url = { version = "2.5.9", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-jsonld = { workspace = true, features = ["test-support"] }
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query = { workspace = true, features = ["test-support"] }
 andromeda-retry = { workspace = true, features = ["test-support"] }

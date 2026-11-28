@@ -41,6 +41,7 @@ url = "2.5.9"
 andromeda-architecture-checks.workspace = true
 andromeda-entity.workspace = true
 andromeda-json-literal.workspace = true
+andromeda-jsonld = { workspace = true, features = ["test-support"] }
 andromeda-ngsi-ld-model.workspace = true
 andromeda-persistence-failure.workspace = true
 pretty_assertions = "1.4.1"

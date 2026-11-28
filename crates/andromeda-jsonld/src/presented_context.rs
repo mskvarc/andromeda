@@ -40,16 +40,13 @@ use crate::{
     context_value::{ContextEntry, EntriesShape, NamedCore, WithoutCore, without_core, written_entries},
     core_context_precedence::is_core_context_json_string,
     error::JsonLdError,
-    hosted_context_recognizer::{HostedContextRecognizer, NoHostedContexts},
+    hosted_context_recognizer::HostedContextRecognizer,
     loader::http::HttpContextLoader,
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf};
-use std::{
-    collections::HashSet,
-    future::{Future, ready},
-};
+use std::{collections::HashSet, future::Future};
 
 /// Where the facts about the documents a request named are read from.
 pub trait ContextTailLookup: Sync {
@@ -73,24 +70,6 @@ impl ContextTailLookup for HttpContextLoader {
 
     fn hosted_contexts(&self) -> &dyn HostedContextRecognizer {
         HttpContextLoader::hosted_contexts(self)
-    }
-}
-
-/// A lookup that holds no document.
-///
-/// A test double: every broker operation resolves through its tenant's
-/// loader. Every document is reported as not ending with the core context,
-/// which appends it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoLoadedContexts;
-
-impl ContextTailLookup for NoLoadedContexts {
-    fn tail_of(&self, _url: &IriBuf) -> impl Future<Output = Result<ContextTail, JsonLdError>> + Send {
-        ready(Ok(ContextTail::Unresolvable))
-    }
-
-    fn hosted_contexts(&self) -> &dyn HostedContextRecognizer {
-        &NoHostedContexts
     }
 }
 
@@ -262,7 +241,8 @@ mod tests {
         context_tail::ContextTail,
         error::JsonLdError,
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
-        presented_context::{ContextLinkTarget, ContextTailLookup, NoLoadedContexts, PresentedContext, notification_body_context},
+        no_loaded_contexts::NoLoadedContexts,
+        presented_context::{ContextLinkTarget, ContextTailLookup, PresentedContext, notification_body_context},
         test_documents::{as_value, literal},
     };
     use andromeda_ngsi_ld_vocabulary::{

@@ -12,6 +12,11 @@ description = "How Andromeda resolves JSON-LD contexts and reshapes documents ag
 [lints]
 workspace = true
 
+[features]
+# A context host that stores nothing and a lookup that holds no document, for
+# tests that render or present a context without a tenant.
+test-support = []
+
 [dependencies]
 andromeda-configuration.workspace = true
 andromeda-http-headers.workspace = true
