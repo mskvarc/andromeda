@@ -1,5 +1,6 @@
 //! Typed listener and connection-serving failures.
 
+use andromeda_configuration::validate::config_key::ConfigKey;
 use humantime::format_duration;
 use std::{io, net::SocketAddr, time::Duration};
 
@@ -23,9 +24,39 @@ pub enum HttpServerError {
         source: io::Error,
     },
     /// Accepted connections did not drain before the configured deadline.
-    #[error("HTTP connections did not drain within {}", format_duration(*.deadline))]
+    ///
+    /// The message names the deadline and the key that sets it.
+    #[error(
+        "HTTP connections did not drain within {} ({})",
+        format_duration(*.deadline),
+        ConfigKey::ServerGracefulDrainTimeout
+    )]
     DrainDeadlineExceeded {
         /// Configured maximum drain duration.
         deadline: Duration,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::HttpServerError;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    /// 90 seconds reads `1m 30s`, which a `Debug` interpolation spells `90s`.
+    #[test]
+    fn a_missed_drain_deadline_names_the_deadline_and_the_key_that_sets_it() {
+        for (deadline, message) in [
+            (
+                Duration::from_secs(30),
+                "HTTP connections did not drain within 30s (server.graceful_drain_timeout)",
+            ),
+            (
+                Duration::from_secs(90),
+                "HTTP connections did not drain within 1m 30s (server.graceful_drain_timeout)",
+            ),
+        ] {
+            assert_eq!(HttpServerError::DrainDeadlineExceeded { deadline }.to_string(), message);
+        }
+    }
 }

@@ -14,10 +14,11 @@ use crate::{
     quic_crypto::quic_server_config,
     request_loop::{Drain, accept_connections},
 };
-use andromeda_configuration::header_section_limit::HeaderSectionLimit;
+use andromeda_configuration::{header_section_limit::HeaderSectionLimit, validate::config_key::ConfigKey};
 use andromeda_http_server::close_policy::ClosePolicy;
 use andromeda_server_tls::server_config_feed::ServerConfigFeed;
 use axum::Router;
+use humantime::format_duration;
 use quinn::{Endpoint, VarInt};
 use std::{
     convert::Infallible,
@@ -38,7 +39,13 @@ pub enum Http3ServeError {
     #[error("local address of the QUIC endpoint is unavailable: {0}")]
     LocalAddress(#[source] io::Error),
     /// Connections were still open once the drain deadline passed and were cut off.
-    #[error("HTTP/3 connections did not drain before the configured deadline")]
+    ///
+    /// The message names the deadline and the key that sets it.
+    #[error(
+        "HTTP/3 connections did not drain within {} ({})",
+        format_duration(*.deadline),
+        ConfigKey::ServerGracefulDrainTimeout
+    )]
     DrainDeadlineExceeded {
         /// The drain deadline the connections overran.
         deadline: Duration,
@@ -645,5 +652,22 @@ mod tests {
         }
         client.close().await;
         running.stop().await
+    }
+
+    /// 90 seconds reads `1m 30s`, which a `Debug` interpolation spells `90s`.
+    #[test]
+    fn a_missed_drain_deadline_names_the_deadline_and_the_key_that_sets_it() {
+        for (deadline, message) in [
+            (
+                Duration::from_secs(30),
+                "HTTP/3 connections did not drain within 30s (server.graceful_drain_timeout)",
+            ),
+            (
+                Duration::from_secs(90),
+                "HTTP/3 connections did not drain within 1m 30s (server.graceful_drain_timeout)",
+            ),
+        ] {
+            assert_eq!(Http3ServeError::DrainDeadlineExceeded { deadline }.to_string(), message);
+        }
     }
 }
