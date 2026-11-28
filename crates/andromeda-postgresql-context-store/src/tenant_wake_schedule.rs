@@ -11,6 +11,7 @@
 
 use crate::store_fault::{persistence_failure, undecodable};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_schema::tenancy::{TenantWakeSchedule as WakeScheduleTable, Tenants};
 use andromeda_postgresql_seaquery::{queue::is_claimed_from, statement::Statement};
 use andromeda_tenancy::{
@@ -76,7 +77,7 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
     }
 
     async fn claim_due(&self, now: SystemTime, lease_until: SystemTime, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
-        let keys: Vec<i64> = claim_statement(now, lease_until, limit)
+        let keys: Vec<i64> = claim_statement(now, lease_until, statement_limit(limit)?)
             .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
@@ -111,13 +112,19 @@ impl TenantWakeSchedule for PostgresTenantWakeSchedule {
     }
 
     async fn next_unprobed(&self, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
-        let names: Vec<String> = next_unprobed_query(limit)
+        let names: Vec<String> = next_unprobed_query(statement_limit(limit)?)
             .to_query_scalar()
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| store_error(&error))?;
         names.into_iter().map(tenant_name).collect()
     }
+}
+
+/// The `LIMIT` a statement takes for `limit` tenants, a value no statement can
+/// encode when it does not fit one.
+fn statement_limit(limit: usize) -> Result<u64, WakeScheduleError> {
+    u64::try_from(limit).map_err(|error| WakeScheduleError::Store(PersistenceFailure::Unencodable.record(&error)))
 }
 
 /// A platform-statement failure becomes a wake-schedule store error.
@@ -173,14 +180,14 @@ fn tenant_key_of(tenant: &TenantName) -> SelectStatement {
 /// The update leases exactly the keys its `FOR UPDATE SKIP LOCKED` selection
 /// picked ([`is_claimed_from`]), so one pass wakes at most `limit` tenants and
 /// leaves every other due tenant to the next pass.
-fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: usize) -> UpdateStatement {
+fn claim_statement(now: SystemTime, lease_until: SystemTime, limit: u64) -> UpdateStatement {
     let candidates = Query::select()
         .column(WakeScheduleTable::TenantKey)
         .from(WakeScheduleTable::Table)
         .and_where(Expr::col(WakeScheduleTable::WakeAt).is_not_null())
         .and_where(Expr::col(WakeScheduleTable::WakeAt).lte(DateTime::<Utc>::from(now)))
         .order_by(WakeScheduleTable::WakeAt, Order::Asc)
-        .limit(u64::try_from(limit).unwrap_or(u64::MAX))
+        .limit(limit)
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
 
@@ -226,7 +233,7 @@ fn names_for_keys_query(keys: Vec<i64>) -> SelectStatement {
 }
 
 /// The named tenants least recently probed, unprobed ones first, up to `limit`.
-fn next_unprobed_query(limit: usize) -> SelectStatement {
+fn next_unprobed_query(limit: u64) -> SelectStatement {
     Query::select()
         .column((Tenants::Table, Tenants::Name))
         .from(Tenants::Table)
@@ -237,7 +244,7 @@ fn next_unprobed_query(limit: usize) -> SelectStatement {
         .and_where(Expr::col((Tenants::Table, Tenants::IsUnnamedDefault)).eq(false))
         .and_where(Expr::col((Tenants::Table, Tenants::Name)).is_not_null())
         .order_by_with_nulls((WakeScheduleTable::Table, WakeScheduleTable::ProbedAt), Order::Asc, NullOrdering::First)
-        .limit(u64::try_from(limit).unwrap_or(u64::MAX))
+        .limit(limit)
         .to_owned()
 }
 

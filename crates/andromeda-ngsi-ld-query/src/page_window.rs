@@ -87,7 +87,7 @@ impl PageWindow {
     /// The element past the page sits at the end it was read towards: the last of a page read ascending, the first of one read descending and reversed for presentation.
     #[must_use]
     pub fn settle<T>(&self, read: Vec<T>) -> (Vec<T>, PageReach) {
-        let limit = usize::try_from(self.limit).unwrap_or(usize::MAX);
+        let limit = element_count(self.limit);
         let surplus = read.len().saturating_sub(limit);
         if surplus == 0 {
             return (read, PageReach::Exhausted);
@@ -113,11 +113,11 @@ impl PageWindow {
     /// An offset needs no particular order. A forward cursor takes the elements past its boundary, a backward one the elements closest before it, and the from-end cursor the final elements: at most `limit`, ascending. These are the rows a store's keyset read returns once a descending read is reversed, so a walk moves between a stored and a merged collection without skipping or repeating an element.
     #[must_use]
     pub fn cut<T>(&self, sorted: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
-        let limit = usize::try_from(self.limit).unwrap_or(usize::MAX);
+        let limit = element_count(self.limit);
         let len = sorted.len();
         let forward_from = |start: usize| (start, start.saturating_add(limit).min(len));
         let (start, end) = match &self.start {
-            PageStart::Offset(offset) => forward_from(usize::try_from(*offset).unwrap_or(usize::MAX).min(len)),
+            PageStart::Offset(offset) => forward_from(element_count(*offset).min(len)),
             PageStart::Cursor(None) => forward_from(0),
             PageStart::Cursor(Some(PageCursor::After(boundary))) => forward_from(sorted.partition_point(|element| key(element) <= boundary.as_str())),
             PageStart::Cursor(Some(PageCursor::Before(boundary))) => {
@@ -130,14 +130,31 @@ impl PageWindow {
     }
 }
 
+/// The number of elements a page bound counts, as a length.
+///
+/// Every target the broker builds for has a `usize` at least as wide as a
+/// `u32`, which the assertion holds at compile time, so widening keeps every
+/// bound, `u32::MAX` of the unbounded window included.
+const fn element_count(bound: u32) -> usize {
+    const _: () = assert!(usize::BITS >= u32::BITS, "a page bound fits a length");
+    bound as usize
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         cursor::PageCursor,
         page_reach::PageReach,
-        page_window::{PageStart, PageWindow},
+        page_window::{PageStart, PageWindow, element_count},
         read_order::ReadOrder,
     };
+
+    #[test]
+    fn every_page_bound_counts_as_many_elements_as_it_names() {
+        for bound in [0, 1, 1000, u32::MAX] {
+            pretty_assertions::assert_eq!(u32::try_from(element_count(bound)), Ok(bound));
+        }
+    }
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
 
