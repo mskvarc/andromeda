@@ -18,8 +18,9 @@ use headers::HeaderMapExt;
 /// Constructed from a typed body already written into a [`RenderedResponse`]:
 ///
 /// ```ignore
-/// let host = context_hosting.for_request(&api_root);
-/// let renderer = start_rendering(media_type, engine.presented_context(&context).await?, &host, prefer, format).await?;
+/// let renderer = ResponseContextSource::new(engine, &context, &context_hosting, &api_root)
+///     .start_rendering(media_type, prefer, format)
+///     .await?;
 /// let rendered = RenderedResponse::resource(renderer.with_body(&resource))?;
 /// NgsiLdResponse::ok(rendered)
 ///     .with_location(location)
