@@ -13,8 +13,9 @@
 //! flight is still recorded at once, with no timer.
 //!
 //! A slot a claim left empty, because the queue had nothing more to give it at
-//! that instant, is claimed again only with the next slot that frees: claiming
-//! it at once would ask the queue the same question again straight away.
+//! that instant, is claimed again only with the next slot that frees, or once
+//! a commit may have queued deliveries for it: claiming it at once would ask
+//! the queue the same question again straight away.
 
 use crate::delivery_round_trip::RoundTrip;
 use std::{mem::take, num::NonZeroUsize};
@@ -25,7 +26,7 @@ pub(crate) enum Refill {
     /// The pass still claims: the queue may hold more, and nothing failed or
     /// cancelled it.
     Allowed,
-    /// The pass claims no further and only acknowledges what is in flight.
+    /// The next round claims nothing and only acknowledges what ended.
     Withheld,
 }
 
@@ -77,6 +78,19 @@ impl<T> RoundPlan<T> {
     /// settle.
     pub(crate) const fn free(&mut self) {
         self.freed = self.freed.saturating_add(1);
+    }
+
+    /// Make the slots earlier claims left empty claimable by the next round
+    /// with no slot having to free first, a commit having possibly queued
+    /// deliveries for them.
+    pub(crate) const fn reopen(&mut self) {
+        self.freed = self.freed.saturating_add(self.left_empty);
+        self.left_empty = 0;
+    }
+
+    /// Whether a round is in flight.
+    pub(crate) const fn round_trip(&self) -> RoundTrip {
+        self.round
     }
 
     /// Record the round in flight coming back with `got` deliveries of the
@@ -232,6 +246,28 @@ mod tests {
                 width: Some(width(5)),
             })
         );
+        assert_eq!(plan.next_round(Refill::Allowed), None);
+    }
+
+    /// A commit makes the slot a short claim left empty claimable at once,
+    /// with no slot freeing first.
+    #[test]
+    fn a_reopened_plan_claims_the_slots_a_short_claim_left_empty_at_once() {
+        let mut plan = opened(4, 1);
+        plan.reopen();
+        assert_eq!(
+            plan.next_round(Refill::Allowed),
+            Some(Round {
+                group: Vec::new(),
+                width: Some(width(3)),
+            })
+        );
+    }
+
+    #[test]
+    fn a_reopened_plan_with_every_slot_claimed_issues_no_round() {
+        let mut plan = opened(4, 4);
+        plan.reopen();
         assert_eq!(plan.next_round(Refill::Allowed), None);
     }
 

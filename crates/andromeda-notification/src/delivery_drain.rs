@@ -8,13 +8,13 @@ use crate::{
     delivery_concurrency::DeliveryConcurrency,
     delivery_entry::DeliveryEntry,
     delivery_lease::LeaseTerm,
+    delivery_pass_event::{PassEvent, next_pass_event},
+    delivery_pass_state::{DeliveryPassState, IssuedRound},
     delivery_policy::{delivery_concurrency, lease_term},
-    delivery_queue_supply::QueueSupply,
     delivery_round::{ClaimRequest, SettledRound},
-    delivery_round_plan::{Refill, Round, RoundPlan},
     delivery_settlement::DeliverySettlement,
-    delivery_slot_event::{AttemptEnded, AwaitingAcknowledgement, ClaimAsked, RoundEnded, SlotEvent},
-    delivery_slot_share::{SlotOccupant, SlotShare},
+    delivery_slot_event::{AttemptEnded, ClaimAsked, RoundEnded, SlotEvent},
+    delivery_slot_share::SlotOccupant,
     delivery_store::DeliveryStore,
     delivery_transport::NotificationDeliveryTransport,
     error::NotificationError,
@@ -22,15 +22,16 @@ use crate::{
     notification_invariant::NotificationInvariant,
 };
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
-use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
+use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_retry::retry_delay::RetryDelay;
 use chrono::{DateTime, Utc};
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
-use std::{
-    num::NonZeroU32,
-    sync::Arc,
-    time::{Duration, Instant},
+use futures::{
+    FutureExt,
+    StreamExt,
+    future::BoxFuture,
+    stream::{FuturesUnordered, Stream},
 };
+use std::{num::NonZeroU32, pin::pin, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
@@ -68,14 +69,6 @@ pub struct NotificationDeliveryDrain {
     slot_activity: Duration,
 }
 
-/// Release the slot of a delivery that left flight from its Subscription's
-/// share, when it was read back.
-fn release_share(share: &mut SlotShare, occupant: Option<SlotOccupant>) {
-    if let Some(occupant) = occupant {
-        share.release(occupant, Instant::now());
-    }
-}
-
 impl NotificationDeliveryDrain {
     /// Create a bounded delivery operation from validated runtime configuration,
     /// waiting on `delay` between requests to record an outcome.
@@ -108,7 +101,9 @@ impl NotificationDeliveryDrain {
     }
 
     /// Execute one leased delivery pass, until the queue holds no more due
-    /// deliveries or `cancellation` fires.
+    /// deliveries or `cancellation` fires. `commits` yields whenever a commit
+    /// may have queued deliveries since the pass began or since it last
+    /// yielded.
     ///
     /// A pass keeps every one of its slots busy for as long as the queue
     /// supplies due deliveries. It goes to the queue in rounds, and has at
@@ -119,10 +114,16 @@ impl NotificationDeliveryDrain {
     /// that only claims, one delivery per slot. Endpoints that answer at once
     /// cost one round per batch of attempts, not an acknowledgement and a
     /// claim per delivery, and a lone outcome with no round in flight is still
-    /// recorded at once. The pass stops claiming once a claim comes back
-    /// short, once a round fails, or once `cancellation` fires, then only
-    /// acknowledges, and returns when the last delivery in flight is
-    /// acknowledged.
+    /// recorded at once.
+    ///
+    /// A claim that comes back short found the queue out of due deliveries,
+    /// so the slots that free after it are not claimed again until `commits`
+    /// yields; the next round then claims every slot the pass has free, while
+    /// the attempts holding the others are still in flight. An attempt that
+    /// waits out `request_timeout` holds its own slot, not the claiming of
+    /// what commits queue meanwhile. The pass stops claiming once a round
+    /// fails or `cancellation` fires, then only acknowledges, and returns when
+    /// the last delivery in flight is acknowledged.
     ///
     /// Once one Subscription holds half the slots, each slot that frees goes
     /// to a due delivery of the Subscription with the fewest in flight, and
@@ -130,9 +131,8 @@ impl NotificationDeliveryDrain {
     /// so an endpoint that answers late leaves the others at least half the
     /// slots. A slot such a claim leaves empty, because the Subscriptions
     /// below half had nothing due at that instant, is claimed again with the
-    /// next slot that frees, so a burst written meanwhile fills every slot
-    /// left to it. A lone Subscription still gets every slot, and the slots
-    /// wait on a last slow attempt only when nothing else is due.
+    /// next slot that frees or the next commit, so a burst written meanwhile
+    /// fills every slot left to it. A lone Subscription still gets every slot.
     ///
     /// A delivery is claimed only when a slot is free to send it, so its lease
     /// starts as its attempt does and has to outlast that one attempt (which
@@ -171,73 +171,26 @@ impl NotificationDeliveryDrain {
     /// claimed from, and [`NotificationError::Persistence`] when acknowledging a
     /// delivery outcome fails. A lease another worker reclaimed is counted in
     /// [`DeliveryDrainOutcome::lease_lost`] rather than surfaced as an error.
-    pub async fn execute(&self, cancellation: &CancellationToken) -> Result<DeliveryDrainOutcome, NotificationError> {
+    pub async fn execute(&self, cancellation: &CancellationToken, commits: impl Stream<Item = ()> + Send) -> Result<DeliveryDrainOutcome, NotificationError> {
         let held = HeldEvents::default();
-        let mut share = SlotShare::new(self.concurrency, self.slot_activity);
-        let mut supply = QueueSupply::MayHoldMore;
-        let mut plan = RoundPlan::new(self.concurrency.get());
-        let mut claimed = 0_usize;
-        let mut lease_lost = 0_usize;
-        let mut failure: Option<NotificationError> = None;
+        let mut state = DeliveryPassState::new(self.concurrency, self.slot_activity);
         let mut slots: FuturesUnordered<BoxFuture<'_, SlotEvent>> = FuturesUnordered::new();
+        let mut commits = pin!(commits.fuse());
         loop {
-            let refill = match (&failure, supply, cancellation.is_cancelled()) {
-                (None, QueueSupply::MayHoldMore, false) => Refill::Allowed,
-                (Some(_), _, _) | (None, QueueSupply::Drained, _) | (None, QueueSupply::MayHoldMore, true) => Refill::Withheld,
-            };
-            if let Some(round) = plan.next_round(refill) {
-                slots.push(self.issue(round, &mut share, &held).boxed());
+            if let Some(IssuedRound { settlements, claim }) = state.next_round(cancellation) {
+                slots.push(self.settle_and_claim(settlements, claim, &held).boxed());
             }
-            let Some(mut event) = slots.next().await else {
-                break;
+            let mut event = match next_pass_event(&mut slots, commits.as_mut(), state.commit_watch(cancellation)).await {
+                PassEvent::Finished(event) => event,
+                PassEvent::Committed => {
+                    state.commit_seen();
+                    continue;
+                }
+                PassEvent::Idle => break,
             };
             loop {
-                match event {
-                    SlotEvent::Attempted(ended) => match *ended {
-                        AttemptEnded {
-                            settlement: Ok(settlement),
-                            occupant,
-                        } => plan.wait(AwaitingAcknowledgement { settlement, occupant }),
-                        AttemptEnded {
-                            settlement: Err(error),
-                            occupant,
-                        } => {
-                            release_share(&mut share, occupant);
-                            plan.free();
-                            failure.get_or_insert(error);
-                        }
-                    },
-                    SlotEvent::RoundEnded(ended) => {
-                        let RoundEnded { claim, answer } = *ended;
-                        let claims = match answer {
-                            Ok(SettledRound { answers, claims }) => {
-                                lease_lost += answers.iter().filter(|answer| **answer == LeaseAcknowledgement::Lost).count();
-                                claims
-                            }
-                            Err(error) => Err(error),
-                        };
-                        match claims {
-                            Ok(claims) => {
-                                if let Some(asked) = claim {
-                                    supply = supply.after_claim(asked.width, asked.order, claims.len());
-                                }
-                                plan.settle(claim.map(|asked| asked.width), claims.len());
-                                claimed += claims.len();
-                                for claim in &claims {
-                                    match claim {
-                                        DeliveryClaim::Readable(entry) => share.occupy(&entry.target, &entry.subscription_id),
-                                        DeliveryClaim::Unreadable(_) => {}
-                                    }
-                                }
-                                slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &held).boxed()));
-                            }
-                            Err(error) => {
-                                plan.settle(claim.map(|asked| asked.width), 0);
-                                failure.get_or_insert(error);
-                            }
-                        }
-                    }
-                }
+                let claims = state.take_in(event);
+                slots.extend(claims.into_iter().map(|claim| self.attempt(claim, &held).boxed()));
                 // Every event already finished is taken in before the next
                 // round goes out, so attempts that end together share one
                 // round.
@@ -247,33 +200,7 @@ impl NotificationDeliveryDrain {
                 }
             }
         }
-        match failure {
-            Some(error) => Err(error),
-            None => Ok(DeliveryDrainOutcome { claimed, lease_lost }),
-        }
-    }
-
-    /// Issue one round: the deliveries it settles leave flight now, their
-    /// attempts having ended, so the order its claim takes counts them out.
-    fn issue<'pass>(
-        &'pass self,
-        round: Round<AwaitingAcknowledgement>,
-        share: &mut SlotShare,
-        held: &'pass HeldEvents,
-    ) -> impl Future<Output = SlotEvent> + Send + 'pass {
-        let settlements = round
-            .group
-            .into_iter()
-            .map(|AwaitingAcknowledgement { settlement, occupant }| {
-                release_share(share, occupant);
-                settlement
-            })
-            .collect();
-        let claim = round.width.map(|width| ClaimAsked {
-            width,
-            order: share.claim_order(Instant::now()),
-        });
-        self.settle_and_claim(settlements, claim, held)
+        state.outcome()
     }
 
     /// Record `settlements` and claim what `claim` asks for under a lease that
@@ -412,8 +339,10 @@ mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use futures::{
+        channel::mpsc::{UnboundedSender, unbounded},
         executor::block_on,
-        future::{BoxFuture, poll_fn},
+        future::{BoxFuture, join, poll_fn},
+        stream::pending,
     };
     use std::{
         collections::{BTreeSet, VecDeque},
@@ -507,6 +436,10 @@ mod tests {
         rounds: Mutex<Vec<(usize, Option<u32>)>>,
         /// Deliveries whose leases another worker took, answered lost.
         lost: BTreeSet<DeliveryKey>,
+        /// A delivery a commit queues once the next claim has read the
+        /// queue, and the wake that commit raises before the round's answer
+        /// arrives.
+        commit_after_claim: Mutex<Option<(DeliveryEntry, UnboundedSender<()>)>>,
     }
 
     impl RecordingStore {
@@ -731,6 +664,15 @@ mod tests {
                 .push((settlements.len(), refill.map(|request| request.width.get())));
             let answers = self.acknowledge(settlements)?;
             let claims = refill.map_or_else(|| Ok(Vec::new()), |request| self.claim(request));
+            let commit = refill.and(self.commit_after_claim.lock().expect("the test lock is not poisoned").take());
+            if let Some((entry, commits)) = commit {
+                self.entries
+                    .lock()
+                    .expect("the test lock is not poisoned")
+                    .push_back(DeliveryClaim::Readable(Box::new(entry)));
+                commits.unbounded_send(()).expect("the pass holds the commit stream");
+                round_trip(SLOW_ROUND_POLLS).await;
+            }
             Ok(SettledRound { answers, claims })
         }
 
@@ -900,7 +842,7 @@ mod tests {
             let transport = Arc::new(InFlightTransport::default());
             let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), transport.clone(), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
             let peak = transport.peak.load(Ordering::SeqCst);
@@ -916,7 +858,9 @@ mod tests {
     fn delivered_entries_are_acknowledged_only_after_delivery() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
-            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(&CancellationToken::new()).await?;
+            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?
+                .execute(&CancellationToken::new(), pending())
+                .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
             let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
             pretty_assertions::assert_eq!(delivered.as_slice(), &[DeliveryKey::from(1)]);
@@ -936,7 +880,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let failed_count = retry_store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 1);
@@ -950,7 +894,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let terminal = terminal_store.terminal.lock().expect("the terminal result lock is not poisoned");
             pretty_assertions::assert_eq!(terminal.len(), 1);
@@ -973,7 +917,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let failed_count = store.failed.lock().expect("the retry result lock is not poisoned").len();
             pretty_assertions::assert_eq!(failed_count, 0, "the final attempt must not be rescheduled");
@@ -1000,7 +944,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let terminal_count = store.terminal.lock().expect("the terminal result lock is not poisoned").len();
             pretty_assertions::assert_eq!(terminal_count, 0);
@@ -1031,7 +975,7 @@ mod tests {
                     retry_after: None,
                 });
                 NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), config)?
-                    .execute(&CancellationToken::new())
+                    .execute(&CancellationToken::new(), pending())
                     .await?;
                 let failed = store.failed.lock().expect("the retry result lock is not poisoned").len();
                 let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned").len();
@@ -1060,7 +1004,7 @@ mod tests {
                         retry_after: requested,
                     },
                 )?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
                 waits.extend(
                     store
@@ -1097,7 +1041,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             pretty_assertions::assert_eq!(store.failed.lock().expect("the retry result lock is not poisoned").len(), 0);
             pretty_assertions::assert_eq!(store.terminal.lock().expect("the terminal result lock is not poisoned").len(), 1);
@@ -1119,7 +1063,7 @@ mod tests {
                 final_attempt.attempt_count = 4;
                 let store = Arc::new(RecordingStore::with_entry(final_attempt));
                 drain(store.clone(), DeliveryDisposition::Deferred { window })?
-                    .execute(&CancellationToken::new())
+                    .execute(&CancellationToken::new(), pending())
                     .await?;
                 let deferred = store.deferred.lock().expect("the deferral lock is not poisoned").clone();
                 pretty_assertions::assert_eq!(
@@ -1145,7 +1089,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             pretty_assertions::assert_eq!(failed.first().map(|(_, detail, _)| detail.as_str()), Some("endpoint"));
@@ -1157,7 +1101,9 @@ mod tests {
     fn claims_carry_the_configured_lease_term() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
-            drain(store.clone(), DeliveryDisposition::Delivered)?.execute(&CancellationToken::new()).await?;
+            drain(store.clone(), DeliveryDisposition::Delivered)?
+                .execute(&CancellationToken::new(), pending())
+                .await?;
             let claimed_with = store.claimed_with.lock().expect("the claim record lock is not poisoned");
             let expected = LeaseTerm::from_seconds(30).expect("a valid lease term");
             pretty_assertions::assert_eq!(claimed_with.as_slice(), &[expected]);
@@ -1169,7 +1115,9 @@ mod tests {
     fn an_expired_lease_is_reported_instead_of_acknowledged_silently() -> Result<(), NotificationError> {
         block_on(async {
             let store = Arc::new(RecordingStore::with_expired_lease(entry()?));
-            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(&CancellationToken::new()).await?;
+            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?
+                .execute(&CancellationToken::new(), pending())
+                .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
             pretty_assertions::assert_eq!(outcome.lease_lost, 1);
             let delivered = store.delivered.lock().expect("the delivered result lock is not poisoned");
@@ -1190,7 +1138,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             pretty_assertions::assert_eq!(outcome.lease_lost, 1);
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
@@ -1222,7 +1170,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_claims([unreadable, DeliveryClaim::Readable(Box::new(entry()?))]));
             let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 2);
             pretty_assertions::assert_eq!(outcome.lease_lost, 0);
@@ -1247,7 +1195,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries([entry_keyed(1)?, entry_keyed(2)?, entry_keyed(3)?]));
             let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(PoisonedTransport(DeliveryKey::from(2_i64))), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
             let terminal = store.terminal.lock().expect("the terminal result lock is not poisoned");
@@ -1272,7 +1220,7 @@ mod tests {
                 waits(),
                 &config(),
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
@@ -1292,7 +1240,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(4);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10);
             let widths = store.claim_widths();
@@ -1315,7 +1263,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(6))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 12);
             pretty_assertions::assert_eq!(store.recorded_rounds(), vec![(0, Some(6)), (1, Some(1)), (5, Some(5)), (1, Some(1)), (5, None)]);
@@ -1334,7 +1282,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(6))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 6);
             pretty_assertions::assert_eq!(store.group_sizes(), vec![1, 5]);
@@ -1349,7 +1297,7 @@ mod tests {
             let entries = (1..=6_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(6))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 6);
             pretty_assertions::assert_eq!(store.group_sizes(), vec![6]);
@@ -1383,7 +1331,7 @@ mod tests {
             let entries = (1..=200_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_slow_rounds(entries, []));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(InFlightTransport::default()), waits(), &sized(20))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 200);
             pretty_assertions::assert_eq!(store.peak_rounds_in_flight.load(Ordering::SeqCst), 1);
@@ -1427,7 +1375,7 @@ mod tests {
             let entries = (1..=5_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_slow_rounds(entries, [DeliveryKey::from(5_i64)]));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(Staggered(MixedTransport)), waits(), &sized(5))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (5, 1));
             pretty_assertions::assert_eq!(store.group_sizes(), vec![1, 4]);
@@ -1460,7 +1408,7 @@ mod tests {
             });
             let transport = Staggered(FixedTransport(DeliveryDisposition::Delivered));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(transport), waits(), &sized(5))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (5, 0));
             pretty_assertions::assert_eq!(store.recorded_rounds(), vec![(0, Some(5)), (1, Some(1)), (1, Some(1)), (4, None)]);
@@ -1482,7 +1430,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             let mut outstanding = 0_i64;
             for call in store.recorded_calls() {
@@ -1506,7 +1454,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             let acknowledged = store.acknowledged_keys();
             pretty_assertions::assert_eq!(acknowledged.len(), 5);
@@ -1528,7 +1476,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(2);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(SlowOnceTransport(DeliveryKey::from(1_i64))), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(store.reused_keys(), [2, 3, 4, 5].map(DeliveryKey::from));
             Ok(())
@@ -1545,7 +1493,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(1);
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(store.claim_widths(), vec![1, 1, 1, 1]);
             assert!(store.reused_keys().is_empty(), "{:?}", store.reused_keys());
@@ -1554,9 +1502,9 @@ mod tests {
     }
 
     /// A claim that comes back short means the queue ran out of due
-    /// deliveries: the pass claims no more and ends once the deliveries in
-    /// flight are acknowledged. It opens with a round that only claims and
-    /// ends with one that only acknowledges.
+    /// deliveries: with no commit meanwhile, the pass claims no more and ends
+    /// once the deliveries in flight are acknowledged. It opens with a round
+    /// that only claims and ends with one that only acknowledges.
     #[test]
     fn a_short_claim_ends_the_pass() -> Result<(), NotificationError> {
         block_on(async {
@@ -1564,7 +1512,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let config = sized(2);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 3);
             // Both deliveries end together, so the second round claims both their slots and comes back with the last delivery.
@@ -1583,7 +1531,7 @@ mod tests {
         });
         let outcome = block_on(async {
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(2))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
@@ -1605,7 +1553,7 @@ mod tests {
         let config = sized(2);
         let outcome = block_on(async {
             NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &config)?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await
         });
         assert!(matches!(outcome, Err(NotificationError::Persistence { .. })), "{outcome:?}");
@@ -1635,7 +1583,7 @@ mod tests {
                 Arc::clone(&delay) as Arc<dyn RetryDelay>,
                 &config(),
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (1, 0));
             pretty_assertions::assert_eq!(
@@ -1660,7 +1608,7 @@ mod tests {
                 Arc::clone(&delay) as Arc<dyn RetryDelay>,
                 &config(),
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             pretty_assertions::assert_eq!(
                 store.recorded_calls(),
@@ -1688,7 +1636,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             pretty_assertions::assert_eq!(
@@ -1716,7 +1664,7 @@ mod tests {
                     retry_after: None,
                 },
             )?
-            .execute(&CancellationToken::new())
+            .execute(&CancellationToken::new(), pending())
             .await?;
             let probes = store.next_probes.lock().expect("the probe record lock is not poisoned").clone();
             pretty_assertions::assert_eq!(probes.iter().map(|step| step.duration()).collect::<Vec<_>>(), vec![Duration::from_secs(5)]);
@@ -1759,7 +1707,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entries(entries));
             let held = DeliveryKey::from(1_i64);
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(HeldOnceTransport(held)), waits(), &sized(4))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1_000);
             let acknowledged = store.acknowledged_keys();
@@ -1768,6 +1716,136 @@ mod tests {
             pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 999);
             let failed = store.failed.lock().expect("the retry result lock is not poisoned");
             pretty_assertions::assert_eq!(failed.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(), vec![held]);
+            Ok(())
+        })
+    }
+
+    /// A transport that answers every delivery at once except one, which it
+    /// holds unanswered until the test releases it and then reports timed
+    /// out, as an endpoint that never answers would at `request_timeout`.
+    struct GatedTransport {
+        /// The delivery held unanswered.
+        gated: DeliveryKey,
+        /// Whether the held delivery's timeout has come.
+        released: AtomicBool,
+    }
+
+    impl GatedTransport {
+        fn holding(gated: DeliveryKey) -> GatedTransport {
+            GatedTransport {
+                gated,
+                released: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl NotificationDeliveryTransport for GatedTransport {
+        fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
+            Box::pin(async move {
+                if entry.key != self.gated {
+                    return DeliveryDisposition::Delivered;
+                }
+                poll_fn(|context| {
+                    if self.released.load(Ordering::SeqCst) {
+                        Poll::Ready(())
+                    } else {
+                        context.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                })
+                .await;
+                DeliveryDisposition::Failed {
+                    class: FailureClass::Unavailable,
+                    detail: "timed out".to_owned(),
+                    retry_after: None,
+                }
+            })
+        }
+    }
+
+    /// Wait until `holds`, or at most [`HELD_POLLS`] polls, so that a pass
+    /// that never gets there fails its assertions instead of hanging.
+    async fn until(holds: impl Fn() -> bool + Send + Sync) {
+        let mut remaining = HELD_POLLS;
+        poll_fn(|context| {
+            if remaining == 0 || holds() {
+                Poll::Ready(())
+            } else {
+                remaining -= 1;
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    /// Delivery 1 goes to an endpoint that never answers, and the opening
+    /// claim drains the queue. A commit then queues delivery 3: the pass
+    /// claims and sends it while delivery 1 still holds its slot, instead of
+    /// leaving it until delivery 1 times out.
+    #[test]
+    fn a_commit_while_a_slow_attempt_is_in_flight_is_claimed_and_sent_before_that_attempt_ends() -> Result<(), NotificationError> {
+        block_on(async {
+            let store = Arc::new(RecordingStore::with_entries([entry_keyed(1)?, entry_keyed(2)?]));
+            let transport = Arc::new(GatedTransport::holding(DeliveryKey::from(1_i64)));
+            let (commits, commit_stream) = unbounded();
+            let drain = NotificationDeliveryDrain::new(store.clone(), transport.clone(), waits(), &sized(4))?;
+            let commit = async {
+                until(|| store.acknowledged_keys().contains(&DeliveryKey::from(2_i64))).await;
+                store
+                    .entries
+                    .lock()
+                    .expect("the test lock is not poisoned")
+                    .push_back(DeliveryClaim::Readable(Box::new(entry_keyed(3)?)));
+                commits.unbounded_send(()).expect("the pass holds the commit stream");
+                until(|| store.acknowledged_keys().contains(&DeliveryKey::from(3_i64))).await;
+                transport.released.store(true, Ordering::SeqCst);
+                Ok::<_, NotificationError>(())
+            };
+            let (outcome, committed) = join(drain.execute(&CancellationToken::new(), commit_stream), commit).await;
+            committed?;
+            pretty_assertions::assert_eq!(outcome?.claimed, 3);
+            pretty_assertions::assert_eq!(store.acknowledged_keys(), [2, 3, 1].map(DeliveryKey::from));
+            pretty_assertions::assert_eq!(
+                store.recorded_calls().first(),
+                Some(&StoreCall::Claim { asked: 4, granted: 2 }),
+                "the opening claim drained the queue"
+            );
+            pretty_assertions::assert_eq!(
+                store.delivered.lock().expect("the delivered result lock is not poisoned").as_slice(),
+                &[DeliveryKey::from(2_i64), DeliveryKey::from(3_i64)]
+            );
+            Ok(())
+        })
+    }
+
+    /// The commit lands after the opening claim has read the queue and before
+    /// its short answer arrives, while delivery 1 holds its slot: the pass
+    /// takes the wake in after that answer, so the answer cannot drain the
+    /// pass again, and delivery 2 is claimed and sent while delivery 1 is
+    /// still in flight.
+    #[test]
+    fn a_commit_during_a_round_is_claimed_after_that_round_answers() -> Result<(), NotificationError> {
+        block_on(async {
+            let (commits, commit_stream) = unbounded();
+            let store = Arc::new(RecordingStore {
+                commit_after_claim: Mutex::new(Some((entry_keyed(2)?, commits))),
+                ..RecordingStore::with_entry(entry()?)
+            });
+            let transport = Arc::new(GatedTransport::holding(DeliveryKey::from(1_i64)));
+            let drain = NotificationDeliveryDrain::new(store.clone(), transport.clone(), waits(), &sized(4))?;
+            let release = async {
+                until(|| store.acknowledged_keys().contains(&DeliveryKey::from(2_i64))).await;
+                transport.released.store(true, Ordering::SeqCst);
+            };
+            let (outcome, ()) = join(drain.execute(&CancellationToken::new(), commit_stream), release).await;
+            pretty_assertions::assert_eq!(outcome?.claimed, 2);
+            pretty_assertions::assert_eq!(store.acknowledged_keys(), [2, 1].map(DeliveryKey::from));
+            pretty_assertions::assert_eq!(
+                store.recorded_calls().first(),
+                Some(&StoreCall::Claim { asked: 4, granted: 1 }),
+                "the opening claim read the queue before the commit"
+            );
             Ok(())
         })
     }
@@ -1783,7 +1861,7 @@ mod tests {
             let cancellation = CancellationToken::new();
             let transport = Arc::new(CancellingTransport(cancellation.clone()));
             let outcome = NotificationDeliveryDrain::new(store.clone(), transport, waits(), &sized(2))?
-                .execute(&cancellation)
+                .execute(&cancellation, pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 2);
             pretty_assertions::assert_eq!(store.claim_widths(), vec![2]);
@@ -1799,7 +1877,7 @@ mod tests {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             let cancellation = CancellationToken::new();
             cancellation.cancel();
-            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(&cancellation).await?;
+            let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(&cancellation, pending()).await?;
             pretty_assertions::assert_eq!((outcome.claimed, outcome.lease_lost), (0, 0));
             pretty_assertions::assert_eq!(store.recorded_calls(), Vec::<StoreCall>::new());
             Ok(())
@@ -1821,7 +1899,7 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let outcome = NotificationDeliveryDrain::new(store.clone(), Arc::new(FixedTransport(DeliveryDisposition::Delivered)), waits(), &sized(4))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             pretty_assertions::assert_eq!(outcome.claimed, 10_000);
             pretty_assertions::assert_eq!(store.delivered.lock().expect("the delivered result lock is not poisoned").len(), 10_000);
@@ -1898,7 +1976,7 @@ mod tests {
         block_on(async {
             let store = Arc::new(RecordingStore::with_entries(entries));
             NotificationDeliveryDrain::new(store.clone(), Arc::new(Staggered(InFlightTransport::default())), waits(), &sized(4))?
-                .execute(&CancellationToken::new())
+                .execute(&CancellationToken::new(), pending())
                 .await?;
             Ok(store.orders.lock().expect("the test lock is not poisoned").clone())
         })

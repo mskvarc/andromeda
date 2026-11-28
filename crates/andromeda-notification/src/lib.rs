@@ -36,6 +36,10 @@ pub mod delivery_entry;
 pub mod delivery_error_bound;
 /// Worker ownership of a claimed notification delivery.
 pub mod delivery_lease;
+/// What a delivery pass waits for: its in-flight set, or a commit's wake.
+mod delivery_pass_event;
+/// What one delivery pass knows between the events it takes in.
+mod delivery_pass_state;
 /// Notification delivery runtime configuration.
 pub mod delivery_policy;
 /// Whether the queue may still supply due deliveries to a delivery pass.

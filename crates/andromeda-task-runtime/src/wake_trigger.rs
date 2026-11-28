@@ -44,14 +44,25 @@ impl WakeHandle {
 pub struct DrainWakeReceiver {
     /// The signal stream the drain driver reads.
     receiver: mpsc::Receiver<()>,
-    /// Kept only to hold the channel open for the task's lifetime.
-    _guard: WakeHandle,
+    /// Holds the channel open for the task's lifetime, and requeues a wake a
+    /// pass returned without taking in.
+    own: WakeHandle,
 }
 
 impl DrainWakeReceiver {
     /// Await the next coalesced wake, or `None` once every sender is dropped.
     pub(crate) async fn recv(&mut self) -> Option<()> {
         self.receiver.recv().await
+    }
+
+    /// Queue one wake again, coalescing with one already waiting.
+    pub(crate) fn requeue(&self) {
+        match self.own.wake() {
+            // The receiver holds a sender of its own, so its channel stays
+            // open while it lives, and a wake already waiting starts the same
+            // pass this one would.
+            WakeRequest::Scheduled | WakeRequest::Coalesced | WakeRequest::Closed => {}
+        }
     }
 }
 
@@ -109,6 +120,6 @@ impl DrainFallbackPolicy {
 pub fn wake_channel() -> (WakeHandle, DrainWakeReceiver) {
     let (sender, receiver) = mpsc::channel(1);
     let handle = WakeHandle { sender };
-    let guard = handle.clone();
-    (handle, DrainWakeReceiver { receiver, _guard: guard })
+    let own = handle.clone();
+    (handle, DrainWakeReceiver { receiver, own })
 }

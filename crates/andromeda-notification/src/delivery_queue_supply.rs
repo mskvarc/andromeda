@@ -2,9 +2,12 @@
 //!
 //! A pass claims for each slot that frees, and keeps claiming for as long as
 //! every claim comes back filled. A claim that comes back short found no more
-//! due deliveries, so the pass claims no further: a delivery that falls due
-//! later, a retry whose backoff ends or one a commit queues, is left to the
-//! next pass, which the commit's wake or the drain's fallback timer starts.
+//! due deliveries, so the pass claims no further for the slots that free
+//! after it. A commit's wake taken in during the pass restores the supply, so
+//! the deliveries a commit queues are claimed by the pass still running; a
+//! delivery that falls due with time, a retry whose backoff ends, is left to
+//! the next claim the pass makes or to the next pass, which the drain's
+//! fallback timer starts.
 //!
 //! A claim under an in-flight ceiling passes over the Subscriptions at it, so
 //! coming back short says only that the others have nothing due. The pass
