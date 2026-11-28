@@ -50,6 +50,7 @@ url = { version = "2.5.9", features = ["serde"] }
 andromeda-architecture-checks.workspace = true
 andromeda-configuration.workspace = true
 andromeda-context-commit.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 async-trait = "0.1.92"
 http = "1.5.0"
 pretty_assertions = "1.4.1"
