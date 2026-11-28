@@ -259,7 +259,7 @@ mod tests {
         NGSI_LD_CORE_CONTEXT_URL,
         core_context::{NGSI_LD_CORE_CONTEXT_V10_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
     };
-    use iri_rs::{IriBuf, iri};
+    use iri_rs::IriBuf;
     use jstrict::Print;
     use serde_json::{Value, json};
 
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn the_core_context_document_itself_is_left_alone() {
-        let core_url = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"));
+        let core_url = IriBuf::from(NGSI_LD_CORE_CONTEXT_URL);
         let payload = json!({ "@context": [core_url.as_str(), { "location": "https://example.com/location" }] });
 
         let (normalized, _) = prepare(core_url.as_str(), &payload);

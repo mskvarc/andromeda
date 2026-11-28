@@ -43,6 +43,7 @@ use andromeda_ngsi_ld_query::{
     query_error::QueryError,
 };
 use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use iri_rs::IriBuf;
@@ -762,7 +763,7 @@ async fn an_update_naming_a_request_context_keeps_the_stored_jsonld_context() {
 #[tokio::test]
 async fn an_update_naming_a_jsonld_context_replaces_the_stored_one() {
     // An embedded release, so the offline engine can validate it.
-    let replacement = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
+    let replacement = NGSI_LD_CORE_CONTEXT_URL.as_str();
 
     let written = written_context_after_update(json!({ "jsonldContext": replacement }), &ContextSpec::none()).await;
 

@@ -11,11 +11,8 @@ use crate::reassembly_harness::{
     identifier,
     subscribing_source::{SPEED, SubscribingSource},
 };
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use serde_json::{Value, json};
-
-/// The `jsonldContext` a subscription created without a `@context` is stored
-/// with (clause 5.8.1.4): the v1.9 core context.
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
 /// The registration of the source the copy is placed at.
 const SOURCE: &str = "urn:ngsi-ld:ContextSourceRegistration:late";
@@ -38,7 +35,7 @@ async fn scene_with(source: &SubscribingSource) -> ReassemblyScene {
     ReassemblyScene::start(SceneSpec {
         subscription_members: json!({
             "watchedAttributes": [SPEED],
-            "jsonldContext": CORE_CONTEXT
+            "jsonldContext": NGSI_LD_CORE_CONTEXT_URL.as_str()
         }),
         registrations: vec![source.stored()],
         ..SceneSpec::default()

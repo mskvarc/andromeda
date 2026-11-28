@@ -126,7 +126,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-subscription",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-configuration", "andromeda-context-commit"],
+    allow_workspace_dev_dependencies: ["andromeda-configuration", "andromeda-context-commit", "andromeda-ngsi-ld-vocabulary"],
     allow_production_dependencies: [],
 }
 
