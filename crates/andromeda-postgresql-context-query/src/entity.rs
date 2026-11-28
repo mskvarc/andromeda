@@ -48,12 +48,11 @@ pub struct EntityQuery {
     /// The order the page's rows come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
-    /// How PostgreSQL may plan and run `select`: a gated page, keyed, cut
-    /// from the carriers of its `attrs` or the trigram matches of its
-    /// `idPattern`, or walked in the order of an Attribute's value index, with its
-    /// bound values, which alone let the planner price an
-    /// index against walking the selection, and without the parallel workers
-    /// a gated-off branch would launch.
+    /// How PostgreSQL may plan and run `select`: a keyed page whose reads
+    /// take one access path whatever is bound once per connection without
+    /// its values, every other gated page with its bound values, and each
+    /// gated page without the parallel workers a gated-off branch would
+    /// launch.
     pub planning: StatementPlanning,
     /// How PostgreSQL may plan the statement `total` runs: a keyed count with
     /// its bound values, for the same pricing.

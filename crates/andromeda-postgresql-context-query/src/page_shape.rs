@@ -133,6 +133,7 @@ impl<'q> PageShape<'q> {
         count: CountPolicy,
         counted_on_page: CountPolicy,
     ) -> Result<CutPage<'q>, RenderError> {
+        let planning = self.planning(source.query);
         let (page, read_order, total_planning, total_candidates) = match self {
             PageShape::Plain => {
                 let mut page = Query::select();
@@ -142,7 +143,7 @@ impl<'q> PageShape<'q> {
                 return Ok(CutPage {
                     select: heads_of(page, source.rows, keys, counted_on_page),
                     read_order,
-                    planning: StatementPlanning::Cached,
+                    planning,
                     total_planning: StatementPlanning::Cached,
                     total_candidates: None,
                 });
@@ -189,10 +190,25 @@ impl<'q> PageShape<'q> {
         Ok(CutPage {
             select: heads_over(page, source.rows, counted_on_page, step),
             read_order,
-            planning: StatementPlanning::GatedBranches,
+            planning,
             total_planning,
             total_candidates,
         })
+    }
+
+    /// How PostgreSQL may plan the page statement cut this way from `query`.
+    ///
+    /// A plain page takes any plan the plan cache chooses. A gated page runs
+    /// without parallel workers, since a `Gather` under a branch whose gate
+    /// fails still launches them. A keyed page is planned as its reads allow
+    /// ([`KeyedReads::planning`]), and every other gated page with its bound
+    /// values.
+    fn planning(&self, query: &CompiledEntityQuery) -> StatementPlanning {
+        match self {
+            PageShape::Plain => StatementPlanning::Cached,
+            PageShape::Keyed(reads) => reads.planning(query),
+            PageShape::Geo(_) | PageShape::Carriers(_) | PageShape::ValueWalk(_) | PageShape::IdPattern(_) => StatementPlanning::GatedBranches,
+        }
     }
 }
 

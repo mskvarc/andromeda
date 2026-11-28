@@ -75,7 +75,12 @@ use crate::{
     geo_page::{GeoMatches, GeoWalk, geo_probe, geo_read},
     page_walk::{PageWalk, walked_rows},
 };
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, filter::compiled_filter::CompiledFilter, read_order::ReadOrder};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    entity::compiled::CompiledEntityQuery,
+    filter::compiled_filter::CompiledFilter,
+    read_order::ReadOrder,
+};
 use andromeda_postgresql_query::{
     error::RenderError,
     one_time_gate::CandidateBound,
@@ -85,6 +90,7 @@ use andromeda_postgresql_query::{
         projection::{compile, compile_led_by},
     },
 };
+use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::Condition;
 
 /// How many Entities the short walk probes, and how many index entries a
@@ -156,6 +162,44 @@ pub(crate) struct KeyedReads<'q> {
     /// The matches of the query's geo-query, read before the terms; `None`
     /// when the query has no geo-query with matches to read.
     pub(crate) geo: Option<GeoMatches<'q>>,
+}
+
+impl KeyedReads<'_> {
+    /// How PostgreSQL may plan the page these reads cut from `query`.
+    ///
+    /// The page keeps one generic plan per connection when every term it
+    /// reads is an equality or an ordering on an attribute's own value, `q`
+    /// crosses no Linked Entity, and `query` has neither a geo-query nor a
+    /// `scopeQ`. Every read then takes one access path whatever the request
+    /// binds: the selection's types and every limit are literals, the walks
+    /// probe each Entity by its key behind fences the planner cannot flatten,
+    /// and each count and read of a term goes through the B-tree over the
+    /// columns it compares. Planned with its values, the page of one trip
+    /// among 719 663 stop times spends 1.5 ms planning on every request and
+    /// executes on the same plan in 0.3 ms.
+    ///
+    /// Any other keyed page is planned with its bound values, which change
+    /// what it reads. Only a literal pattern is read as a B-tree range over its
+    /// anchored prefix or through the trigrams it holds, where a parameter
+    /// reads every value of the attribute: among the trips
+    /// `direction==0;headSign~="^Vaj.*"` takes 10 ms planned with its values
+    /// and 21 ms without them. Only a literal reference geometry is made valid
+    /// once rather than on every Entity a walk probes, and only a literal
+    /// `scopeQ` lets a probe reject an Entity through the scope index. Without
+    /// the operand of a hop's inner term, the planner reads that term's index
+    /// on every probe instead of following the walked Entity's Relationship,
+    /// so `hasTrip{headSign}=="Vajnory"` takes 88 ms where 19 ms suffice. A
+    /// sub-attribute equality and an existence, read through a GIN as a
+    /// pattern is, are planned with their values as well.
+    pub(crate) fn planning(&self, query: &CompiledEntityQuery) -> StatementPlanning {
+        let selection = &query.selection;
+        let b_tree_reads = self.terms.iter().all(|keyed| keyed.entries.is_some());
+        if b_tree_reads && selection.geo.is_none() && selection.scope_q.is_none() && !self.q.filter().contains_linked_hop() {
+            StatementPlanning::GenericGatedBranches
+        } else {
+            StatementPlanning::GatedBranches
+        }
+    }
 }
 
 /// The projected page of `source` for a `q` with keyed terms, read in the
@@ -614,7 +658,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        assert_eq!(built.planning, StatementPlanning::GenericGatedBranches);
         assert_statement_snapshot!("keyed-page-a-date-time-ordering-reads-its-candidates-from-a-range-of-its-index", built.select);
     }
 
@@ -740,21 +784,57 @@ mod tests {
         assert_statement_snapshot!("keyed-page-a-sub-attribute-pattern-pages-without-the-index", built.select);
     }
 
-    /// Without the operand a generic plan cannot estimate the key overlap and
-    /// reads the attribute's rows through its name index instead, so the
-    /// keyed page is planned with its bound values, and its gated-off
-    /// branches launch no parallel worker.
+    /// Each read of an equality or an ordering on an own value takes one
+    /// access path whatever is bound, as do the walks beside it and a
+    /// disjunction they probe, so the page keeps one generic plan per
+    /// connection, and its gated-off branches launch no parallel worker.
     #[test]
-    fn a_keyed_page_is_planned_with_its_bound_values_and_runs_serially() {
-        let built = build_query(
-            &ContextTarget::Live,
-            &query("\"https://example.com/temperature\".\"https://example.com/source\"==\"uncalibrated\""),
-            &PageWindow::offset(100, 0),
+    fn an_own_value_equality_or_ordering_page_keeps_one_generic_plan_per_connection() {
+        for q in [
+            "\"https://example.com/hasTrip\"==\"urn:ngsi-ld:GtfsTrip:1\"",
+            "\"https://example.com/speed\">107;\"https://example.com/status\"==\"moving\"",
+            "\"https://example.com/hasStop\"==\"urn:ngsi-ld:GtfsStop:1\";\"https://example.com/departureTime\">=\"07:00:00\";\"https://example.com/departureTime\"<\"08:00:00\"",
+            "\"https://example.com/status\"==\"fail\";(\"https://example.com/speed\"==1|\"https://example.com/speed\"==2)",
+        ] {
+            let built = build_query(&ContextTarget::Live, &query(q), &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
+            assert_eq!(built.planning, StatementPlanning::GenericGatedBranches, "{q}");
+        }
+    }
+
+    /// A pattern, a sub-attribute equality, an existence and a hop, read or
+    /// only probed, take another access path without their values, as does a
+    /// geo-query or a `scopeQ` beside an equality, so each such page is
+    /// planned with its bound values, and runs serially.
+    #[test]
+    fn a_keyed_page_whose_values_change_its_reads_is_planned_with_them() {
+        let mut scoped = query("\"https://example.com/status\"==\"fail\"");
+        scoped.selection.scope_q = Some("/Madrid/#".parse::<ScopeQuery>().expect("valid scope query"));
+        let queries = [
+            "\"https://example.com/temperature\"~=\"^text-71.*\"",
+            "\"https://example.com/temperature\".\"https://example.com/source\"==\"uncalibrated\"",
+            "\"https://example.com/temperature\"",
+            "\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\"",
+            "\"https://example.com/status\"==\"fail\";(\"https://example.com/speed\"==1|\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\")",
+            "\"https://example.com/status\"==\"fail\";\"https://example.com/temperature\"~=\"^text-71.*\"",
+        ]
+        .map(query)
+        .into_iter()
+        .chain([scoped]);
+        for query in queries {
+            let built = build_query(&ContextTarget::Live, &query, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
+            assert_eq!(
+                built.planning,
+                StatementPlanning::GatedBranches,
+                "{:?}",
+                query.selection.q.as_ref().map(CompiledFilter::filter)
+            );
+        }
+        let beside_geo = built(
+            &filtered(sensors_within_square(), "\"https://example.com/status\"==\"fail\""),
+            &first_page(),
             CountPolicy::Omit,
-            &names(),
-        )
-        .expect("valid entity query");
-        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        );
+        assert_eq!(beside_geo.planning, StatementPlanning::GatedBranches);
     }
 
     /// The index branch looks each candidate up by key, so it keeps the plain
@@ -769,7 +849,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        assert_eq!(built.planning, StatementPlanning::GenericGatedBranches);
         assert_statement_snapshot!("keyed-page-a-keyed-page-beside-attrs-walks-in-identifier-order", built.select);
     }
 
@@ -783,7 +863,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        assert_eq!(built.planning, StatementPlanning::GatedBranches);
+        assert_eq!(built.planning, StatementPlanning::GenericGatedBranches);
         assert_statement_snapshot!("keyed-page-a-keyed-page-without-a-type-beside-attrs-walks-the-identifier-index", built.select);
     }
 
