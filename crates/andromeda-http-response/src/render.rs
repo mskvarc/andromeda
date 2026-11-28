@@ -181,9 +181,11 @@ mod tests {
     use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
-        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, NoCompoundContextHost, WrapperUse},
+        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, WrapperUse},
         context_spec::ContextSpec,
-        presented_context::{NoLoadedContexts, PresentedContext},
+        no_compound_context_host::NoCompoundContextHost,
+        no_loaded_contexts::NoLoadedContexts,
+        presented_context::PresentedContext,
     };
     use andromeda_ngsi_ld_render::{
         context::ResponseContext,

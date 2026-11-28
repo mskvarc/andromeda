@@ -56,6 +56,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-entity",
         "andromeda-json-literal",
+        "andromeda-jsonld",
         "andromeda-ngsi-ld-model",
         "andromeda-persistence-failure",
     ],

@@ -61,9 +61,10 @@ mod tests {
     use crate::{error::SubscriptionError, notification_context::initialize_notification_context, subscription_context::SubscriptionContext};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
-        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, NoCompoundContextHost, WrapperUse},
+        compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, WrapperUse},
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
+        no_compound_context_host::NoCompoundContextHost,
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
     use andromeda_ngsi_ld_model::clearable::Clearable;

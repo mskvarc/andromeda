@@ -78,6 +78,10 @@ pub mod error;
 pub mod hit_counter;
 pub mod hosted_context_recognizer;
 pub mod loader;
+#[cfg(any(test, feature = "test-support"))]
+pub mod no_compound_context_host;
+#[cfg(any(test, feature = "test-support"))]
+pub mod no_loaded_contexts;
 pub mod operation_hit_scope;
 pub mod presented_context;
 pub mod request_context;

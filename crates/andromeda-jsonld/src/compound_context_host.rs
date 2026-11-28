@@ -53,16 +53,6 @@ pub trait CompoundContextHost: Debug + Send + Sync {
     fn host<'a>(&'a self, context: &'a JsonLiteral, usage: WrapperUse) -> CompoundContextHostFuture<'a>;
 }
 
-/// A test double: asked to host, it reports that no host is attached rather than naming a context it never stored.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoCompoundContextHost;
-
-impl CompoundContextHost for NoCompoundContextHost {
-    fn host<'a>(&'a self, _context: &'a JsonLiteral, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
-        Box::pin(async { Err(ContextHostingError::NoHost) })
-    }
-}
-
 /// Why a compound `@context` could not be hosted.
 #[derive(Debug, Error)]
 pub enum ContextHostingError {
@@ -87,23 +77,4 @@ pub enum ContextHostingError {
     /// mistake.
     #[error("the hosted @context document could not be written: {0}")]
     Unwritable(#[source] JsonLiteralError),
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        compound_context_host::{CompoundContextHost, ContextHostingError, NoCompoundContextHost, WrapperUse},
-        test_documents::literal,
-    };
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn a_host_that_stores_nothing_reports_that_no_host_is_attached() {
-        let context = literal(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]));
-
-        assert!(matches!(
-            NoCompoundContextHost.host(&context, WrapperUse::Response).await,
-            Err(ContextHostingError::NoHost)
-        ));
-    }
 }
