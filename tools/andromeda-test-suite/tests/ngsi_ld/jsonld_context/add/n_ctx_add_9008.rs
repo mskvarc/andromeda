@@ -24,7 +24,7 @@ async fn n_ctx_add_9008_a_cyclic_iri_mapping_is_bad_request_data() -> Result<()>
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
-            .with_detail("the @context cannot define the term a: cyclic IRI mapping")
+            .with_detail(r#"the @context cannot define the term "a": cyclic IRI mapping"#)
             .without_header(HeaderName::from_static("location"))
     );
     let contexts = tenant

@@ -31,7 +31,7 @@ async fn n_ctx_del_9014_a_reloaded_unknown_container_is_ld_context_not_available
     expect_that!(
         &answer,
         problem(StatusCode::GATEWAY_TIMEOUT, ErrorType::LdContextNotAvailable).with_detail(&format!(
-            "the context downloaded from {} is not valid JSON-LD: the @context has a member speed/@container holding a value JSON-LD does not allow there",
+            r#"the context downloaded from {} is not valid JSON-LD: the @context has a member "speed"/@container holding a value JSON-LD does not allow there"#,
             cached.url()
         ))
     );

@@ -164,11 +164,11 @@ mod tests {
         for (context, detail) in [
             (
                 r#"{"speed": 5}"#,
-                "the @context defines the term speed as a number, but a term definition is null, a string or an object",
+                r#"the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#,
             ),
             (
                 r#"{"speed": true}"#,
-                "the @context defines the term speed as a boolean, but a term definition is null, a string or an object",
+                r#"the @context defines the term "speed" as a boolean, but a term definition is null, a string or an object"#,
             ),
             (r#""not a url""#, r#"the @context names "not a url", which is not a URL"#),
             (
@@ -177,27 +177,37 @@ mod tests {
             ),
             (
                 r#"{"speed": {"@id": 5}}"#,
-                "the @context has a member speed/@id that is a number, but a string is expected",
+                r#"the @context has a member "speed"/@id that is a number, but a string is expected"#,
             ),
-            (r#"{"a": "b:x", "b": "a:y"}"#, "the @context cannot define the term a: cyclic IRI mapping"),
+            (r#"{"a": "b:x", "b": "a:y"}"#, r#"the @context cannot define the term "a": cyclic IRI mapping"#),
             (
                 r#"{"@id": "https://example.org/id"}"#,
                 "the @context cannot define the keyword @id: keyword redefinition",
             ),
             (
                 r#"{"speed": {"@id": "https://example.org/speed", "@container": "@bogus"}}"#,
-                "the @context has a member speed/@container holding a value JSON-LD does not allow there",
+                r#"the @context has a member "speed"/@container holding a value JSON-LD does not allow there"#,
             ),
         ] {
             pretty_assertions::assert_eq!(rendered(context), detail, "{context}");
         }
     }
 
+    /// JSON-LD 1.1 API section 4.2.2, create term definition step 2: the
+    /// empty string is no term, and the refusal names it as `""`.
+    #[test]
+    fn a_definition_of_the_empty_term_is_named_by_an_empty_string() {
+        pretty_assertions::assert_eq!(
+            rendered(r#"{"": {"@id": "https://example.org/x/", "@type": "@id"}}"#),
+            r#"the @context cannot define the term "": invalid term definition"#
+        );
+    }
+
     #[test]
     fn an_entry_a_term_definition_does_not_take_is_disallowed() {
         pretty_assertions::assert_eq!(
             rendered(r#"{"speed": {"@id": "https://example.org/speed", "unit": "km/h"}}"#),
-            "the @context has a member speed/unit that JSON-LD does not allow there"
+            r#"the @context has a member "speed"/"unit" that JSON-LD does not allow there"#
         );
     }
 

@@ -26,7 +26,7 @@ async fn n_ctx_del_9009_a_reloaded_term_defined_as_a_boolean_is_ld_context_not_a
     expect_that!(
         &answer,
         problem(StatusCode::GATEWAY_TIMEOUT, ErrorType::LdContextNotAvailable).with_detail(&format!(
-            "the context downloaded from {} is not valid JSON-LD: the @context defines the term speed as a boolean, but a term definition is null, a string or an object",
+            r#"the context downloaded from {} is not valid JSON-LD: the @context defines the term "speed" as a boolean, but a term definition is null, a string or an object"#,
             cached.url()
         ))
     );

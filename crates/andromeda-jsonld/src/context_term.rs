@@ -5,9 +5,10 @@ use derive_more::Display;
 /// A term a `@context` declares, spelled exactly as the context writes it.
 ///
 /// JSON-LD 1.1 lets a term be any non-empty key that is not a keyword, so the
-/// spelling carries no further structure. The type keeps that key apart from the
-/// IRIs and values it sits beside, and lets an error name the term a client's
-/// context declared.
+/// spelling carries no further structure; the empty key is kept as written too,
+/// so a refusal can name it. The type keeps that key apart from the IRIs and
+/// values it sits beside, and lets an error name the term a client's context
+/// declared.
 #[derive(Clone, Debug, Display, Eq, Hash, PartialEq)]
 pub struct ContextTerm(Box<str>);
 

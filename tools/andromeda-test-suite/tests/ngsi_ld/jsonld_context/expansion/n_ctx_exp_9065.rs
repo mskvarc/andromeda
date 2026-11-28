@@ -20,7 +20,7 @@ async fn n_ctx_exp_9065_a_linked_term_with_a_number_id_is_refused_and_not_cached
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
-            "invalid JSON-LD context at {}: the @context has a member speed/@id that is a number, but a string is expected",
+            r#"invalid JSON-LD context at {}: the @context has a member "speed"/@id that is a number, but a string is expected"#,
             linked.url()
         ))
     );

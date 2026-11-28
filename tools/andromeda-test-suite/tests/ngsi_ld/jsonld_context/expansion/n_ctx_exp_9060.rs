@@ -38,7 +38,7 @@ async fn n_ctx_exp_9060_a_context_link_that_does_not_process_is_named_in_the_det
     expect_that!(
         &answer,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
-            "invalid JSON-LD context at {number}: the @context defines the term speed as a number, but a term definition is null, a string or an object"
+            r#"invalid JSON-LD context at {number}: the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#
         ))
     );
     let answer_2 = broker
@@ -53,7 +53,7 @@ async fn n_ctx_exp_9060_a_context_link_that_does_not_process_is_named_in_the_det
     expect_that!(
         &answer_2,
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(&format!(
-            "invalid JSON-LD context at {cyclic}: the @context cannot define the term a: cyclic IRI mapping"
+            r#"invalid JSON-LD context at {cyclic}: the @context cannot define the term "a": cyclic IRI mapping"#
         ))
     );
     Ok(())

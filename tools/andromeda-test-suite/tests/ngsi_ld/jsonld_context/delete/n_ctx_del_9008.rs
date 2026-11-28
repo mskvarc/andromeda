@@ -26,7 +26,7 @@ async fn n_ctx_del_9008_a_reloaded_term_defined_as_a_number_is_ld_context_not_av
     expect_that!(
         &answer,
         problem(StatusCode::GATEWAY_TIMEOUT, ErrorType::LdContextNotAvailable).with_detail(&format!(
-            "the context downloaded from {} is not valid JSON-LD: the @context defines the term speed as a number, but a term definition is null, a string or an object",
+            r#"the context downloaded from {} is not valid JSON-LD: the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#,
             cached.url()
         ))
     );

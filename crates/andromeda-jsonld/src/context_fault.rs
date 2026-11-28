@@ -10,9 +10,13 @@
 //!
 //! A fault reads as a predicate of the `@context` it was found in, so the
 //! context can be named in front of it ([`FaultyContext`]).
+//!
+//! A term is named as a JSON string, quoted and escaped, because any key
+//! may be one: the empty key reads `""` and a term spelled like a keyword
+//! reads apart from the keyword. A keyword is named bare.
 
 use crate::context_spec::ContextSpec;
-use andromeda_json_literal::piece::JsonKind;
+use andromeda_json_literal::{json_text::quoted, piece::JsonKind};
 use derive_more::Display;
 use iri_rs::{InvalidIriRef, IriBuf};
 use jsonld_syntax::{ErrorCode, context::definition::KeyOrKeyword};
@@ -154,14 +158,18 @@ impl ContextLocation {
     }
 }
 
-// Written by hand: the keys are joined, which no derive spells.
+// Written by hand: the keys are joined, each term quoted and each keyword
+// bare, which no derive spells.
 impl fmt::Display for ContextLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (position, key) in self.0.iter().enumerate() {
             if position > 0 {
                 f.write_str("/")?;
             }
-            f.write_str(key.as_str())?;
+            match key {
+                KeyOrKeyword::Keyword(keyword) => write!(f, "{keyword}")?,
+                KeyOrKeyword::Key(term) => f.write_str(&quoted(term.as_str()))?,
+            }
         }
         Ok(())
     }
@@ -175,7 +183,7 @@ impl fmt::Display for Defined<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             KeyOrKeyword::Keyword(keyword) => write!(f, "the keyword {keyword}"),
-            KeyOrKeyword::Key(term) => write!(f, "the term {term}"),
+            KeyOrKeyword::Key(term) => write!(f, "the term {}", quoted(term.as_str())),
         }
     }
 }
@@ -249,7 +257,7 @@ mod tests {
         };
         pretty_assertions::assert_eq!(
             format!("{} {fault}", FaultyContext::Unnamed),
-            "the @context defines the term speed as a number, but a term definition is null, a string or an object"
+            r#"the @context defines the term "speed" as a number, but a term definition is null, a string or an object"#
         );
     }
 
@@ -260,7 +268,7 @@ mod tests {
             found: JsonKind::Number,
             expected: Box::new([JsonKind::String]),
         };
-        pretty_assertions::assert_eq!(fault.to_string(), "has a member speed/@id that is a number, but a string is expected");
+        pretty_assertions::assert_eq!(fault.to_string(), r#"has a member "speed"/@id that is a number, but a string is expected"#);
 
         let fault = ContextFault::MemberKind {
             member: location(&["@base"]),
@@ -273,19 +281,42 @@ mod tests {
         );
     }
 
+    /// A term is named in quotes and a keyword bare.
     #[test]
     fn a_refused_term_definition_names_the_term_and_the_json_ld_error() {
         let fault = ContextFault::TermDefinition {
-            term: KeyOrKeyword::Key(Key::from("a")),
-            reason: ErrorCode::CyclicIriMapping,
+            term: KeyOrKeyword::Key(Key::from("beginLifespanVersion")),
+            reason: ErrorCode::InvalidIriMapping,
         };
-        pretty_assertions::assert_eq!(fault.to_string(), "cannot define the term a: cyclic IRI mapping");
+        pretty_assertions::assert_eq!(fault.to_string(), r#"cannot define the term "beginLifespanVersion": invalid IRI mapping"#);
 
         let fault = ContextFault::TermDefinition {
             term: KeyOrKeyword::Keyword(Keyword::Id),
             reason: ErrorCode::KeywordRedefinition,
         };
         pretty_assertions::assert_eq!(fault.to_string(), "cannot define the keyword @id: keyword redefinition");
+    }
+
+    /// JSON-LD 1.1 API section 4.2.2, create term definition step 2: the
+    /// empty string is no term, and the refusal names it as `""`.
+    #[test]
+    fn a_refused_definition_of_the_empty_term_names_it_as_an_empty_string() {
+        let fault = ContextFault::TermDefinition {
+            term: KeyOrKeyword::Key(Key::from("")),
+            reason: ErrorCode::InvalidTermDefinition,
+        };
+        pretty_assertions::assert_eq!(fault.to_string(), r#"cannot define the term "": invalid term definition"#);
+    }
+
+    /// A term written like a keyword is not one, so it reads quoted beside
+    /// the keyword it resembles, and a term holding a quotation mark reads
+    /// escaped.
+    #[test]
+    fn a_member_path_quotes_each_term_and_leaves_each_keyword_bare() {
+        let fault = ContextFault::DuplicateMember {
+            member: location(&["", "@context", "@vocabulary", "a\"b", "@id"]),
+        };
+        pretty_assertions::assert_eq!(fault.to_string(), r#"has the member ""/@context/"@vocabulary"/"a\"b"/@id more than once"#);
     }
 
     #[test]

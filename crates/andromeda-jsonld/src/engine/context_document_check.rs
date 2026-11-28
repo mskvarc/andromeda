@@ -130,6 +130,6 @@ mod tests {
         let Err(refusal) = checked(r#"{"@context": {"a": "b:x", "b": "a:y"}}"#).await else {
             panic!("a cyclic IRI mapping is refused");
         };
-        pretty_assertions::assert_eq!(refusal.to_string(), "the @context cannot define the term a: cyclic IRI mapping");
+        pretty_assertions::assert_eq!(refusal.to_string(), r#"the @context cannot define the term "a": cyclic IRI mapping"#);
     }
 }
