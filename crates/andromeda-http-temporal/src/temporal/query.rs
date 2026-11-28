@@ -185,7 +185,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // The histories are compacted under the request context once every holder's
     // part has been merged into them (clause 5.7.3); the join then reads the
     // compact roots.
-    let bodies = service.compact_histories(entities, &context).await.with_instance(&uri)?;
+    let bodies = read.compacted(entities).await.with_instance(&uri)?;
     let (resolved, warnings) = apply_temporal_join(&read, &bodies, merged.warnings).await.with_instance(&uri)?;
     let linked_ids = resolved.linked_ids();
 

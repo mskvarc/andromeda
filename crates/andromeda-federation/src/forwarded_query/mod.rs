@@ -38,8 +38,6 @@ use andromeda_ngsi_ld_model::{
     registration_matching::entity_specification::EntitySpecification,
 };
 use andromeda_ngsi_ld_query::{entity_constraint::EntityConstraint, name_stage::Written};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
 use std::num::NonZeroU32;
 use url::form_urlencoded;
 
@@ -202,13 +200,18 @@ impl ForwardedQuery {
         self.push_optional(ForwardedParameter::Lang, lang.map(ToString::to_string));
     }
 
-    /// Clause 4.3.6.1: every source supports the normalized representation and
-    /// the broker renders the merged result itself, so the only `options` token
-    /// worth forwarding is the request for system-generated attributes.
-    fn push_sys_attrs(&mut self, sys_attrs: Option<SysAttrsInclusion>) {
-        if sys_attrs == Some(SysAttrsInclusion::Include) {
-            self.push(ForwardedParameter::Options, SYS_ATTRS_OPTION.to_string());
-        }
+    /// Ask the source for its system-generated attributes, whatever the client
+    /// asked for.
+    ///
+    /// Clause 4.5.5.3 settles two holders' instances of one `datasetId` by the
+    /// most recent `modifiedAt` when no `observedAt` tells them apart, and a
+    /// source writes `modifiedAt` only when asked (clause 4.8), so every
+    /// forwarded read asks; the merged result is written once, under the
+    /// client's own `sysAttrs`. Clause 4.3.6.1: every source supports the
+    /// normalized representation and the broker renders the merged result
+    /// itself, so no other `options` token is forwarded.
+    fn push_system_attributes(&mut self) {
+        self.push(ForwardedParameter::Options, SYS_ATTRS_OPTION.to_string());
     }
 
     /// The clause 4.5.23 traversal continuation of a Linked Entity retrieval.
@@ -305,7 +308,7 @@ impl RegistrationForwarding<'_, '_> {
                 query.push_csf(params.csf.as_ref(), self.names).await?;
                 query.push_dataset_ids(self.datasets);
                 query.push_lang(params.lang.as_ref());
-                query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
+                query.push_system_attributes();
             }
             ClientQuery::EntityRetrieve { id, params } => {
                 // The entity is named by the caller; the block contributes only
@@ -328,7 +331,7 @@ impl RegistrationForwarding<'_, '_> {
                 }
                 query.push_dataset_ids(self.datasets);
                 query.push_lang(params.lang.as_ref());
-                query.push_sys_attrs(params.options.as_ref().and_then(WrittenValue::if_supported).map(|options| options.sys_attrs));
+                query.push_system_attributes();
                 query.push_traversal(params.join.map(|join| join.to_string()), params.join_level, params.contained_by.as_deref());
             }
             ClientQuery::TemporalQuery(params) => {
@@ -536,7 +539,7 @@ mod tests {
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(
             strings(&forwarded),
-            vec!["id=urn%3Angsi-ld%3AVehicle%3AX&type=Vehicle&limit=1000&attrs=speed".to_string()]
+            vec!["id=urn%3Angsi-ld%3AVehicle%3AX&type=Vehicle&limit=1000&attrs=speed&options=sysAttrs".to_string()]
         );
     }
 
@@ -553,8 +556,8 @@ mod tests {
         pretty_assertions::assert_eq!(
             strings(&forwarded),
             vec![
-                "type=Vehicle&limit=1000&attrs=speed".to_string(),
-                "type=Device&limit=1000&attrs=fuel".to_string()
+                "type=Vehicle&limit=1000&attrs=speed&options=sysAttrs".to_string(),
+                "type=Device&limit=1000&attrs=fuel&options=sysAttrs".to_string()
             ]
         );
     }
@@ -723,13 +726,33 @@ mod tests {
 
     /// Clause 4.3.6.1: sources answer in the normalized representation and the
     /// broker renders the merged result, so a representation choice is never
-    /// forwarded; only the system-attribute request is.
+    /// forwarded; the only `options` token a forwarded read carries is the
+    /// system-attribute request every one of them makes.
     #[tokio::test]
     async fn a_representation_choice_is_never_forwarded() {
         let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle&format=keyValues&options=concise");
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000".to_string()]);
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000&options=sysAttrs".to_string()]);
+    }
+
+    /// Clause 4.5.5.3 settles conflicting instances without `observedAt` by
+    /// their `modifiedAt`, which a source writes only when asked (clause 4.8),
+    /// so a query and a retrieval ask for the system-generated attributes
+    /// although the client did not.
+    #[tokio::test]
+    async fn every_forwarded_entity_read_asks_for_system_attributes() {
+        let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}]}]));
+        let query = entity_query("type=Vehicle");
+        let queried = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
+        let split = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Split).await;
+        let params = GetEntityParams::default();
+        let id: Identifier = VEHICLE_X.parse().expect("an identifier");
+        let retrieved = narrow(ClientQuery::EntityRetrieve { id: &id, params: &params }, &block, SplitEntities::Complete).await;
+        for forwarded in [queried, split, retrieved] {
+            pretty_assertions::assert_eq!(forwarded.len(), 1);
+            pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Options), Some("sysAttrs"));
+        }
     }
 
     #[tokio::test]
@@ -743,7 +766,7 @@ mod tests {
             SourcePage { limit: 250, offset: 750 },
         )
         .await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=250&offset=750".to_string()]);
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=250&offset=750&options=sysAttrs".to_string()]);
     }
 
     /// Two identical blocks produce the same forwarded query, which is issued
@@ -752,7 +775,7 @@ mod tests {
     async fn identical_block_queries_are_deduplicated() {
         let reg = registration(&json!([{"entities": [{"type": VEHICLE}]}, {"entities": [{"type": VEHICLE}]}]));
         let forwarded = narrow(ClientQuery::EntityQuery(&entity_query("type=Vehicle")), &reg, SplitEntities::Complete).await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000".to_string()]);
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000&options=sysAttrs".to_string()]);
     }
 
     /// A POST query naming `selectors`, whose flat members are the flattened
@@ -778,7 +801,7 @@ mod tests {
         let reg = registration(&json!([{"entities": [{"type": DEVICE}]}]));
         let query = union_query(vec![typed("Vehicle"), typed("Device")]);
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Device&limit=1000".to_string()]);
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Device&limit=1000&options=sysAttrs".to_string()]);
     }
 
     /// A block covering both selectors is asked once per selector, since a GET
@@ -790,7 +813,10 @@ mod tests {
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(
             strings(&forwarded),
-            vec!["type=Vehicle&limit=1000".to_string(), "type=Device&limit=1000".to_string()]
+            vec![
+                "type=Vehicle&limit=1000&options=sysAttrs".to_string(),
+                "type=Device&limit=1000&options=sysAttrs".to_string()
+            ]
         );
     }
 
@@ -800,7 +826,7 @@ mod tests {
         let reg = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = union_query(vec![typed("Vehicle"), typed("Vehicle")]);
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &reg, SplitEntities::Complete).await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000".to_string()]);
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&limit=1000&options=sysAttrs".to_string()]);
     }
 
     /// A registration matching none of the selectors yields no query, so no
@@ -909,7 +935,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             strings(&forwarded),
             vec![
-                "attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&join=flat&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1%2Curn%3Angsi-ld%3ABuilding%3A2"
+                "attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&options=sysAttrs&join=flat&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1%2Curn%3Angsi-ld%3ABuilding%3A2"
                     .to_string()
             ]
         );
@@ -928,17 +954,17 @@ mod tests {
         let hop = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2&containedBy=urn:ngsi-ld:Building:1");
         pretty_assertions::assert_eq!(
             strings(&narrow(ClientQuery::EntityQuery(&hop), &block, SplitEntities::Complete).await),
-            vec!["type=Vehicle&limit=1000&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline&joinLevel=2".to_string()]
+            vec!["type=Vehicle&limit=1000&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline&joinLevel=2&options=sysAttrs".to_string()]
         );
-        let default_depth = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline");
+        let default_depth = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline&options=sysAttrs");
         pretty_assertions::assert_eq!(
             strings(&narrow(ClientQuery::EntityQuery(&default_depth), &block, SplitEntities::Complete).await),
-            vec!["type=Vehicle&limit=1000&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline".to_string()]
+            vec!["type=Vehicle&limit=1000&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=inline&options=sysAttrs".to_string()]
         );
         let no_hop = entity_query("type=Vehicle&q=speed%3E1&join=flat&joinLevel=2");
         pretty_assertions::assert_eq!(
             strings(&narrow(ClientQuery::EntityQuery(&no_hop), &block, SplitEntities::Complete).await),
-            vec!["type=Vehicle&limit=1000&q=speed%3E1".to_string()]
+            vec!["type=Vehicle&limit=1000&q=speed%3E1&options=sysAttrs".to_string()]
         );
     }
 
@@ -950,7 +976,7 @@ mod tests {
         let hop = entity_query("type=Vehicle&q=isParkedIn%7Bcategory%7D%3D%3D%22commercial%22&join=flat&joinLevel=2");
         pretty_assertions::assert_eq!(
             strings(&narrow(ClientQuery::EntityQuery(&hop), &block, SplitEntities::Split).await),
-            vec!["type=Vehicle&limit=1000".to_string()]
+            vec!["type=Vehicle&limit=1000&options=sysAttrs".to_string()]
         );
     }
 
@@ -982,7 +1008,7 @@ mod tests {
             )
             .await,
         );
-        pretty_assertions::assert_eq!(walked_here, vec!["timerel=after&timeAt=2020-01-01T00%3A00%3A00Z".to_string()]);
+        pretty_assertions::assert_eq!(walked_here, vec!["timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&options=sysAttrs".to_string()]);
 
         let continuation = strings(
             &narrow(
@@ -994,7 +1020,7 @@ mod tests {
         );
         pretty_assertions::assert_eq!(
             continuation,
-            vec!["timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&join=inline&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1".to_string()]
+            vec!["timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&options=sysAttrs&join=inline&joinLevel=2&containedBy=urn%3Angsi-ld%3ABuilding%3A1".to_string()]
         );
     }
 
@@ -1007,7 +1033,10 @@ mod tests {
         let id = uri(VEHICLE_X);
         let params = temporal_query("timerel=before&timeAt=2030-01-01T00:00:00Z");
         let forwarded = narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["timerel=before&timeAt=2030-01-01T00%3A00%3A00Z".to_string()]);
+        pretty_assertions::assert_eq!(
+            strings(&forwarded),
+            vec!["timerel=before&timeAt=2030-01-01T00%3A00%3A00Z&options=sysAttrs".to_string()]
+        );
     }
 
     /// Clause 4.3.6.1: the block's attribute constraint narrows the client's
@@ -1017,11 +1046,11 @@ mod tests {
     async fn a_temporal_retrieval_forwards_the_block_attribute_dataset_lang_and_window() {
         let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}], "propertyNames": [SPEED]}]));
         let id = uri(VEHICLE_X);
-        let params = temporal_query("attrs=speed,fuel&datasetId=urn:ngsi-ld:ds:1&lang=en&timerel=after&timeAt=2024-01-01T00:00:00Z&lastN=2");
+        let params = temporal_query("attrs=speed,fuel&datasetId=urn:ngsi-ld:ds:1&lang=en&timerel=after&timeAt=2024-01-01T00:00:00Z&lastN=2&options=sysAttrs");
         let forwarded = narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(
             strings(&forwarded),
-            vec!["attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&lang=en&timerel=after&timeAt=2024-01-01T00%3A00%3A00Z&lastN=2".to_string()]
+            vec!["attrs=speed&datasetId=urn%3Angsi-ld%3Ads%3A1&lang=en&timerel=after&timeAt=2024-01-01T00%3A00%3A00Z&lastN=2&options=sysAttrs".to_string()]
         );
     }
 
@@ -1047,7 +1076,7 @@ mod tests {
             "type=Vehicle&id=urn:ngsi-ld:Vehicle:X&idPattern=urn:ngsi-ld:Vehicle:.*&q=speed%3E1&scopeQ=%2FMadrid&csf=tier%3D%3D1&limit=3&timerel=after&timeAt=2024-01-01T00:00:00Z",
         );
         let forwarded = strings(&narrow(temporal_retrieve(&id, &params, TemporalTraversal::WalkedHere), &block, SplitEntities::Complete).await);
-        pretty_assertions::assert_eq!(forwarded, vec!["timerel=after&timeAt=2024-01-01T00%3A00%3A00Z".to_string()]);
+        pretty_assertions::assert_eq!(forwarded, vec!["timerel=after&timeAt=2024-01-01T00%3A00%3A00Z&options=sysAttrs".to_string()]);
     }
 
     /// The forwarded retrieval is admitted by the receiving binding, whatever
@@ -1099,7 +1128,7 @@ mod tests {
         let id = uri(VEHICLE_X);
         let params: GetEntityParams = serde_urlencoded::from_str("type=Vehicle").expect("valid retrieve parameters");
         let forwarded = narrow(ClientQuery::EntityRetrieve { id: &id, params: &params }, &block, SplitEntities::Complete).await;
-        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle".to_string()]);
+        pretty_assertions::assert_eq!(strings(&forwarded), vec!["type=Vehicle&options=sysAttrs".to_string()]);
     }
 
     /// Clause 5.7.1.4: a block registering the entity under a type outside the

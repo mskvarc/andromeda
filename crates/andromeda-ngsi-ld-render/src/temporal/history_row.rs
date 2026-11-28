@@ -32,7 +32,6 @@ use andromeda_ngsi_ld_model::temporal::{
     observation_metadata::ObservationMetadata,
     text_annotation::TextAnnotation,
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
@@ -70,16 +69,18 @@ pub enum HistoryRowRenderError {
 /// as.
 ///
 /// The row already carries decoded, typed values; what is left is to put each
-/// back in the member its family keeps it in. The clause 4.8 times are written
-/// only under `sysAttrs` (Table 5.2.14-1), and the operational write clock
-/// never: clause 5.2.21 admits only `observedAt`, `createdAt`, `modifiedAt` and
-/// `deletedAt` as Temporal Properties.
+/// back in the member its family keeps it in. The clause 4.8 times are kept,
+/// since merging holders' instances (clause 4.5.5.3) and every window, page
+/// and `lastN` over a system time read them; whether a response writes them
+/// is decided when the evolution is compacted. The operational write clock is
+/// never kept: clause 5.2.21 admits only `observedAt`, `createdAt`,
+/// `modifiedAt` and `deletedAt` as Temporal Properties.
 ///
 /// # Errors
 ///
 /// Returns [`HistoryRowRenderError`] for a stored row that no longer reads as
 /// the instance it recorded.
-pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclusion) -> Result<InstanceDocument, HistoryRowRenderError> {
+pub fn neutral_row_to_instance(row: TemporalHistoryRow) -> Result<InstanceDocument, HistoryRowRenderError> {
     let TemporalHistoryRow {
         attribute_name: _,
         attribute_type,
@@ -120,10 +121,6 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
             .dataset_id(dataset_id)
             .build());
     }
-    let (created_at, modified_at) = match sys_attrs {
-        SysAttrsInclusion::Include => (created_at.map(SystemInstant::new), modified_at.map(SystemInstant::new)),
-        SysAttrsInclusion::Strip => (None, None),
-    };
     Ok(InstanceDocument::builder()
         .family(Some(attribute_type))
         .dataset_id(dataset_id)
@@ -133,8 +130,8 @@ pub fn neutral_row_to_instance(row: TemporalHistoryRow, sys_attrs: SysAttrsInclu
         .unit_code(metadata.unit_code)
         .value_type(metadata.value_type)
         .object_types(metadata.object_types)
-        .created_at(created_at)
-        .modified_at(modified_at)
+        .created_at(created_at.map(SystemInstant::new))
+        .modified_at(modified_at.map(SystemInstant::new))
         .deleted_at(metadata.deleted_at)
         .instance_id(instance_id)
         .proof_seals(metadata.proof_seals)

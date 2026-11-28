@@ -8,7 +8,10 @@
 //! answer is written.
 
 use crate::entity_system_times::EntitySystemTimes;
-use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_entity::{
+    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument},
+    history::instance_recency::InstanceRecency,
+};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -20,14 +23,19 @@ use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use std::{cmp::Reverse, collections::HashMap, num::NonZeroU32};
+use std::{
+    cmp::{Ordering, Reverse},
+    collections::HashMap,
+    num::NonZeroU32,
+};
 
 /// How the history another holder contributed joins the one already held
 /// (clauses 4.3.6.2 and 5.7.3.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MergeMode {
     /// An inclusive, exclusive or redirecting holder: every instance it holds
-    /// joins, one carrying an `instanceId` already held counting once.
+    /// joins, one carrying an `instanceId` already held counting once, as the
+    /// more current of the two (clause 4.5.5.3).
     Inclusive,
     /// An auxiliary holder: clause 5.7.3.4 adds its data "only when the
     /// Attribute instance, whose value of the timeproperty [...] is not
@@ -198,6 +206,19 @@ impl TemporalDocument {
         });
     }
 
+    /// Drop the clause 4.8 times of the entity and the `createdAt` and
+    /// `modifiedAt` of every instance of its attributes, which a representation
+    /// that did not ask for `sysAttrs` leaves out (clause 6.3.11).
+    pub fn forget_system_times(&mut self) {
+        self.system_times = EntitySystemTimes::default();
+        for member in self.entity.attributes_mut().values_mut() {
+            match member {
+                AttributeMember::Instances(instances) => instances.iter_mut().for_each(InstanceDocument::forget_system_times),
+                AttributeMember::Remove => {}
+            }
+        }
+    }
+
     /// Keep, for every attribute, the `last_n` instances with the most recent
     /// instant on `timeproperty`, in ascending order of it: clause 5.7.3.4
     /// fixes which instants are kept, never the order of the response, and
@@ -276,13 +297,14 @@ impl TemporalDocument {
             self.emptied.shift_remove(&name);
             match self.entity.attributes_mut().get_mut(&name) {
                 Some(AttributeMember::Instances(held)) => {
-                    let before = held.len();
+                    let mut changed = false;
                     for instance in received {
-                        if joins(held, &instance, mode, timeproperty) {
-                            held.push(instance);
+                        match place(held, instance, mode, timeproperty) {
+                            Placement::Joined | Placement::Replaced => changed = true,
+                            Placement::Left => {}
                         }
                     }
-                    if held.len() != before {
+                    if changed {
                         held.sort_by_key(|instance| instance.instant_on(timeproperty));
                     }
                 }
@@ -309,19 +331,53 @@ impl TemporalDocument {
     }
 }
 
-/// Whether `candidate` joins the `held` instances of its attribute under `mode`.
-fn joins(held: &[InstanceDocument], candidate: &InstanceDocument, mode: MergeMode, timeproperty: TimeProp) -> bool {
-    let known = |id: &Identifier| held.iter().any(|instance| instance.instance_id() == Some(id));
+/// What placing one instance another holder contributed did to the instances
+/// held for its attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Placement {
+    /// It was added beside them.
+    Joined,
+    /// It stands in place of the held instance carrying its `instanceId`.
+    Replaced,
+    /// It was left out.
+    Left,
+}
+
+/// Place `candidate` among the `held` instances of its attribute under `mode`.
+///
+/// Two holders answering one `instanceId` with different data are in
+/// conflict, and clause 4.5.5.3 keeps the more current: the held instance
+/// stays unless the candidate's `observedAt`, then its `modifiedAt`, is the
+/// more recent.
+fn place(held: &mut Vec<InstanceDocument>, candidate: InstanceDocument, mode: MergeMode, timeproperty: TimeProp) -> Placement {
     match (mode, candidate.instance_id()) {
-        (MergeMode::Inclusive, Some(id)) => !known(id),
-        (MergeMode::Inclusive, None) => true,
+        (MergeMode::Inclusive, Some(id)) => match held.iter_mut().find(|instance| instance.instance_id() == Some(id)) {
+            None => {
+                held.push(candidate);
+                Placement::Joined
+            }
+            Some(standing) if InstanceRecency::of_document(standing).order(&InstanceRecency::of_document(&candidate)) == Ordering::Less => {
+                *standing = candidate;
+                Placement::Replaced
+            }
+            Some(_) => Placement::Left,
+        },
+        (MergeMode::Inclusive, None) => {
+            held.push(candidate);
+            Placement::Joined
+        }
         (MergeMode::Auxiliary, _) => {
             let Some(instant) = candidate.instant_on(timeproperty) else {
-                return false;
+                return Placement::Left;
             };
-            !held
+            let taken = held
                 .iter()
-                .any(|instance| instance.dataset_id() == candidate.dataset_id() && instance.instant_on(timeproperty) == Some(instant))
+                .any(|instance| instance.dataset_id() == candidate.dataset_id() && instance.instant_on(timeproperty) == Some(instant));
+            if taken {
+                return Placement::Left;
+            }
+            held.push(candidate);
+            Placement::Joined
         }
     }
 }

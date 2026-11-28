@@ -8,11 +8,12 @@ use ngsi_ld::{
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
 };
 
-/// Pins: Query Entities by type without an options parameter is forwarded once to the source with no options
-/// parameter
-/// Clause: 5.7.2.4, 6.3.9
-/// Recorded: the specification does not say which options a broker puts on a forwarded request; Andromeda forwards
-/// the normalized default and adds none
+/// Pins: Query Entities by type without an options parameter is forwarded once to the source with options `sysAttrs`
+/// alone
+/// Clause: 5.7.2.4, 6.3.9, 4.5.5.3
+/// Recorded: the specification does not say which options a broker puts on a forwarded request; Andromeda asks for
+/// the normalized default and for the system attributes, since clause 4.5.5.3 compares conflicting instances by their
+/// `modifiedAt`, and adds no other token
 #[gtest]
 #[tokio::test]
 async fn o_fed_qry_6409_a_forwarded_query_requests_the_normalized_form_by_default() -> Result<()> {
@@ -41,6 +42,6 @@ async fn o_fed_qry_6409_a_forwarded_query_requests_the_normalized_form_by_defaul
     let forwarded = source.received_on(Method::GET, "/ngsi-ld/v1/entities").await?;
     expect_that!(forwarded, len(eq(1)));
     let forwarded_one = forwarded.first().or_fail()?;
-    expect_that!(query_values(forwarded_one, "options"), is_empty());
+    expect_that!(query_values(forwarded_one, "options"), elements_are![eq("sysAttrs")]);
     Ok(())
 }

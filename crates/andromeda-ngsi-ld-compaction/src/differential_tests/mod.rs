@@ -14,6 +14,7 @@ mod documents;
 mod names;
 mod oracle;
 mod store_reads;
+mod system_times_tests;
 
 use crate::{
     compacted::Compacted,
@@ -248,7 +249,7 @@ async fn every_written_document_reads_as_the_temporal_entity_the_processor_compa
                 .map(|entity| format!("{entity:?}"))
                 .map_err(|error| error.to_string());
             let actual = typed
-                .temporal(&evolution)
+                .temporal(evolution, SysAttrsInclusion::Include)
                 .await
                 .map(|entity| format!("{entity:?}"))
                 .map_err(|error| error.to_string());

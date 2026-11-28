@@ -13,8 +13,7 @@
 //! The merge works on expanded names, so two holders spelling one attribute
 //! under different contexts merge into one attribute.
 
-use crate::{attribute_instances::AttributeInstances, entity_state::EntityState, history::instance_recency::InstanceRecency, instance::Instance};
-use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, system_instant::SystemInstant};
+use crate::{attribute_instances::AttributeInstances, entity_state::EntityState, history::instance_recency::InstanceRecency};
 use std::{cmp::Ordering, sync::Arc};
 
 /// How one version folds into the entity being assembled.
@@ -94,20 +93,12 @@ fn merge_instances(held: &mut AttributeInstances, received: &AttributeInstances)
     for (dataset_id, candidate) in received.iter() {
         let wins = held
             .get(dataset_id)
-            .is_none_or(|existing| recency(existing).order(&recency(candidate)) == Ordering::Less);
+            .is_none_or(|existing| InstanceRecency::of(existing).order(&InstanceRecency::of(candidate)) == Ordering::Less);
         if wins {
             // clone: the received version is shared and still referenced by its
             // holder's answer
             held.insert(dataset_id.cloned(), candidate.clone());
         }
-    }
-}
-
-/// The clause 4.5.5.3 instants one instance carries.
-fn recency(instance: &Instance) -> InstanceRecency {
-    InstanceRecency {
-        observed_at: instance.observed_at().map(NgsiLdDateTime::get),
-        modified_at: instance.modified_at().map(SystemInstant::get),
     }
 }
 
@@ -166,6 +157,20 @@ mod tests {
         let remote = entity(vec![(SPEED, instances(vec![(None, observed(2, at, Some("2020-02-01T00:00:00Z")))]))]);
         local.merge_version(remote, MergePolicy::Instances);
         assert_eq!(instance_rows(local.attributes(), SPEED), vec![row(None, 2)]);
+    }
+
+    /// Clause 4.5.5.3: neither instance carries `observedAt`, so the one
+    /// modified later is provided, whichever holder answered first.
+    #[test]
+    fn the_later_modification_wins_without_an_observation_whichever_version_is_held() {
+        let earlier = || entity(vec![(SPEED, instances(vec![(None, observed(1, None, Some("2020-01-01T00:00:00Z")))]))]);
+        let later = || entity(vec![(SPEED, instances(vec![(None, observed(2, None, Some("2020-02-01T00:00:00Z")))]))]);
+        let mut held_earlier = earlier();
+        held_earlier.merge_version(later(), MergePolicy::Instances);
+        assert_eq!(instance_rows(held_earlier.attributes(), SPEED), vec![row(None, 2)]);
+        let mut held_later = later();
+        held_later.merge_version(earlier(), MergePolicy::Instances);
+        assert_eq!(instance_rows(held_later.attributes(), SPEED), vec![row(None, 2)]);
     }
 
     #[test]

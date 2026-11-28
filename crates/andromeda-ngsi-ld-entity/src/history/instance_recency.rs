@@ -8,14 +8,17 @@
 //! instances neither tells apart leave the result indeterminate. "If present"
 //! is read per instance: an instance carrying `observedAt` is the one with the
 //! most recent observation over one carrying none, so `modifiedAt` decides
-//! only between two instances that carry no `observedAt` or the same one. A
-//! forwarded answer carries `modifiedAt` only when the client asked for
-//! system attributes, so reading "if present" as present on both would leave
-//! an observed instance and an unobserved one undecided. Every place
-//! that decides which instance stands (merging the answers of several Context
-//! Sources, folding a Temporal Evolution into current state) reads the same
-//! order, and each decides for itself what an undecided tie keeps.
+//! only between two instances that carry no `observedAt` or the same one.
+//! Every place that decides which instance stands (merging the answers of
+//! several Context Sources, merging their Temporal Evolutions, folding a
+//! Temporal Evolution into current state) reads the same order, and each
+//! decides for itself what an undecided tie keeps.
 
+use crate::{
+    document::{instance_document::InstanceDocument, slot::Slot},
+    instance::Instance,
+};
+use andromeda_ngsi_ld_lexicon::time::{date_time::NgsiLdDateTime, system_instant::SystemInstant};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 
@@ -29,6 +32,25 @@ pub struct InstanceRecency {
 }
 
 impl InstanceRecency {
+    /// The instants a held instance carries.
+    #[must_use]
+    pub fn of(instance: &Instance) -> InstanceRecency {
+        InstanceRecency {
+            observed_at: instance.observed_at().map(NgsiLdDateTime::get),
+            modified_at: instance.modified_at().map(SystemInstant::get),
+        }
+    }
+
+    /// The instants an instance of a Temporal Evolution carries; one that
+    /// removes its `observedAt` carries none.
+    #[must_use]
+    pub fn of_document(instance: &InstanceDocument) -> InstanceRecency {
+        InstanceRecency {
+            observed_at: instance.observed_at().and_then(Slot::as_set).map(|observed_at| observed_at.get()),
+            modified_at: instance.modified_at().map(SystemInstant::get),
+        }
+    }
+
     /// How `self` orders against `other` under clause 4.5.5.3: the greater is
     /// the more current.
     ///

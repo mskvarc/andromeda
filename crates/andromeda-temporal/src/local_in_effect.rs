@@ -17,7 +17,6 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{projection::attrs_selection::AttrsAdmission, split_filter::SplitFilter};
 use andromeda_ngsi_ld_render::temporal::history_row::neutral_row_to_instance;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -86,8 +85,7 @@ pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow
     for row in rows {
         // clone: the name is taken before `row` is moved into the instance.
         let attribute = row.attribute_name.clone();
-        let instance =
-            neutral_row_to_instance(row, SysAttrsInclusion::Include).map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
+        let instance = neutral_row_to_instance(row).map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
         instances.entry(attribute).or_default().push(instance);
     }
     let attributes = instances

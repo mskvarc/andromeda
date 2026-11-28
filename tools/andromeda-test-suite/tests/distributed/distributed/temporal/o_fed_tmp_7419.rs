@@ -13,8 +13,8 @@ use ngsi_ld::{
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
 };
 
-/// Pins: Retrieve Temporal Evolution as `temporalValues` forwards to the source a retrieval naming neither format
-/// nor options `temporalValues`
+/// Pins: Retrieve Temporal Evolution as `temporalValues` forwards to the source a retrieval naming no format and
+/// options `sysAttrs` alone, never `temporalValues`
 /// Clause: 5.7.3.4, 4.5.9
 /// Recorded: the clause does not say which representation a forwarded retrieval asks for; Andromeda asks the source
 /// for the normalized instances so that the instances of one dataset can be merged
@@ -68,7 +68,7 @@ async fn o_fed_tmp_7419_a_source_is_asked_for_normalized_instances() -> Result<(
     expect_that!(forwarded, len(eq(2)));
     for forwarded_one in &forwarded {
         expect_that!(query_values(forwarded_one, "format"), is_empty());
-        expect_that!(query_values(forwarded_one, "options"), is_empty());
+        expect_that!(query_values(forwarded_one, "options"), elements_are![eq("sysAttrs")]);
     }
     Ok(())
 }

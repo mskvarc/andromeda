@@ -27,13 +27,9 @@ use crate::{
     entity_state::EntityState,
     entity_types::EntityTypes,
     history::instance_recency::InstanceRecency,
-    instance::Instance,
     operation::{attribute_write::remove_instance, instance_patch::new_instance, mutation_error::MutationError},
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -122,7 +118,7 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
         // the older instance.
         modified_at: Some(at),
     };
-    if held.is_some_and(|held| recency_of(held).order(&candidate_recency) == Ordering::Greater) {
+    if held.is_some_and(|held| InstanceRecency::of(held).order(&candidate_recency) == Ordering::Greater) {
         return Ok(());
     }
     match (held, candidate.deleted_at()) {
@@ -150,14 +146,6 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
 /// Whether a candidate is already past its `expiresAt` (clause 4.22).
 fn expired(candidate: &InstanceDocument, at: DateTime<Utc>) -> bool {
     candidate.expires_at().and_then(Slot::as_set).is_some_and(|expires_at| expires_at.get() <= at)
-}
-
-/// The clause 4.5.5.3 instants a held instance carries.
-fn recency_of(instance: &Instance) -> InstanceRecency {
-    InstanceRecency {
-        observed_at: instance.observed_at().map(NgsiLdDateTime::get),
-        modified_at: instance.modified_at().map(SystemInstant::get),
-    }
 }
 
 /// A new entity with the fragment's identifier, types and scope.

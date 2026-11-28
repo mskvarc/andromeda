@@ -109,6 +109,13 @@ impl TemporalQueryParameters {
             .build()
     }
 
+    /// Whether the evolutions a validated request answers with are written
+    /// with the `createdAt` and `modifiedAt` of their instances.
+    #[must_use]
+    pub fn written_system_times(&self) -> SysAttrsInclusion {
+        self.sys_attrs().in_temporal_evolution(self.selected_format(), self.timeproperty_or_default())
+    }
+
     /// The temporal representation a validated request selected.
     ///
     /// The infallible counterpart of [`Self::parse_format`], read once the

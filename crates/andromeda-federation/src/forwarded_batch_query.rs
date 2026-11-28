@@ -510,7 +510,7 @@ mod tests {
                 "joinLevel": 2
             })
         );
-        pretty_assertions::assert_eq!(batch.parameters, format!("limit={SOURCE_PAGE_SIZE}"));
+        pretty_assertions::assert_eq!(batch.parameters, format!("limit={SOURCE_PAGE_SIZE}&options=sysAttrs"));
     }
 
     /// Clause 4.9 EXAMPLE 11: `jsonKeys` names the members `q` reads as
@@ -572,7 +572,7 @@ mod tests {
         )
         .await
         .expect("selects");
-        pretty_assertions::assert_eq!(batch.parameters, "limit=250&offset=750");
+        pretty_assertions::assert_eq!(batch.parameters, "limit=250&offset=750&options=sysAttrs");
     }
 
     /// The narrowing of an entity query writes no temporal parameter, so one

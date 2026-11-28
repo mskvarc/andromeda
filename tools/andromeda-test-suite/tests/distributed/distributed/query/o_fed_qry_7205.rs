@@ -8,8 +8,8 @@ use ngsi_ld::{
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
 };
 
-/// Pins: Query Entities by type with options `keyValues` over a matching registration forwards the query once with
-/// neither options nor format, so the source answers its default normalized representation
+/// Pins: Query Entities by type with options `keyValues` over a matching registration forwards the query once with no
+/// format and options `sysAttrs` alone, so the source answers its default normalized representation
 /// Clause: 6.3.7, 5.7.2.4
 /// Recorded: clause 6.3.7 requires a source to support only the normalized representation by default and does not
 /// say which representation a broker requests when merging
@@ -47,7 +47,7 @@ async fn o_fed_qry_7205_a_query_asking_for_key_values_is_forwarded_without_a_rep
         .send()
         .await?;
     let forwarded_request = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/entities")
-        .without_query("options")
+        .query("options", "sysAttrs")
         .without_query("format");
     let forwarded = source.received_matching(&forwarded_request).await?;
     expect_that!(forwarded, len(eq(1)));
