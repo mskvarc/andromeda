@@ -8,11 +8,14 @@ use crate::{
     driver_supervision::DriverSupervision,
     failure::TaskFailure,
     failure_report::FailureReport,
+    pass_wakes::PassWakes,
     runtime_failure::RuntimeFailure,
     task_observer::DriverTerminal,
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
 use std::{
+    future::Future,
+    pin::pin,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -42,14 +45,14 @@ pub(crate) async fn run(
             () = cancellation.cancelled() => return DriverTerminal::Cancelled,
             signal = wake.recv() => {
                 if signal.is_none() {
-                    return DriverTerminal::Failed(FailureReport::of(&TaskFailure::invariant_violation(RuntimeFailure::DrainWakeChannelClosed)));
+                    return wake_channel_closed();
                 }
                 backoff.record_wake();
                 DrainCause::Wake
             }
             () = sleep(next.delay) => next.expiry,
         };
-        next = match drain_until_settled(&supervision, &operation, &mut backoff, cause).await {
+        next = match drain_until_settled(&supervision, &operation, &mut backoff, cause, &mut wake).await {
             Ok(next) => next,
             Err(terminal) => return terminal,
         };
@@ -72,22 +75,29 @@ struct NextSleep {
 /// that reaches the due instant a pass reported ends in a [`DrainCause::Due`]
 /// pass; every other sleep ends in a [`DrainCause::Fallback`] pass. The first
 /// pass carries `cause`; every repeat is a [`DrainCause::Continuation`].
+///
+/// Each pass is handed the wakes that arrive while it runs, and a wake it
+/// returns without taking in is queued again on `wake`, so it starts a pass
+/// as it would have had it arrived between passes.
 async fn drain_until_settled(
     supervision: &DriverSupervision,
     operation: &Arc<DrainOperation>,
     backoff: &mut DrainBackoff,
     cause: DrainCause,
+    wake: &mut DrainWakeReceiver,
 ) -> Result<NextSleep, DriverTerminal> {
     let cancellation = &supervision.cancellation;
     let mut did_work = false;
     let mut cause = cause;
     loop {
         let pass_cause = cause;
-        let result = bounded_driver::execute(supervision, || {
-            let execution = DrainExecution::new(cancellation.clone(), SystemTime::now(), pass_cause);
+        let wakes = PassWakes::default();
+        let pass = bounded_driver::execute(supervision, || {
+            let execution = DrainExecution::new(cancellation.clone(), SystemTime::now(), pass_cause, wakes.clone());
             operation(execution)
-        })
-        .await;
+        });
+        let result = handing_wakes(pass, wake, &wakes, backoff).await?;
+        wakes.hand_back(wake);
         cause = DrainCause::Continuation;
         match result {
             Ok(DrainPassOutcome::WorkMayRemain) => did_work = true,
@@ -121,4 +131,34 @@ async fn drain_until_settled(
             return Err(DriverTerminal::Cancelled);
         }
     }
+}
+
+/// Run `pass` to its end, handing it each wake that arrives on `wake`
+/// meanwhile through `wakes`.
+async fn handing_wakes<O>(
+    pass: impl Future<Output = O>,
+    wake: &mut DrainWakeReceiver,
+    wakes: &PassWakes,
+    backoff: &mut DrainBackoff,
+) -> Result<O, DriverTerminal> {
+    let mut pass = pin!(pass);
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut pass => return Ok(result),
+            signal = wake.recv() => match signal {
+                Some(()) => {
+                    backoff.record_wake();
+                    wakes.raise();
+                }
+                None => return Err(wake_channel_closed()),
+            },
+        }
+    }
+}
+
+/// The terminal of a drain whose wake channel closed, which its own sender
+/// rules out.
+fn wake_channel_closed() -> DriverTerminal {
+    DriverTerminal::Failed(FailureReport::of(&TaskFailure::invariant_violation(RuntimeFailure::DrainWakeChannelClosed)))
 }

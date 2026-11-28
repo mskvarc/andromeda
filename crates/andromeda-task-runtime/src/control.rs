@@ -1,5 +1,6 @@
 //! Cancellation context and coalescing run-now control.
 
+use crate::pass_wakes::PassWakes;
 use std::{
     sync::{
         Arc,
@@ -43,12 +44,19 @@ pub struct DrainExecution {
     cutoff: SystemTime,
     /// What set this pass in motion.
     cause: DrainCause,
+    /// The wakes that reach the drain while this pass runs.
+    wakes: PassWakes,
 }
 
 impl DrainExecution {
     /// Construct one drain execution context.
-    pub(crate) const fn new(cancellation: CancellationToken, cutoff: SystemTime, cause: DrainCause) -> DrainExecution {
-        DrainExecution { cancellation, cutoff, cause }
+    pub(crate) const fn new(cancellation: CancellationToken, cutoff: SystemTime, cause: DrainCause, wakes: PassWakes) -> DrainExecution {
+        DrainExecution {
+            cancellation,
+            cutoff,
+            cause,
+            wakes,
+        }
     }
 
     /// What set this pass in motion.
@@ -67,6 +75,13 @@ impl DrainExecution {
     #[must_use]
     pub const fn cutoff(&self) -> SystemTime {
         self.cutoff
+    }
+
+    /// Return the wakes that reach the drain while this pass runs. A pass
+    /// that takes none in is followed by a pass of its own for each.
+    #[must_use]
+    pub const fn wakes(&self) -> &PassWakes {
+        &self.wakes
     }
 }
 

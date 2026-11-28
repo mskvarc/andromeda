@@ -24,6 +24,8 @@ pub mod keyed_slots;
 mod keyed_slots_registration;
 /// Observable task lifecycle events.
 pub mod lifecycle_event;
+/// The wakes that reach a drain while one of its passes runs.
+pub mod pass_wakes;
 /// Periodic scheduling policy.
 pub mod periodic_trigger;
 /// Complete metadata required before task execution.

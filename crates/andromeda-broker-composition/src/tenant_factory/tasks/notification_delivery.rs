@@ -39,6 +39,7 @@ use andromeda_task_runtime::{
     wake_trigger::{DrainFallbackPolicy, DrainWakeReceiver},
 };
 use chrono::{DateTime, Utc};
+use futures::stream;
 use std::{
     sync::{Arc, atomic::AtomicU64},
     time::Duration,
@@ -119,9 +120,16 @@ fn register_delivery_drain(
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
+                    // A durable commit wakes the drain once it has queued its
+                    // deliveries, so each wake the pass takes in is a commit
+                    // the pass claims for while its earlier attempts run.
+                    let commits = stream::unfold(execution.wakes().clone(), |wakes| async move {
+                        wakes.next().await;
+                        Some(((), wakes))
+                    });
                     // A completed pass found the queue out of due deliveries or
                     // was cancelled, so no continuation follows it.
-                    let outcome = drain.execute(execution.cancellation()).await.map_err(classify_notification_failure)?;
+                    let outcome = drain.execute(execution.cancellation(), commits).await.map_err(classify_notification_failure)?;
                     tracing::debug!(
                         claimed = outcome.claimed,
                         lease_lost = outcome.lease_lost,

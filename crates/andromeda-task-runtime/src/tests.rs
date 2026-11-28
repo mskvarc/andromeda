@@ -742,6 +742,103 @@ async fn a_wake_sent_before_registration_is_not_lost() -> Result<(), TestError> 
     Ok(())
 }
 
+/// A pass still running when a producer wakes the drain is handed the wake,
+/// and having taken it in, is followed by no pass of its own for it.
+#[tokio::test(start_paused = true)]
+async fn a_wake_that_arrives_while_a_pass_runs_is_handed_to_that_pass() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let passes = Arc::new(AtomicUsize::new(0));
+    let taken = Arc::new(AtomicUsize::new(0));
+    let task = DrainTask::new(
+        registration("wake-in-pass", RestartPolicy::Never, Duration::from_secs(1))?,
+        // A long fallback: only a wake starts a pass within the test.
+        DrainFallbackPolicy::new(Duration::from_secs(3_600), Duration::from_secs(3_600))?,
+        {
+            let passes = Arc::clone(&passes);
+            let taken = Arc::clone(&taken);
+            move |execution: DrainExecution| {
+                let passes = Arc::clone(&passes);
+                let taken = Arc::clone(&taken);
+                async move {
+                    passes.fetch_add(1, Ordering::SeqCst);
+                    execution.wakes().next().await;
+                    taken.fetch_add(1, Ordering::SeqCst);
+                    Scripted::Ok(DrainPassOutcome::Idle)
+                }
+            }
+        },
+    );
+    let (wake, receiver) = wake_channel();
+    supervisor.register_drain(task, receiver)?;
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    assert_eq!(
+        (passes.load(Ordering::SeqCst), taken.load(Ordering::SeqCst)),
+        (1, 0),
+        "the woken pass waits for a wake"
+    );
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    assert_eq!(
+        (passes.load(Ordering::SeqCst), taken.load(Ordering::SeqCst)),
+        (1, 1),
+        "the running pass took the wake in"
+    );
+    sleep(Duration::from_secs(60)).await;
+    settle().await;
+    assert_eq!(passes.load(Ordering::SeqCst), 1, "a wake the pass took in starts no pass of its own");
+    supervisor.shutdown().await;
+    Ok(())
+}
+
+/// A wake that arrives while a pass runs and that the pass returns without
+/// taking in starts the next pass, as it would between passes.
+#[tokio::test(start_paused = true)]
+async fn a_wake_a_pass_returns_without_taking_in_starts_the_next_pass() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let causes = Arc::new(Mutex::new(Vec::new()));
+    let release = Arc::new(Notify::new());
+    let task = DrainTask::new(
+        registration("wake-untaken", RestartPolicy::Never, Duration::from_secs(1))?,
+        DrainFallbackPolicy::new(Duration::from_secs(3_600), Duration::from_secs(3_600))?,
+        {
+            let causes = Arc::clone(&causes);
+            let release = Arc::clone(&release);
+            move |execution: DrainExecution| {
+                let causes = Arc::clone(&causes);
+                let release = Arc::clone(&release);
+                async move {
+                    let first = {
+                        let mut causes = causes.lock().expect("cause log");
+                        causes.push(execution.cause());
+                        causes.len() == 1
+                    };
+                    if first {
+                        release.notified().await;
+                    }
+                    Scripted::Ok(DrainPassOutcome::Idle)
+                }
+            }
+        },
+    );
+    let (wake, receiver) = wake_channel();
+    supervisor.register_drain(task, receiver)?;
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    assert_eq!(
+        causes.lock().expect("cause log").clone(),
+        vec![DrainCause::Wake],
+        "the first pass is still running"
+    );
+    release.notify_one();
+    settle().await;
+    assert_eq!(causes.lock().expect("cause log").clone(), vec![DrainCause::Wake, DrainCause::Wake]);
+    supervisor.shutdown().await;
+    Ok(())
+}
+
 #[tokio::test(start_paused = true)]
 async fn missed_cadences_need_no_persisted_timer_jobs_for_level_triggered_work() -> Result<(), TestError> {
     let supervisor = TaskSupervisor::process(Handle::current());
