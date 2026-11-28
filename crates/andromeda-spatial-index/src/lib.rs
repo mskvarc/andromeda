@@ -7,10 +7,11 @@
 //! reference geometries, each answering the same question from opposite ends.
 //!
 //! Nothing here decides what a relation *means*. A candidate that survives the
-//! bounding-box prefilter is either put through
-//! [`andromeda_ngsi_ld_geometry::relation::matches`], the in-memory evaluation
-//! of the one clause 4.10 reading every matcher shares, or handed to the store,
-//! which renders the same reading; the tree is only ever an optimisation.
+//! bounding-box prefilter is either handed to the store, which applies the
+//! clause 4.10 relation to every entity candidate, or, for a subscription, put
+//! through [`andromeda_ngsi_ld_geometry::relation::matches`], the in-memory
+//! evaluation of the one clause 4.10 reading every matcher shares; the tree is
+//! only ever an optimisation.
 //!
 //! The boxes are great-circle bounds and `near` envelopes that cover every
 //! point within the distance on the WGS 84 spheroid, wrapping across the
@@ -18,8 +19,8 @@
 //! prefilter at all, and that is deliberate rather than missing: `disjoint`
 //! matches precisely the entries a bounding-box test discards, and `near` with
 //! only a `minDistance` matches entries arbitrarily far from the reference. The
-//! subscription index scans its partition in full for them; the entity index
-//! scans it for `disjoint` and declines to narrow such a `near` at all.
+//! subscription index scans its partition in full for them, and the entity
+//! index declines to narrow them at all.
 
 pub mod entity;
 pub mod key;

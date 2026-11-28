@@ -124,6 +124,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
+        line_string_coordinates::LineStringCoordinates,
         linear_ring::LinearRing,
         planar::PlanarGeometry,
         position::Position,
@@ -177,6 +178,47 @@ mod tests {
 
     fn candidates_of(index: &SpatialSubscriptionIndex, key: &SpatialKey, entity: &GeometryForm) -> Vec<Identifier> {
         index.candidates(key, &PlanarGeometry::project(entity))
+    }
+
+    fn line(positions: &[(f64, f64)]) -> GeometryForm {
+        GeometryForm::LineString(
+            LineStringCoordinates::try_new(
+                positions
+                    .iter()
+                    .map(|&(x, y)| Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
+                    .collect(),
+            )
+            .expect("a test line has two positions or more"),
+        )
+    }
+
+    /// ETSI GS CIM 009 v1.9.1 clause 4.10 reads `overlaps` by the Simple
+    /// Features relation, and both lines share the reference's second segment:
+    /// the one turning back and crossing that segment overlaps it as the one
+    /// leaving it does.
+    #[test]
+    fn an_overlaps_subscription_is_a_candidate_for_a_line_crossing_back_over_a_segment_it_shares() {
+        let index = SpatialSubscriptionIndex::new();
+        let reference = line(&[
+            (17.041_112_899_780_3, 48.208_068_847_656_3),
+            (17.044_538_497_924_8, 48.199_306_488_037_1),
+            (17.049_634_933_471_7, 48.196_449_279_785_2),
+            (17.052_634_9, 48.198_449_3),
+        ]);
+        index.insert(key(), entry("overlaps", &reference, GeoRel::Overlaps));
+        let crossing_back = line(&[
+            (17.044_538_497_924_8, 48.199_306_488_037_1),
+            (17.049_634_933_471_7, 48.196_449_279_785_2),
+            (17.048_576_354_980_5, 48.197_162_628_173_8),
+            (17.046_571_731_567_4, 48.193_210_601_806_6),
+        ]);
+        let control = line(&[
+            (17.044_538_497_924_8, 48.199_306_488_037_1),
+            (17.049_634_933_471_7, 48.196_449_279_785_2),
+            (17.05, 48.19),
+        ]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &crossing_back), vec![uri("overlaps")]);
+        pretty_assertions::assert_eq!(candidates_of(&index, &key(), &control), vec![uri("overlaps")]);
     }
 
     #[test]

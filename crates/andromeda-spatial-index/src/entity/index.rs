@@ -5,14 +5,7 @@ use crate::{
     key::SpatialKey,
     partitioned_rtree::{Indexed, PartitionedRTree, WriteTracking, packed_rtree::PackedRTree},
 };
-use andromeda_ngsi_ld_geometry::{
-    form::GeometryForm,
-    geo_rel::GeoRel,
-    great_circle::great_circle_bounds,
-    near_envelope::NearEnvelope,
-    planar::PlanarGeometry,
-    relation::matches,
-};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, great_circle::great_circle_bounds, near_envelope::NearEnvelope, planar::PlanarGeometry};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, identifier_spelling::IdentifierSpelling};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashSet;
@@ -33,8 +26,8 @@ struct SeedScope {
 ///
 /// A thin reading over the shared [`PartitionedRTree`]: the storage,
 /// back-index, and rebuild machinery all live there, and this type adds the two
-/// things that are entity-specific (evaluating a caller-supplied `georel`
-/// against a partition, and knowing which partitions are complete enough to
+/// things that are entity-specific (the region of a partition a caller-supplied
+/// `georel` can reach, and knowing which partitions are complete enough to
 /// answer one).
 ///
 /// A partition answers only once a [`SpatialEntityIndex::rebuild`] has seeded
@@ -96,18 +89,23 @@ impl SpatialEntityIndex {
         self.tree.current_generation()
     }
 
-    /// The entities of one partition that `admitted` admits and that may
-    /// satisfy a `georel` filter, at most `at_most` of them, for the store to
-    /// decide.
+    /// The entities of one partition that `admitted` admits and whose envelope
+    /// meets the region a `georel` filter can reach, at most `at_most` of them,
+    /// for the store to decide.
     ///
-    /// `None` means the index declines to narrow, which is not the same answer
-    /// as an empty set: the caller falls through to the store rather than
-    /// reporting that nothing matched. It declines when the partition's scope
-    /// has not been seeded, for a `near` with only a `minDistance`, which no
-    /// envelope can bound, and when more than `at_most` admitted entities may
-    /// satisfy the filter, which it knows at the first entity past them: a
-    /// filter most of a partition meets costs `at_most + 1` tests, not one per
-    /// entry. An entity `admitted` leaves out is neither named nor counted. A
+    /// The index never decides the relation itself: every entity whose
+    /// envelope meets the region is a candidate, and the store applies the
+    /// relation to each, so the index cannot leave out an entity the store
+    /// would answer. `None` means the index declines to narrow, which is not
+    /// the same answer as an empty set: the caller falls through to the store
+    /// rather than reporting that nothing matched. It declines when the
+    /// partition's scope has not been seeded, for `disjoint` and for a `near`
+    /// with only a `minDistance`, which match away from the reference so that
+    /// no envelope bounds them, and when more than `at_most` admitted entities
+    /// are candidates, which it knows at the first entity past them: a filter
+    /// most of a partition meets costs `at_most + 1` envelope tests, not one
+    /// per entry. An entity `admitted` leaves out is neither named nor
+    /// counted. A
     /// seeded scope with no partition for the key answers with the empty set,
     /// because its rebuild found no entity of that type conveying the
     /// `GeoProperty`. An entity is named by the spelling the store tells it
@@ -127,12 +125,9 @@ impl SpatialEntityIndex {
         if !self.seeded.contains(&scope) {
             return None;
         }
-        // Projected once: the candidate region and every candidate's relation
-        // read the same projection.
-        let reference = PlanarGeometry::project(reference);
-        let candidates = candidates_for(georel, &reference)?;
+        let candidates = candidates_for(georel, &PlanarGeometry::project(reference))?;
         self.tree
-            .read_partition(key, |tree| evaluate(tree, georel, &reference, &candidates, admitted, at_most))
+            .read_partition(key, |tree| evaluate(tree, &candidates, admitted, at_most))
             .unwrap_or_else(|| Some(HashSet::new()))
     }
 
@@ -196,14 +191,14 @@ fn entries_of<'g>(
         .collect()
 }
 
-/// Which entries of a partition a relation has to be evaluated against.
+/// Which entries of a partition the store has to decide a relation for.
 ///
 /// The R-tree can only rule out entries whose box misses a region the relation
-/// can reach, which is sound for the containment and intersection relations
-/// and for `near` up to a `maxDistance`, and unsound for the ones that match
-/// *away* from the reference.
+/// can reach, which is sound for the relations that need the geometries to
+/// meet and for `near` up to a `maxDistance`, and unsound for the ones that
+/// match *away* from the reference.
 enum Candidates {
-    /// Every entry in the partition.
+    /// Every entry in the partition, for a reference with no region.
     WholePartition,
     /// Only the entries whose envelope meets the region.
     Envelope(NearEnvelope),
@@ -216,13 +211,12 @@ enum Candidates {
 /// candidate.
 fn candidates_for(georel: &GeoRel, reference: &PlanarGeometry) -> Option<Candidates> {
     match georel {
-        // `disjoint` matches precisely the entries the envelope test discards.
-        GeoRel::Disjoint => Some(Candidates::WholePartition),
-        // A `minDistance` alone matches entries arbitrarily far from the
-        // reference, so no envelope bounds it, and every entry of the partition
-        // would be a candidate the store has to bind and re-check. Declining
-        // lets the store evaluate the relation over its own rows instead.
-        GeoRel::Near { max_distance: None, .. } => None,
+        // `disjoint` matches entries anywhere outside the reference, and a
+        // `minDistance` alone entries arbitrarily far from it, so no envelope
+        // bounds either, and every entry of the partition would be a candidate
+        // the store has to bind and re-check. Declining lets the store evaluate
+        // the relation over its own rows instead.
+        GeoRel::Disjoint | GeoRel::Near { max_distance: None, .. } => None,
         // Clause 4.10 `near` with a `maxDistance` reaches only what lies within
         // that distance of the reference, measured along great-circle edges on
         // the spheroid; the envelope covers all of it.
@@ -240,85 +234,37 @@ fn candidates_for(georel: &GeoRel, reference: &PlanarGeometry) -> Option<Candida
     }
 }
 
-/// Whether the in-memory relation may decide membership, or only the envelope
-/// test may.
+/// The entities of whichever candidates the relation admits, at most
+/// `at_most` of them that `admitted` admits, or `None` once one more is a
+/// candidate.
 ///
-/// The index is an optimisation, so it may hand the store more candidates than
-/// match but never fewer. That rules the in-memory predicate out wherever its
-/// reading is not the store's to the last bit.
-enum Refinement {
-    /// The in-memory relation is the predicate the store applies.
-    Exact,
-    /// Only the envelope test may be trusted; the store decides membership.
-    EnvelopeOnly,
-}
-
-/// Whether a relation's in-memory reading agrees with the store's.
-const fn refinement_for(georel: &GeoRel) -> Refinement {
-    match georel {
-        // `geo` has no topological equality predicate, so the in-memory reading
-        // of clause 4.10 `equals` is mutual containment, which excludes shared
-        // boundaries and is therefore strictly stronger than the `ST_Equals`
-        // set equality the store applies. Refining with it would drop entities
-        // the store counts as equal.
-        GeoRel::Equals |
-        // The in-memory `near` measures what `geography` measures, but runs its
-        // own containment test and geodesic arithmetic, so a pair at the
-        // threshold can fall either side of it. The store
-        // re-applies the relation to every candidate anyway, and refining
-        // would make an answer depend on two implementations agreeing exactly;
-        // a centroid reading of `near` would drop every building whose middle
-        // is out of range but whose nearest wall is not.
-        GeoRel::Near { .. } => Refinement::EnvelopeOnly,
-        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Disjoint | GeoRel::Overlaps => Refinement::Exact,
-    }
-}
-
-/// Run the clause 4.10 predicate over whichever candidates the relation
-/// admits, at most `at_most` entities of them that `admitted` admits, or
-/// `None` once one more meets it.
-fn evaluate(
-    tree: &PackedRTree<SpatialEntry>,
-    georel: &GeoRel,
-    reference: &PlanarGeometry,
-    candidates: &Candidates,
-    admitted: Admitted<'_>,
-    at_most: usize,
-) -> Option<HashSet<IdentifierSpelling>> {
+/// The index decides no relation itself, however close an in-memory reading
+/// of it comes to the store's: two implementations of one predicate can part
+/// on a pair whose crossings round differently, and an index that answered by
+/// its own reading would then leave out an entity the store matches.
+fn evaluate(tree: &PackedRTree<SpatialEntry>, candidates: &Candidates, admitted: Admitted<'_>, at_most: usize) -> Option<HashSet<IdentifierSpelling>> {
     match candidates {
-        Candidates::WholePartition => meeting(tree.iter(), georel, reference, admitted, at_most),
-        Candidates::Envelope(envelope) => meeting(
+        Candidates::WholePartition => admitted_among(tree.iter(), admitted, at_most),
+        Candidates::Envelope(envelope) => admitted_among(
             envelope
                 .rects()
                 .iter()
                 .flat_map(|rect| tree.intersecting(AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]))),
-            georel,
-            reference,
             admitted,
             at_most,
         ),
     }
 }
 
-/// The entities of `entries` that `admitted` admits and that meet `georel`,
-/// read lazily and at most `at_most` of them, or `None` at the first entity
-/// past them.
+/// The entities of `entries` that `admitted` admits, read lazily and at most
+/// `at_most` of them, or `None` at the first entity past them.
 ///
 /// An entry that straddles the antimeridian can meet both halves of a split
-/// envelope; the set reports it once and counts it once.
-fn meeting<'t>(
-    entries: impl Iterator<Item = &'t SpatialEntry>,
-    georel: &GeoRel,
-    reference: &PlanarGeometry,
-    admitted: Admitted<'_>,
-    at_most: usize,
-) -> Option<HashSet<IdentifierSpelling>> {
+/// envelope, and an entity can hold one entry per instance; the set reports it
+/// once and counts it once.
+fn admitted_among<'t>(entries: impl Iterator<Item = &'t SpatialEntry>, admitted: Admitted<'_>, at_most: usize) -> Option<HashSet<IdentifierSpelling>> {
     entries
         .filter(|entry| admitted.admits(entry.id()))
-        .filter(|entry| match refinement_for(georel) {
-            Refinement::Exact => matches(georel, &entry.planar(), reference),
-            Refinement::EnvelopeOnly => true,
-        })
         .try_fold(HashSet::new(), |mut found, entry| {
             if !found.contains(entry.id()) {
                 if found.len() == at_most {
@@ -343,6 +289,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{
         form::{GeometryForm, PolygonRings},
         geo_rel::GeoRel,
+        line_string_coordinates::LineStringCoordinates,
         linear_ring::LinearRing,
         position::Position,
         positive_distance::PositiveDistance,
@@ -458,12 +405,99 @@ mod tests {
     }
 
     #[test]
-    fn an_entity_overlapping_the_reference_does_not_match_disjoint() {
+    fn disjoint_declines_to_narrow() {
         let index = seeded();
         index.replace_entity(uri("urn:ngsi-ld:Vehicle:A"), [(key(), &square(0.0, 0.0, 2.0))]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:B"), [(key(), &square(50.0, 50.0, 1.0))]);
         assert_eq!(
             index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0), Admitted::Every, usize::MAX),
-            Some(HashSet::new())
+            None
+        );
+    }
+
+    /// A triangle whose box holds points the triangle does not.
+    fn triangle() -> GeometryForm {
+        GeometryForm::Polygon(PolygonRings::new(vec![
+            LinearRing::try_new(
+                [(0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (0.0, 0.0)]
+                    .into_iter()
+                    .map(|(x, y)| Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
+                    .collect(),
+            )
+            .expect("a test triangle is a closed ring"),
+        ]))
+    }
+
+    /// The store applies the relation to every candidate, so the index hands
+    /// it every entity whose envelope meets the reference's, whether or not
+    /// the entity stands in the relation.
+    #[test]
+    fn every_relation_it_narrows_hands_the_store_each_entity_whose_envelope_meets_the_reference() {
+        let index = seeded();
+        let beside = uri("urn:ngsi-ld:Vehicle:beside-the-triangle");
+        index.replace_entity(beside.clone(), [(key(), &point(1.8, 1.8))]);
+        index.replace_entity(uri("urn:ngsi-ld:Vehicle:far"), [(key(), &point(30.0, 30.0))]);
+        for georel in [GeoRel::Within, GeoRel::Contains, GeoRel::Intersects, GeoRel::Equals, GeoRel::Overlaps] {
+            assert_eq!(
+                index.query(&key(), &georel, &triangle(), Admitted::Every, usize::MAX),
+                Some(identifiers([beside.clone()])),
+                "{georel:?}"
+            );
+        }
+    }
+
+    fn line(positions: &[(f64, f64)]) -> GeometryForm {
+        GeometryForm::LineString(
+            LineStringCoordinates::try_new(
+                positions
+                    .iter()
+                    .map(|&(x, y)| Position::try_new(x, y, None).expect("a test position lies on the CRS84 axes"))
+                    .collect(),
+            )
+            .expect("a test line has two positions or more"),
+        )
+    }
+
+    /// Both lines share the reference's second segment, so clause 4.10
+    /// `overlaps` holds for both, the second one crossing back over the
+    /// shared segment included.
+    #[test]
+    fn overlaps_hands_the_store_a_line_crossing_back_over_a_segment_it_shares() {
+        let index = seeded();
+        let crossing_back = uri("urn:ngsi-ld:Shape:crossing-back");
+        let control = uri("urn:ngsi-ld:Shape:control");
+        index.replace_entity(
+            crossing_back.clone(),
+            [(
+                key(),
+                &line(&[
+                    (17.044_538_497_924_8, 48.199_306_488_037_1),
+                    (17.049_634_933_471_7, 48.196_449_279_785_2),
+                    (17.048_576_354_980_5, 48.197_162_628_173_8),
+                    (17.046_571_731_567_4, 48.193_210_601_806_6),
+                ]),
+            )],
+        );
+        index.replace_entity(
+            control.clone(),
+            [(
+                key(),
+                &line(&[
+                    (17.044_538_497_924_8, 48.199_306_488_037_1),
+                    (17.049_634_933_471_7, 48.196_449_279_785_2),
+                    (17.05, 48.19),
+                ]),
+            )],
+        );
+        let reference = line(&[
+            (17.041_112_899_780_3, 48.208_068_847_656_3),
+            (17.044_538_497_924_8, 48.199_306_488_037_1),
+            (17.049_634_933_471_7, 48.196_449_279_785_2),
+            (17.052_634_9, 48.198_449_3),
+        ]);
+        assert_eq!(
+            index.query(&key(), &GeoRel::Overlaps, &reference, Admitted::Every, usize::MAX),
+            Some(identifiers([crossing_back, control]))
         );
     }
 
@@ -784,14 +818,9 @@ mod tests {
         );
     }
 
-    /// `equals` is answered by the envelope test alone.
-    ///
-    /// `geo` offers no topological equality, and the mutual-containment reading
-    /// standing in for it excludes shared boundaries, so it is strictly
-    /// stronger than the `ST_Equals` the store applies. The index therefore
-    /// keeps every envelope-intersecting entry and leaves the decision to the
-    /// store, because handing back fewer candidates than match is the one thing
-    /// an optimisation may not do.
+    /// `equals` is the store's to decide: the index keeps every entry whose
+    /// envelope meets the reference's, because handing back fewer candidates
+    /// than match is the one thing an optimisation may not do.
     #[test]
     fn equals_admits_every_envelope_intersecting_candidate_and_leaves_the_decision_to_the_store() {
         let index = seeded();
