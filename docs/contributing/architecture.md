@@ -62,7 +62,7 @@ When two places need the same functionality, it moves into the module that owns 
 
 ## What the gates catch
 
-The gates below run over the whole workspace. Most of them check production code only, not tests, build scripts or test-only items. `time_handling` reads test code too, because a test that parses a time some other way asserts behaviour the broker doesn't have, and so do `module_naming` and the part of `raw_sql` that looks for statement text handed to the driver. Some gates have a baseline, which tolerates only the entries listed on it and can only shrink. One baseline has an entry today. `type_erased_error` lists the DNS resolver in `andromeda-outbound-http`, because `reqwest`'s `Resolve` trait hands errors back boxed. Every other gate fails on the first violation.
+The gates below run over the whole workspace. Most of them check production code only, not tests, build scripts or test-only items. `time_handling` reads test code too, because a test that parses a time some other way asserts behaviour the broker doesn't have, and so do `module_naming`, `super_import` and the part of `raw_sql` that looks for statement text handed to the driver. Some gates have a baseline, which tolerates only the entries listed on it and can only shrink. One baseline has an entry today. `type_erased_error` lists the DNS resolver in `andromeda-outbound-http`, because `reqwest`'s `Resolve` trait hands errors back boxed. Every other gate fails on the first violation.
 
 | Gate | Fails on | Why |
 |---|---|---|
@@ -79,6 +79,7 @@ The gates below run over the whole workspace. Most of them check production code
 | `raw_constant` | an IRI or media type kept as a plain string constant | A constant is validated when it compiles. |
 | `configuration_layering`, `configuration_ownership`, `configuration_description` | the configuration rules above | |
 | `god_file`, `module_naming` | the file size and module name rules below | |
+| `super_import` | a `use` whose path starts at `super`, in production or test code | A `crate::` path names an item the same way from every module, so moving a module leaves its imports meaning what they did. A `use` inside a `macro_rules!` body isn't read, because a declarative macro has no `crate::` spelling of the module that invokes it. |
 | `comment_hygiene` | a spaced `--` or an em or en dash in any comment, or a `clone:` note in test code or one that points at another line or names a shared handle | A comment states a reason in words of its own, with commas, colons or parentheses in place of dash asides. |
 | `manifest_hygiene`, `package_metadata` | the manifest rules in [Dependencies](dependencies.md) | |
 | `licence_policy` | a licence `about.toml` accepts that `deny.toml` doesn't allow, or the other way round, or a licence `about.toml` grants a crate that `deny.toml` makes no exception for | The licence file the broker image ships is written under the same policy cargo-deny enforces. [Dependencies](dependencies.md#licences) describes both. |

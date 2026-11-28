@@ -115,8 +115,7 @@ impl From<ScopeQuery> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::scope::scope_query_error::ScopeQueryError;
+    use crate::scope::{scope_pattern::ScopePattern, scope_query::ScopeQuery, scope_query_error::ScopeQueryError};
 
     fn shape(raw: &str) -> Vec<Vec<String>> {
         raw.parse::<ScopeQuery>()

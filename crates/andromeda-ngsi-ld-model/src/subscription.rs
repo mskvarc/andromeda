@@ -334,10 +334,27 @@ pub struct Subscription {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::notification::NotificationTrigger;
-    use chrono::TimeZone;
-    use std::str::FromStr;
+    use crate::{
+        notification::NotificationTrigger,
+        notification_media_type::NotificationMediaType,
+        subscription::{
+            Endpoint,
+            NotificationParams,
+            NotificationStatus,
+            Subscription,
+            SubscriptionLifecycle,
+            SubscriptionStatus,
+            SubscriptionType,
+            standing::SubscriptionStanding,
+            subscription_filters::SubscriptionFilters,
+        },
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_iri::AttributeIri, identifier::Identifier, positive_milliseconds::PositiveMilliseconds};
+    use chrono::{TimeZone, Utc};
+    use std::{
+        num::{NonZeroU32, NonZeroU64},
+        str::FromStr,
+    };
 
     /// Clause 4.5.23: `joinLevel` is a positive integer. Zero names no
     /// traversal, so a subscription carrying it is rejected rather than

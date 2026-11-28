@@ -50,7 +50,10 @@ impl EntityMapRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{EntityMapRouteServices, EntityMapStateResolver};
+    use crate::{
+        routes::EntityMapRoutes,
+        state::{EntityMapRouteServices, EntityMapStateResolver},
+    };
     use andromeda_extensions::enabled::EnabledExtensions;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
@@ -76,7 +79,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_current_and_temporal_entity_map_inventory() -> Result<(), Box<dyn Error>> {
-        let routes = super::EntityMapRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
+        let routes = EntityMapRoutes::new(Arc::new(RejectingResolver), EnabledExtensions::none()).into_router();
         for (method, path) in [
             (Method::GET, "/entityMaps"),
             (Method::POST, "/entityMaps"),

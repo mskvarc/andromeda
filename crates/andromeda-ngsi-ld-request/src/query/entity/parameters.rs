@@ -214,14 +214,18 @@ pub struct EntityQueryParametersOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         error::ParameterError,
         params_from_query,
-        query::{entity::operation::EntityQueryOperation, permissive_admission::PERMISSIVE},
+        query::{
+            entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters},
+            permissive_admission::PERMISSIVE,
+        },
     };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_query::{ordering::ordering_direction::OrderingDirection, projection::exclusivity::ProjectionConflict};
+    use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
         params_from_query!(query, EntityQueryParameters)

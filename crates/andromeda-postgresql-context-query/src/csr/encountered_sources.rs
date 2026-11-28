@@ -20,7 +20,8 @@ pub(crate) fn not_encountered(encountered: &[ContextSourcePseudonym]) -> Conditi
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::csr::encountered_sources::not_encountered;
+    use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use sea_query::{Alias, Query};
 

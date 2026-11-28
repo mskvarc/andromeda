@@ -186,9 +186,11 @@ impl fmt::Display for ScopePattern {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::scope::scope_query_error::ScopeQueryError;
-    use andromeda_ngsi_ld_lexicon::scope::level::LEVEL_CHARACTER_LIMIT;
+    use crate::scope::{
+        scope_pattern::{ScopeLabel, ScopePattern, ScopeSegment},
+        scope_query_error::ScopeQueryError,
+    };
+    use andromeda_ngsi_ld_lexicon::scope::{level::LEVEL_CHARACTER_LIMIT, path::ScopePath};
 
     fn segments(raw: &str) -> Vec<ScopeSegment> {
         raw.parse::<ScopePattern>().expect("valid pattern").segments().to_vec()

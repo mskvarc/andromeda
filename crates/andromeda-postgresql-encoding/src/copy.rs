@@ -222,8 +222,25 @@ pub fn write_null(buf: &mut Vec<u8>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use chrono::TimeZone;
+    use crate::copy::{
+        COPY_HEADER_SIGNATURE,
+        CopyFieldError,
+        write_bool_opt,
+        write_bytea_opt,
+        write_field_count,
+        write_header,
+        write_i64,
+        write_jsonb_text,
+        write_null,
+        write_payload_length,
+        write_text,
+        write_text_opt,
+        write_timestamptz,
+        write_timestamptz_opt,
+        write_trailer,
+        write_uuid,
+    };
+    use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
 
     #[test]

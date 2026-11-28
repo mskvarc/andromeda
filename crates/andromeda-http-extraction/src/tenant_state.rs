@@ -63,7 +63,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{ExistingTenantState, TenantStateResolver};
+    use crate::tenant_state::{ExistingTenantState, TenantStateResolver};
     use andromeda_failure_classification::classified_report::ClassifiedReport;
     use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

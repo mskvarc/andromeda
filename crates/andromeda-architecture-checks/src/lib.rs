@@ -37,6 +37,7 @@ mod source_scan;
 pub mod sql;
 pub mod state_codec_boundary;
 pub mod string_typed_error;
+pub mod super_import;
 pub mod swallowed_row_decode;
 pub mod task_runtime_boundary;
 pub mod time_handling;

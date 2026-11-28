@@ -151,8 +151,22 @@ pub fn negate_total(predicate: SimpleExpr) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use crate::{
+        operator::{
+            array_contained_by_keys,
+            array_contains,
+            array_contains_key,
+            hash_key_array,
+            negate_total,
+            null_if,
+            present_and,
+            regex_match,
+            regex_substring,
+        },
+        pg_operator::PgBinaryOperator,
+        pg_type::PostgresType,
+    };
+    use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     #[test]
     fn a_sentinel_renders_as_nullif() {

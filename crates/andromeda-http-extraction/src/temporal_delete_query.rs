@@ -47,9 +47,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::temporal_delete_query::TemporalDeleteQuery;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
-    use axum::{body::Body, http::Request};
+    use axum::{body::Body, extract::FromRequestParts, http::Request};
 
     async fn extract(uri: &str) -> Result<TemporalDeleteQuery, ExtractorRejection> {
         let request = Request::builder().uri(uri).body(Body::empty()).expect("valid request");

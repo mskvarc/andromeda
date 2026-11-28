@@ -56,7 +56,10 @@ impl SubscriptionRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{SubscriptionRouteServices, SubscriptionStateResolver};
+    use crate::{
+        routes::SubscriptionRoutes,
+        state::{SubscriptionRouteServices, SubscriptionStateResolver},
+    };
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -81,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_subscription_route_inventory() -> Result<(), Box<dyn Error>> {
-        let routes = super::SubscriptionRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = SubscriptionRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/subscriptions"),
             (Method::GET, "/subscriptions"),

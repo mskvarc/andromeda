@@ -225,9 +225,18 @@ impl CsrQueryParameters {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{params_from_query, query::SharedQueryParams};
-    use andromeda_ngsi_ld_query::{projection::exclusivity::ProjectionConflict, temporal::time_interval_error::TimeIntervalError};
+    use crate::{
+        error::ParameterError,
+        params_from_query,
+        query::{SharedQueryParams, csr::CsrQueryParameters},
+    };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        projection::{exclusivity::ProjectionConflict, written_projection_term::WrittenProjectionTerm},
+        query_error::QueryError,
+        temporal::time_interval_error::TimeIntervalError,
+    };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn params_from_query(query: &str) -> CsrQueryParameters {

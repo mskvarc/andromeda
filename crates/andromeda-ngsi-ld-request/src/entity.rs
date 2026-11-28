@@ -298,9 +298,17 @@ impl GetEntityParams {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::query::entity::parameters::EntityQueryParameters;
-    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
+    use crate::{
+        entity::{AppendParams, AttributeWriteParams, GetEntityParams, MergeParams},
+        error::ParameterError,
+        query::entity::parameters::EntityQueryParameters,
+        representation_parameter::WrittenValue,
+    };
+    use andromeda_ngsi_ld_query::{
+        projection::{exclusivity::ProjectionConflict, written_projection_term::WrittenProjectionTerm},
+        type_selection::TypeSelection,
+    };
+    use andromeda_ngsi_ld_representation::{merge_representation::MergeRepresentation, response_format::ResponseFormat};
 
     /// Clause 6.3.18 gives Append Attributes, Partial Attribute Update and
     /// Replace Attribute `local` beside their own parameters.

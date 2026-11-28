@@ -103,14 +103,22 @@ fn keyword_term(term: &WrittenProjectionTerm, expanded: ExpandedProjectionTerm) 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         namespace_expander::EXAMPLE_NAMESPACE_TYPED,
-        projection::{projection_error::ProjectionError, written_projection_list::WrittenProjectionList},
-        term_expander::TermExpansionError,
+        projection::{
+            expanded_projection::ExpandedProjection,
+            expanded_projection_term::ExpandedProjectionTerm,
+            expansion::{expand_attrs, expand_projection, expand_projection_terms},
+            projection_error::ProjectionError,
+            written_projection_list::WrittenProjectionList,
+            written_projection_term::WrittenProjectionTerm,
+        },
+        query_error::QueryError,
+        term_expander::{TermExpander, TermExpansionError},
     };
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use std::future::ready;
+    use std::future::{Future, ready};
 
     #[tokio::test]
     async fn every_attribute_name_is_expanded() {

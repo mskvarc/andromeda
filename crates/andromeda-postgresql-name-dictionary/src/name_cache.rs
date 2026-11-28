@@ -390,7 +390,7 @@ mod tests {
     macro_rules! name_cache_tests {
         ($module:ident, $name:ty, $key:ty, $first:literal, $second:literal, $table:literal) => {
             mod $module {
-                use super::*;
+                use crate::name_cache::tests::*;
                 use pretty_assertions::assert_eq;
 
                 /// The one interned name these tests resolve.

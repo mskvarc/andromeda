@@ -42,7 +42,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::query::ValidatedQuery;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use andromeda_ngsi_ld_request::{

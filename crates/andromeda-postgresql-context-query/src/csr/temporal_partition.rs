@@ -97,9 +97,11 @@ fn window_instant(instant: DateTime<Utc>) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use crate::csr::temporal_partition::temporal_partition;
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, temporal::window::TimeInterval};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use chrono::{DateTime, Utc};
     use sea_query::{Alias, Query, SelectStatement};
 
     fn dt(s: &str) -> DateTime<Utc> {

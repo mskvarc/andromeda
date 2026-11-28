@@ -84,9 +84,12 @@ impl_accept_extractor!(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::accept::{AcceptFormat, AcceptFormatNoGeo, resolve_accept};
+    use andromeda_http_headers::media_type::{GeoJsonSupport, ResponseMediaType};
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
         body::Body,
+        extract::FromRequestParts,
         http::{Request, header::ACCEPT},
     };
 

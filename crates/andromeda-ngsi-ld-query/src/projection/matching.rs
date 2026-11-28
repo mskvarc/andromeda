@@ -21,7 +21,11 @@ pub fn matching_position(key: &str, terms: &[ExpandedProjectionTerm], index: &At
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::projection::{
+        attribute_iri_index::AttributeIriIndex,
+        expanded_projection_term::ExpandedProjectionTerm,
+        matching::{matching_position, matching_term},
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;

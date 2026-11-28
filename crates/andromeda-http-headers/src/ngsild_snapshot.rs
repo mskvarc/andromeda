@@ -70,8 +70,11 @@ impl headers::Header for NgsiLdSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ngsild_snapshot::NgsiLdSnapshot;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     fn decode_from(raw: &str) -> Result<NgsiLdSnapshot, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");

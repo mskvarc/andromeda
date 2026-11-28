@@ -94,8 +94,11 @@ impl headers::Header for PreferenceApplied {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{preference::Preference, preference_applied::PreferenceApplied};
+    use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use headers::Header;
+    use http::HeaderValue;
+    use std::iter;
 
     /// Helper: decode a `PreferenceApplied` from a raw header string.
     fn decode_preference_applied(raw: &str) -> PreferenceApplied {

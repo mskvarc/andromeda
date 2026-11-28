@@ -64,7 +64,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::snapshot::SnapshotHeader;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{extract::FromRequestParts, http::Request};
 
     #[tokio::test]

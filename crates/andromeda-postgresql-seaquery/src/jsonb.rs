@@ -253,7 +253,16 @@ pub fn escape_jsonpath_key(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::jsonb::{
+        escape_jsonpath_key,
+        jsonb_key_exists,
+        jsonb_object_agg,
+        jsonb_path_exists,
+        jsonb_path_query,
+        jsonb_path_query_array,
+        jsonb_path_query_first,
+        jsonb_path_query_silent,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 

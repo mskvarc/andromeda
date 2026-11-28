@@ -48,7 +48,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::via::IncomingVia;
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use axum::{extract::FromRequestParts, http::Request};
 

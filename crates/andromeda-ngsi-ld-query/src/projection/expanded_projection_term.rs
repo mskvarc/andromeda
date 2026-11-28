@@ -120,7 +120,8 @@ impl ExpandedProjectionTerm {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::projection::expanded_projection_term::ExpandedProjectionTerm;
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
 
     fn iri(value: &str) -> IriBuf {

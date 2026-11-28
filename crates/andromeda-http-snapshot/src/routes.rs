@@ -42,7 +42,10 @@ impl SnapshotRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{SnapshotRouteServices, SnapshotStateResolver};
+    use crate::{
+        routes::SnapshotRoutes,
+        state::{SnapshotRouteServices, SnapshotStateResolver},
+    };
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -67,7 +70,7 @@ mod tests {
 
     #[tokio::test]
     async fn owns_the_complete_snapshot_inventory() -> Result<(), Box<dyn Error>> {
-        let routes = super::SnapshotRoutes::new(Arc::new(RejectingResolver)).into_router();
+        let routes = SnapshotRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/snapshots"),
             (Method::DELETE, "/snapshots"),
