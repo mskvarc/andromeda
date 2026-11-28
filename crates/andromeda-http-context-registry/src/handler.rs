@@ -31,7 +31,7 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
-    jsonld_context::{CONTEXT_PAGE_SIZE, DeleteParams, ListParams, ServeParams},
+    jsonld_context::{CONTEXT_PAGE_SIZE, ContextListParams, DeleteParams, ServeParams},
     pagination::{
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
@@ -104,7 +104,7 @@ pub(crate) async fn query(
         query,
         pointed,
     }: RequestPagination,
-    ValidatedQuery(params): ValidatedQuery<ListParams>,
+    ValidatedQuery(params): ValidatedQuery<ContextListParams>,
 ) -> Result<Response, ProblemResponse> {
     let detail_level = match params.details {
         Some(true) => ContextDetailLevel::Full,

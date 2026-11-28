@@ -26,7 +26,7 @@ pub const CONTEXT_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
 /// like every other one, by the broker's pagination policy (clause 4.12).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ListParams {
+pub struct ContextListParams {
     /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
     /// `cursor`).
     #[serde(flatten)]
@@ -39,7 +39,7 @@ pub struct ListParams {
     pub details: Option<bool>,
 }
 
-query_parameter_set!(ListParams { Kind, Details } + PageParameters);
+query_parameter_set!(ContextListParams { Kind, Details } + PageParameters);
 
 /// Query parameters for `GET /jsonldContexts/{contextId}` (Serve @context,
 /// clause 6.30.3.1).
@@ -71,7 +71,7 @@ query_parameter_set!(DeleteParams { Reload });
 #[cfg(test)]
 mod tests {
     use crate::{
-        jsonld_context::{CONTEXT_PAGE_SIZE, DeleteParams, ListParams, ServeParams},
+        jsonld_context::{CONTEXT_PAGE_SIZE, ContextListParams, DeleteParams, ServeParams},
         pagination::page_size::PageSizeExceeded,
     };
     use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
@@ -107,14 +107,14 @@ mod tests {
     fn every_operation_refuses_the_former_tenant_parameter() {
         assert!(serde_urlencoded::from_str::<ServeParams>("andromedaTenant=acme").is_err());
         assert!(serde_urlencoded::from_str::<ServeParams>("details=true&andromedaTenant=acme").is_err());
-        assert!(serde_urlencoded::from_str::<ListParams>("andromedaTenant=acme").is_err());
+        assert!(serde_urlencoded::from_str::<ContextListParams>("andromedaTenant=acme").is_err());
         assert!(serde_urlencoded::from_str::<DeleteParams>("andromedaTenant=acme").is_err());
     }
 
     /// The listing reads its filter, its detail level and the page together.
     #[test]
     fn list_reads_the_filter_the_detail_level_and_the_page() {
-        let params: ListParams = serde_urlencoded::from_str("kind=Hosted&details=true&limit=3&offset=6").expect("valid parameters");
+        let params: ContextListParams = serde_urlencoded::from_str("kind=Hosted&details=true&limit=3&offset=6").expect("valid parameters");
         assert_eq!(params.kind, Some(ContextKind::Hosted));
         assert_eq!(params.details, Some(true));
         assert_eq!(params.page.limit, Some(3));
@@ -124,7 +124,9 @@ mod tests {
     /// A parameter the listing does not define stays unknown beside the page.
     #[test]
     fn list_refuses_an_undefined_parameter_beside_the_page() {
-        let message = serde_urlencoded::from_str::<ListParams>("limit=3&page=2").expect_err("rejected").to_string();
+        let message = serde_urlencoded::from_str::<ContextListParams>("limit=3&page=2")
+            .expect_err("rejected")
+            .to_string();
         assert!(message.contains("unknown field"), "{message}");
     }
 }

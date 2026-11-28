@@ -1,12 +1,8 @@
 //! Typed, state-complete inventory of Entity Map routes.
 
-use crate::{
-    handler,
-    query_creation,
-    state::{EntityMapRouteState, EntityMapStateResolver},
-};
+use crate::{handler, query_creation, state::EntityMapRouteServices};
 use andromeda_extensions::enabled::EnabledExtensions;
-use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
+use andromeda_http_extraction::{snapshot_scope_guard::reject_snapshot_scope, tenant_state::TenantServicesResolver};
 use andromeda_http_temporal::extension_gate::TemporalExtensionGate;
 use axum::{Extension, Router, middleware::from_fn, routing::get};
 use std::sync::Arc;
@@ -23,8 +19,8 @@ impl EntityMapRoutes {
     /// routes do (clause 5.14.5.4). An entity map serves only distributed
     /// operations and an operation on a Snapshot is always local
     /// (clause 5.5.15), so each route refuses a Snapshot.
-    pub fn new(resolver: Arc<dyn EntityMapStateResolver>, enabled: EnabledExtensions) -> EntityMapRoutes {
-        let state = EntityMapRouteState::new(resolver);
+    pub fn new(resolver: Arc<dyn TenantServicesResolver<EntityMapRouteServices>>, enabled: EnabledExtensions) -> EntityMapRoutes {
+        let state = resolver;
         let current_routes = Router::new()
             .route("/", get(query_creation::create_from_query).post(query_creation::create_from_query_post))
             .route("/{entity_map_id}", get(handler::get).patch(handler::update).delete(handler::delete));
@@ -50,11 +46,9 @@ impl EntityMapRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::EntityMapRoutes,
-        state::{EntityMapRouteServices, EntityMapStateResolver},
-    };
+    use crate::{routes::EntityMapRoutes, state::EntityMapRouteServices};
     use andromeda_extensions::enabled::EnabledExtensions;
+    use andromeda_http_extraction::tenant_state::TenantServicesResolver;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -67,7 +61,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl EntityMapStateResolver for RejectingResolver {
+    impl TenantServicesResolver<EntityMapRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

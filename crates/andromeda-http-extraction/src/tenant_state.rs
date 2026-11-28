@@ -1,13 +1,14 @@
 //! Generic extraction of tenant-scoped focused state.
 
-use crate::{addressed_uri::addressed_uri, tenant::TenantHeader};
+use crate::{addressed_uri::addressed_uri, classification::classify_tenancy_error, tenant::TenantHeader};
 use andromeda_http_response::{problem_response::ProblemResponse, tenant_state_rejection::TenantStateRejection};
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
 use axum::{
     extract::FromRequestParts,
     http::{Uri, request::Parts},
 };
 use futures::future::BoxFuture;
+use std::sync::Arc;
 
 /// Resolves one binding-specific state value for a typed tenant scope.
 pub trait TenantStateResolver<T>: Send + Sync {
@@ -18,6 +19,32 @@ pub trait TenantStateResolver<T>: Send + Sync {
         creation_policy: TenantCreationPolicy,
         instance: &'a Uri,
     ) -> BoxFuture<'a, Result<T, ProblemResponse>>;
+}
+
+/// Resolves a tenant to the capability set `T` one binding serves it with.
+///
+/// The composition implements it once per binding, and the binding's routes
+/// hold it as their axum state: [`TenantStateResolver`] is implemented for it
+/// once, classifying a tenancy failure at the HTTP boundary.
+pub trait TenantServicesResolver<T>: Send + Sync {
+    /// Resolve or create the tenant according to `creation_policy`, with no
+    /// capability of another binding.
+    fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<T>, TenancyError>>;
+}
+
+impl<T: Send + Sync + 'static> TenantStateResolver<Arc<T>> for Arc<dyn TenantServicesResolver<T>> {
+    fn resolve_tenant<'a>(
+        &'a self,
+        tenant: &'a TenantRef,
+        creation_policy: TenantCreationPolicy,
+        instance: &'a Uri,
+    ) -> BoxFuture<'a, Result<Arc<T>, ProblemResponse>> {
+        Box::pin(async move {
+            self.resolve(tenant, creation_policy)
+                .await
+                .map_err(|error| ProblemResponse::classified(classify_tenancy_error(&error), instance.clone()))
+        })
+    }
 }
 
 /// Extracted tenant state for operations that require an existing tenant.

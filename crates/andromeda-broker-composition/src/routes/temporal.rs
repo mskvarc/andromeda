@@ -1,8 +1,8 @@
 //! Composition adapters that supply focused broker capabilities to temporal HTTP routes.
 
 use crate::{routes::context_target::BrokerSnapshotTargetResolver, tenant_factory::BrokerTenantFactory};
-use andromeda_http_extraction::context_target::SnapshotTargetResolver;
-use andromeda_http_temporal::state::{TemporalRouteServices, TemporalStateResolver};
+use andromeda_http_extraction::{context_target::SnapshotTargetResolver, tenant_state::TenantServicesResolver};
+use andromeda_http_temporal::state::TemporalRouteServices;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -27,7 +27,7 @@ impl BrokerTemporalStateResolver {
     }
 }
 
-impl TemporalStateResolver for BrokerTemporalStateResolver {
+impl TenantServicesResolver<TemporalRouteServices> for BrokerTemporalStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<TemporalRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;

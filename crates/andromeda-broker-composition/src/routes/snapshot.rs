@@ -1,7 +1,8 @@
 //! Composition of focused snapshot HTTP capabilities.
 
 use crate::tenant_factory::BrokerTenantFactory;
-use andromeda_http_snapshot::state::{SnapshotRouteServices, SnapshotStateResolver};
+use andromeda_http_extraction::tenant_state::TenantServicesResolver;
+use andromeda_http_snapshot::state::SnapshotRouteServices;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     creation_policy::TenantCreationPolicy,
@@ -26,7 +27,7 @@ impl BrokerSnapshotStateResolver {
     }
 }
 
-impl SnapshotStateResolver for BrokerSnapshotStateResolver {
+impl TenantServicesResolver<SnapshotRouteServices> for BrokerSnapshotStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<SnapshotRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;

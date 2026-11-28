@@ -26,7 +26,7 @@ use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
 use andromeda_ngsi_ld_render::subscription::SubscriptionView;
-use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::ListParams, sys_attrs_parameters::SysAttrsParams};
+use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::SubscriptionListParams, sys_attrs_parameters::SysAttrsParams};
 use andromeda_subscription::{subscription_context::SubscriptionContext, subscription_listing::SubscriptionListing};
 use axum::{
     extract::OriginalUri,
@@ -109,7 +109,7 @@ pub(crate) async fn query(
     accept: AcceptFormatNoGeo,
     ContextUrl(context): ContextUrl,
     pagination: RequestPagination,
-    ValidatedQuery(params): ValidatedQuery<ListParams>,
+    ValidatedQuery(params): ValidatedQuery<SubscriptionListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
     let listing = ListingRequest::of(pagination, &params, &uri)?;

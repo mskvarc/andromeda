@@ -1,14 +1,8 @@
 //! Typed, state-complete inventory of entity HTTP routes.
 
-use crate::{
-    attribute,
-    entity,
-    entity_operations,
-    entity_type,
-    state::{EntityRouteState, EntityStateResolver},
-};
+use crate::{attribute, entity, entity_operations, entity_type, state::EntityRouteServices};
 use andromeda_extensions::enabled::EnabledExtensions;
-use andromeda_http_extraction::{accept_language::AcceptLanguageReading, scoped_response::echo_scope_headers};
+use andromeda_http_extraction::{accept_language::AcceptLanguageReading, scoped_response::echo_scope_headers, tenant_state::TenantServicesResolver};
 use axum::{
     Extension,
     Router,
@@ -32,7 +26,11 @@ impl EntityRoutes {
     /// `DELETE /entities` gate reads it: the purge's parameter extractor has no
     /// config access, so the `purge_dataset_scope` gate is applied in the
     /// handler off this layer.
-    pub fn new(resolver: Arc<dyn EntityStateResolver>, enabled: EnabledExtensions, accept_language: AcceptLanguageReading) -> EntityRoutes {
+    pub fn new(
+        resolver: Arc<dyn TenantServicesResolver<EntityRouteServices>>,
+        enabled: EnabledExtensions,
+        accept_language: AcceptLanguageReading,
+    ) -> EntityRoutes {
         let entity_routes = Router::new()
             .route("/", post(entity::create::create))
             .route("/", accept_language.negotiate(get(entity::query::query)))
@@ -63,7 +61,7 @@ impl EntityRoutes {
 
         let type_routes = Router::new().route("/", get(entity_type::query)).route("/{type_}", get(entity_type::get));
         let attribute_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
-        let state = EntityRouteState::new(resolver);
+        let state = resolver;
         let router = Router::new()
             .nest("/entities", entity_routes)
             .nest("/entityOperations", entity_operation_routes)
@@ -82,12 +80,9 @@ impl EntityRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::EntityRoutes,
-        state::{EntityRouteServices, EntityStateResolver},
-    };
+    use crate::{routes::EntityRoutes, state::EntityRouteServices};
     use andromeda_extensions::enabled::EnabledExtensions;
-    use andromeda_http_extraction::accept_language::AcceptLanguageReading;
+    use andromeda_http_extraction::{accept_language::AcceptLanguageReading, tenant_state::TenantServicesResolver};
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::{Body, to_bytes},
@@ -100,7 +95,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl EntityStateResolver for RejectingResolver {
+    impl TenantServicesResolver<EntityRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

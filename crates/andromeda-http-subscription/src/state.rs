@@ -3,16 +3,12 @@
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_http_extraction::{
-    classification::classify_tenancy_error,
     context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
-    tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
+    tenant_state::{ExistingTenantState, ProvisionableTenantState},
 };
-use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
-use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
-use axum::http::Uri;
-use futures::future::BoxFuture;
+use andromeda_tenancy::runtime::lease::RuntimeLease;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -54,45 +50,5 @@ impl ContextTargetProvider for SubscriptionRouteServices {
 
     fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
         self.snapshot_targets.as_ref()
-    }
-}
-
-/// Resolves only subscription capabilities for one tenant scope.
-pub trait SubscriptionStateResolver: Send + Sync {
-    /// Resolve or create the tenant according to the supplied policy.
-    fn resolve<'a>(
-        &'a self,
-        tenant: &'a TenantRef,
-        creation_policy: TenantCreationPolicy,
-    ) -> BoxFuture<'a, Result<Arc<SubscriptionRouteServices>, TenancyError>>;
-}
-
-/// Axum state for the complete subscription route fragment.
-#[derive(Clone)]
-pub(crate) struct SubscriptionRouteState {
-    /// Resolves or creates the request's tenant with its subscription capabilities.
-    resolver: Arc<dyn SubscriptionStateResolver>,
-}
-
-impl SubscriptionRouteState {
-    /// Route state resolving tenants through `resolver`.
-    pub(crate) const fn new(resolver: Arc<dyn SubscriptionStateResolver>) -> SubscriptionRouteState {
-        SubscriptionRouteState { resolver }
-    }
-}
-
-impl TenantStateResolver<Arc<SubscriptionRouteServices>> for SubscriptionRouteState {
-    fn resolve_tenant<'a>(
-        &'a self,
-        tenant: &'a TenantRef,
-        creation_policy: TenantCreationPolicy,
-        instance: &'a Uri,
-    ) -> BoxFuture<'a, Result<Arc<SubscriptionRouteServices>, ProblemResponse>> {
-        Box::pin(async move {
-            self.resolver
-                .resolve(tenant, creation_policy)
-                .await
-                .map_err(|error| ProblemResponse::classified(classify_tenancy_error(&error), instance.clone()))
-        })
     }
 }

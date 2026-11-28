@@ -1,13 +1,8 @@
 //! Typed, state-complete inventory of temporal HTTP routes.
 
-use crate::{
-    extension_gate::TemporalExtensionGate,
-    operation_query,
-    state::{TemporalRouteState, TemporalStateResolver},
-    temporal,
-};
+use crate::{extension_gate::TemporalExtensionGate, operation_query, state::TemporalRouteServices, temporal};
 use andromeda_extensions::enabled::EnabledExtensions;
-use andromeda_http_extraction::{accept_language::AcceptLanguageReading, scoped_response::echo_scope_headers};
+use andromeda_http_extraction::{accept_language::AcceptLanguageReading, scoped_response::echo_scope_headers, tenant_state::TenantServicesResolver};
 use axum::{
     Extension,
     Router,
@@ -31,7 +26,11 @@ impl TemporalRoutes {
     /// `temporal_delete_by_query` extension is enabled; when it is not, the
     /// route is absent and the method answers `405`, exactly as a conformant
     /// broker that never implemented it does.
-    pub fn new(resolver: Arc<dyn TemporalStateResolver>, enabled: EnabledExtensions, accept_language: AcceptLanguageReading) -> TemporalRoutes {
+    pub fn new(
+        resolver: Arc<dyn TenantServicesResolver<TemporalRouteServices>>,
+        enabled: EnabledExtensions,
+        accept_language: AcceptLanguageReading,
+    ) -> TemporalRoutes {
         let mut entity_routes = Router::new()
             .route("/", post(temporal::create_or_update::create_or_update))
             .route("/", accept_language.negotiate(get(temporal::query::request::query)))
@@ -51,7 +50,7 @@ impl TemporalRoutes {
             entity_routes = entity_routes.route("/", delete(temporal::delete_by_query::delete_by_query));
         }
         let operation_routes = Router::new().route("/query", accept_language.negotiate(post(operation_query::query)));
-        let state = TemporalRouteState::new(resolver);
+        let state = resolver;
         let router = Router::new()
             .nest("/entities", entity_routes)
             .nest("/entityOperations", operation_routes)
@@ -74,12 +73,9 @@ impl TemporalRoutes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        routes::TemporalRoutes,
-        state::{TemporalRouteServices, TemporalStateResolver},
-    };
+    use crate::{routes::TemporalRoutes, state::TemporalRouteServices};
     use andromeda_extensions::enabled::EnabledExtensions;
-    use andromeda_http_extraction::accept_language::AcceptLanguageReading;
+    use andromeda_http_extraction::{accept_language::AcceptLanguageReading, tenant_state::TenantServicesResolver};
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
@@ -92,7 +88,7 @@ mod tests {
 
     struct RejectingResolver;
 
-    impl TemporalStateResolver for RejectingResolver {
+    impl TenantServicesResolver<TemporalRouteServices> for RejectingResolver {
         fn resolve<'a>(
             &'a self,
             _tenant: &'a TenantRef,

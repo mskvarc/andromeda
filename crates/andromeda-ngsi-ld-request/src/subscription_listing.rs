@@ -30,7 +30,7 @@ pub const SUBSCRIPTION_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
 /// paginated operations, so clause 6.3.13 adds `count` beside the page.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ListParams {
+pub struct SubscriptionListParams {
     /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
     /// `cursor`), decided by the broker's pagination policy.
     #[serde(flatten)]
@@ -43,9 +43,9 @@ pub struct ListParams {
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
 
-query_parameter_set!(ListParams { Count, Options } + PageParameters);
+query_parameter_set!(SubscriptionListParams { Count, Options } + PageParameters);
 
-impl ListParams {
+impl SubscriptionListParams {
     /// The system-attribute selection the `options` parameter made.
     ///
     /// # Errors
@@ -62,7 +62,7 @@ mod tests {
     use crate::{
         error::ParameterError,
         pagination::page_size::PageSizeExceeded,
-        subscription_listing::{ListParams, SUBSCRIPTION_PAGE_SIZE},
+        subscription_listing::{SUBSCRIPTION_PAGE_SIZE, SubscriptionListParams},
     };
     use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -81,7 +81,7 @@ mod tests {
     /// are read side by side.
     #[test]
     fn the_page_the_count_and_the_options_are_read_together() {
-        let params: ListParams = serde_urlencoded::from_str("limit=3&offset=6&count=true&options=sysAttrs").expect("parses");
+        let params: SubscriptionListParams = serde_urlencoded::from_str("limit=3&offset=6&count=true&options=sysAttrs").expect("parses");
         assert_eq!(params.page.limit, Some(3));
         assert_eq!(params.page.offset, Some(6));
         assert_eq!(params.count, CountPolicy::Emit);
@@ -91,7 +91,7 @@ mod tests {
     /// Without `count` the listing reports no total (Table 6.3.13-1).
     #[test]
     fn an_absent_count_asks_for_no_total() {
-        let params: ListParams = serde_urlencoded::from_str("limit=3").expect("parses");
+        let params: SubscriptionListParams = serde_urlencoded::from_str("limit=3").expect("parses");
         assert_eq!(params.count, CountPolicy::Omit);
     }
 
@@ -99,14 +99,16 @@ mod tests {
     /// is the clause 6.3.13 parameter of its own.
     #[test]
     fn a_count_through_options_is_refused() {
-        let params: ListParams = serde_urlencoded::from_str("options=count").expect("parses");
+        let params: SubscriptionListParams = serde_urlencoded::from_str("options=count").expect("parses");
         assert!(matches!(params.parse_options(), Err(ParameterError::OptionsInvalid(_))));
     }
 
     /// A parameter the collections do not define is refused as unknown.
     #[test]
     fn an_undefined_parameter_is_unknown() {
-        let message = serde_urlencoded::from_str::<ListParams>("page=2").expect_err("rejected").to_string();
+        let message = serde_urlencoded::from_str::<SubscriptionListParams>("page=2")
+            .expect_err("rejected")
+            .to_string();
         assert!(message.contains("unknown field"), "{message}");
     }
 }
